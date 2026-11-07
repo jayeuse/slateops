@@ -92,6 +92,11 @@ def plan_notification_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...
     )
 
 
+# A listing reads ceil(total / PAGE_SIZE) pages, known from the first page. PAGE_CEILING
+# (25,000 notices) stops a total no Large pack reaches; the busiest is School's 6,638.
+PAGE_SIZE = 25
+PAGE_CEILING = 1_000
+
 EVIDENCE_KEYS = tuple(
     "step actor_key actor_id method path expected_status status_code request_id".split()
 )
@@ -189,17 +194,19 @@ class _Run:
     def listing(self, actor: str, step: str) -> list[dict[str, Any]]:
         output: list[dict[str, Any]] = []
         expected_total = None
-        for page_number in range(100):
+        for page_number in range(PAGE_CEILING):
             offset = len(output)
             body = self.request(
                 actor,
                 "GET",
                 "/api/notifications",
                 f"{step}_page_{offset}",
-                {"limit": 25, "offset": offset},
+                {"limit": PAGE_SIZE, "offset": offset},
             )
-            rows = validate_platform_page(body, 25, step, offset=offset)
+            rows = validate_platform_page(body, PAGE_SIZE, step, offset=offset)
             total = body["pagination"]["total"]
+            if expected_total is None and total > PAGE_CEILING * PAGE_SIZE:
+                _fail("Notification listing exceeded the bounded page budget", step)
             if expected_total is not None and total != expected_total:
                 _fail("Notification total changed during bounded paging", step)
             expected_total = total
