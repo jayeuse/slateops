@@ -9,7 +9,7 @@ from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -173,6 +173,55 @@ def test_a_competing_seal_is_kept_and_any_other_write_failure_is_raised(
         seal_chain(world.engines.runtime, world.second, hour_of(1, 6))
     assert getattr(refused.value.orig, "sqlstate", None) == "23514"
     assert sealed_hours(world.engines, world.second) == {}
+
+
+def test_the_seal_transaction_sets_its_own_statement_limit(
+    world: SealWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # REQ-0009: the hour read of a busy hour can outlast the API's request limit.
+    limits: list[str] = []
+    real_read = seals.read_hours
+
+    def read(connection, org_id, start, end):
+        limits.append(connection.scalar(text("SELECT current_setting('statement_timeout')")))
+        return real_read(connection, org_id, start, end)
+
+    monkeypatch.setattr(seals, "read_hours", read)
+
+    seal_chain(world.engines.runtime, world.first, hour_of(1, 4))
+
+    assert limits == ["2min"]
+    assert sealed_hours(world.engines, world.first) == {hour_of(1, 0): 0, hour_of(1, 1): 0}
+    # The limit ends with the seal transaction; the pooled connection keeps its own.
+    with world.engines.runtime.connect() as connection:
+        assert connection.scalar(text("SELECT current_setting('statement_timeout')")) != "2min"
+
+
+def test_a_failed_chain_is_a_backlog_and_the_next_wake_seals_it(
+    world: SealWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # REQ-0009: a chain that fails stays behind, so the worker wakes again after a minute.
+    real_read = seals.read_hours
+    failing = [world.first]
+
+    def read(connection, org_id, start, end):
+        if org_id in failing:
+            failing.remove(org_id)
+            raise OperationalError("SELECT", {}, RuntimeError("statement timeout"))
+        return real_read(connection, org_id, start, end)
+
+    monkeypatch.setattr(seals, "read_hours", read)
+    now = hour_of(1, 4)
+
+    first = seal_audit(world.engines.runtime, now=now)
+    behind = sealed_hours(world.engines, world.first)
+    second = seal_audit(world.engines.runtime, now=now)
+
+    assert (first.backlog, first.failed, first.failures) == (True, world.first, 1)
+    assert behind == {}
+    assert len(sealed_hours(world.engines, world.second)) == 2
+    assert second == seals.SealPass(backlog=False)
+    assert sealed_hours(world.engines, world.first) == {hour_of(1, 0): 0, hour_of(1, 1): 0}
 
 
 def test_the_chain_hash_refuses_an_hour_that_is_not_whole() -> None:

@@ -68,6 +68,9 @@ _HOURS = (
     "GROUP BY 1"
 )
 CATALOG_PATH = text("SET LOCAL search_path = pg_catalog, pg_temp")
+# The hour read of a busy hour can outlast the API's request limit (REQ-0009). The seal
+# transaction sets the same limit as `operations/verify_audit_seals.py`, for itself only.
+STATEMENT_LIMIT = text("SET LOCAL statement_timeout = '120s'")
 
 
 class SealChainError(RuntimeError):
@@ -181,6 +184,7 @@ def seal_span(db: AuditSession, org_id: UUID | None, now: datetime) -> SpanResul
 
     connection = db.connection(execution_options={"schema_translate_map": {None: "public"}})
     connection.execute(CATALOG_PATH)
+    connection.execute(STATEMENT_LIMIT)
     locked = db.scalar(
         select(func.pg_try_advisory_xact_lock(_LOCK_CLASS, func.hashtext(str(org_id or ""))))
     )
@@ -277,7 +281,9 @@ def seal_audit(engine: Engine, *, now: datetime) -> SealPass:
             failures.append((org_id, failure_cause(error)))
     if not failures:
         return SealPass(backlog)
-    return SealPass(backlog, failures[0][0], failures[0][1], len(failures))
+    # A failed chain keeps its hours, so it is a backlog: the worker tries it again on its
+    # next short wake, not an hour later (REQ-0009).
+    return SealPass(True, failures[0][0], failures[0][1], len(failures))
 
 
 def read_seal_heads(connection: Connection) -> list[dict[str, Any]]:
