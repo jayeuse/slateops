@@ -12,6 +12,27 @@ Slate Operations profile. A provider account or matching email alone never grant
 application access. FastAPI owns the local profile, roles, groups, permissions,
 and domain authorization.
 
+[`effective_levels`](../../backend/app/systems/access/policy/scope.py) resolves a
+person's access once for each transaction (plan step 3.4,
+[`transaction_access.py`](../../backend/app/systems/access/policy/transaction_access.py)).
+The stored result is keyed by the transaction's current organization and the person,
+tagged with the root transaction, and read-only. These clear it: a commit of the root
+transaction, any rollback (a savepoint's too), the end of the root transaction (the only
+event of `Session.close()`), a lookup under another root transaction, and a flush that
+writes a group, group member, group access row, membership, user, module or department.
+A savepoint release does not clear it. A lock or a fresh read of a person's authority
+drops that person's result and stored membership (`forget_access`): the lock helpers of
+`checks.py` and `delegation.py`, `organization_membership(fresh=True)` (and so
+`fresh_membership` and `require_fresh_exact_admin`), the Report schedule manager check,
+and the locked writes of Views, Reports and Dashboards, whose check after the row lock
+must see a revocation that committed before it. A load or reload of a `User` or
+`Membership` row drops it too, as a backup only. A caller that passes `now` or a
+membership resolves again; the post-lock check of a group delegation passes a fresh
+membership, and `require_fresh_module_access`, whose locks hold until commit, stores its
+result over any earlier one. Without a lock, a revocation that commits during a request
+is not seen by later checks of the same transaction, and account and membership expiry
+are checked once for each transaction: the same as one check at the start of the request.
+
 Production browsers use a same-origin Caddy gateway with one FastAPI upstream.
 The [cookie helpers](../../backend/app/systems/access/auth/cookies.py) set
 Secure, HttpOnly cookies in production. `slateops_access` contains the provider
