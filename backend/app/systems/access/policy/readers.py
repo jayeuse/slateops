@@ -58,16 +58,13 @@ def _readers(access_target: ColumnElement[bool], now: datetime | None) -> Select
 def module_reader_ids(
     db: Session, module_id: UUID, *, now: datetime | None = None
 ) -> frozenset[UUID]:
-    """Every active user who can read the module now."""
+    """Every active user who can read the module now, in one statement.
 
-    department_id = db.scalar(select(Module.department_id).where(Module.id == module_id))
-    if department_id is None:
-        return frozenset()
-    target = and_(
-        GroupAccess.department_id == department_id,
-        or_(GroupAccess.module_id.is_(None), GroupAccess.module_id == module_id),
-    )
-    return frozenset(db.scalars(_readers(target, now)).all())
+    A missing module has no readers, administrators included.
+    """
+
+    module = select(Module.id).where(Module.id == module_id)
+    return frozenset(db.scalars(module_reader_statement(module, now=now)).all())
 
 
 def module_reader_statement(

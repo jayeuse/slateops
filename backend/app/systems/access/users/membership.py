@@ -14,10 +14,9 @@ from sqlalchemy.orm import Session, object_session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.database.organization_scope import bound_organization_column, session_organization
+from app.systems.access.policy.transaction_access import MEMBERSHIP_CACHE_KEY, forget_access
 from app.systems.access.users.eligibility import is_active_account, is_active_membership
 from app.systems.access.users.models import Membership, PlatformOperator, User
-
-_CACHE_KEY = "slateops.memberships"
 
 
 def organization_required() -> HTTPException:
@@ -61,7 +60,7 @@ def _cache(db: Session) -> dict[tuple[UUID, UUID], Membership]:
     info = getattr(db, "info", None)
     if not isinstance(info, dict):
         return {}
-    cache: dict[tuple[UUID, UUID], Membership] = info.setdefault(_CACHE_KEY, {})
+    cache: dict[tuple[UUID, UUID], Membership] = info.setdefault(MEMBERSHIP_CACHE_KEY, {})
     return cache
 
 
@@ -76,12 +75,15 @@ def organization_membership(
 ) -> Membership | None:
     """The person's membership row in the bound organization, whatever its status.
 
-    A read refreshes the row; ``fresh`` also skips the membership the request cached.
+    A read refreshes the row; ``fresh`` also skips the membership the request cached,
+    and drops the person's stored access resolution (plan step 3.4).
     """
 
     org_id = transaction_organization(db)
     if org_id is None:
         return None
+    if fresh:
+        forget_access(db, user_id)
     cache = _cache(db)
     cached = cache.get((org_id, user_id))
     if cached is not None and not fresh and object_session(cached) is db:

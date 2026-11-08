@@ -20,6 +20,7 @@ Every read path takes its filter from :func:`allowed_module_ids` or
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from types import MappingProxyType
 from uuid import UUID
 
 from sqlalchemy import and_, exists, false, or_, select, true
@@ -46,8 +47,12 @@ from app.systems.access.policy.readers import (
 from app.systems.access.policy.readers import (
     module_reader_statement as module_reader_statement,
 )
+from app.systems.access.policy.transaction_access import (
+    forget_access as forget_access,
+)
+from app.systems.access.policy.transaction_access import recall_access, remember_access
 from app.systems.access.users.eligibility import is_established_user
-from app.systems.access.users.membership import organization_membership
+from app.systems.access.users.membership import organization_membership, transaction_organization
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.sandbox.modules.models import Module
 
@@ -83,6 +88,11 @@ class EffectiveAccess:
     modules: Mapping[UUID, AccessLevel] = field(default_factory=dict)
     module_departments: Mapping[UUID, UUID] = field(default_factory=dict)
     departments: Mapping[UUID, AccessLevel] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # One transaction shares one resolution, so no caller can change it (N2).
+        for name in ("modules", "module_departments", "departments"):
+            object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
 
     def module_level(self, module_id: UUID) -> AccessLevel | None:
         if self.unrestricted:
@@ -170,9 +180,33 @@ class _Resolution:
 def effective_levels(
     db: Session, user: User, *, now: datetime | None = None, membership: Membership | None = None
 ) -> EffectiveAccess:
-    """Resolve the user's level on every department and module they can reach."""
+    """Resolve the user's level on every department and module they can reach.
 
-    return _resolve(db, user, now=now, membership=membership).access
+    One transaction resolves a person once (:mod:`transaction_access`). A caller that
+    passes ``now`` or ``membership`` resolves again and does not read the stored result.
+    """
+
+    if now is not None or membership is not None:
+        return _resolve(db, user, now=now, membership=membership).access
+    # The flush fires the write rule of the store before the lookup.
+    db.flush()
+    org_id = transaction_organization(db)
+    if org_id is None:
+        return _resolve(db, user, now=None).access
+    kept = recall_access(db, org_id, user.id)
+    if isinstance(kept, EffectiveAccess):
+        return kept
+    access = _resolve(db, user, now=None).access
+    remember_access(db, org_id, user.id, access)
+    return access
+
+
+def seed_access(db: Session, user_id: UUID, access: EffectiveAccess) -> None:
+    """Store a resolution made under locks that hold until commit, over any earlier one."""
+
+    org_id = transaction_organization(db)
+    if org_id is not None:
+        remember_access(db, org_id, user_id, access)
 
 
 def _resolve(

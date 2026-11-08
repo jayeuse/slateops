@@ -2,6 +2,7 @@ from secrets import token_urlsafe
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.orm.util import identity_key
 from uuid6 import uuid7
 
 from app.systems.access.users.models import User
@@ -36,8 +37,9 @@ class FakeSession:
         self.dirty: list[object] = []
         self.deleted: list[object] = []
         self.added: list[object] = []
-        self.scalar_rows: list[object] = []
-        self.scalars_calls = 0
+        self.identity_map: dict[object, object] = {}
+        self.rows: list[tuple[object, object]] = []
+        self.queries = 0
 
     def add(self, instance: object) -> None:
         self.added.append(instance)
@@ -49,9 +51,9 @@ class FakeSession:
         url = SimpleNamespace(render_as_string=lambda hide_password: "postgresql://db.test/x")
         return SimpleNamespace(engine=SimpleNamespace(url=url))
 
-    def scalars(self, query) -> object:
-        self.scalars_calls += 1
-        return SimpleNamespace(all=lambda: self.scalar_rows)
+    def execute(self, query) -> object:
+        self.queries += 1
+        return SimpleNamespace(tuples=lambda: SimpleNamespace(all=lambda: self.rows))
 
 
 def test_create_listener_stages_and_writes_create_log() -> None:
@@ -115,12 +117,12 @@ def test_record_create_snapshots_redact_current_dynamic_fields_in_one_query() ->
     record_two.id = uuid7()
     session = FakeSession()
     session.new = [record_one, record_two]
-    session.scalar_rows = [redacted_field]
+    session.rows = [(module_id, redacted_field.id)]
 
     capture_changes(session, None, None)
     create_audit_logs(session, None)
 
-    assert session.scalars_calls == 1
+    assert session.queries == 1
     logs = [entry for entry in session.added if isinstance(entry, AuditLog)]
     assert len(logs) == 2
     assert logs[0].after == {
@@ -136,6 +138,29 @@ def test_record_create_snapshots_redact_current_dynamic_fields_in_one_query() ->
         "data": {redacted_key: REDACTED},
     }
     assert record_one.data == {redacted_key: FIRST_RECORD_CANARY, "clear": "visible"}
+
+
+def test_record_redaction_reuses_a_field_the_transaction_already_loaded() -> None:
+    # The route loaded the module's fields; the listener reads none again (plan step 3.4).
+    redacted = Field(module_id=MODULE_ID, name="Secret", type=FieldType.TEXT, position=0,
+                     audit_redacted=True)
+    redacted.id = uuid7()
+    clear = Field(module_id=MODULE_ID, name="Clear", type=FieldType.TEXT, position=1,
+                  audit_redacted=False)
+    clear.id = uuid7()
+    record = Record(module_id=MODULE_ID, data={str(redacted.id): FIRST_RECORD_CANARY,
+                                               str(clear.id): "visible"})
+    record.id = uuid7()
+    session = FakeSession()
+    session.identity_map = {identity_key(Field, field.id): field for field in (redacted, clear)}
+    session.new = [record]
+
+    capture_changes(session, None, None)
+    create_audit_logs(session, None)
+
+    assert session.queries == 0
+    (log,) = [entry for entry in session.added if isinstance(entry, AuditLog)]
+    assert log.after["data"] == {str(redacted.id): REDACTED, str(clear.id): "visible"}
 
 
 def test_rollback_clears_staged_changes() -> None:

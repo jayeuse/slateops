@@ -7,6 +7,7 @@ from uuid import UUID
 
 from sqlalchemy import event, inspect, select
 from sqlalchemy.orm import Session, SessionTransaction
+from sqlalchemy.orm.util import identity_key
 
 from app.core.base_model import utc_now
 from app.core.database.session import AuditSession
@@ -71,25 +72,77 @@ def _set_performed_by(instance: Any, session: Session) -> None:
         instance.performed_by = get_audit_context(session).performed_by
 
 
+def _uuid_keys(*mappings: Any) -> set[UUID]:
+    keys: set[UUID] = set()
+    for mapping in mappings:
+        for key in mapping if isinstance(mapping, dict) else ():
+            try:
+                keys.add(UUID(str(key)))
+            except ValueError:
+                continue
+    return keys
+
+
+def _loaded_fields(
+    session: Session, field_ids: set[UUID], attributes: frozenset[str]
+) -> tuple[list[Field], set[UUID]]:
+    """Fields the session already holds with ``attributes`` loaded, and the ids still to read.
+
+    A route that changes a record or a link has loaded these fields in the same
+    transaction, so the listener reads only the rest (plan step 3.4).
+    """
+
+    loaded: list[Field] = []
+    missing: set[UUID] = set()
+    for field_id in field_ids:
+        field = session.identity_map.get(identity_key(Field, field_id))
+        if isinstance(field, Field) and not attributes & inspect(field).unloaded:
+            loaded.append(field)
+        else:
+            missing.add(field_id)
+    return loaded, missing
+
+
+_REDACTION = frozenset({"module_id", "audit_redacted"})
+
+
 def _record_redacted_fields(
     session: Session,
     pending: list[PendingChange],
 ) -> dict[UUID, frozenset[str]]:
-    module_ids = {
-        change.instance.module_id for change in pending if isinstance(change.instance, Record)
-    }
-    if not module_ids:
-        return {}
+    """The redacted fields of each record module, among the keys that the records carry.
 
-    redacted_fields = session.scalars(
-        select(Field).where(
-            Field.module_id.in_(module_ids),
-            Field.audit_redacted.is_(True),
-        )
-    ).all()
+    Redaction acts only on keys of the record data, so only those fields are needed.
+    """
+
+    module_ids: set[UUID] = set()
+    field_ids: set[UUID] = set()
+    for change in pending:
+        if not isinstance(change.instance, Record):
+            continue
+        module_ids.add(change.instance.module_id)
+        if change.changes is None:
+            field_ids |= _uuid_keys(change.instance.data)
+        else:
+            field_ids |= _uuid_keys(*change.changes.get("data", ()))
+    if not field_ids:
+        return {}
+    loaded, missing = _loaded_fields(session, field_ids, _REDACTION)
+    redacted = [
+        (field.module_id, field.id) for field in loaded
+        if field.audit_redacted and field.module_id in module_ids
+    ]
+    if missing:
+        redacted += session.execute(
+            select(Field.module_id, Field.id).where(
+                Field.id.in_(missing),
+                Field.module_id.in_(module_ids),
+                Field.audit_redacted.is_(True),
+            )
+        ).tuples().all()
     fields_by_module: dict[UUID, set[str]] = {}
-    for field in redacted_fields:
-        fields_by_module.setdefault(field.module_id, set()).add(str(field.id))
+    for module_id, field_id in redacted:
+        fields_by_module.setdefault(module_id, set()).add(str(field_id))
     return {module_id: frozenset(field_ids) for module_id, field_ids in fields_by_module.items()}
 
 
@@ -103,12 +156,15 @@ def _edge_modules(session: Session, pending: list[PendingChange]) -> dict[UUID, 
     }
     if not field_ids:
         return {}
-    return {
-        field_id: module_id
-        for field_id, module_id in session.execute(
-            select(Field.id, Field.module_id).where(Field.id.in_(field_ids))
-        ).tuples()
-    }
+    loaded, missing = _loaded_fields(session, field_ids, frozenset({"module_id"}))
+    modules = {field.id: field.module_id for field in loaded}
+    if missing:
+        modules.update(
+            session.execute(
+                select(Field.id, Field.module_id).where(Field.id.in_(missing))
+            ).tuples().all()
+        )
+    return modules
 
 
 def _event_module_id(instance: Any, edge_modules: dict[UUID, UUID]) -> UUID | None:

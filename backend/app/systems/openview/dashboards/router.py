@@ -21,7 +21,7 @@ from app.common.listing import ListQuerySpec, StandardListResponse, execute_stan
 from app.core.database import get_db
 from app.systems.access.policy.checks import department_filter, forbidden
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.policy.scope import effective_levels
+from app.systems.access.policy.scope import effective_levels, forget_access
 from app.systems.access.users.models import User
 from app.systems.openview.charts import service as charts
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
@@ -123,6 +123,9 @@ def _dashboard(
     dashboard = db.scalar(statement)
     if dashboard is None:
         raise _not_found()
+    if lock:
+        # A check after the lock reads the access again (plan step 3.4, K57).
+        forget_access(db, user.id)
     if manage:
         _require_manager(db, user, dashboard.department_id)
     return dashboard

@@ -30,6 +30,7 @@ from app.systems.access.policy.checks import (
     require_module_access,
 )
 from app.systems.access.policy.models import AccessLevel
+from app.systems.access.policy.scope import forget_access
 from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.openview.reports.eligibility import capture_run_eligible_users
@@ -113,6 +114,9 @@ def _report(
     report = db.scalar(statement)
     if report is None:
         raise _not_found()
+    if lock:
+        # A check after the lock reads the access again (plan step 3.4, K57).
+        forget_access(db, user.id)
     if manage:
         require_module_access(db, user, report.module_id, AccessLevel.MANAGE)
     return report

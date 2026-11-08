@@ -20,12 +20,14 @@ from uuid6 import uuid7
 
 import app.systems.access.policy.delegation as delegation
 import app.systems.access.policy.service as policy_service
+import app.systems.access.users.account_operations as account_operations
 import app.systems.access.users.service as user_service
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.schemas import GroupAccessEntry
+from app.systems.access.policy.scope import effective_levels
 from app.systems.access.users.coordination import InvitationConflict
-from app.systems.access.users.models import Membership, User, UserRole
-from app.systems.access.users.schemas import InvitationCreate
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
+from app.systems.access.users.schemas import InvitationCreate, UserUpdate
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
@@ -234,6 +236,89 @@ def test_revoking_the_managers_authority_waits_for_the_managers_change(
     finally:
         release_manager.set()
     assert _members(engine, data.target) == {data.member, data.manager}
+
+
+def _lower_manager_access(data: _Seed, engine: Engine) -> tuple[Callable, object, str]:
+    entries = [GroupAccessEntry(department_id=data.inventory, level=AccessLevel.READ)]
+    etag = group_etag_of(engine, data.manager_group)
+    return (
+        lambda db: policy_service.replace_group_access(
+            db, data.manager_group, entries, etag, data.admin
+        ),
+        policy_service,
+        "commit",
+    )
+
+
+def _take_manager_out(data: _Seed, engine: Engine) -> tuple[Callable, object, str]:
+    etag = group_etag_of(engine, data.manager_group)
+    return _replace_as(data.admin, data.manager_group, [], etag), delegation, "commit"
+
+
+def _disable_manager(data: _Seed, _engine: Engine) -> tuple[Callable, object, str]:
+    def action(db: Session) -> object:
+        admin = db.get(User, data.admin)
+        payload = UserUpdate(status=UserStatus.DISABLED)
+        return account_operations.update_user(data.manager, payload, admin, db)
+
+    return action, account_operations, "commit"
+
+
+@pytest.mark.parametrize("revoke", [_lower_manager_access, _take_manager_out, _disable_manager])
+def test_a_revocation_that_commits_while_the_manager_waits_refuses_the_change(
+    seed: tuple[_Seed, Engine],
+    monkeypatch: pytest.MonkeyPatch,
+    revoke: Callable[[_Seed, Engine], tuple[Callable, object, str]],
+) -> None:
+    """The reverse of the test above: the revocation goes first and holds its locks.
+
+    The manager's transaction resolved its access before the revocation, as an earlier
+    check of the same request would. Only a resolution after the manager's locks sees
+    the revocation (plan step 3.4, F1).
+    """
+
+    data, engine = seed
+    etag = group_etag_of(engine, data.target)
+    action, module, name = revoke(data, engine)
+    resolved, revoker_held, release = Event(), Event(), Event()
+    holder: list[int] = []
+    original_commit = getattr(module, name)
+
+    def pause_first_commit(db: Session, message: str) -> None:
+        if not revoker_held.is_set():
+            holder.append(backend_pid(db))
+            revoker_held.set()
+            assert release.wait(timeout=WAIT)
+        original_commit(db, message)
+
+    monkeypatch.setattr(module, name, pause_first_commit)
+    monkeypatch.setattr(account_operations, "_record_outcome", lambda *_args, **_kwargs: None)
+
+    def manager_change(db: Session) -> object:
+        manager = db.get(User, data.manager)
+        assert effective_levels(db, manager).managed_department_ids() == {data.inventory}
+        resolved.set()
+        assert revoker_held.wait(timeout=WAIT)
+        return delegation.replace_members(
+            db, data.target, [data.member, data.outsider], etag, manager
+        )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            manager = executor.submit(in_context(run_action), engine, manager_change)
+            assert resolved.wait(timeout=WAIT)
+            revoker = executor.submit(in_context(run_action), engine, action)
+            try:
+                assert revoker_held.wait(timeout=WAIT)
+                wait_until_blocked_by(engine, holder[0])
+                assert not manager.done()
+            finally:
+                release.set()
+            assert revoker.result(timeout=WAIT) == 200
+            assert manager.result(timeout=WAIT) == 403
+    finally:
+        release.set()
+    assert _members(engine, data.target) == {data.member}
 
 
 # A Sandbox publish holds its administrator's row FOR SHARE while it waits for the

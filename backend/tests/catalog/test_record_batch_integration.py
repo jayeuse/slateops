@@ -245,8 +245,8 @@ def test_batch_constraint_failure_rolls_back_only_that_item_and_its_notification
 
     original = batch_router.notify_record_assignments
 
-    def invalid_recipient(db, record, *, previous, fields):
-        original(db, record, previous=previous, fields=fields)
+    def invalid_recipient(db, record, *, previous, fields, readers=None):
+        original(db, record, previous=previous, fields=fields, readers=readers)
         if str(record.id) == rejected["id"]:
             for event in db.scalars(
                 select(RecordTriggerEvent).where(

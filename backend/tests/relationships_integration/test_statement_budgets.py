@@ -9,6 +9,13 @@ a one-to-many link, and each record write now assigns a reader. With them, befor
 -> after reading the module's readers and fields once per request and checking a
 new link's duplicate and cardinality in one read: POST records 21 -> 16, PATCH
 22 -> 17, POST link 14 -> 13; GET 7 and PUT 15 are unchanged.
+
+Plan step 3.4 (2026-11-08): one statement for a module's readers, the audit listener
+reuses the fields the route loaded, and a transaction resolves a person's access once.
+POST records 16 -> 14, GET 7 -> 6, PATCH 17 -> 15, POST link 13 -> 12, PUT 15 -> 14.
+New budgets, before -> after: GET links 6 -> 4, DELETE link 13 -> 10, batch update
+29 -> 23 for one item and 53 -> 41 for three; each further item costs only its own
+record reads and writes.
 """
 
 from __future__ import annotations
@@ -18,12 +25,19 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 import pytest
-from sqlalchemy import event, text
+from sqlalchemy import event, select, text
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
+
+from app.common.dependencies import CurrentIdentity, get_current_identity
+from app.systems.access.identity.models import IdentitySession
+from app.systems.access.users.models import Membership
+from tests.organization_scope_support import scoped_override
 
 pytestmark = [
     pytest.mark.integration,
@@ -41,11 +55,15 @@ OPEN, DONE = "open", "done"
 # Before the 2026-10 clean-up: GET 4, POST records 18, PATCH 15, POST link 19, PUT 24.
 # The membership read belongs to authentication (cached for the request), not the route.
 BUDGETS = {
-    "GET /api/records/{record_id}": 7,
-    "POST /api/records": 16,
-    "PATCH /api/records/{record_id}": 17,
-    "POST /api/relationships": 13,
-    "PUT /api/relationships/fields/{field_id}/sources/{source_record_id}": 15,
+    "GET /api/records/{record_id}": 6,
+    "POST /api/records": 14,
+    "PATCH /api/records/{record_id}": 15,
+    "POST /api/relationships": 12,
+    "PUT /api/relationships/fields/{field_id}/sources/{source_record_id}": 14,
+    "GET /api/relationships": 4,
+    "DELETE /api/relationships/{relationship_id}": 10,
+    "POST /api/records/batch-update (1 item)": 23,
+    "POST /api/records/batch-update (3 items)": 41,
 }
 
 
@@ -115,6 +133,48 @@ def _add_fields(fixture: Any) -> _Fields:
     return added
 
 
+def _batch_identity(fixture: Any) -> None:
+    """The batch route rechecks the exact session; hand over the writer's, already loaded."""
+
+    with Session(fixture.owner_engine) as session:
+        identity = IdentitySession(
+            user_id=fixture.writer_id,
+            refresh_token_digest=uuid7().hex * 2,
+            csrf_token_digest=uuid7().hex * 2,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        session.add(identity)
+        session.commit()
+        session_id = identity.id
+        membership = session.scalars(select(Membership).where(
+            Membership.user_id == fixture.writer_id, Membership.org_id == fixture.org_id,
+        )).one()
+        session.expunge(membership)
+    fixture.app.dependency_overrides[get_current_identity] = scoped_override(
+        lambda: CurrentIdentity(fixture.writer, session_id, False, False), membership=membership
+    )
+
+
+def _batch(
+    client: Any, module_id: UUID, field_id: str, rows: list[dict[str, Any]], label: str
+) -> Any:
+    response = client.post(
+        "/api/records/batch-update",
+        json={
+            "module_id": str(module_id),
+            "items": [
+                {"record_id": row["id"], "revision": row["updated_at"], "field_id": field_id,
+                 "value": f"{label} {index}"}
+                for index, row in enumerate(rows)
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    results = response.json()["results"]
+    assert [result["status"] for result in results] == ["updated"] * len(rows), response.text
+    return [result["record"] for result in results]
+
+
 def _measure(fixture: Any) -> dict[str, list[str]]:
     graph = fixture.graph
     fields = _add_fields(fixture)
@@ -176,6 +236,36 @@ def _measure(fixture: Any) -> dict[str, list[str]]:
             )
         assert assigned.status_code == 200, assigned.text
         measured["PUT /api/relationships/fields/{field_id}/sources/{source_record_id}"] = executed
+
+        # Two resolutions of the same access each today (K43): one condition holds two
+        # module filters, and the delete checks the link and then the change.
+        with _statements(engine) as executed:
+            listed = client.get(f"/api/relationships?field_id={link_field}")
+        assert listed.status_code == 200, listed.text
+        assert [item["id"] for item in listed.json()["items"]] == [linked.json()["id"]]
+        measured["GET /api/relationships"] = executed
+
+        with _statements(engine) as executed:
+            removed = client.delete(f"/api/relationships/{linked.json()['id']}")
+        assert removed.status_code == 204, removed.text
+        measured["DELETE /api/relationships/{relationship_id}"] = executed
+
+        rows = [edited.json()]
+        for title in ("c", "d"):
+            more = client.post(
+                "/api/records",
+                json={"module_id": str(graph.source_module_id), "data": {text_field: title}},
+            )
+            assert more.status_code == 201, more.text
+            fixture._all_ids.add(UUID(more.json()["id"]))
+            rows.append(more.json())
+        _batch_identity(fixture)
+        with _statements(engine) as executed:
+            rows[0] = _batch(client, graph.source_module_id, text_field, rows[:1], "one")[0]
+        measured["POST /api/records/batch-update (1 item)"] = executed
+        with _statements(engine) as executed:
+            _batch(client, graph.source_module_id, text_field, rows, "three")
+        measured["POST /api/records/batch-update (3 items)"] = executed
     return measured
 
 
@@ -187,10 +277,15 @@ def test_record_and_link_routes_stay_within_their_statement_budgets(
     finally:
         # The fixture removes edges of its own fields only; remove the added field's edges,
         # the outbox events the record writes queued and the assignment notifications.
+        relationship_http_fixture.app.dependency_overrides.pop(get_current_identity, None)
         with relationship_http_fixture.owner_engine.begin() as connection:
             connection.execute(
                 text("DELETE FROM public.in_app_notifications WHERE org_id = :org_id"),
                 {"org_id": relationship_http_fixture.org_id},
+            )
+            connection.execute(
+                text("DELETE FROM public.identity_sessions WHERE user_id = :user_id"),
+                {"user_id": relationship_http_fixture.writer_id},
             )
             connection.execute(
                 text(
@@ -214,10 +309,11 @@ def test_record_and_link_routes_stay_within_their_statement_budgets(
         for route, statements in measured.items()
     )
     print(report)
+    # The batch route rereads the membership under its lock on purpose (fresh access).
     assert not [
         statement
-        for statements in measured.values()
+        for route, statements in measured.items()
         for statement in statements
-        if "FROM memberships" in statement
+        if "FROM memberships" in statement and "batch-update" not in route
     ], report
     assert {route: len(statements) for route, statements in measured.items()} == BUDGETS, report
