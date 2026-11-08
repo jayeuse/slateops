@@ -29,6 +29,9 @@ EXPECTED = {
     "in_app_notifications": QUEUE_TABLE,
     "relationship_edges": UPDATED_TABLE,
     "records": {**UPDATED_TABLE, "fillfactor": "90"},
+    # Plan step 3.6: room for HOT renewals and heartbeats.
+    "comms_realtime_grants": {"fillfactor": "80"},
+    "comms_presence": {"fillfactor": "80"},
 }
 
 
@@ -49,6 +52,26 @@ def _storage_parameters(connection: Connection) -> dict[str, dict[str, str]]:
 
 def test_each_table_has_its_storage_parameters(integration_owner_db: Session) -> None:
     assert _storage_parameters(integration_owner_db.connection()) == EXPECTED
+
+
+def test_no_index_holds_the_column_that_a_renewal_or_heartbeat_changes(
+    integration_owner_db: Session,
+) -> None:
+    # An index on the updated column makes every renewal or heartbeat a non-HOT update.
+    rows = integration_owner_db.connection().execute(
+        text(
+            "SELECT i.indrelid::regclass::text, a.attname FROM pg_index AS i "
+            "JOIN pg_attribute AS a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) "
+            "WHERE i.indrelid IN ('public.comms_realtime_grants'::regclass, "
+            "'public.comms_presence'::regclass)"
+        )
+    ).all()
+    indexed = {(table, column) for table, column in rows}
+
+    assert ("comms_realtime_grants", "user_id") in indexed
+    assert ("comms_realtime_grants", "expires_at") not in indexed
+    assert ("comms_presence", "last_seen_at") not in indexed
+    assert ("comms_presence", "state") not in indexed
 
 
 def test_each_audit_partition_has_its_own_storage_parameters(
