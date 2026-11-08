@@ -19,10 +19,18 @@ from app.systems.access.users.membership import (
     current_membership,
     organization_membership,
 )
-from app.systems.access.users.models import Membership, User
+from app.systems.access.users.models import Membership, User, UserRole
+from app.systems.comms.access_inputs import (
+    DEPARTMENT_RANK,
+    added_grants,
+    department_ranks,
+    live_departments,
+    materialized,
+    member_roles,
+    requested_people,
+)
 from app.systems.comms.conversations.models import (
     CommsCategory,
-    CommsChannelAccess,
     CommsConversation,
     CommsDirectBlock,
     CommsMember,
@@ -63,26 +71,33 @@ def _conversation_access_statement(
     The relation includes zero levels for explanations. Every public projection
     below reads it; D36 composes the same reader projection rather than another policy.
     """
-    c, member = CommsConversation, CommsMember
-    membership_role = (
-        select(member.role)
-        .where(
-            member.org_id == bound_organization_column(),
-            member.conversation_id == c.id,
-            member.user_id == User.id,
-            member.is_deleted.is_(False),
-            member.deleted_at.is_(None),
-        )
-        .correlate(c, User)
-        .scalar_subquery()
-    )
-    # The per-person form of department_level_reader_statement: it reads only this
-    # person's group rows instead of rebuilding the department's whole reader set for
-    # every (conversation, person) pair, which planned per pair and dominated cold reads.
+    c = CommsConversation
+    # Plan step 3.3: each input is read once for the requested conversations and people
+    # (`access_inputs`), then joined to the pair; the CASE logic below is unchanged. The
+    # requested set is computed once too: it can hold another relation (person visibility).
+    requested_set = materialized(conversation_ids)
+    requested = select(list(requested_set.c)[0])
+    people = requested_people(user_ids)
+    person, role = people.c.user_id, people.c.role
+    live = live_departments(requested)
+    members = member_roles(requested, user_ids)
+    ranks = department_ranks(requested, user_ids)
+    grants = added_grants(requested, user_ids)
+    membership_role = members.c.role
+    best_rank = func.coalesce(ranks.c.best, 0)
+
+    # The per-pair form of department_level_clause: the department is live in the bound
+    # organization, and the person is an administrator or has a live department row at
+    # ``minimum`` or above through a live group; a guest meets only ``read``.
     def department_level(minimum: AccessLevel) -> ColumnElement[bool]:
-        return department_level_clause(
-            User.id.expression, Membership.role.expression, c.department_id.expression, minimum,
+        clause = and_(
+            live.c.id.is_not(None),
+            or_(role == UserRole.ADMIN.value,
+                best_rank >= DEPARTMENT_RANK[minimum.value]),
         )
+        if minimum != AccessLevel.READ:
+            clause = and_(clause, role != UserRole.GUEST.value)
+        return clause
 
     department_rank = case(
         (department_level(AccessLevel.WRITE), 2),
@@ -93,38 +108,7 @@ def _conversation_access_statement(
     # or one of their live groups; read 1, post 2, never manage. An organization channel
     # already gives post, and direct or group messages have no category, so only the
     # department arm reads it.
-    groups = (
-        select(GroupMember.group_id)
-        .join(Group, Group.id == GroupMember.group_id)
-        .where(
-            GroupMember.org_id == bound_organization_column(),
-            Group.org_id == bound_organization_column(),
-            GroupMember.user_id == User.id,
-            GroupMember.is_deleted.is_(False),
-            Group.is_deleted.is_(False),
-        )
-        .correlate(User)
-    )
-    grant = CommsChannelAccess
-    granted = func.coalesce(
-        select(func.max(case((grant.level == "post", 2), else_=1)))
-        .where(
-            grant.org_id == bound_organization_column(),
-            grant.is_deleted.is_(False),
-            grant.deleted_at.is_(None),
-            or_(
-                grant.conversation_id == c.id,
-                and_(c.category_id.is_not(None), grant.category_id == c.category_id),
-            ),
-            or_(
-                and_(grant.subject == "user", grant.user_id == User.id),
-                and_(grant.subject == "group", grant.group_id.in_(groups)),
-            ),
-        )
-        .correlate(c, User)
-        .scalar_subquery(),
-        0,
-    )
+    granted = func.coalesce(grants.c.best, 0)
     # Spec deviation 7: on a department channel a creator or roster manager row counts only
     # while the person still reads the channel by department role or D45 grant.
     current_reader = or_(
@@ -132,7 +116,7 @@ def _conversation_access_statement(
     )
     manager = case(
         (
-            and_(membership_role.is_not(None), c.created_by == User.id, current_reader),
+            and_(membership_role.is_not(None), c.created_by == person, current_reader),
             "creator",
         ),
         (and_(membership_role == "manager", current_reader), "membership_manager"),
@@ -148,7 +132,7 @@ def _conversation_access_statement(
     uncapped = case(
         (
             and_(
-                Membership.role == "admin",
+                role == "admin",
                 or_(
                     c.scope != "members",
                     membership_role.is_not(None),
@@ -159,30 +143,31 @@ def _conversation_access_statement(
         (manager.is_not(None), 3),
         else_=ordinary,
     )
-    level = case((Membership.role == "guest", func.least(uncapped, 1)), else_=uncapped)
+    level = case((role == "guest", func.least(uncapped, 1)), else_=uncapped)
     return (
         select(
             c.id.label("conversation_id"),
-            User.id.label("user_id"),
+            person.label("user_id"),
             level.label("level"),
-            Membership.role.label("role"),
+            role.label("role"),
             manager.label("manager"),
             and_(c.scope == "department", granted > department_rank).label("from_grant"),
             c.scope,
             c.department_id,
         )
         .select_from(c)
-        .join(User, User.id.in_(user_ids))
-        .join(
-            Membership,
-            bound_membership_join(),
+        .join(people, true())
+        .outerjoin(live, live.c.id == c.department_id)
+        .outerjoin(
+            ranks, and_(ranks.c.department_id == c.department_id, ranks.c.user_id == person)
         )
+        .outerjoin(members, and_(members.c.conversation_id == c.id, members.c.user_id == person))
+        .outerjoin(grants, and_(grants.c.conversation_id == c.id, grants.c.user_id == person))
         .where(
             c.org_id == bound_organization_column(),
-            c.id.in_(conversation_ids),
+            c.id.in_(requested),
             c.is_deleted.is_(False),
             c.deleted_at.is_(None),
-            active_account_clause(),
         )
     )
 
@@ -382,9 +367,9 @@ def conversation_reader_ids(db: Session, conversation: CommsConversation) -> set
 def conversation_reader_counts(db: Session, conversation_ids: Collection[UUID]) -> dict[UUID, int]:
     """Readers per conversation in one grouped statement (D44 channel member counts).
 
-    Evaluates the requested conversations times the bound organization's active people
-    in the database (C x N), larger than one organization-wide event (N); slice 5 of
-    the D44 spec measures it at sample-pack scale.
+    The relation pairs the requested conversations with the bound organization's active
+    people (C x N rows in memory), but reads each of its inputs once (C + N, plan step 3.3;
+    `tests/comms/policy/test_comms_access_plans.py` owns the growth).
     """
     if not conversation_ids:
         return {}
