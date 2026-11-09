@@ -12,7 +12,7 @@ from uuid import UUID
 
 import pytest
 from fastapi import HTTPException, Response
-from sqlalchemy import Connection, event, text
+from sqlalchemy import Connection, Engine, event, text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -131,6 +131,22 @@ def _load_month(connection: Connection, world: dict[str, Any], first_day: str) -
     )
 
 
+def _vacuum_audit_logs(owner: Engine) -> None:
+    """Remove the dead audit entries that earlier tests in the same database left behind.
+
+    Integration tests roll back, and rolled-back or deleted rows stay as dead entries in the
+    audit indexes until a vacuum. The account arm of a small organization's statement reads
+    every `users` entry, dead ones included, and the organization arm reads past the dead
+    entries of earlier fixtures, so the pages that these plan tests bound would depend on
+    the tests that ran before them (61 pages on one CI shard). VACUUM runs outside a
+    transaction, so it uses an autocommit connection; on the partitioned parent it reaches
+    every leaf.
+    """
+
+    with owner.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        connection.execute(text("VACUUM (INDEX_CLEANUP ON) public.audit_logs"))
+
+
 @pytest.fixture
 def plans(audit_engines: AuditEngines) -> Iterator[_Plans]:
     with AuditSession(bind=audit_engines.owner, expire_on_commit=False) as setup:
@@ -167,6 +183,7 @@ def plans(audit_engines: AuditEngines) -> Iterator[_Plans]:
         for first_day in months:
             _load_month(connection, world, first_day)
         connection.execute(text("ANALYZE public.audit_logs"))
+    _vacuum_audit_logs(audit_engines.owner)
     try:
         yield _Plans(
             audit_engines, large, small, large_admin_id, small_admin_id, manager_id,
@@ -305,6 +322,41 @@ def test_a_small_organization_reads_a_few_pages_beside_a_large_one_k10(plans: _P
     assert scans == []
 
 
+# The two arms of the administrator's organization condition, as the leaf index names end.
+ORGANIZATION_ARM, ACCOUNT_ARM = "_org_id_created_at_id_idx", "_entity_type_entity_id_created_at_idx"
+# One b-tree descent for each leaf: the root, at most one internal page, and the leaf pages
+# that hold the organization's few entries (two, or three once earlier fixtures leave dead
+# entries in the same database).
+ORGANIZATION_ARM_PAGES_PER_LEAF = 4
+
+
+def _assert_reads_only_the_two_arms(world: _Plans, plan: dict[str, Any]) -> None:
+    """K64: a small organization's statement reaches the audit leaves only through the two arms.
+
+    No sequential scan of a loaded leaf and no walk of another index, so its cost cannot
+    follow the large organization's heap or an all-organization order; its own arm reads a
+    few index pages. The total-page ceiling, asserted beside this check, bounds the account
+    arm, which reads every `users` audit entry of the database (see `_vacuum_audit_logs`).
+    """
+
+    scans = [
+        (node["Node Type"], node.get("Relation Name"))
+        for node in _nodes(plan)
+        if node["Node Type"] == "Seq Scan"
+        and node.get("Relation Name") in world.leaves
+        and node["Actual Loops"] > 0
+    ]
+    assert scans == []
+    indexes = [
+        node for node in _nodes(plan) if str(node.get("Index Name", "")).startswith("audit_logs_")
+    ]
+    assert all(node["Index Name"].endswith((ORGANIZATION_ARM, ACCOUNT_ARM)) for node in indexes), [
+        node["Index Name"] for node in indexes
+    ]
+    own_arm = sum(_pages(node) for node in indexes if node["Index Name"].endswith(ORGANIZATION_ARM))
+    assert own_arm <= ORGANIZATION_ARM_PAGES_PER_LEAF * len(world.leaves), own_arm
+
+
 @pytest.mark.parametrize("reader", ["admin", "department manager", "small organization"])
 def test_the_first_page_reads_in_index_order_with_no_sort_p1(plans: _Plans, reader: str) -> None:
     # The page needs no Sort when the sort matches an index: no NULLS LAST on a NOT NULL
@@ -336,6 +388,7 @@ def test_the_first_page_reads_in_index_order_with_no_sort_p1(plans: _Plans, read
         for name in leaf_scans
     ), leaf_scans
     assert _pages(page) <= SMALL_ORGANIZATION_PAGE_CEILING, _pages(page)
+    _assert_reads_only_the_two_arms(world, page)
 
 
 def test_the_capped_count_of_a_small_organization_stays_small_with_workers_on_c5(
@@ -349,6 +402,7 @@ def test_the_capped_count_of_a_small_organization_stays_small_with_workers_on_c5
     count, _page = _captured_list(world, world.small, world.small_admin, workers=True)
 
     assert _pages(count) <= SMALL_ORGANIZATION_PAGE_CEILING, _pages(count)
+    _assert_reads_only_the_two_arms(world, count)
 
 
 @pytest.mark.parametrize(
