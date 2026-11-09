@@ -14,7 +14,10 @@ Nothing outlives that transaction:
   A check that must see the state after a lock calls it, or passes a fresh membership.
   Every load or reload of a ``User`` or ``Membership`` row drops it too. That is the only
   drop for callers that reload the person with ``populate_existing`` and do not call
-  :func:`forget_access` (the notification query, the scheduled post's author check).
+  :func:`forget_access` (the notification query, the scheduled post's author check). Two
+  more reload the person with ``populate_existing`` and then read the membership fresh
+  (``password_admin`` in ``comms/jobs/protected.py``, ``revoke_stale`` in
+  ``comms/realtime/grants.py``), so for them the reload drop is a backup.
 
 This module never imports the membership or scope modules, so both can call it.
 """

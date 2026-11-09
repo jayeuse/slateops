@@ -38,7 +38,11 @@ when the new Dashboard names widget sources. A load or reload of a `User` or
 `Membership` row drops the result too. That is the only drop for the notification
 query (`current_user_notification_query`) and the scheduled post's author check
 (`_current_actor`), which reload the person with `populate_existing`, so a test owns it
-(`test_a_reload_of_the_person_drops_the_stored_resolution`). A caller that passes `now`
+(`test_a_reload_of_the_person_drops_the_stored_resolution`). Two more callers reload the
+person with `populate_existing`: the Comms protected-job password check (`password_admin`
+in `comms/jobs/protected.py`) and the Realtime grant cleanup (`revoke_stale` in
+`comms/realtime/grants.py`). Both then read the membership fresh
+(`require_fresh_exact_admin`, `fresh_membership`), so for them the reload drop is a backup. A caller that passes `now`
 or a membership resolves again; the post-lock check of a group delegation passes a fresh
 membership, and `require_fresh_module_access`, whose locks hold until commit, stores its
 result over any earlier one. Without a lock, a revocation that commits during a request
