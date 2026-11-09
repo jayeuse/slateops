@@ -116,12 +116,15 @@ def test_the_function_gets_the_server_side_readable_set_never_request_input(sear
         hidden = _ok(
             reader.get(ROOT + "/search", params={"q": "kumquat", "in": str(ids["private_room"])})
         )
+        # A search filtered to one conversation reads under row-level security only (NB3).
+        filtered_calls = len(arguments)
         shown = _ok(
             reader.get(ROOT + "/search", params={"q": "kumquat", "sort_by": "created_at"})
         )
     finally:
         event.remove(case.world.runtime, "before_cursor_execute", capture)
     assert hidden["items"] == [] and hidden["pagination"]["total"] == 0
+    assert filtered_calls == 0
     assert [hit["message_id"] for hit in shown["items"]] == [
         str(ids["revocable"]), str(ids["reply"])
     ]

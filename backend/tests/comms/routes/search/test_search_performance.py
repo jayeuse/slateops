@@ -30,30 +30,36 @@ SELECTIVE_PAGE_CEILING = 40
 BROAD_PAGE_FACTOR = 3
 
 
-def _add_selective_rows(connection, org) -> None:
+def _add_selective_rows(
+    connection, org, term: str = SELECTIVE_TERM, rows: int = SELECTIVE_ROWS, conversation=None
+) -> None:
     connection.execute(CommsMessage.__table__.insert(), [
         {
-            "id": uuid7(), "org_id": org.id, "conversation_id": org.conversation,
+            "id": uuid7(), "org_id": org.id,
+            "conversation_id": conversation or org.conversation,
             "author_id": org.author, "client_key": uuid7(), "seq": 100_000 + position,
-            "body": f"Rare {SELECTIVE_TERM} note", "send_fingerprint": "c" * 64,
+            "body": f"Rare {term} note", "send_fingerprint": "c" * 64,
             "created_at": NOW,
         }
-        for position in range(1, SELECTIVE_ROWS + 1)
+        for position in range(1, rows + 1)
     ])
 
 
-def _search_sql(case, api, term: str) -> tuple[dict, list]:
+def _search_sql(
+    case, api, term: str, marker: str = SEARCH_FUNCTION + "(", **filters
+) -> tuple[dict, list]:
     """One real search, and its count and page statements with their bound parameters."""
     captured = []
 
     def capture(_connection, _cursor, statement, parameters, _context, _many):
-        # The count statement names only the function (K52); the page also ranks.
-        if SEARCH_FUNCTION + "(" in statement:
+        # The count statement names only the function (K52); the page also ranks. A search
+        # inside one conversation names `plainto_tsquery(` in both instead.
+        if marker in statement:
             captured.append((statement, parameters))
 
     event.listen(case.world.runtime, "before_cursor_execute", capture)
     try:
-        page = _ok(api.get(ROOT + "/search", params={"q": term, "limit": 50}))
+        page = _ok(api.get(ROOT + "/search", params={"q": term, "limit": 50, **filters}))
     finally:
         event.remove(case.world.runtime, "before_cursor_execute", capture)
     assert len(captured) == 2, captured
@@ -240,10 +246,13 @@ def test_search_over_one_hundred_thousand_messages_is_bounded_and_measured(
 
 
 FOREIGN_MATCHES = 20_000
+# S4's own word, so its 20,000 rows (and their index entries until a vacuum) never reach the
+# selective search above when both tests run on one database (NB1).
+FOREIGN_TERM = "bladderwort"
 
 
 def _add_foreign_matches(connection, org) -> None:
-    """One set-based statement: `FOREIGN_MATCHES` rows of `org` that match the selective term."""
+    """One set-based statement: `FOREIGN_MATCHES` rows of `org` that match `FOREIGN_TERM`."""
     series = func.generate_series(1, FOREIGN_MATCHES).table_valued("value").render_derived()
     connection.execute(CommsMessage.__table__.insert().from_select(
         [
@@ -253,7 +262,7 @@ def _add_foreign_matches(connection, org) -> None:
         select(
             func.gen_random_uuid(), literal(org.id), literal(org.conversation),
             literal(org.author), func.gen_random_uuid(), series.c.value + 1_000,
-            literal(f"Foreign {SELECTIVE_TERM} note"), literal("c" * 64), literal(NOW),
+            literal(f"Foreign {FOREIGN_TERM} note"), literal("c" * 64), literal(NOW),
         ),
     ))
 
@@ -272,18 +281,48 @@ def test_another_organizations_matches_do_not_change_a_search_and_its_pages_are_
     for the trigger (a second client organization in one production installation)."""
     case, org, other = message_routes, message_routes.world.first, message_routes.world.second
     with case.world.owner.begin() as connection:
-        _add_selective_rows(connection, org)
+        _add_selective_rows(connection, org, FOREIGN_TERM)
     _settle(case)
     api = case.client(org.peer, org.id)
-    alone, alone_sql = _search_sql(case, api, SELECTIVE_TERM)
+    alone, alone_sql = _search_sql(case, api, FOREIGN_TERM)
     alone_pages = [_pages_read(plan) for plan in _root_plans(case, org, alone_sql)]
     with case.world.owner.begin() as connection:
         _add_foreign_matches(connection, other)
     _settle(case)
-    beside, beside_sql = _search_sql(case, api, SELECTIVE_TERM)
+    beside, beside_sql = _search_sql(case, api, FOREIGN_TERM)
     beside_pages = [_pages_read(plan) for plan in _root_plans(case, org, beside_sql)]
     pages = {"foreign_0": alone_pages, f"foreign_{FOREIGN_MATCHES}": beside_pages}
     print("D22-1 count and page statement pages:", json.dumps(pages))
     record_property("search_pages_beside_foreign_matches", json.dumps(pages))
     assert alone["pagination"]["total"] == SELECTIVE_ROWS
     assert beside == alone
+
+
+SMALL_CONVERSATION_ROWS = 20
+
+
+def test_a_search_inside_one_conversation_reads_that_conversations_matches(
+    message_routes, record_property
+):
+    """NB3: a common word searched inside a small conversation reads that conversation's
+    rows under row-level security, as before step 3.8, not every match of the word first
+    (100,000 in the large conversation): the function's generic plan cannot use the
+    conversation index, so this search does not call it."""
+    case, org = message_routes, message_routes.world.first
+    case.seed_large_history()
+    with case.world.owner.begin() as connection:
+        _add_selective_rows(
+            connection, org, "history", SMALL_CONVERSATION_ROWS, org.other_conversation
+        )
+    _settle(case)
+    api = case.client(org.peer, org.id)
+    inside, statements = _search_sql(
+        case, api, "history", "plainto_tsquery(", **{"in": str(org.other_conversation)}
+    )
+    assert not any(SEARCH_FUNCTION in sql for sql, _ in statements), statements
+    pages = [_pages_read(plan) for plan in _root_plans(case, org, statements)]
+    print("NB3 filtered broad search, count and page statement pages:", pages)
+    record_property("search_pages_inside_one_conversation", json.dumps(pages))
+    assert inside["pagination"]["total"] == SMALL_CONVERSATION_ROWS
+    for count in pages:
+        assert count <= SELECTIVE_PAGE_CEILING, pages

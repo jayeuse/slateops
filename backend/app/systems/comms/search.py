@@ -118,7 +118,10 @@ def _candidates(
         m.is_deleted.is_(False),
         m.deleted_at.is_(None),
     )
-    if request.q:
+    if request.q and request.conversation_id:
+        # The function's generic plan cannot use the conversation index; read one conversation.
+        query = query.where(m.body_tsv.op("@@")(func.plainto_tsquery("simple", request.q)))
+    elif request.q:
         # Under row-level security `@@` cannot use the search index, so the D22 definer finds
         # the bound organization's matches in the readable conversations. Its second argument
         # is always this server-side `readable` set, bound as `uuid[]` (an empty set finds
