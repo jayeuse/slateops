@@ -154,6 +154,8 @@ Shared services for every workspace. Backend package: `app/systems/platform/`. "
 | Notification | `InAppNotification`, `NotificationKind` | A message in the app, for example a report run, a reminder, a published design, or an OpenComms mention, direct message, followed-thread reply or keyword match. | Customer |
 | Scheduled work | `ScheduledWork`, `WorkKind`, `WorkState` | Durable queued work for report runs, scheduled post publication, event reminders, and OpenComms scheduled sends, exports or link previews. Retention sweeps have separate progress state. | Internal |
 | Work claim | `WorkClaim`, `lease_token` | A work identity and lease token for a bounded execution attempt. The executor still checks the current source/version and authority; a claim is not a permission grant. | Internal |
+| Work hint | `work_scheduled`, `work_triggers`, `WorkSignals` | An invalidation with only an organization, sent after a commit that queues or reschedules background work. It wakes the scheduling worker and the trigger lanes of every API process. The event hub never sends one to a browser. | Internal |
+| Due probe | `probe_due` | One statement for each organization that returns when each work kind is next due: queued work, retries, expired leases, enabled report schedules and export cleanup. The scheduling worker sleeps until the earliest time, a work hint, or its 30-second safety poll. | Internal |
 | Import & export | `record-import-api` | CSV import and export of records for one module. | Customer |
 | Search | `?section=search` | Search across the records that a person can read. | Customer |
 | Account | Platform → Account | The page for your own profile, sign-in sessions, and personal settings. | Customer |

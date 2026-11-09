@@ -59,7 +59,15 @@ Other application pages retain opaque PostgreSQL invalidations to authenticated 
 The [`FastAPI lifespan`](../../backend/app/main.py) owns the publisher and existing
 scheduling worker. [`OpenComms job polls`](../../backend/app/systems/comms/jobs/worker.py)
 run schedules, exports, retention and optional previews in the bound organization;
-there is no additional worker service or message broker. Durable job state and
+there is no additional worker service or message broker. The workers do not poll
+every second. A commit that queues or reschedules work adds a work hint to its
+post-commit invalidations; each process's existing `LISTEN` connection hands it to
+[`WorkSignals`](../../backend/app/systems/platform/scheduling/work_signals.py), which
+wakes the scheduling worker and the trigger lanes. The scheduling worker probes each
+woken organization with one statement and sleeps until the next due time or a
+30-second safety poll, which covers a missed hint. Trigger lane 0 wakes on its own
+at the next minute in which a published schedule fires. A listener reconnect or a `resync` wakes every organization. Several API
+processes all wake; `FOR UPDATE SKIP LOCKED` keeps one claim for each row. Durable job state and
 leases live in PostgreSQL, while the bounded publication queue is process-local
 and best effort. Request-buffered events submit after response completion;
 resource-owned jobs submit after their own commit/SQL-session close independently
