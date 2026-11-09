@@ -1,7 +1,6 @@
-import logging
 from collections.abc import Callable, Iterable
 from datetime import datetime
-from enum import StrEnum
+from enum import Enum, StrEnum
 from typing import Any, cast
 from uuid import UUID
 
@@ -9,10 +8,8 @@ from fastapi import HTTPException
 from sqlalchemy import Select, String, and_, exists, func, literal, or_, select, true
 from sqlalchemy import cast as sql_cast
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy.sql.elements import ColumnElement
-from uuid6 import uuid7
 
 from app.common.listing import (
     ListQueryResult,
@@ -21,26 +18,40 @@ from app.common.listing import (
     build_standard_list_statements,
     execute_standard_list,
 )
-from app.core.base_model import utc_now
 from app.core.database.organization_scope import bound_organization_column
-from app.core.database.session import AuditSession, get_engine
-from app.core.middleware.request_context import get_current_request_context
-from app.core.observability import log_event
 from app.systems.access.users.eligibility import established_user_clause
 from app.systems.access.users.membership import (
     bound_membership_join,
-    is_platform_operator,
     require_current_membership,
 )
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.manage.audit.models import (
     AuditAction,
     AuditLog,
-    SecurityEvent,
-    SecurityEventOutcome,
 )
 from app.systems.manage.audit.reference import reference_condition
-from app.systems.manage.audit.schemas import SecurityEventIngestRequest
+from app.systems.manage.audit.security_events import (
+    SECURITY_EVENT_LIST_SPEC as SECURITY_EVENT_LIST_SPEC,
+)
+from app.systems.manage.audit.security_events import (
+    SecurityEventPersistenceError as SecurityEventPersistenceError,
+)
+from app.systems.manage.audit.security_events import (
+    SecurityEventSortField as SecurityEventSortField,
+)
+from app.systems.manage.audit.security_events import (
+    _security_events_of_bound_organization as _security_events_of_bound_organization,
+)
+from app.systems.manage.audit.security_events import (
+    append_committed_security_event as append_committed_security_event,
+)
+from app.systems.manage.audit.security_events import (
+    append_security_event as append_security_event,
+)
+from app.systems.manage.audit.security_events import bound_members
+from app.systems.manage.audit.security_events import (
+    list_security_events as list_security_events,
+)
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.access import readable_link_clause
 from app.systems.sandbox.relationships.models import RelationshipEdge
@@ -51,10 +62,6 @@ class AuditLogSortField(StrEnum):
     CREATED_AT = "created_at"
     ENTITY_TYPE = "entity_type"
     REQUEST_PATH = "request_path"
-
-
-class SecurityEventPersistenceError(RuntimeError):
-    """A security event could not be committed durably."""
 
 
 AUDIT_LOG_LIST_SPEC = ListQuerySpec(
@@ -128,50 +135,39 @@ def readable_audit_entries(db: Session, reader: User) -> ColumnElement[bool]:
     )
 
 
-def _bound_members() -> Select[tuple[UUID]]:
-    return select(Membership.user_id).where(Membership.org_id == bound_organization_column())
+class AuditOrganization(Enum):
+    """Which rows of the bound organization a statement reads. Every value names some rows."""
+
+    ALL_ROWS = "all rows"
+    OWN_ROWS = "own rows"
+    ACCOUNT_ROWS = "account rows"
+
+
+def _own_rows() -> ColumnElement[bool]:
+    return AuditLog.org_id == bound_organization_column()
+
+
+def _account_rows_of_its_people() -> ColumnElement[bool]:
+    return and_(
+        AuditLog.org_id.is_(None),
+        AuditLog.entity_type == User.__tablename__,
+        AuditLog.entity_id.in_(bound_members()),
+    )
 
 
 def _audit_rows_of_bound_organization() -> ColumnElement[bool]:
     """Rows of the bound organization, and account rows of its own people.
 
     Install-wide rows (platform settings, backups) stay hidden from organization
-    readers until the owner decides who reads them (S07 checkpoint).
+    readers until the owner decides who reads them (S07 checkpoint). Row-level security
+    passes every row with no organization, so this is the only filter for those rows.
     """
 
-    return or_(
-        AuditLog.org_id == bound_organization_column(),
-        and_(
-            AuditLog.org_id.is_(None),
-            AuditLog.entity_type == User.__tablename__,
-            AuditLog.entity_id.in_(_bound_members()),
-        ),
-    )
+    return or_(_own_rows(), _account_rows_of_its_people())
 
 
-def _security_events_of_bound_organization(*, operator: bool = False) -> ColumnElement[bool]:
-    """Events of the bound organization, and account events about its own people."""
-
-    return or_(
-        SecurityEvent.org_id == bound_organization_column(),
-        and_(
-            SecurityEvent.org_id.is_(None),
-            SecurityEvent.event_type != "workspace.security_policy_change",
-            or_(
-                SecurityEvent.actor_id.in_(_bound_members()),
-                SecurityEvent.subject_id.in_(_bound_members()),
-            ),
-        ),
-        and_(
-            SecurityEvent.org_id.is_(None),
-            SecurityEvent.event_type == "workspace.security_policy_change",
-            literal(operator),
-        ),
-    )
-
-
-def _reader_scope(db: Session, reader: User | None) -> Callable[[Select[Any]], Select[Any]]:
-    """Narrow an audit statement to the rows that the reader sees.
+def _member_link_scope(db: Session, reader: User | None) -> Callable[[Select[Any]], Select[Any]]:
+    """Add the link check of a member reader; an administrator's statement stays as it is.
 
     PostgreSQL copies a condition on `audit_logs` into each partition, and each copy builds
     its own hash of the readable links. The condition must run once, above the partitions, so
@@ -179,17 +175,22 @@ def _reader_scope(db: Session, reader: User | None) -> Callable[[Select[Any]], S
     nothing, and it can never show a row that the rest of the condition hides.
     """
 
-    organization = _audit_rows_of_bound_organization()
-    if reader is None or require_current_membership(db, reader).role == UserRole.ADMIN.value:
-        return lambda statement: statement.where(organization)
+    if reader is None or _is_admin(db, reader):
+        return lambda statement: statement
     # OFFSET keeps PostgreSQL from folding the subquery into the statement.
     joined = select(literal(True).label("row_exists")).offset(0).subquery("above_partitions")
     readable = or_(joined.c.row_exists.is_(False), readable_audit_entries(db, reader))
-    return lambda statement: statement.outerjoin(joined, true()).where(organization, readable)
+    return lambda statement: statement.outerjoin(joined, true()).where(readable)
+
+
+def _is_admin(db: Session, reader: User) -> bool:
+    return require_current_membership(db, reader).role == UserRole.ADMIN.value
 
 
 def audit_log_statement(
     *,
+    columns: tuple[Any, ...] = (AuditLog,),
+    organization: AuditOrganization = AuditOrganization.ALL_ROWS,
     action: AuditAction | None = None,
     entity_type: str | None = None,
     entity_id: UUID | None = None,
@@ -199,8 +200,21 @@ def audit_log_statement(
     created_after: datetime | None = None,
     created_before: datetime | None = None,
     reference: str | None = None,
-) -> Select[tuple[AuditLog]]:
-    conditions: list[ColumnElement[bool]] = [_audit_rows_of_bound_organization()]
+) -> Select[Any]:
+    """The start of every read of `/api/audit-logs`: it adds the organization condition once.
+
+    ``columns`` selects `AuditLog` columns or expressions over them only. ``organization``
+    is internal: only the administrator's two-arm count reads one arm (contract 1.3 item 4).
+    """
+
+    match organization:
+        case AuditOrganization.OWN_ROWS:
+            rows = _own_rows()
+        case AuditOrganization.ACCOUNT_ROWS:
+            rows = _account_rows_of_its_people()
+        case AuditOrganization.ALL_ROWS:
+            rows = _audit_rows_of_bound_organization()
+    conditions: list[ColumnElement[bool]] = [rows]
     if action is not None:
         conditions.append(AuditLog.action == action)
     if entity_type is not None:
@@ -220,7 +234,7 @@ def audit_log_statement(
     if created_before is not None:
         conditions.append(AuditLog.created_at <= created_before)
 
-    return select(AuditLog).where(*conditions)
+    return select(*columns).where(*conditions)
 
 
 def list_audit_logs(
@@ -238,20 +252,20 @@ def list_audit_logs(
     created_before: datetime | None = None,
     reference: str | None = None,
 ) -> ListQueryResult[AuditLog]:
-    statement = audit_log_statement(
-        action=action,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        department_id=department_id,
-        performed_by=performed_by,
-        request_id=request_id,
-        created_after=created_after,
-        created_before=created_before,
-        reference=reference,
+    statement = _member_link_scope(db, reader)(
+        audit_log_statement(
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            department_id=department_id,
+            performed_by=performed_by,
+            request_id=request_id,
+            created_after=created_after,
+            created_before=created_before,
+            reference=reference,
+        )
     )
-    return execute_standard_list(
-        db, _reader_scope(db, reader)(statement), params, AUDIT_LOG_LIST_SPEC
-    )
+    return execute_standard_list(db, statement, params, AUDIT_LOG_LIST_SPEC)
 
 
 def export_audit_log_rows(
@@ -298,22 +312,19 @@ def list_audit_log_options(
     reader: User | None = None,
     search: str | None = None,
 ) -> tuple[list[str], list[tuple[UUID, str | None]]]:
-    narrow = _reader_scope(db, reader)
-    conditions: list[ColumnElement[bool]] = []
-    if department_id is not None:
-        conditions.append(AuditLog.department_id == department_id)
-
+    narrow = _member_link_scope(db, reader)
     pattern = None
-    entity_conditions = [*conditions]
+    entity_statement = narrow(
+        audit_log_statement(columns=(AuditLog.entity_type,), department_id=department_id)
+    )
     if search:
         escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         pattern = f"%{escaped}%"
-        entity_conditions.append(AuditLog.entity_type.ilike(pattern, escape="\\"))
+        entity_statement = entity_statement.where(AuditLog.entity_type.ilike(pattern, escape="\\"))
 
     entity_types = list(
         db.scalars(
-            narrow(select(AuditLog.entity_type))
-            .where(*entity_conditions)
+            entity_statement
             .group_by(AuditLog.entity_type)
             .order_by(func.max(AuditLog.created_at).desc(), AuditLog.entity_type.asc())
             .limit(200)
@@ -330,14 +341,17 @@ def list_audit_log_options(
     )
     recent_actor_rows = (
         narrow(
-            select(
-                AuditLog.performed_by,
-                AuditLog.actor_label,
-                AuditLog.created_at.label("last_used"),
-                actor_rank,
+            audit_log_statement(
+                columns=(
+                    AuditLog.performed_by,
+                    AuditLog.actor_label,
+                    AuditLog.created_at.label("last_used"),
+                    actor_rank,
+                ),
+                department_id=department_id,
             )
         )
-        .where(*conditions, AuditLog.performed_by.is_not(None))
+        .where(AuditLog.performed_by.is_not(None))
         .subquery()
     )
     actor_conditions = [recent_actor_rows.c.actor_rank == 1]
@@ -382,117 +396,3 @@ def list_audit_log_options(
     return entity_types, actors
 
 
-class SecurityEventSortField(StrEnum):
-    EVENT_TYPE = "event_type"
-    OCCURRED_AT = "occurred_at"
-    OUTCOME = "outcome"
-    SOURCE = "source"
-
-
-SECURITY_EVENT_LIST_SPEC = ListQuerySpec(
-    sort_fields={
-        SecurityEventSortField.EVENT_TYPE: cast(ColumnElement[Any], SecurityEvent.event_type),
-        SecurityEventSortField.OCCURRED_AT: cast(ColumnElement[Any], SecurityEvent.occurred_at),
-        SecurityEventSortField.OUTCOME: cast(ColumnElement[Any], SecurityEvent.outcome),
-        SecurityEventSortField.SOURCE: cast(ColumnElement[Any], SecurityEvent.source),
-    },
-    default_sort=SecurityEventSortField.OCCURRED_AT,
-    tie_breaker=cast(ColumnElement[Any], SecurityEvent.id),
-    search_fields=(
-        cast(ColumnElement[str], SecurityEvent.event_type),
-        cast(ColumnElement[str], SecurityEvent.source),
-        cast(ColumnElement[str], SecurityEvent.reason),
-        cast(ColumnElement[str], SecurityEvent.request_path),
-    ),
-)
-
-
-def append_security_event(
-    db: Session, payload: SecurityEventIngestRequest, *, org_id: UUID | None = None
-) -> SecurityEvent:
-    """Add one security event; ``org_id`` records the organization it happened in.
-
-    Producers pass it explicitly: an organization-only event names its organization,
-    while account and installation events (sign-in, platform policy) stay ``None``.
-    """
-    context = get_current_request_context()
-    event = SecurityEvent(
-        id=uuid7(),
-        org_id=org_id,
-        occurred_at=payload.occurred_at or utc_now(),
-        event_type=payload.event_type,
-        outcome=payload.outcome,
-        source=payload.source,
-        operation_id=payload.operation_id,
-        actor_id=payload.actor_id,
-        subject_id=payload.subject_id,
-        labels=dict(payload.labels),
-        fingerprint=payload.fingerprint,
-        reason=payload.reason,
-        request_id=payload.request_id or (context.request_id if context else None),
-        request_method=payload.request_method or (context.method if context else None),
-        request_path=payload.request_path or (context.path if context else None),
-        event_metadata=dict(payload.metadata),
-    )
-    object.__setattr__(event, "_security_event_internal", True)
-    db.add(event)
-    return event
-
-
-def append_committed_security_event(
-    payload: SecurityEventIngestRequest, *, org_id: UUID | None = None
-) -> None:
-    """Commit one security event through a session independent of the request transaction."""
-
-    session = AuditSession(bind=get_engine())
-    try:
-        append_security_event(session, payload, org_id=org_id)
-        session.commit()
-    except SQLAlchemyError as error:
-        log_event(
-            "security_event_ingestion_failed",
-            level=logging.ERROR,
-            operation_id=payload.operation_id,
-            reason_code="persistence_failed",
-        )
-        session.rollback()
-        raise SecurityEventPersistenceError("Unable to commit security event") from error
-    finally:
-        session.close()
-
-
-def list_security_events(
-    db: Session,
-    params: StandardListRequest[SecurityEventSortField],
-    *,
-    reader: User | None = None,
-    operation_id: UUID | None = None,
-    event_type: str | None = None,
-    outcome: SecurityEventOutcome | None = None,
-    person_id: UUID | None = None,
-    occurred_after: datetime | None = None,
-    occurred_before: datetime | None = None,
-    reference: str | None = None,
-) -> ListQueryResult[SecurityEvent]:
-    conditions: list[ColumnElement[bool]] = [_security_events_of_bound_organization(
-        operator=reader is not None and is_platform_operator(db, reader.id),
-    )]
-    if operation_id is not None:
-        conditions.append(SecurityEvent.operation_id == operation_id)
-    if event_type is not None:
-        conditions.append(SecurityEvent.event_type == event_type)
-    if outcome is not None:
-        conditions.append(SecurityEvent.outcome == outcome)
-    if person_id is not None:
-        conditions.append(
-            or_(SecurityEvent.actor_id == person_id, SecurityEvent.subject_id == person_id)
-        )
-    if occurred_after is not None:
-        conditions.append(SecurityEvent.occurred_at >= occurred_after)
-    if occurred_before is not None:
-        conditions.append(SecurityEvent.occurred_at < occurred_before)
-    if reference is not None:
-        conditions.append(reference_condition(SecurityEvent.request_id, reference))
-
-    statement = select(SecurityEvent).where(*conditions)
-    return execute_standard_list(db, statement, params, SECURITY_EVENT_LIST_SPEC)

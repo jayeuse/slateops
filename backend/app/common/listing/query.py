@@ -1,12 +1,12 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import Select, asc, desc, func, or_, select
+from sqlalchemy import Column, Select, Table, asc, desc, func, or_, select
 from sqlalchemy.orm import Session
-from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.elements import ColumnElement, UnaryExpression
 
 from app.common.listing.schemas import (
     DeletedFilter,
@@ -119,12 +119,29 @@ def build_standard_list_statements[ModelT, SortFieldT: StrEnum](
     sort_column = spec.sort_fields[request.sort_by or spec.default_sort]
     sort_function = asc if request.sort_order is SortOrder.ASC else desc
     item_statement = filtered.order_by(
-        sort_function(sort_column).nulls_last(),
-        sort_function(spec.tie_breaker).nulls_last(),
+        _ordered(sort_function, sort_column), _ordered(sort_function, spec.tie_breaker)
     )
     # One row more than the page says whether more follow, with no extra statement.
     item_statement = item_statement.offset(request.offset).limit(request.limit + 1)
     return item_statement, count_statement
+
+
+def _ordered(
+    direction: Callable[[ColumnElement[Any]], UnaryExpression[Any]], column: ColumnElement[Any]
+) -> UnaryExpression[Any]:
+    """Order by ``column``; nulls last only where the column can hold a null.
+
+    A `NOT NULL` table column keeps PostgreSQL's default null order, which matches a forward
+    or backward index scan, so the index gives the order with no Sort. The rows are the same.
+    """
+
+    expression = getattr(column, "expression", column)
+    never_null = (
+        isinstance(expression, Column)
+        and isinstance(expression.table, Table)
+        and not expression.nullable
+    )
+    return direction(column) if never_null else direction(column).nulls_last()
 
 
 def capped_count(statement: Select[Any]) -> Select[tuple[int]]:

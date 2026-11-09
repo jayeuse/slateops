@@ -4,7 +4,7 @@ import pytest
 from fastapi import HTTPException
 from hypothesis import assume, given
 from hypothesis import strategies as st
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects import postgresql
 
 from app.common.listing.query import ListQuerySpec, build_standard_list_statements
@@ -39,7 +39,9 @@ def test_list_query_escapes_search_and_counts_before_pagination() -> None:
     compiled = items.compile(dialect=postgresql.dialect())
     assert "%50\\%\\_done%" in compiled.params.values()
     assert "is_deleted IS true" in str(compiled)
-    assert "departments.id DESC NULLS LAST" in str(compiled)
+    # A NOT NULL column keeps the default null order, which an index scan gives (contract 2.4).
+    assert "departments.id DESC" in str(compiled)
+    assert "NULLS LAST" not in str(compiled)
     assert "LIMIT" in str(compiled) and "OFFSET" in str(compiled)
     count_compiled = count.compile(dialect=postgresql.dialect())
     # The count stops one row above the cap (D1); it never sorts or skips.
@@ -99,14 +101,51 @@ def test_default_list_hides_deleted_rows_sorts_ascending_and_counts_every_match(
         items.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
     )
     assert "WHERE departments.is_deleted IS false" in item_sql
-    assert (
-        "ORDER BY departments.department_name ASC NULLS LAST, departments.id ASC NULLS LAST"
-        in item_sql
-    )
+    assert "ORDER BY departments.department_name ASC, departments.id ASC" in item_sql
     # One row more than the page says whether more follow.
     assert item_sql.endswith("LIMIT 11 OFFSET 20")
     count_sql = str(count.compile(dialect=postgresql.dialect()))
     assert count_sql.startswith("SELECT count(*) AS count_1")
+
+
+class NullableSortField(StrEnum):
+    DELETED_AT = "deleted_at"
+    NAME_LENGTH = "name_length"
+
+
+@pytest.mark.parametrize(
+    ("sort_by", "order_by"),
+    [
+        pytest.param(
+            NullableSortField.DELETED_AT,
+            "ORDER BY departments.deleted_at DESC NULLS LAST, departments.id DESC",
+            id="nullable-column-keeps-nulls-last",
+        ),
+        pytest.param(
+            NullableSortField.NAME_LENGTH,
+            "ORDER BY length(departments.department_name) DESC NULLS LAST, departments.id DESC",
+            id="expression-keeps-nulls-last",
+        ),
+    ],
+)
+def test_only_a_column_that_can_hold_a_null_sorts_nulls_last(
+    sort_by: NullableSortField, order_by: str
+) -> None:
+    spec = ListQuerySpec(
+        sort_fields={
+            NullableSortField.DELETED_AT: Department.deleted_at,
+            NullableSortField.NAME_LENGTH: func.length(Department.department_name),
+        },
+        default_sort=NullableSortField.DELETED_AT,
+        tie_breaker=Department.id,
+    )
+    items, _count = build_standard_list_statements(
+        select(Department),
+        StandardListRequest[NullableSortField](sort_by=sort_by, sort_order="desc"),
+        spec,
+    )
+
+    assert order_by in str(items.compile(dialect=postgresql.dialect()))
 
 
 def test_an_empty_list_reports_a_total_of_zero() -> None:

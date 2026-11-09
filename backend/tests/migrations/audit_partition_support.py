@@ -2,6 +2,7 @@
 
 import os
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -12,7 +13,9 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.pool import NullPool
 from uuid6 import uuid7
 
-from tests.conftest import guarded_create_engine
+from tests.conftest import alembic_heads, guarded_create_engine
+from tests.database_pool import dispose_process_engines
+from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
 DEFAULT_PARTITION = "audit_logs_default"
 INSUFFICIENT_PRIVILEGE = "42501"
@@ -46,6 +49,36 @@ def audit_engines() -> Iterator[AuditEngines]:
         runtime.dispose()
 
 
+@contextmanager
+def committed_history() -> Iterator[AuditEngines]:
+    """Engines for rows that a test commits; they leave with `downgrade base`."""
+
+    environment = guarded_migration_environment()
+    [head] = alembic_heads()
+    dispose_process_engines()
+    owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"], poolclass=NullPool)
+    runtime = guarded_create_engine(os.environ["TEST_DATABASE_URL"], poolclass=NullPool)
+    try:
+        yield AuditEngines(owner, runtime)
+    finally:
+        run_alembic(environment, "downgrade", "base")
+        run_alembic(environment, "upgrade", head)
+        owner.dispose()
+        runtime.dispose()
+
+
+def plan_nodes(plan: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    yield plan
+    for child in plan.get("Plans", ()):
+        yield from plan_nodes(child)
+
+
+def plan_pages(plan: dict[str, Any]) -> int:
+    # Buffers count each page visit, warm or cold, so the number does not depend on the cache.
+    return int(plan["Shared Hit Blocks"]) + int(plan["Shared Read Blocks"])
+
+
+# `bool` before `int`: a bool is an int.
 def leaf_names(connection: Connection) -> list[str]:
     return list(connection.scalars(_LEAVES))
 

@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.dependencies.models import Dependant
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -194,6 +194,109 @@ def test_account_event_details_match_collection_visibility(
                 detail = client.get(f"/api/{prefix}/{row.id}")
                 assert detail.status_code == (200 if index == 0 else 404), detail.text
                 assert (str(row.id) in visible_ids) is (index == 0)
+
+
+def _account_row(db: Session, entity_type: str, entity_id: Any, actor: Any) -> str:
+    """An installation-wide audit row, as account and platform changes write them."""
+
+    marker = uuid7().hex
+    db.connection().execute(AuditLog.__table__.insert().values(
+        id=uuid7(), org_id=None, action=AuditAction.UPDATE, entity_type=entity_type,
+        entity_id=entity_id, performed_by=actor, after={"marker": marker},
+    ))
+    return marker
+
+
+def test_every_audit_read_keeps_other_organizations_and_install_rows_out_h1(
+    two_organizations: tuple[Session, User, WorkspaceProfile, WorkspaceProfile],
+) -> None:
+    # H1: row-level security passes every row with no organization, so the application's
+    # organization condition is the only thing that hides these rows. Each read must keep it.
+    db, actor, home, visited = two_organizations
+    shared, _ = create_member(db, home)
+    create_member(db, visited, user=shared)
+    foreign, _ = create_member(db, visited)
+    shown = _account_row(db, "users", shared.id, shared.id)
+    hidden = {
+        _account_row(db, "users", foreign.id, foreign.id),
+        _account_row(db, "platform_settings", uuid7(), foreign.id),
+    }
+    db.commit()
+    rows = {
+        row.after["marker"]: str(row.id)
+        for row in db.scalars(select(AuditLog).where(AuditLog.org_id.is_(None)))
+        if row.after and "marker" in row.after
+    }
+
+    with _client(db, actor, home) as client:
+        listed = client.get("/api/audit-logs?limit=100")
+        exported = client.get("/api/audit-logs/export")
+        details = {marker: client.get(f"/api/audit-logs/{rows[marker]}").status_code
+                   for marker in {shown, *hidden}}
+        options = client.get("/api/audit-logs/options")
+
+    assert listed.status_code == 200, listed.text
+    listed_ids = {row["id"] for row in listed.json()["items"]}
+    assert rows[shown] in listed_ids
+    assert not {rows[marker] for marker in hidden} & listed_ids
+    assert exported.status_code == 200, exported.text
+    assert f"Marker: {shown}" in exported.text
+    assert [marker for marker in hidden if marker in exported.text] == []
+    assert details == {shown: 200, **dict.fromkeys(hidden, 404)}
+    assert options.status_code == 200, options.text
+    assert "platform_settings" not in options.json()["entity_types"]
+    assert str(foreign.id) not in {row["performed_by"] for row in options.json()["actors"]}
+    assert str(shared.id) in {row["performed_by"] for row in options.json()["actors"]}
+
+
+def _bulk_rows(db: Session, rows: int, request_id: Any, **values: Any) -> None:
+    db.connection().execute(
+        text(
+            "INSERT INTO public.audit_logs (id, org_id, created_at, action, entity_type, "
+            "entity_id, request_id) SELECT gen_random_uuid(), :org_id, "
+            "now() - make_interval(secs => step), 'update', :entity_type, :entity_id, "
+            ":request_id FROM generate_series(1, :rows) AS step"
+        ),
+        {"rows": rows, "request_id": request_id, **values},
+    )
+
+
+def test_an_administrators_count_equals_a_walk_of_every_page_c7(
+    two_organizations: tuple[Session, User, WorkspaceProfile, WorkspaceProfile],
+) -> None:
+    # H2: the count reads the same organization condition as the page, so the account rows
+    # of other organizations' people and install-wide rows are in neither.
+    db, actor, home, visited = two_organizations
+    shared, _ = create_member(db, home)
+    create_member(db, visited, user=shared)
+    foreign, _ = create_member(db, visited)
+    small, large = uuid7(), uuid7()
+    _bulk_rows(db, 3, small, org_id=home.id, entity_type="reports", entity_id=None)
+    _bulk_rows(db, 3, small, org_id=None, entity_type="users", entity_id=shared.id)
+    _bulk_rows(db, 2, small, org_id=None, entity_type="users", entity_id=foreign.id)
+    _bulk_rows(db, 2, small, org_id=None, entity_type="platform_settings", entity_id=uuid7())
+    # The count is one statement (K64 form 1), so one condition above the cap caps it. No
+    # bulk account rows: their dead index entries would cost every later account-row read.
+    _bulk_rows(db, 10_001, large, org_id=home.id, entity_type="reports", entity_id=None)
+    _bulk_rows(db, 2, large, org_id=None, entity_type="platform_settings", entity_id=uuid7())
+    db.commit()
+
+    with _client(db, actor, home) as client:
+        walked: list[str] = []
+        while True:
+            page = client.get(
+                "/api/audit-logs", params={"request_id": str(small), "limit": 2,
+                                           "offset": len(walked)},
+            ).json()
+            walked += [row["id"] for row in page["items"]]
+            if not page["pagination"]["has_more"]:
+                break
+        capped = client.get("/api/audit-logs", params={"request_id": str(large), "limit": 1})
+
+    assert (len(walked), page["pagination"]["total"]) == (6, 6)
+    assert page["pagination"]["total_is_capped"] is False
+    assert capped.json()["pagination"]["total"] == 10_000
+    assert capped.json()["pagination"]["total_is_capped"] is True
 
 
 def test_people_lifecycle_projects_and_readmits_only_the_bound_membership(
