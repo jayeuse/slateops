@@ -6,7 +6,7 @@ from sqlalchemy.exc import OperationalError
 from uuid6 import uuid7
 
 from app.core.observability import LOGGER_NAME
-from app.systems.manage.audit import listeners, service
+from app.systems.manage.audit import listeners, security_events, service
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.platform.events.models import InvalidationEvent
 
@@ -41,8 +41,9 @@ def test_persistence_failure_is_logged_without_payload(monkeypatch, caplog) -> N
         def close(self):
             pass
 
-    monkeypatch.setattr(service, "AuditSession", FailedSession)
-    monkeypatch.setattr(service, "get_engine", lambda: None)
+    # The writer lives in `security_events`, which looks these names up in its own module.
+    monkeypatch.setattr(security_events, "AuditSession", FailedSession)
+    monkeypatch.setattr(security_events, "get_engine", lambda: None)
     payload = SecurityEventIngestRequest(
         event_type="user.invitation",
         outcome="attempt",

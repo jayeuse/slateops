@@ -39,7 +39,9 @@ def search(api, **filters):
     assert "no-store" in response.headers["cache-control"]
     result = response.json()
     assert set(result) == {"items", "pagination"}
-    assert set(result["pagination"]) == {"limit", "offset", "count", "total", "has_more"}
+    assert set(result["pagination"]) == {
+        "limit", "offset", "count", "total", "total_is_capped", "has_more"
+    }
     for hit in result["items"]:
         assert set(hit) == HIT_KEYS
         UUID(hit["message_id"])

@@ -167,7 +167,9 @@ def test_search_over_one_hundred_thousand_messages_is_bounded_and_measured(
             baseline_selects.clear()
             handler_selects.clear()
             page = _ok(api.get(ROOT + "/search", params={"q": "history", "limit": limit}))
-            assert page["pagination"]["total"] == 100_000 and page["pagination"]["count"] == limit
+            # D1: the search counts at most 10,000 of its 100,000 matches and says so.
+            assert page["pagination"]["total"] == 10_000 and page["pagination"]["count"] == limit
+            assert page["pagination"]["total_is_capped"] is True
             counts.append((len(baseline_selects), len(handler_selects)))
         for _ in range(5):
             started = perf_counter()
@@ -180,7 +182,8 @@ def test_search_over_one_hundred_thousand_messages_is_bounded_and_measured(
             started = perf_counter()
             page = _ok(api.get(ROOT + "/search", params={"q": "history", "limit": 50}))
             samples.append((perf_counter() - started) * 1000)
-            assert page["pagination"]["total"] == 100_000 and page["pagination"]["count"] == 50
+            assert page["pagination"]["total"] == 10_000 and page["pagination"]["count"] == 50
+            assert page["pagination"]["total_is_capped"] is True
     finally:
         event.remove(case.world.runtime, "after_cursor_execute", observe)
     assert counts[0] == counts[1] and all(value > 0 for value in counts[0])

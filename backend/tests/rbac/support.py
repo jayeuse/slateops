@@ -16,7 +16,7 @@ from uuid6 import uuid7
 from app.common.dependencies.auth import (
     get_current_user,
 )
-from app.common.listing import ListQueryResult, PaginationMetadata
+from app.common.listing import KeysetPaginationMetadata, ListQueryResult, PaginationMetadata
 from app.core.database import get_db
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
@@ -221,6 +221,22 @@ def _empty_list_result() -> ListQueryResult[Any]:
             count=0,
             total=0,
             has_more=False,
+        ),
+    )
+
+
+def _empty_keyset_list_result() -> ListQueryResult[Any]:
+    """The empty page of a D1 keyset list (audit, relationships), which names no next cursor."""
+
+    return ListQueryResult(
+        items=[],
+        pagination=KeysetPaginationMetadata(
+            limit=25,
+            offset=0,
+            count=0,
+            total=0,
+            has_more=False,
+            next_cursor=None,
         ),
     )
 

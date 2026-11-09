@@ -29,7 +29,7 @@ from app.systems.sandbox.lifecycle.schemas import (
     LifecycleTargetType,
 )
 
-from .support import _client, _empty_list_result, make_user
+from .support import _client, _empty_keyset_list_result, _empty_list_result, make_user
 
 # Fixed, so parametrized test IDs are the same in every process.
 _PATH_ID = "0190a000-0000-7000-8000-000000000001"
@@ -210,7 +210,7 @@ def test_users_invitations_and_audit_are_administrator_only(
         monkeypatch.setattr(
             audit_router,
             "list_audit_logs",
-            lambda *_args, **_kwargs: _empty_list_result(),
+            lambda *_args, **_kwargs: _empty_keyset_list_result(),
         )
 
     admin = make_user("admin", role=UserRole.ADMIN)
