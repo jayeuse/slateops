@@ -232,8 +232,12 @@ def chains(engine: Engine) -> list[UUID | None]:
     return [*organizations, None]
 
 
-def seal_chain(engine: Engine, org_id: UUID | None, now: datetime) -> bool:
-    """Seal up to `WAKE_HOURS` hours, one transaction a span. True when hours remain."""
+def seal_chain(engine: Engine, org_id: UUID | None, now: datetime) -> bool | None:
+    """Seal up to `WAKE_HOURS` hours, one transaction a span. True when hours remain.
+
+    None when another process holds the chain's lock: it is sealing the chain, so this
+    pass learns nothing about whether the chain fails or succeeds.
+    """
 
     for _span in range(WAKE_HOURS // SPAN_HOURS):
         try:
@@ -246,6 +250,8 @@ def seal_chain(engine: Engine, org_id: UUID | None, now: datetime) -> bool:
             if getattr(error.orig, "sqlstate", None) != _UNIQUE_VIOLATION:
                 raise
             continue  # Another process sealed the same hour first; read its seals again.
+        if result.skipped:
+            return None
         if not result.more:
             return False
     return True
@@ -321,13 +327,16 @@ def seal_audit(engine: Engine, *, now: datetime) -> SealPass:
             failures.append((org_id, waiting))
             continue
         try:
-            backlog = seal_chain(engine, org_id, now) or backlog
+            behind = seal_chain(engine, org_id, now)
         except Exception as error:
             cause = failure_cause(error)
             failures.append((org_id, cause))
             backoff.failed(org_id, now, cause)
-        else:
+            continue
+        # A lock miss (None) is neither: another process seals the chain (G2).
+        if behind is not None:
             backoff.succeeded(org_id)
+        backlog = bool(behind) or backlog
     if not failures:
         return SealPass(backlog)
     # A failed chain keeps its hours, so it is a backlog: the worker wakes every minute,

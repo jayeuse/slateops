@@ -100,7 +100,7 @@ def test_a_chain_that_another_process_is_sealing_is_skipped(world: SealWorld) ->
             text("SELECT pg_advisory_lock(:key, hashtext(:chain))"),
             {"key": seals._LOCK_CLASS, "chain": str(world.first)},
         )
-        assert seal_chain(world.engines.runtime, world.first, now) is False
+        assert seal_chain(world.engines.runtime, world.first, now) is None
         assert sealed_hours(world.engines, world.first) == {}
         seal_chain(world.engines.runtime, world.second, now)
         holder.rollback()
@@ -223,6 +223,40 @@ def test_a_failed_chain_is_a_backlog_and_the_next_wake_seals_it(
     assert len(sealed_hours(world.engines, world.second)) == 2
     assert second == seals.SealPass(backlog=False)
     assert sealed_hours(world.engines, world.first) == {hour_of(1, 0): 0, hour_of(1, 1): 0}
+
+
+def test_a_chain_that_another_process_holds_keeps_its_back_off(
+    world: SealWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # G2: with several API processes, a lock miss says nothing about the chain, so it
+    # neither resets the back-off (success) nor lengthens it (failure).
+    real_read = seals.read_hours
+    failing = [world.first]
+
+    def read(connection, org_id, start, end):
+        if org_id in failing:
+            failing.remove(org_id)
+            raise OperationalError("SELECT", {}, RuntimeError("statement timeout"))
+        return real_read(connection, org_id, start, end)
+
+    monkeypatch.setattr(seals, "read_hours", read)
+    now = hour_of(1, 4)
+    failed = seal_audit(world.engines.runtime, now=now)
+    backing_off = (now + seals.BACKOFF_FIRST, seals.BACKOFF_FIRST, failed.cause)
+    assert seals._BACKOFF._failing[world.first] == backing_off
+
+    with world.engines.owner.connect() as holder:
+        holder.execute(
+            text("SELECT pg_advisory_lock(:key, hashtext(:chain))"),
+            {"key": seals._LOCK_CLASS, "chain": str(world.first)},
+        )
+        # The back-off has passed, so this pass reaches the chain's lock and misses it.
+        seal_audit(world.engines.runtime, now=now + seals.BACKOFF_FIRST)
+        holder.rollback()
+        holder.execute(text("SELECT pg_advisory_unlock_all()"))
+
+    assert sealed_hours(world.engines, world.first) == {}
+    assert seals._BACKOFF._failing[world.first] == backing_off
 
 
 def test_the_chain_hash_refuses_an_hour_that_is_not_whole() -> None:
