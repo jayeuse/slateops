@@ -312,7 +312,7 @@ function LinkPicker({
             }),
           staleTime: 0,
         });
-        if (page.pagination.total > 0) occupied.push(candidate.id);
+        if (page.pagination.count > 0) occupied.push(candidate.id);
       }
       return occupied;
     },
@@ -903,7 +903,7 @@ export function RecordLinksPanel({
     readAt: number;
     items: OpenViewRelationship[];
     hasMore: boolean;
-    nextOffset: number;
+    nextCursor: string | null;
   } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreError, setMoreError] = useState("");
@@ -943,8 +943,10 @@ export function RecordLinksPanel({
         linksHasMore
           ? listOpenViewRecordLinks(record.id, {
               limit: 100,
-              offset:
-                linkExtension?.nextOffset ?? links.data?.pagination.count ?? 0,
+              cursor:
+                (linkExtension
+                  ? linkExtension.nextCursor
+                  : links.data?.pagination.nextCursor) ?? undefined,
             })
           : null,
       ]);
@@ -960,7 +962,7 @@ export function RecordLinksPanel({
           readAt: linkReadAt,
           items: [...(linkExtension?.items ?? []), ...linkPage.items],
           hasMore: linkPage.pagination.hasMore,
-          nextOffset: linkPage.pagination.offset + linkPage.pagination.count,
+          nextCursor: linkPage.pagination.nextCursor,
         });
     } catch (caught) {
       if (isAuthorizationDenied(caught)) {

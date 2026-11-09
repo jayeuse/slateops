@@ -17,6 +17,11 @@ import {
   useNotificationCommands,
 } from "./notification-items";
 import { apiErrorReference } from "@/lib/api-errors";
+import {
+  listCountText,
+  listNumberText,
+  listTotalText,
+} from "@/lib/list-pagination";
 
 const PAGE_LIMIT = 25;
 
@@ -114,7 +119,12 @@ export default function ConnectedReportNotifications() {
         </div>
         <p className="text-muted-foreground text-sm">
           {pagination
-            ? `${pagination.total} notification${pagination.total === 1 ? "" : "s"}`
+            ? listCountText(
+                pagination.total,
+                pagination.totalIsCapped,
+                "notification",
+                "notifications",
+              )
             : "Current account"}
         </p>
         {loading && (
@@ -163,8 +173,9 @@ export default function ConnectedReportNotifications() {
               Previous
             </Action>
             <span className="text-muted-foreground text-sm">
-              {pagination.offset + 1}–{pagination.offset + pagination.count} of{" "}
-              {pagination.total}
+              {listNumberText(pagination.offset + 1)}–
+              {listNumberText(pagination.offset + pagination.count)} of{" "}
+              {listTotalText(pagination.total, pagination.totalIsCapped)}
             </span>
             <Action
               type="button"

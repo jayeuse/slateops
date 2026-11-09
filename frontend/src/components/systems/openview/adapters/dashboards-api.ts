@@ -15,6 +15,7 @@ import {
   type OpenViewDashboardChartConfig,
   type OpenViewDashboardRecordsConfig,
 } from "./dashboard-widget-config";
+import { hasMoreAgreesWithTotal } from "@/lib/list-pagination";
 
 export {
   dashboardWidgetConfigInputSchema,
@@ -146,11 +147,13 @@ const paginationSchema = z
     count: z.number().int().min(0),
     total: z.number().int().min(0),
     has_more: z.boolean(),
+    total_is_capped: z.boolean(),
   })
   .strict()
-  .transform(({ has_more, ...pagination }) => ({
+  .transform(({ has_more, total_is_capped, ...pagination }) => ({
     ...pagination,
     hasMore: has_more,
+    totalIsCapped: total_is_capped,
   }));
 const wireWidgetBaseShape = {
   id: uuidSchema,
@@ -522,8 +525,7 @@ export async function listOpenViewDashboards(
         pagination.offset !== request.offset ||
         pagination.count !== items.length ||
         pagination.count > pagination.limit ||
-        pagination.hasMore !==
-          pagination.offset + pagination.count < pagination.total
+        !hasMoreAgreesWithTotal(pagination)
       ) {
         context.addIssue({
           code: "custom",

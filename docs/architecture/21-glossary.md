@@ -159,6 +159,8 @@ Shared services for every workspace. Backend package: `app/systems/platform/`. "
 | Import & export | `record-import-api` | CSV import and export of records for one module. | Customer |
 | Search | `?section=search` | Search across the records that a person can read. | Customer |
 | Account | Platform → Account | The page for your own profile, sign-in sessions, and personal settings. | Customer |
+| Capped total | `total_is_capped`, `totalIsCapped`, `TOTAL_CAP`, "10,000+" | The total of a list that holds more than 10,000 matching rows. The count stops at 10,000, so the total is a lower bound; `has_more` still says exactly whether more rows follow. Records lists keep their exact total. See [list paging](06-data-architecture.md#list-paging). | Internal |
+| Keyset cursor | `cursor`, `next_cursor`, `nextCursor`, `KeysetListRequest` | An opaque value that names the position after the last row of a page, by creation time and id. The audit log, the relationship list and the trigger runs accept it in place of an offset, so a deep page costs the same as the first. See [list paging](06-data-architecture.md#list-paging). | Internal |
 
 ## OpenComms
 

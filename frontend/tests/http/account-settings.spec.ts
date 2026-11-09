@@ -776,6 +776,7 @@ function signInEventPage(
       count: items.length,
       total,
       has_more: offset + items.length < total,
+      total_is_capped: false,
     },
   };
 }

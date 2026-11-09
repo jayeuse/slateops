@@ -110,6 +110,7 @@ def test_event_occurrence_window_paging_dst_and_explicit_density_limits(
         "offset": 1,
         "count": 2,
         "total": 4,
+        "total_is_capped": False,
         "has_more": True,
     }
     all_spring = client.get(f"{root}?{spring_window}").json()["items"]

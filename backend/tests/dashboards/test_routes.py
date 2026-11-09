@@ -66,6 +66,7 @@ def test_owner_can_create_page_revision_update_archive_and_restore_dashboard_dra
             "offset": 0,
             "count": 1,
             "total": 1,
+            "total_is_capped": False,
             "has_more": False,
         }
 

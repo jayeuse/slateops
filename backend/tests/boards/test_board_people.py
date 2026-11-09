@@ -92,6 +92,7 @@ def test_writers_and_managers_list_every_active_reader_and_others_are_refused(
     assert avatars[str(reader.id)] == f"/api/users/{reader.id}/avatar"
     assert avatars[str(writer.id)] is None
     assert page["pagination"] == {"limit": 25, "offset": 0, "count": 6, "total": 6,
+                                  "total_is_capped": False,
                                   "has_more": False}
     for denied in (reader, guest_reader, guest_writer):
         assert _api(db, denied).get(f"/api/boards/{board.id}/people").status_code == 403
@@ -183,6 +184,7 @@ def test_search_matches_the_name_or_email_and_pages_follow_the_name_order(
     assert (_names(first), _names(second), _names(last)) == (
         ["Ana Writer", "Bo Lee"], ["cy Leeds", "Di Mora"], ["Ed Rivers"])
     assert first["pagination"] == {"limit": 2, "offset": 0, "count": 2, "total": 5,
+                                   "total_is_capped": False,
                                    "has_more": True}
     assert last["pagination"]["has_more"] is False
 

@@ -31,13 +31,19 @@ const auditLogSchema = z.object({
 
 const auditLogListSchema = z.object({
   items: z.array(auditLogSchema),
-  pagination: z.object({
-    limit: z.number().int().positive(),
-    offset: z.number().int().nonnegative(),
-    count: z.number().int().nonnegative(),
-    total: z.number().int().nonnegative(),
-    has_more: z.boolean(),
-  }),
+  pagination: z
+    .object({
+      limit: z.number().int().positive(),
+      offset: z.number().int().nonnegative(),
+      count: z.number().int().nonnegative(),
+      total: z.number().int().nonnegative(),
+      has_more: z.boolean(),
+      total_is_capped: z.boolean(),
+      // Opaque; on the created_at order that this list always reads it is a
+      // string exactly when more entries exist. The server takes back 128.
+      next_cursor: z.string().min(1).max(128).nullable(),
+    })
+    .refine(({ has_more, next_cursor }) => has_more === (next_cursor !== null)),
 });
 
 const auditLogOptionsSchema = z.object({
@@ -79,11 +85,20 @@ export type ManageAuditListRequest = {
   sortOrder: "asc" | "desc";
   limit: number;
   offset: number;
+  /**
+   * The `next_cursor` of the page before (contract 2.3). It replaces the
+   * offset; the server pages the created_at order this list always reads.
+   */
+  cursor?: string;
 };
 
-function auditFilterParams(
-  request: Omit<ManageAuditListRequest, "limit" | "offset">,
-): URLSearchParams {
+/** The list request without its page: what the export reads. */
+export type ManageAuditFilters = Omit<
+  ManageAuditListRequest,
+  "limit" | "offset" | "cursor"
+>;
+
+function auditFilterParams(request: ManageAuditFilters): URLSearchParams {
   const params = new URLSearchParams();
   if (request.action) params.set("action", request.action);
   if (request.entityType) params.set("entity_type", request.entityType);
@@ -103,7 +118,8 @@ function auditFilterParams(
 export function manageAuditListPath(request: ManageAuditListRequest): string {
   const params = auditFilterParams(request);
   params.set("limit", String(request.limit));
-  params.set("offset", String(request.offset));
+  if (request.cursor) params.set("cursor", request.cursor);
+  else params.set("offset", String(request.offset));
   return `/audit-logs?${params.toString()}`;
 }
 
@@ -136,14 +152,15 @@ export function getManageAuditOptions(
 }
 
 export async function getManageAuditExportPreview(
-  request: Omit<ManageAuditListRequest, "limit" | "offset">,
+  request: ManageAuditFilters,
   signal?: AbortSignal,
 ): Promise<ManageAuditListResponse> {
   const page = await listManageAuditLogs(
     { ...request, limit: 10, offset: 0 },
     signal,
   );
-  if (page.pagination.total > 10_000) throw new AuditExportLimitError();
+  // Above 10,000 entries the total is capped at 10,000 and carries the flag.
+  if (page.pagination.total_is_capped) throw new AuditExportLimitError();
   return page;
 }
 
@@ -158,7 +175,7 @@ const exportCountSchema = z
   .pipe(z.number().int().nonnegative().max(10_000));
 
 export async function downloadManageAuditCsv(
-  request: Omit<ManageAuditListRequest, "limit" | "offset">,
+  request: ManageAuditFilters,
   signal?: AbortSignal,
 ): Promise<ManageAuditCsv> {
   const response = await apiRequest(

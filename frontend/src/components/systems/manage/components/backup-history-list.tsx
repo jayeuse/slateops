@@ -66,6 +66,8 @@ export function BackupHistoryList({
   phone,
   runs,
   total,
+  totalIsCapped,
+  hasMore,
   body,
   loading,
   failure,
@@ -84,6 +86,10 @@ export function BackupHistoryList({
   phone: boolean;
   runs: readonly ManageBackupRun[];
   total: number;
+  /** The server capped `total` at 10,000 (U1 to U5). */
+  totalIsCapped?: boolean;
+  /** Whether the server has backups after this page (U6). */
+  hasMore?: boolean;
   body: BackupListBody;
   loading: boolean;
   failure: "denied" | "unavailable" | null;
@@ -275,6 +281,8 @@ export function BackupHistoryList({
         <TablePagination
           ariaLabel="Backup pages"
           total={total}
+          totalIsCapped={totalIsCapped}
+          hasMore={hasMore}
           offset={request.offset}
           rowCount={runs.length}
           pageSize={request.limit}

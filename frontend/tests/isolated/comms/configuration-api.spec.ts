@@ -175,7 +175,14 @@ test("configuration collections preserve offsets and reject mixed scope or incon
   ]) {
     const valid = {
       items: [row.item],
-      pagination: { limit: 1, offset: 2, count: 1, total: 3, has_more: false },
+      pagination: {
+        limit: 1,
+        offset: 2,
+        count: 1,
+        total: 3,
+        has_more: false,
+        total_is_capped: false,
+      },
     };
     let wire: unknown = valid;
     const mock = installFetch(() =>

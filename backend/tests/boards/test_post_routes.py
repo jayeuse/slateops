@@ -443,6 +443,7 @@ def test_default_post_order_is_pinned_first_before_paging(
                 "offset": offset,
                 "count": 1,
                 "total": 3,
+                "total_is_capped": False,
                 "has_more": offset < 2,
             }
             returned.append(page["items"][0]["id"])

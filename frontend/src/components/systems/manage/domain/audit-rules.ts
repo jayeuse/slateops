@@ -1041,11 +1041,16 @@ export function auditRowTime(
   );
 }
 
-export const AUDIT_EXPORT_LIMIT = 10_000;
-
-/** Why Export is off for this many matching events, or null (MD7). */
-export function auditExportBlockedReason(total: number): string | null {
-  return total > AUDIT_EXPORT_LIMIT
+/**
+ * Why Export is off for the list's matching events, or null (MD7). The export
+ * takes at most 10,000 events; above that the list total is capped at
+ * 10,000 and carries the flag, so the flag decides, not the number.
+ */
+export function auditExportBlockedReason(pagination: {
+  total: number;
+  total_is_capped: boolean;
+}): string | null {
+  return pagination.total_is_capped
     ? "Narrow the filters to 10,000 events or fewer to export."
     : null;
 }

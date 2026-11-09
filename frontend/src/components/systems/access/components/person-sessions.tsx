@@ -60,7 +60,8 @@ export function PersonSessions({
   const items = sessions.data?.items ?? [];
   const total = sessions.data?.pagination.total ?? 0;
   useEffect(() => {
-    if (sessions.data)
+    // A capped total is a lower bound and moves no page (U8).
+    if (sessions.data && !sessions.data.pagination.total_is_capped)
       setPageIndex((current) =>
         Math.min(
           current,
@@ -197,6 +198,8 @@ export function PersonSessions({
             <TablePagination
               ariaLabel="Session pages"
               total={total}
+              totalIsCapped={sessions.data?.pagination.total_is_capped}
+              hasMore={sessions.data?.pagination.has_more}
               offset={sessions.data?.pagination.offset ?? pageIndex * 10}
               rowCount={items.length}
               pageSize={10}

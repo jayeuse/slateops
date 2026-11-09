@@ -97,7 +97,17 @@ const json = (body: unknown) =>
   });
 const emptyPage = {
   items: [],
-  pagination: { limit: 50, offset: 0, count: 0, total: 0, has_more: false },
+  pagination: {
+    limit: 50,
+    offset: 0,
+    count: 0,
+    total: 0,
+    has_more: false,
+    total_is_capped: false,
+    // The page the server builds for a record the reader cannot open has
+    // the same keyset shape as a real empty page (check 20).
+    next_cursor: null,
+  },
 };
 
 test("S4-C5: a manager reads the department's history; a reader reads the record's alone", async () => {
@@ -111,6 +121,30 @@ test("S4-C5: a manager reads the department's history; a reader reads the record
       // own read access (API contract S4).
       `/api/audit-logs?entity_type=records&entity_id=${recordId}&limit=50`,
     ]);
+  } finally {
+    fetchStub.restore();
+  }
+});
+
+test("record history reads a capped keyset page with its cursor", async () => {
+  const fetchStub = installFetch(() =>
+    json({
+      items: [],
+      pagination: {
+        limit: 50,
+        offset: 0,
+        count: 0,
+        total: 10_000,
+        has_more: true,
+        total_is_capped: true,
+        next_cursor: "cursor-after-50",
+      },
+    }),
+  );
+  try {
+    await expect(
+      listOpenViewRecordHistory({ recordId, departmentId, manages: true }),
+    ).resolves.toEqual([]);
   } finally {
     fetchStub.restore();
   }

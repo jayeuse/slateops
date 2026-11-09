@@ -480,6 +480,7 @@ def test_admin_session_collection_returns_paged_public_person_and_client_metadat
         "offset": 0,
         "count": 1,
         "total": 1,
+        "total_is_capped": False,
         "has_more": False,
     }
     assert response.headers["cache-control"] == "no-store"

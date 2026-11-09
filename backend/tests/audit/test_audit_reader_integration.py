@@ -120,10 +120,20 @@ def test_s4_c3_c4_a_reader_gets_readable_history_and_a_non_reader_an_empty_page(
 
     real = world.get(world.outsider, entity_id=str(world.record.id))
     missing = world.get(world.outsider, entity_id=str(uuid7()))
+    # A readable record with no matching entry: the empty page of the full read path.
+    readable_empty = world.get(world.reader, entity_id=str(world.record.id), entity_type="files")
     assert real.status_code == missing.status_code == 200
-    assert real.json() == missing.json() == {
+    assert real.json() == missing.json() == readable_empty.json() == {
         "items": [],
-        "pagination": {"limit": 25, "offset": 0, "count": 0, "total": 0, "has_more": False},
+        "pagination": {
+            "limit": 25,
+            "offset": 0,
+            "count": 0,
+            "total": 0,
+            "total_is_capped": False,
+            "has_more": False,
+            "next_cursor": None,
+        },
     }
 
 

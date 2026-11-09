@@ -118,7 +118,7 @@ def test_lists_only_my_active_due_cards_on_boards_i_read(
 
     page = _due(db, me, limit=2, offset=2)
     assert page.json()["pagination"] == {
-        "limit": 2, "offset": 2, "count": 2, "total": 6, "has_more": True,
+        "limit": 2, "offset": 2, "count": 2, "total": 6, "total_is_capped": False, "has_more": True,
     }
     assert [item["title"] for item in page.json()["items"]] == [
         "Same day, later rank", "Same day, second board",

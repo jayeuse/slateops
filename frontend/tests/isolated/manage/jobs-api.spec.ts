@@ -7,6 +7,7 @@ import {
   retryManageJob,
 } from "../../../src/components/systems/manage/adapters/jobs-api";
 import { installFetch } from "../platform/fixtures";
+import { cappedWirePagination } from "../../helpers/pagination";
 
 // Jobs trusts a page only when it describes the request it answers, and a
 // retry only when its receipt names the job it retried (a scheduled job) or a
@@ -46,6 +47,7 @@ function pageWire(
     count: number;
     total: number;
     has_more: boolean;
+    total_is_capped: boolean;
   }> = {},
 ) {
   return {
@@ -56,10 +58,38 @@ function pageWire(
       count: items.length,
       total: items.length,
       has_more: false,
+      total_is_capped: false,
       ...pagination,
     },
   };
 }
+
+test("Jobs list accepts a capped total whose rows reach row 10,000", async () => {
+  const items = Array.from({ length: 10 }, (_, index) =>
+    jobWire({
+      id: `00000000-0000-4000-8000-${String(900 + index).padStart(12, "0")}`,
+    }),
+  );
+  const mock = installFetch(() =>
+    Response.json({
+      items,
+      pagination: cappedWirePagination({ limit: 10, count: 10 }),
+    }),
+  );
+  try {
+    const page = await listManageJobs({ offset: 9_990 });
+    expect(page.pagination).toEqual({
+      limit: 10,
+      offset: 9_990,
+      count: 10,
+      total: 10_000,
+      has_more: true,
+      total_is_capped: true,
+    });
+  } finally {
+    mock.restore();
+  }
+});
 
 test("Jobs list asks for server priority order with the default page", async () => {
   const mock = installFetch(() => Response.json(pageWire([jobWire()])));
@@ -170,7 +200,11 @@ const refusedPages: { name: string; body: unknown }[] = [
   },
   {
     name: "a count that differs from the remaining total",
-    body: pageWire([jobWire()], { total: 5, has_more: true }),
+    body: pageWire([jobWire()], {
+      total: 5,
+      has_more: true,
+      total_is_capped: false,
+    }),
   },
   {
     name: "a wrong has_more",

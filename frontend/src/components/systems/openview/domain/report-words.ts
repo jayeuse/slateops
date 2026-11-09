@@ -3,6 +3,7 @@ import {
   type WorkspaceRegion,
 } from "@/lib/date-time-display";
 import type { OpenViewReportRecipe } from "../adapters/reports-api";
+import { listCountText } from "@/lib/list-pagination";
 
 // The words of a module page's Reports view (DC2, DC4, DC11). A report reads
 // as one sentence in three steps: what it lists, when it runs, what you keep.
@@ -76,18 +77,19 @@ export function runsWords(
   return isScheduled(schedule) ? `${cadence} at ${time}` : cadence;
 }
 
-/** "No copies yet", "1 copy", "12 copies". */
-export function copiesWords(total: number): string {
+/** "No copies yet", "1 copy", "1,234 copies", "10,000+ copies". */
+export function copiesWords(total: number, capped = false): string {
   if (total === 0) return "No copies yet";
-  return `${total} ${total === 1 ? "copy" : "copies"}`;
+  return listCountText(total, capped, "copy", "copies");
 }
 
 /** A list row's plain line: "Every Monday · 12 copies". */
 export function reportListLine(
   schedule: ReportScheduleFacts | null | undefined,
   copies: number,
+  capped = false,
 ): string {
-  return `${cadenceWords(schedule)} · ${copiesWords(copies)}`;
+  return `${cadenceWords(schedule)} · ${copiesWords(copies, capped)}`;
 }
 
 /**

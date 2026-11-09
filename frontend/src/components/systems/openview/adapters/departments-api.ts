@@ -25,6 +25,7 @@ const pageSchema = z
         count: z.number().int().min(0),
         total: z.number().int().min(0),
         has_more: z.boolean(),
+        total_is_capped: z.boolean(),
       })
       .strict(),
   })
@@ -60,7 +61,14 @@ export function listOpenViewDepartments(
     `/departments?${query}`,
     pageSchema.transform(({ items, pagination }) => ({
       items,
-      pagination: { ...pagination, hasMore: pagination.has_more },
+      pagination: {
+        limit: pagination.limit,
+        offset: pagination.offset,
+        count: pagination.count,
+        total: pagination.total,
+        hasMore: pagination.has_more,
+        totalIsCapped: pagination.total_is_capped,
+      },
     })),
     { cache: "no-store", signal: options.signal },
   );

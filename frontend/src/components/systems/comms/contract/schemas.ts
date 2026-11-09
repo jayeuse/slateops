@@ -488,6 +488,7 @@ export function pageSchema<Item extends z.ZodType>(item: Item) {
       count: watermark,
       total: watermark,
       has_more: z.boolean(),
+      total_is_capped: z.boolean(),
     }),
   });
 }

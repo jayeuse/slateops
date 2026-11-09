@@ -42,6 +42,7 @@ test("OpenView catalog and department reads leave later pages for explicit loadi
           count: offset === 0 ? 1 : 0,
           total: 101,
           has_more: offset === 0,
+          total_is_capped: false,
         },
       }),
     );
@@ -79,6 +80,7 @@ test("module workspace leaves field and saved-view continuations for the load-mo
           count: 0,
           total: 101,
           has_more: true,
+          total_is_capped: false,
         },
       }),
     );

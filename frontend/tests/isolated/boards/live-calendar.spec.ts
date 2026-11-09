@@ -68,7 +68,14 @@ const visibleOccurrence: BoardEventOccurrencePage["items"][number] = {
 };
 const page: BoardEventOccurrencePage = {
   items: [visibleOccurrence],
-  pagination: { limit: 100, offset: 0, count: 1, total: 1, hasMore: false },
+  pagination: {
+    limit: 100,
+    offset: 0,
+    count: 1,
+    total: 1,
+    hasMore: false,
+    totalIsCapped: false,
+  },
   boardRevision: 1,
   nextOccurrence: null,
 };
@@ -104,7 +111,14 @@ test("calendar appends the next page only while Board revision and occurrence to
   ) => BoardEventOccurrencePage | null;
   const first: BoardEventOccurrencePage = {
     ...page,
-    pagination: { limit: 100, offset: 0, count: 1, total: 2, hasMore: true },
+    pagination: {
+      limit: 100,
+      offset: 0,
+      count: 1,
+      total: 2,
+      hasMore: true,
+      totalIsCapped: false,
+    },
   };
   const nextItem = {
     ...visibleOccurrence,
@@ -114,7 +128,14 @@ test("calendar appends the next page only while Board revision and occurrence to
   const next: BoardEventOccurrencePage = {
     ...page,
     items: [nextItem],
-    pagination: { limit: 100, offset: 1, count: 1, total: 2, hasMore: false },
+    pagination: {
+      limit: 100,
+      offset: 1,
+      count: 1,
+      total: 2,
+      hasMore: false,
+      totalIsCapped: false,
+    },
   };
   const merged = merge(first, next);
   expect(merged?.items.map((item) => item.id)).toEqual([
@@ -127,6 +148,7 @@ test("calendar appends the next page only while Board revision and occurrence to
     count: 2,
     total: 2,
     hasMore: false,
+    totalIsCapped: false,
   });
   expect(merge(first, { ...next, boardRevision: 2 })).toBeNull();
   expect(
@@ -286,7 +308,14 @@ test("archived event list exposes only returned content and gated restore action
   const archived = { ...visibleOccurrence.event, archived: true };
   const archivedPage: BoardEventPage = {
     items: [archived],
-    pagination: { limit: 25, offset: 0, count: 1, total: 1, hasMore: false },
+    pagination: {
+      limit: 25,
+      offset: 0,
+      count: 1,
+      total: 1,
+      hasMore: false,
+      totalIsCapped: false,
+    },
     boardRevision: 1,
   };
   const markup = (allowed: boolean) =>

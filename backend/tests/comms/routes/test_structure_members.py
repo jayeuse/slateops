@@ -192,6 +192,7 @@ def test_membership_grant_role_removal_and_group_floor_are_distinct_atomic_comma
         "offset": 0,
         "count": 2,
         "total": 4,
+        "total_is_capped": False,
         "has_more": True,
     }
     assert last["pagination"] == {
@@ -199,6 +200,7 @@ def test_membership_grant_role_removal_and_group_floor_are_distinct_atomic_comma
         "offset": 2,
         "count": 2,
         "total": 4,
+        "total_is_capped": False,
         "has_more": False,
     }
     _error(admin.get(f"{ROOT}/conversations/{other.conversation}/members"), 404, "comms_not_found")
@@ -258,10 +260,11 @@ def test_channel_members_are_its_readers_with_level_role_paging_and_search(
         "Alpha", "Bravo", "Charlie", "Delta",
     ]
     assert first["pagination"] == {
-        "limit": 2, "offset": 0, "count": 2, "total": 4, "has_more": True,
+        "limit": 2, "offset": 0, "count": 2, "total": 4, "total_is_capped": False, "has_more": True,
     }
     assert rest["pagination"] == {
-        "limit": 2, "offset": 2, "count": 2, "total": 4, "has_more": False,
+        "limit": 2, "offset": 2, "count": 2, "total": 4, "total_is_capped": False,
+        "has_more": False,
     }
     found = _ok(peer.get(path + "/members", params=query | {"search": "char"}))
     assert [row["display_name"] for row in found["items"]] == ["Charlie"]

@@ -764,9 +764,14 @@ test("row times read Today and Yesterday in the organization zone, then a date",
 });
 
 test("Export is blocked with its reason only above 10,000 matching events", () => {
-  expect(auditExportBlockedReason(10_000)).toBeNull();
-  expect(auditExportBlockedReason(0)).toBeNull();
-  expect(auditExportBlockedReason(10_001)).toBe(
-    "Narrow the filters to 10,000 events or fewer to export.",
-  );
+  // Above 10,000 the server sends the capped total 10,000 with the flag.
+  expect(
+    auditExportBlockedReason({ total: 10_000, total_is_capped: false }),
+  ).toBeNull();
+  expect(
+    auditExportBlockedReason({ total: 0, total_is_capped: false }),
+  ).toBeNull();
+  expect(
+    auditExportBlockedReason({ total: 10_000, total_is_capped: true }),
+  ).toBe("Narrow the filters to 10,000 events or fewer to export.");
 });

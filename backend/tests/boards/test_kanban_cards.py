@@ -173,6 +173,7 @@ def test_card_lists_filter_by_stage_assignee_label_due_window_search_and_archive
     assert titles(archived="true") == ["Old task"]
     page = kanban(db, reader).get(root, params={"stage_id": str(todo.id), "limit": 1}).json()
     assert page["pagination"] == {"limit": 1, "offset": 0, "count": 1, "total": 2,
+                                  "total_is_capped": False,
                                   "has_more": True}
 
 

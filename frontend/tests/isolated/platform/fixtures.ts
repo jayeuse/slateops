@@ -80,5 +80,6 @@ export function pagination(
     count,
     total,
     has_more: offset + count < total,
+    total_is_capped: false,
   };
 }

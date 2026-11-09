@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  hasMoreAgreesWithTotal,
+  pageEndsWithinTotal,
+  wirePageCounts,
+} from "@/lib/list-pagination";
 
 export const uuid = z.string().uuid();
 const date = z.iso.date();
@@ -139,15 +144,20 @@ const pagination = z
     count: z.number().int().min(0),
     total: z.number().int().min(0),
     has_more: z.boolean(),
+    total_is_capped: z.boolean(),
   })
   .strict()
   .refine(
-    ({ count, limit, offset, total, has_more }) =>
-      count <= limit &&
-      (count === 0 || offset + count <= total) &&
-      has_more === offset + count < total,
+    (page) =>
+      page.count <= page.limit &&
+      (page.count === 0 || pageEndsWithinTotal(wirePageCounts(page))) &&
+      hasMoreAgreesWithTotal(wirePageCounts(page)),
   )
-  .transform(({ has_more, ...page }) => ({ ...page, hasMore: has_more }));
+  .transform(({ has_more, total_is_capped, ...page }) => ({
+    ...page,
+    hasMore: has_more,
+    totalIsCapped: total_is_capped,
+  }));
 export const eventListWire = z
   .object({
     items: z.array(eventWire),

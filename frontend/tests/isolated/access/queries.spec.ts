@@ -54,6 +54,7 @@ test("a list read keeps the server page and does not follow has_more automatical
         offset,
         total: 2,
         has_more: offset === 0,
+        total_is_capped: false,
       },
     });
   });
@@ -63,7 +64,12 @@ test("a list read keeps the server page and does not follow has_more automatical
     expect(mock.requests).toHaveLength(1);
     expect(users).toMatchObject({
       items: [{ id: user.id }],
-      pagination: { count: 1, total: 2, has_more: true },
+      pagination: {
+        count: 1,
+        total: 2,
+        has_more: true,
+        total_is_capped: false,
+      },
     });
   } finally {
     mock.restore();

@@ -275,6 +275,7 @@ export async function installCommsLiveApi(
       count: 0,
       total: 0,
       has_more: false,
+      total_is_capped: false,
     },
   });
   await own(
@@ -333,6 +334,7 @@ export async function installCommsLiveApi(
             count: items.length,
             total: rows.length,
             has_more: offset + items.length < rows.length,
+            total_is_capped: false,
           },
         },
       });
@@ -983,6 +985,7 @@ export async function installCommsLiveApi(
             count: items.length,
             total: removed.length,
             has_more: offset + items.length < removed.length,
+            total_is_capped: false,
           },
         });
       }
@@ -1122,6 +1125,7 @@ export async function installCommsLiveApi(
                 count: items.length,
                 total: matching.length,
                 has_more: offset + items.length < matching.length,
+                total_is_capped: false,
               },
             },
           });

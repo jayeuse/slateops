@@ -169,6 +169,7 @@ export type Page<T> = {
     count: number;
     total: number;
     has_more: boolean;
+    total_is_capped: boolean;
   };
 };
 /** Client-only metadata; HTTP bodies remain direct resources. */

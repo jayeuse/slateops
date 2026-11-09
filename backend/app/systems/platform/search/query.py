@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.selectable import Subquery
 
-from app.common.listing import ListQuerySpec, PaginationMetadata, build_standard_list_statements
+from app.common.listing import ListQuerySpec, build_standard_list_statements, capped_pagination
 from app.core.base_model import utc_now
 from app.systems.access.identity.eligibility import identity_eligible_clause
 from app.systems.access.policy.checks import module_filter
@@ -355,18 +355,12 @@ def search_content(db: Session, actor: User, params: SearchRequest) -> SearchRes
         params.model_copy(update={"search": None}),
         spec,
     )
-    total = int(db.scalar(count_statement) or 0)
-    items = [
-        SearchItem.model_validate({**dict(row), "kind": params.kind})
-        for row in db.execute(page_statement).mappings()
-    ]
-    return SearchResponse(
-        items=items,
-        pagination=PaginationMetadata(
-            limit=params.limit,
-            offset=params.offset,
-            count=len(items),
-            total=total,
-            has_more=params.offset + len(items) < total,
-        ),
+    counted = int(db.scalar(count_statement) or 0)
+    rows, pagination = capped_pagination(
+        limit=params.limit,
+        offset=params.offset,
+        rows=db.execute(page_statement).mappings().all(),
+        counted=counted,
     )
+    items = [SearchItem.model_validate({**dict(row), "kind": params.kind}) for row in rows]
+    return SearchResponse(items=items, pagination=pagination)

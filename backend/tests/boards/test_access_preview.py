@@ -158,6 +158,7 @@ def test_preview_user_chooser_filters_before_bounded_pagination_and_exposes_no_p
         "offset": 1,
         "count": 2,
         "total": 3,
+        "total_is_capped": False,
         "has_more": False,
     }
     # The chooser label is the display name; a blank one falls back to the username.

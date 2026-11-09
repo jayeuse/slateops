@@ -22,6 +22,7 @@ import type {
   BoardUnlinkedFilePage,
 } from "../adapters/board-files-api";
 import { ErrorReference } from "@/components/ui/error-reference";
+import { listNumberText, listTotalText } from "@/lib/list-pagination";
 
 const control = "min-h-11 xl:min-h-8";
 
@@ -199,8 +200,8 @@ export function BoardUnattachedFiles({
                   </Button>
                   <span className="text-muted-foreground text-sm tabular-nums">
                     {page.items.length
-                      ? `${page.pagination.offset + 1}–${page.pagination.offset + page.items.length} of ${page.pagination.total}`
-                      : `0 of ${page.pagination.total}`}
+                      ? `${listNumberText(page.pagination.offset + 1)}–${listNumberText(page.pagination.offset + page.items.length)} of ${listTotalText(page.pagination.total, page.pagination.totalIsCapped)}`
+                      : `0 of ${listTotalText(page.pagination.total, page.pagination.totalIsCapped)}`}
                   </span>
                   <Button
                     type="button"

@@ -95,6 +95,8 @@ async function activity(
       count: items.length,
       total: rows.length,
       has_more: request.offset + items.length < rows.length,
+      // Every row was read, so the total is exact.
+      total_is_capped: false,
     },
   };
 }

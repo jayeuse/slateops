@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 import app.systems.manage.audit.listeners as audit_listeners
 import app.systems.manage.audit.models as audit_models
+import app.systems.manage.audit.security_events as security_events
 import app.systems.manage.audit.service as audit_service
 from app.core.database.session import AuditSession
 
@@ -82,8 +83,9 @@ def test_committed_security_event_uses_an_independent_audit_session(
     assert callable(writer), "append_committed_security_event is not implemented"
 
     independent_session = Mock()
-    monkeypatch.setattr(audit_service, "AuditSession", Mock(return_value=independent_session))
-    monkeypatch.setattr(audit_service, "get_engine", Mock(return_value=object()))
+    # The writer lives in `security_events`, which looks these names up in its own module.
+    monkeypatch.setattr(security_events, "AuditSession", Mock(return_value=independent_session))
+    monkeypatch.setattr(security_events, "get_engine", Mock(return_value=object()))
     payload = _security_event_payload().model_validate(_payload_values())
 
     writer(payload)

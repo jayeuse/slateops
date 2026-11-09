@@ -232,7 +232,8 @@ class RecordTriggerRun(BaseModel):
         UniqueConstraint(
             "event_id", "trigger_id", name="uq_record_trigger_runs_event_trigger"
         ),
-        Index("ix_record_trigger_runs_created", "created_at", "id"),
+        # The recent-run list reads one organization newest first (K66).
+        Index("ix_record_trigger_runs_org_created", "org_id", "created_at", "id"),
     )
     org_id: Mapped[UUID] = mapped_column(
         ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False

@@ -93,6 +93,7 @@ def test_empty_search_is_an_empty_standard_page_without_database_queries() -> No
             "offset": 20,
             "count": 0,
             "total": 0,
+            "total_is_capped": False,
             "has_more": False,
         },
     }
@@ -150,6 +151,7 @@ def test_record_fts_filters_access_before_counts_and_searches_displayed_titles(
             "offset": 0,
             "count": 1,
             "total": 3,
+            "total_is_capped": False,
             "has_more": True,
         }
         first = result["items"][0]

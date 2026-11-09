@@ -85,6 +85,7 @@ export const page = (items: unknown[]) => ({
     count: items.length,
     total: items.length,
     has_more: false,
+    total_is_capped: false,
   },
 });
 

@@ -105,7 +105,7 @@ def test_admin_reads_every_active_board_in_one_sorted_page(
 
     page = client(db, actor, router).get(ROOT, params={**NOVEMBER, "limit": 1, "offset": 1})
     assert page.json()["pagination"] == {
-        "limit": 1, "offset": 1, "count": 1, "total": 3, "has_more": True,
+        "limit": 1, "offset": 1, "count": 1, "total": 3, "total_is_capped": False, "has_more": True,
     }
     assert page.json()["items"][0]["board"]["id"] == str(first.id)
     searched = client(db, actor, router).get(ROOT, params={**NOVEMBER, "search": "same DAY"})

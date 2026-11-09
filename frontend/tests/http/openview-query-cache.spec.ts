@@ -191,7 +191,12 @@ async function installOpenViewApi(page: Page): Promise<Api> {
           contentType: "application/json",
           body: JSON.stringify({
             ...first,
-            pagination: { ...first.pagination, total: 2, has_more: true },
+            pagination: {
+              ...first.pagination,
+              total: 2,
+              has_more: true,
+              total_is_capped: false,
+            },
           }),
         });
       }

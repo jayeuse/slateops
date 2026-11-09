@@ -840,6 +840,7 @@ export function SecurityView({
                         remoteSessions.items.map((session) => session.user_id),
                       ).size,
                       more: remoteSessions.pagination.has_more,
+                      sessionsCapped: remoteSessions.pagination.total_is_capped,
                     }
                   : null,
               ),

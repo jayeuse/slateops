@@ -33,7 +33,14 @@ function jsonResponse(body: unknown, status = 200): Response {
   return Response.json(body, { status });
 }
 
-const page = { limit: 25, offset: 0, count: 1, total: 1, has_more: false };
+const page = {
+  limit: 25,
+  offset: 0,
+  count: 1,
+  total: 1,
+  has_more: false,
+  total_is_capped: false,
+};
 const activity = {
   id: activityId,
   created_at: "2026-09-23T00:00:00Z",
@@ -161,7 +168,14 @@ test("Board preview user chooser validates and pages only active-label DTOs", as
       listBoardPreviewUsers(boardId, { search: "  Ave  ", sortOrder: "desc" }),
     ).resolves.toEqual({
       items: [{ id: userId, username: "avery", displayName: "Avery Lin" }],
-      pagination: { limit: 25, offset: 0, count: 1, total: 1, hasMore: false },
+      pagination: {
+        limit: 25,
+        offset: 0,
+        count: 1,
+        total: 1,
+        hasMore: false,
+        totalIsCapped: false,
+      },
     });
     expect(fetch.paths).toEqual([
       `/api/boards/${boardId}/preview-users?limit=25&offset=0&sort_by=display_name&sort_order=desc&search=Ave`,
@@ -214,7 +228,14 @@ test("Board Activity uses supported paging and sort but never sends unsupported 
           },
         },
       ],
-      pagination: { limit: 25, offset: 0, count: 2, total: 2, hasMore: false },
+      pagination: {
+        limit: 25,
+        offset: 0,
+        count: 2,
+        total: 2,
+        hasMore: false,
+        totalIsCapped: false,
+      },
     });
     expect(fetch.paths).toEqual([
       `/api/boards/${boardId}/activity?limit=25&offset=0&sort_by=created_at&sort_order=desc`,

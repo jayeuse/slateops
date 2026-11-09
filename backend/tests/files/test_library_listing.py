@@ -120,6 +120,7 @@ def test_library_search_escapes_wildcards_and_sorts_paged_name_and_effective_siz
             "offset": 3,
             "count": 2,
             "total": 6,
+            "total_is_capped": False,
             "has_more": True,
         }
         descending = client.get(

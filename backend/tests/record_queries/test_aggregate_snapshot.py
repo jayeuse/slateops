@@ -333,6 +333,7 @@ def test_snapshot_returns_every_group_and_commits_safe_audit_event(
         "offset": 0,
         "count": 105,
         "total": 105,
+        "total_is_capped": False,
         "has_more": False,
     }
     with Session(snapshot_fixture.engine) as observer:
@@ -376,6 +377,7 @@ def test_snapshot_returns_a_complete_empty_group_result(
             "offset": 0,
             "count": 0,
             "total": 0,
+            "total_is_capped": False,
             "has_more": False,
         },
     }

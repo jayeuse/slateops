@@ -22,7 +22,14 @@ function jsonResponse(body: unknown, status = 200): Response {
   return Response.json(body, { status });
 }
 
-const page = { limit: 25, offset: 0, count: 1, total: 1, has_more: false };
+const page = {
+  limit: 25,
+  offset: 0,
+  count: 1,
+  total: 1,
+  has_more: false,
+  total_is_capped: false,
+};
 const allDayEvent = {
   id: eventId,
   board_id: boardId,
@@ -72,6 +79,7 @@ test("Board event series list uses bounded query and parses the event with its r
       count: 1,
       total: 1,
       hasMore: false,
+      totalIsCapped: false,
     });
     expect(String(mock.requests[0]?.input)).toBe(
       `/api/boards/${boardId}/events?limit=25&offset=0&sort_by=created_at&sort_order=desc&archived=all&search=Plan`,
@@ -191,7 +199,14 @@ test("Board event occurrence window is inclusive, bounded, paged and carries its
           event: eventWithLink,
         },
       ],
-      pagination: { limit: 10, offset: 5, count: 1, total: 6, has_more: false },
+      pagination: {
+        limit: 10,
+        offset: 5,
+        count: 1,
+        total: 6,
+        has_more: false,
+        total_is_capped: false,
+      },
       board_revision: 3,
     }),
   );
@@ -212,7 +227,11 @@ test("Board event occurrence window is inclusive, bounded, paged and carries its
         links: [{ label: "Guide", url: "https://example.org/guide" }],
       },
     });
-    expect(result.pagination).toMatchObject({ total: 6, hasMore: false });
+    expect(result.pagination).toMatchObject({
+      total: 6,
+      hasMore: false,
+      totalIsCapped: false,
+    });
     expect(String(mock.requests[0]?.input)).toBe(
       `/api/boards/${boardId}/events/occurrences?window_start=2026-09-14&window_end=2026-09-20&limit=10&offset=5&search=Budget%25_`,
     );
@@ -231,7 +250,14 @@ test("Board event occurrence page exposes the next occurrence after its window",
   };
   const empty = {
     items: [],
-    pagination: { limit: 100, offset: 0, count: 0, total: 0, has_more: false },
+    pagination: {
+      limit: 100,
+      offset: 0,
+      count: 0,
+      total: 0,
+      has_more: false,
+      total_is_capped: false,
+    },
     board_revision: 3,
   };
   for (const [body, expected] of [

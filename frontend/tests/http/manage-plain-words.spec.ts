@@ -86,6 +86,8 @@ async function mockAudit(page: Page) {
           count: items.length,
           total: items.length,
           has_more: false,
+          total_is_capped: false,
+          next_cursor: null,
         },
       },
     });
@@ -122,6 +124,7 @@ async function mockJobs(page: Page) {
           count: items.length,
           total: items.length,
           has_more: false,
+          total_is_capped: false,
         },
       },
     }),

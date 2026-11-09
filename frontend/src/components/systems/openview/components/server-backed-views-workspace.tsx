@@ -322,6 +322,7 @@ import {
   useOpenViewSelectedFields,
 } from "../hooks/use-openview-catalog";
 import { useErrorText } from "@/lib/use-error-text";
+import { listCountText } from "@/lib/list-pagination";
 
 function DepartmentName({
   departmentId,
@@ -2288,6 +2289,8 @@ export default function ServerBackedViewsWorkspace({
     reportCountQuery.data && !exportAccessDenied
       ? reportCountQuery.data.pagination.total
       : null;
+  const reportCountCapped =
+    reportCountQuery.data?.pagination.totalIsCapped ?? false;
   // The dialog keeps its module and name, so a refused read that hides the
   // catalog does not close it or drop the draft.
   const [reportDialog, setReportDialog] = useState<{
@@ -2354,9 +2357,11 @@ export default function ServerBackedViewsWorkspace({
                 : page.items.map((item) =>
                     item.id === saved.id ? saved : item,
                   ),
-              pagination: created
-                ? { ...page.pagination, total: page.pagination.total + 1 }
-                : page.pagination,
+              // A capped total is a lower bound: it stays (U8).
+              pagination:
+                created && !page.pagination.totalIsCapped
+                  ? { ...page.pagination, total: page.pagination.total + 1 }
+                  : page.pagination,
             }
           : page,
     );
@@ -2465,7 +2470,7 @@ export default function ServerBackedViewsWorkspace({
         ? null
         : reportCount === 0
           ? "no reports yet"
-          : `${reportCount} ${reportCount === 1 ? "report" : "reports"}`
+          : listCountText(reportCount, reportCountCapped, "report", "reports")
       : recordTotal === null
         ? null
         : `${recordTotal} ${recordTotal === 1 ? "record" : "records"}`,

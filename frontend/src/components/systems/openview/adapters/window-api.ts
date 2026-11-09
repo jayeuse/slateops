@@ -98,11 +98,13 @@ const paginationSchema = z
     count: z.number().int().min(0),
     total: z.number().int().min(0),
     has_more: z.boolean(),
+    total_is_capped: z.boolean(),
   })
   .strict()
-  .transform(({ has_more, ...pagination }) => ({
+  .transform(({ has_more, total_is_capped, ...pagination }) => ({
     ...pagination,
     hasMore: has_more,
+    totalIsCapped: total_is_capped,
   }));
 const recordSchema = z
   .object({

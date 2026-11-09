@@ -361,7 +361,14 @@ test("a revoked notification 404 clears old references before a failed first-pag
   const followUp = heldResponse();
   const oldPage = {
     items: [notification("unread")],
-    pagination: { limit: 25, offset: 0, count: 1, total: 1, has_more: false },
+    pagination: {
+      limit: 25,
+      offset: 0,
+      count: 1,
+      total: 1,
+      has_more: false,
+      total_is_capped: false,
+    },
   };
   await notificationRoute(page, async (route) => {
     if (route.request().method() === "POST") {
@@ -475,6 +482,7 @@ test("a revoked notice on a later page reloads the authorized first page", async
           count: items.length,
           total: 26,
           has_more: offset === "0",
+          total_is_capped: false,
         },
       }),
     });
@@ -525,6 +533,7 @@ test("Report notification paging remains bounded to the server page", async ({
           count: items.length,
           total: 26,
           has_more: offset === 0,
+          total_is_capped: false,
         },
       }),
     });
@@ -547,7 +556,15 @@ function noticePage(
   offset: number,
   total: number,
 ) {
-  return pageOf(items, { limit, offset, total });
+  // Like the server, the list counts at most 10,000 notices; above that the
+  // total is 10,000 with the capped flag, and has_more stays exact.
+  return pageOf(items, {
+    limit,
+    offset,
+    total: Math.min(total, 10_000),
+    hasMore: offset + items.length < total,
+    totalIsCapped: total > 10_000,
+  });
 }
 
 async function installTitleSources(page: Page) {
@@ -801,6 +818,26 @@ for (const count of [0, 8, 125]) {
     ).toBeVisible();
   });
 }
+
+test("the notification center shows a capped total as 10,000+ and pages on", async ({
+  page,
+}) => {
+  // D23: notifications stay on offset paging; only their total text changes.
+  await installNotificationJourney(page, 10_001);
+  await page.goto("/platform?section=notifications");
+  const inbox = page.getByRole("region", { name: "Notifications" });
+  await expect(
+    inbox.getByText("10,000+ notifications", { exact: true }),
+  ).toBeVisible();
+  const pages = inbox.getByRole("navigation", { name: "Notification pages" });
+  await expect(
+    pages.getByText("1–25 of 10,000+", { exact: true }),
+  ).toBeVisible();
+  await pages.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(
+    pages.getByText("26–50 of 10,000+", { exact: true }),
+  ).toBeVisible();
+});
 
 // The count rules (negative, fractional, extra field, missing, text) are
 // owned by isolated/platform/notifications-api.spec.ts.

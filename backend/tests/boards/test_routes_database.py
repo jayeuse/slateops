@@ -66,6 +66,7 @@ def test_list_filters_to_visible_boards_before_count_and_pagination(
         "offset": 1,
         "count": 1,
         "total": 2,
+        "total_is_capped": False,
         "has_more": False,
     }
     every = api.get(f"/api/boards?search={tag}&status=all").json()

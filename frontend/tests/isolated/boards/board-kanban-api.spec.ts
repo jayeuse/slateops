@@ -46,6 +46,7 @@ const page = (offset: number, count: number, total: number) => ({
   count,
   total,
   has_more: offset + count < total,
+  total_is_capped: false,
 });
 
 test("the board's cards are read to the end, with each record card's summary for this viewer", async () => {

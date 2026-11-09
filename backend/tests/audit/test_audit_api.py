@@ -52,8 +52,9 @@ def test_audit_listing_filters_pagination_detail_and_bounded_export() -> None:
     database.scalars.side_effect = lambda query: Mock(all=lambda: (
         [membership] if query.column_descriptions[0]["entity"] is Membership else [log, log]
     ))
+    # The page reads one row more than its limit; the mock's two rows are the whole tail.
     params = AuditLogListRequest(
-        limit=1,
+        limit=2,
         offset=2,
         search="users",
         sort_by="request_path",

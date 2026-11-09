@@ -4,9 +4,7 @@ Pages and plan shape only, with parallel workers off (plan rules 9 and 10). The 
 come from the real list service and are replayed in a runtime session.
 """
 
-import os
 from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -14,12 +12,11 @@ from uuid import UUID
 
 import pytest
 from fastapi import HTTPException, Response
-from sqlalchemy import Connection, event, text
+from sqlalchemy import Connection, Engine, event, text
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import NullPool
 from uuid6 import uuid7
 
-from app.common.listing import StandardListRequest
+from app.common.listing import KeysetListRequest, SortOrder
 from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
 from app.systems.access.policy.models import AccessLevel
@@ -35,17 +32,19 @@ from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
 from tests.boards.support import project_board
-from tests.conftest import alembic_heads, create_member, guarded_create_engine
-from tests.database_pool import dispose_process_engines
+from tests.conftest import create_member
 from tests.migrations.audit_partition_support import (
     AuditEngines,
     month_starts,
     partition_name,
+    prepared_plan_pages,
 )
 from tests.migrations.audit_partition_support import (
     audit_engines as audit_engines,
 )
-from tests.operations.migration_support import guarded_migration_environment, run_alembic
+from tests.migrations.audit_partition_support import committed_history as _committed_history
+from tests.migrations.audit_partition_support import plan_nodes as _nodes
+from tests.migrations.audit_partition_support import plan_pages as _pages
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -61,6 +60,8 @@ LINK_ENTRIES = 9_000
 # The department's other entries, which have no link to look for.
 OTHER_ENTRIES = 9_000
 FEW_MONTHS, MANY_MONTHS = 2, 6
+# A deep cursor page reads one more index descent for each leaf at most.
+DEPTH_PAGE_MARGIN = 20
 LINK_TABLES = {"relationship_edges", "records"}
 PARENT_INDEX = {
     "department_id": "ix_audit_logs_department_created_at_id",
@@ -77,6 +78,7 @@ class _Plans:
     small: UUID
     large_admin: UUID
     small_admin: UUID
+    manager: UUID
     actor: UUID
     department: UUID
     request_id: UUID
@@ -129,6 +131,22 @@ def _load_month(connection: Connection, world: dict[str, Any], first_day: str) -
     )
 
 
+def _vacuum_audit_logs(owner: Engine) -> None:
+    """Remove the dead audit entries that earlier tests in the same database left behind.
+
+    Integration tests roll back, and rolled-back or deleted rows stay as dead entries in the
+    audit indexes until a vacuum. The account arm of a small organization's statement reads
+    every `users` entry, dead ones included, and the organization arm reads past the dead
+    entries of earlier fixtures, so the pages that these plan tests bound would depend on
+    the tests that ran before them (61 pages on one CI shard). VACUUM runs outside a
+    transaction, so it uses an autocommit connection; on the partitioned parent it reaches
+    every leaf.
+    """
+
+    with owner.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        connection.execute(text("VACUUM (INDEX_CLEANUP ON) public.audit_logs"))
+
+
 @pytest.fixture
 def plans(audit_engines: AuditEngines) -> Iterator[_Plans]:
     with AuditSession(bind=audit_engines.owner, expire_on_commit=False) as setup:
@@ -146,8 +164,13 @@ def plans(audit_engines: AuditEngines) -> Iterator[_Plans]:
             setup, small_org, UserRole.ADMIN.value,
             email=f"plans-small-{name}@example.test", username=f"plans-small-{name}",
         )
+        # A department manager's list takes the member path: the link check above the leaves.
+        manager, _member = create_member(
+            setup, large_org, UserRole.MEMBER.value,
+            email=f"plans-manager-{name}@example.test", username=f"plans-manager-{name}",
+        )
         setup.commit()
-        large_admin_id, small_admin_id = large_admin.id, small_admin.id
+        large_admin_id, small_admin_id, manager_id = large_admin.id, small_admin.id, manager.id
     world = {
         "large": large,
         "small": small,
@@ -160,13 +183,16 @@ def plans(audit_engines: AuditEngines) -> Iterator[_Plans]:
         for first_day in months:
             _load_month(connection, world, first_day)
         connection.execute(text("ANALYZE public.audit_logs"))
+    _vacuum_audit_logs(audit_engines.owner)
     try:
         yield _Plans(
-            audit_engines, large, small, large_admin_id, small_admin_id, world["actor"],
-            world["department"], world["request_id"], months,
+            audit_engines, large, small, large_admin_id, small_admin_id, manager_id,
+            world["actor"], world["department"], world["request_id"], months,
         )
     finally:
-        ids = {"large": large, "small": small, "users": [large_admin_id, small_admin_id]}
+        ids = {
+            "large": large, "small": small, "users": [large_admin_id, small_admin_id, manager_id],
+        }
         with audit_engines.owner.begin() as connection:
             connection.execute(
                 text("DELETE FROM public.audit_logs WHERE org_id IN (:large, :small)"), ids
@@ -181,7 +207,14 @@ def plans(audit_engines: AuditEngines) -> Iterator[_Plans]:
 
 
 def _captured_list(
-    world: Any, org_id: UUID, reader_id: UUID, **filters: Any
+    world: Any,
+    org_id: UUID,
+    reader_id: UUID,
+    *,
+    order: SortOrder = SortOrder.ASC,
+    workers: bool = False,
+    cursor: str | None = None,
+    **filters: Any,
 ) -> list[dict[str, Any]]:
     """Run the real list, then read the plan of each of its audit statements as the runtime."""
 
@@ -199,32 +232,49 @@ def _captured_list(
         try:
             list_audit_logs(
                 db,
-                StandardListRequest[AuditLogSortField](sort_by=AuditLogSortField.CREATED_AT),
+                KeysetListRequest[AuditLogSortField](
+                    sort_by=AuditLogSortField.CREATED_AT, sort_order=order, cursor=cursor
+                ),
                 reader=reader,
                 **filters,
             )
         finally:
             event.remove(runtime, "before_cursor_execute", capture)
         assert captured
-        cursor = db.connection().connection.cursor()
-        cursor.execute("SET LOCAL max_parallel_workers_per_gather = 0")
+        raw = db.connection().connection.cursor()
+        if not workers:
+            raw.execute("SET LOCAL max_parallel_workers_per_gather = 0")
+        else:
+            # The fixture's leaves are below the parallel size limits; at production volume
+            # they are not, so the plan read lets the planner weigh a parallel plan (K64).
+            raw.execute("SET LOCAL min_parallel_table_scan_size = 0")
+            raw.execute("SET LOCAL min_parallel_index_scan_size = 0")
         plans = []
         for statement, parameters in captured:
-            cursor.execute("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + statement, parameters)
-            plans.append(cursor.fetchone()[0][0]["Plan"])
+            raw.execute("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + statement, parameters)
+            plans.append(raw.fetchone()[0][0]["Plan"])
         db.rollback()
     return plans
 
 
-def _nodes(plan: dict[str, Any]) -> Iterator[dict[str, Any]]:
-    yield plan
-    for child in plan.get("Plans", ()):
-        yield from _nodes(child)
+def _cursor_after(world: Any, org_id: UUID, reader_id: UUID, rows: int, **filters: Any) -> str:
+    """The cursor that the newest-first list gives after its first `rows` rows."""
 
-
-def _pages(plan: dict[str, Any]) -> int:
-    # Buffers count each page visit, warm or cold, so the number does not depend on the cache.
-    return int(plan["Shared Hit Blocks"]) + int(plan["Shared Read Blocks"])
+    with AuditSession(bind=world.engines.runtime) as db:
+        scope_session(db, org_id)
+        result = list_audit_logs(
+            db,
+            KeysetListRequest[AuditLogSortField](
+                sort_by=AuditLogSortField.CREATED_AT, sort_order=SortOrder.DESC,
+                limit=1, offset=rows - 1,
+            ),
+            reader=db.get_one(User, reader_id),
+            **filters,
+        )
+        db.rollback()
+    cursor = getattr(result.pagination, "next_cursor", None)
+    assert isinstance(cursor, str)
+    return cursor
 
 
 def _child_indexes(world: _Plans, parent_index: str) -> dict[str, str]:
@@ -270,6 +320,155 @@ def test_a_small_organization_reads_a_few_pages_beside_a_large_one_k10(plans: _P
         if node["Node Type"] == "Seq Scan" and node.get("Relation Name") in world.leaves
     ]
     assert scans == []
+
+
+# The two arms of the administrator's organization condition, as the leaf index names end.
+ORGANIZATION_ARM, ACCOUNT_ARM = "_org_id_created_at_id_idx", "_entity_type_entity_id_created_at_idx"
+# One b-tree descent for each leaf: the root, at most one internal page, and the leaf pages
+# that hold the organization's few entries (two, or three once earlier fixtures leave dead
+# entries in the same database).
+ORGANIZATION_ARM_PAGES_PER_LEAF = 4
+
+
+def _assert_reads_only_the_two_arms(world: _Plans, plan: dict[str, Any]) -> None:
+    """K64: a small organization's statement reaches the audit leaves only through the two arms.
+
+    No sequential scan of a loaded leaf and no walk of another index, so its cost cannot
+    follow the large organization's heap or an all-organization order; its own arm reads a
+    few index pages. The total-page ceiling, asserted beside this check, bounds the account
+    arm, which reads every `users` audit entry of the database (see `_vacuum_audit_logs`).
+    """
+
+    scans = [
+        (node["Node Type"], node.get("Relation Name"))
+        for node in _nodes(plan)
+        if node["Node Type"] == "Seq Scan"
+        and node.get("Relation Name") in world.leaves
+        and node["Actual Loops"] > 0
+    ]
+    assert scans == []
+    indexes = [
+        node for node in _nodes(plan) if str(node.get("Index Name", "")).startswith("audit_logs_")
+    ]
+    assert all(node["Index Name"].endswith((ORGANIZATION_ARM, ACCOUNT_ARM)) for node in indexes), [
+        node["Index Name"] for node in indexes
+    ]
+    own_arm = sum(_pages(node) for node in indexes if node["Index Name"].endswith(ORGANIZATION_ARM))
+    assert own_arm <= ORGANIZATION_ARM_PAGES_PER_LEAF * len(world.leaves), own_arm
+
+
+@pytest.mark.parametrize("reader", ["admin", "department manager", "small organization"])
+def test_the_first_page_reads_in_index_order_with_no_sort_p1(plans: _Plans, reader: str) -> None:
+    # The page needs no Sort when the sort matches an index: no NULLS LAST on a NOT NULL
+    # column, and the organization condition stated once (contract 2.4, the Harbor shape).
+    world = plans
+    org, user, filters = {
+        "admin": (world.large, world.large_admin, {}),
+        "department manager": (world.large, world.manager, {"department_id": world.department}),
+        "small organization": (world.small, world.small_admin, {}),
+    }[reader]
+
+    # Newest first, as the audit route reads it.
+    *_counts, page = _captured_list(world, org, user, order=SortOrder.DESC, **filters)
+
+    sorts = [node for node in _nodes(page) if "Sort" in node["Node Type"]]
+    if reader != "small organization":
+        assert sorts == []
+        return
+    # The administrator's condition is an OR of two arms, so a small organization's page
+    # sorts its own rows from a BitmapOr (contract 2.2, the partner admin row). It never
+    # reads the large organization: only the two arms' indexes, under the K10 ceiling.
+    leaf_scans = {
+        node["Index Name"]
+        for node in _nodes(page)
+        if "Index Name" in node and str(node.get("Relation Name")).startswith("audit_logs_")
+    }
+    assert all(
+        name.endswith(("_org_id_created_at_id_idx", "_entity_type_entity_id_created_at_idx"))
+        for name in leaf_scans
+    ), leaf_scans
+    assert _pages(page) <= SMALL_ORGANIZATION_PAGE_CEILING, _pages(page)
+    _assert_reads_only_the_two_arms(world, page)
+
+
+def test_the_capped_count_of_a_small_organization_stays_small_with_workers_on_c5(
+    plans: _Plans,
+) -> None:
+    # K64: `LIMIT 10001` lets the planner pick a parallel sequential scan that stops after
+    # 10,001 matches, so its cost follows the heap order. The small organization's rows are
+    # written after the large one's, and parallel workers stay on, as in production.
+    world = plans
+
+    count, _page = _captured_list(world, world.small, world.small_admin, workers=True)
+
+    assert _pages(count) <= SMALL_ORGANIZATION_PAGE_CEILING, _pages(count)
+    _assert_reads_only_the_two_arms(world, count)
+
+
+@pytest.mark.parametrize(
+    ("reader", "rows"),
+    # The department holds 240 entries in the fixture, so its cursor sits after 200.
+    [("admin", 2_500), ("department manager", 200)],
+)
+def test_a_page_after_many_rows_reads_as_few_pages_as_page_1_p2(
+    plans: _Plans, reader: str, rows: int
+) -> None:
+    world = plans
+    user, filters = {
+        "admin": (world.large_admin, {}),
+        "department manager": (world.manager, {"department_id": world.department}),
+    }[reader]
+    cursor = _cursor_after(world, world.large, user, rows, **filters)
+
+    *_counts, first = _captured_list(world, world.large, user, order=SortOrder.DESC, **filters)
+    *_counts, deep = _captured_list(
+        world, world.large, user, order=SortOrder.DESC, cursor=cursor, **filters
+    )
+
+    assert _pages(deep) <= _pages(first) + DEPTH_PAGE_MARGIN, (_pages(first), _pages(deep))
+
+
+@pytest.mark.parametrize("reader", ["admin", "department manager"])
+def test_a_page_statement_run_again_keeps_its_custom_plan_p8(plans: _Plans, reader: str) -> None:
+    # psycopg prepares a statement after five runs; a generic plan would not see the bound
+    # organization or the cursor (K71). After 12 runs PostgreSQL still plans it per value.
+    world = plans
+    user, filters = {
+        "admin": (world.large_admin, {}),
+        "department manager": (world.manager, {"department_id": world.department}),
+    }[reader]
+    cursor = _cursor_after(world, world.large, user, 200, **filters)
+    captured: list[tuple[str, Any]] = []
+
+    def capture(_connection, _cursor, statement, parameters, _context, _many) -> None:
+        if "FROM audit_logs" in statement:
+            captured.append((statement, parameters))
+
+    runtime = world.engines.runtime
+    with AuditSession(bind=runtime) as db:
+        scope_session(db, world.large)
+        event.listen(runtime, "before_cursor_execute", capture)
+        try:
+            list_audit_logs(
+                db,
+                KeysetListRequest[AuditLogSortField](sort_order=SortOrder.DESC, cursor=cursor),
+                reader=db.get_one(User, user),
+                **filters,
+            )
+        finally:
+            event.remove(runtime, "before_cursor_execute", capture)
+        # The count runs first; the page statement is the last one.
+        statement, parameters = captured[-1]
+        generic, generic_pages = prepared_plan_pages(
+            db.connection().connection.cursor(), statement, parameters
+        )
+        db.rollback()
+    *_counts, first = _captured_list(world, world.large, user, order=SortOrder.DESC, **filters)
+
+    # P8: no generic plan, or a generic plan within the P2 ceiling.
+    assert generic == 0 or generic_pages <= _pages(first) + DEPTH_PAGE_MARGIN, (
+        generic, generic_pages, _pages(first),
+    )
 
 
 @pytest.mark.parametrize("name", sorted(PARENT_INDEX))
@@ -324,24 +523,6 @@ class _LinkHistory:
     department: UUID
     edges: list[UUID]
     months: list[str]
-
-
-@contextmanager
-def _committed_history() -> Iterator[AuditEngines]:
-    """Engines for rows that a test commits; they leave with `downgrade base`."""
-
-    environment = guarded_migration_environment()
-    [head] = alembic_heads()
-    dispose_process_engines()
-    owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"], poolclass=NullPool)
-    runtime = guarded_create_engine(os.environ["TEST_DATABASE_URL"], poolclass=NullPool)
-    try:
-        yield AuditEngines(owner, runtime)
-    finally:
-        run_alembic(environment, "downgrade", "base")
-        run_alembic(environment, "upgrade", head)
-        owner.dispose()
-        runtime.dispose()
 
 
 def _create_months(db: Session) -> list[str]:
@@ -410,13 +591,9 @@ def _spread_entries(world: _LinkHistory, month_count: int) -> None:
     """The same audit entries, now over `month_count` months."""
 
     with world.engines.owner.begin() as connection:
-        connection.execute(
-            text(
-                "DELETE FROM public.audit_logs WHERE org_id = :org "
-                "AND entity_type IN ('relationship_edges', 'reports')"
-            ),
-            {"org": world.org},
-        )
+        # The pages count audit leaves, so each spread starts on empty leaves; rows that other
+        # tests deleted would leave dead tuples. The fixture's `downgrade base` removes all.
+        connection.execute(text("TRUNCATE public.audit_logs"))
         connection.execute(
             text(
                 "INSERT INTO public.audit_logs (id, org_id, created_at, action, entity_type, "
@@ -641,3 +818,50 @@ def test_activity_readers_read_their_identities_once_at_any_month_count(
 
     assert pages[FEW_MONTHS] > 0, pages
     assert pages[MANY_MONTHS] <= pages[FEW_MONTHS] * 5 // 4, pages
+
+
+def _link_scans_under_leaves(plan: dict[str, Any], leaves: set[str]) -> list[str]:
+    """Link table scans inside an audit leaf scan, where each month would repeat them."""
+
+    found = []
+    for node in _nodes(plan):
+        if node.get("Relation Name") in leaves:
+            found += [
+                inner["Relation Name"]
+                for inner in _nodes(node)
+                if inner.get("Relation Name") in LINK_TABLES
+            ]
+    return found
+
+
+def test_the_keyset_page_and_count_cost_the_same_at_any_month_count_p4_p5(
+    link_history: _LinkHistory,
+) -> None:
+    # A row comparison does not prune months, so each populated leaf adds one index descent to
+    # the page (contract 2.7). The capped count and the link check stay within a quarter, and
+    # the link check stays above the leaves on both statements (REQ-0006).
+    world = link_history
+    leaves = {partition_name(first_day) for first_day in world.months}
+    pages = {}
+    for month_count in (FEW_MONTHS, MANY_MONTHS):
+        _spread_entries(world, month_count)
+        cursor = _cursor_after(
+            world, world.org, world.manager, 2_500, department_id=world.department
+        )
+        count, page = _captured_list(
+            world, world.org, world.manager, order=SortOrder.DESC, cursor=cursor,
+            department_id=world.department,
+        )
+        assert _link_scans_under_leaves(count, leaves) == []
+        assert _link_scans_under_leaves(page, leaves) == []
+        leaf_pages = sum(
+            _pages(node) for node in _nodes(page) if node.get("Relation Name") in leaves
+        )
+        link_pages = max(_link_pages(count), _link_pages(page))
+        pages[month_count] = (_pages(count), leaf_pages, link_pages)
+
+    (few_count, few_leaves, few_links) = pages[FEW_MONTHS]
+    (many_count, many_leaves, many_links) = pages[MANY_MONTHS]
+    assert many_count <= few_count * 5 // 4, pages
+    assert many_links <= few_links * 5 // 4, pages
+    assert many_leaves <= few_leaves * 5 // 4 + (MANY_MONTHS - FEW_MONTHS), pages

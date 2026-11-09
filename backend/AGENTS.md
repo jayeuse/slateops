@@ -4,7 +4,7 @@ FastAPI application data API: Python 3.12, synchronous SQLAlchemy 2 + Alembic, a
 
 The deployment profile is one full stack per client (micro–medium SMB, on-premise first, cloud second). One installation holds several organizations: shared tables with `org_id`, membership-based authorization in the bound organization, and RLS on `slateops.org_id` as a backstop (decision D01, `docs/plans/supabase-foundation.md`).
 
-Every organization query runs in a bound transaction (`app/core/database/organization_scope.py`); join `memberships` through `bound_membership_join()` or an explicit `org_id`; workers loop `active_organization_ids()` under `worker_organization()`. Exception (K38): the audit seal job and `operations/verify_audit_seals.py` read every `organizations` row, so a chain never stops when an organization changes state. Keep the synchronous stack; do not introduce async SQLAlchemy, keyset pagination, or per-organization schemas without an explicit decision.
+Every organization query runs in a bound transaction (`app/core/database/organization_scope.py`); join `memberships` through `bound_membership_join()` or an explicit `org_id`; workers loop `active_organization_ids()` under `worker_organization()`. Exception (K38): the audit seal job and `operations/verify_audit_seals.py` read every `organizations` row, so a chain never stops when an organization changes state. Keep the synchronous stack; do not introduce async SQLAlchemy, keyset pagination beyond D4 and D1, or per-organization schemas without an explicit decision.
 
 ## Layout
 
@@ -43,8 +43,9 @@ Every organization query runs in a bound transaction (`app/core/database/organiz
 - Users, groups, invitations, purge, the Sandbox, audit detail/export, and security events are administrator-only. Record export (CSV and Excel) needs module `read` (Tier 2 D12).
 - Department managers may list audit entries only for an explicitly selected department where they have department-level `manage`; module-level `manage` is insufficient.
 - A user with department `manage` may also read and replace the members of a group whose live access rows all fall inside departments they manage (`policy/delegation.py`, `EffectiveAccess.manages_all`). Renaming a group or changing its access stays administrator-only.
-- List endpoints use `StandardListRequest`/`StandardListResponse` and `ListQuerySpec`: explicit sort enum, allowlisted columns, default sort, UUID tie-breaker, and offset pagination (never keyset).
-- Exception D4: OpenComms message and reply history use exclusive `seq` keysets (before/after/around); other lists retain offset pagination.
+- List endpoints use `StandardListRequest`/`StandardListResponse` and `ListQuerySpec`: explicit sort enum, allowlisted columns, default sort, UUID tie-breaker, and offset pagination. A shared-helper list counts at most 10,000 rows (`total_is_capped`); Records lists keep their exact count (`exact_total`).
+- Exception D4: OpenComms message and reply history use exclusive `seq` keysets (before/after/around).
+- Exception D1: the audit log (list and record history), the relationship list and the recent trigger runs accept a `cursor` on their default `created_at` order (`KeysetListRequest`, `ListQuerySpec.keyset`, `next_cursor`), beside offset. Notifications stay on offset paging (D23). Other lists retain offset pagination.
 - Keep errors route-local `HTTPException` shapes (for example lifecycle `{"detail":{"code","message"}}` and record validation with `code`, `message`, `errors`, `truncated`); do not add a global envelope.
 - Departments, modules, and fields expose only `GET` routes; the Sandbox publish is the only way to change them. Hierarchical close/reopen/purge belongs to lifecycle, never CRUD.
 

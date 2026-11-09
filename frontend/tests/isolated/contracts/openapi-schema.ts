@@ -9,7 +9,12 @@ export type Json =
   null | boolean | number | string | Json[] | { [key: string]: Json };
 export type JsonObject = { [key: string]: Json };
 export type Schema = JsonObject;
-export type ResponseMode = "values" | "nulls";
+/**
+ * `capped` sends the `values` response with every capped-total flag set to
+ * true: above 10,000 rows a list sends `total_is_capped` (trigger runs:
+ * `totalIsCapped`), and each adapter must still accept the page.
+ */
+export type ResponseMode = "values" | "nulls" | "capped";
 
 export const REFRESH =
   "cd backend && uv run python -m tests.contracts.export_openapi";

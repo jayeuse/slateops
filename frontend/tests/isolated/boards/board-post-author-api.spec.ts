@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { ApiContractError, ApiError } from "../../../src/lib/api";
 import { listBoardPostAuthors } from "../../../src/components/systems/boards/adapters/board-post-author-api";
-import { pageOf } from "../../helpers/pagination";
+import { cappedWirePagination, pageOf } from "../../helpers/pagination";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const firstId = "00000000-0000-4000-8000-000000000002";
@@ -34,6 +34,35 @@ function installFetch(responder: () => Response) {
   };
 }
 
+test("author search accepts a capped total whose rows reach row 10,000", async () => {
+  const items = Array.from({ length: 10 }, (_, index) => ({
+    id: `00000000-0000-4000-8000-${String(900 + index).padStart(12, "0")}`,
+    label: `Author ${index}`,
+  }));
+  const mock = installFetch(() =>
+    Response.json({
+      items,
+      pagination: cappedWirePagination({ limit: 25, count: 10 }),
+    }),
+  );
+  try {
+    const page = await listBoardPostAuthors(boardId, {
+      limit: 25,
+      offset: 9_990,
+    });
+    expect(page.pagination).toEqual({
+      limit: 25,
+      offset: 9_990,
+      count: 10,
+      total: 10_000,
+      hasMore: true,
+      totalIsCapped: true,
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
 test("author search reads only the requested Board page and preserves server labels", async () => {
   const mock = installFetch(() =>
     Response.json(
@@ -63,6 +92,7 @@ test("author search reads only the requested Board page and preserves server lab
       count: 2,
       total: 60,
       hasMore: true,
+      totalIsCapped: false,
     });
     expect(mock.paths).toEqual([
       `/api/boards/${boardId}/post-authors?limit=25&offset=25&search=Avery`,
@@ -125,10 +155,38 @@ test("author choices reject fabricated, duplicate, and oversized data without le
 
 test("author paging rejects a mismatched offset and inconsistent server counts", async () => {
   for (const pagination of [
-    { limit: 25, offset: 0, count: 1, total: 1, has_more: false },
-    { limit: 25, offset: 25, count: 2, total: 60, has_more: true },
-    { limit: 25, offset: 25, count: 1, total: 60, has_more: false },
-    { limit: 25, offset: 25, count: 1, total: 25, has_more: false },
+    {
+      limit: 25,
+      offset: 0,
+      count: 1,
+      total: 1,
+      has_more: false,
+      total_is_capped: false,
+    },
+    {
+      limit: 25,
+      offset: 25,
+      count: 2,
+      total: 60,
+      has_more: true,
+      total_is_capped: false,
+    },
+    {
+      limit: 25,
+      offset: 25,
+      count: 1,
+      total: 60,
+      has_more: false,
+      total_is_capped: false,
+    },
+    {
+      limit: 25,
+      offset: 25,
+      count: 1,
+      total: 25,
+      has_more: false,
+      total_is_capped: false,
+    },
   ]) {
     const mock = installFetch(() =>
       Response.json({ items: [{ id: firstId, label: "Avery" }], pagination }),

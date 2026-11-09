@@ -21,6 +21,7 @@ import {
   tableCardGaps,
   toolbarLines,
 } from "./helpers/layout";
+import { keysetStart, testCursor } from "../helpers/pagination";
 
 // Who sees which Manage section, the section header, and the still page from
 // 1280px. The navigation rule itself is owned by the isolated
@@ -84,17 +85,22 @@ async function mockAudit(page: Page, count = 24) {
         },
       });
     const limit = Number(url.searchParams.get("limit") ?? "10");
-    const offset = Number(url.searchParams.get("offset") ?? "0");
+    const { offset, cursorPage } = keysetStart(url.searchParams);
     const page = items.slice(offset, offset + limit);
     return route.fulfill({
       json: {
         items: page,
         pagination: {
           limit,
-          offset,
+          offset: cursorPage ? 0 : offset,
           count: page.length,
           total: items.length,
           has_more: offset + limit < items.length,
+          total_is_capped: false,
+          next_cursor:
+            offset + limit < items.length
+              ? testCursor(offset + page.length)
+              : null,
         },
       },
     });
@@ -140,6 +146,7 @@ async function mockJobs(page: Page, rows: readonly JobRow[] = reportRows) {
           count: page.length,
           total: items.length,
           has_more: offset + limit < items.length,
+          total_is_capped: false,
         },
       },
     });

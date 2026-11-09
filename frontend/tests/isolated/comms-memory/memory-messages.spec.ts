@@ -768,8 +768,18 @@ test("search filters before paging, is stable on ties, and drops revoked or dele
     expect(
       new Set([...a.items, ...b.items].map((hit) => hit.message_id)),
     ).toEqual(new Set([first.id, second.id]));
-    expect(a.pagination).toMatchObject({ total: 2, count: 1, has_more: true });
-    expect(b.pagination).toMatchObject({ total: 2, count: 1, has_more: false });
+    expect(a.pagination).toMatchObject({
+      total: 2,
+      count: 1,
+      has_more: true,
+      total_is_capped: false,
+    });
+    expect(b.pagination).toMatchObject({
+      total: 2,
+      count: 1,
+      has_more: false,
+      total_is_capped: false,
+    });
     expect(await f.as().search(query)).toEqual(a);
     const hits = await f.as().search({ q: "needle", on: "2026-10-19" });
     expect(hits.items.map((hit) => hit.message_id).sort()).toEqual([

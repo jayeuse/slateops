@@ -92,8 +92,9 @@ def _snapshot(body: Any, query: Any, step: str) -> AggregateSnapshotResponse:
         page, items = parsed.pagination, parsed.items
         raw_page = body["pagination"]
         if (
-            set(raw_page) != {"limit", "offset", "count", "total", "has_more"}
+            set(raw_page) != {"limit", "offset", "count", "total", "total_is_capped", "has_more"}
             or any(type(raw_page[key]) is not int for key in ("limit", "offset", "count", "total"))
+            or raw_page["total_is_capped"] is not False
             or raw_page["has_more"] is not False
             or page.offset != 0
             or page.count != len(items)

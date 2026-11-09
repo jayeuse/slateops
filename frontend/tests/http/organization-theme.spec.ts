@@ -537,6 +537,8 @@ test("Organization accepted Manage tab transition suspends the preview and retur
           count: 0,
           total: 0,
           has_more: false,
+          total_is_capped: false,
+          next_cursor: null,
         },
       },
     });
@@ -631,6 +633,7 @@ test("Organization keeps a trusted background role refresh interactive and a ret
       count: items.length,
       total: items.length,
       has_more: false,
+      total_is_capped: false,
     },
   });
   await page.route(
@@ -696,6 +699,7 @@ test("Organization keeps a trusted background role refresh interactive and a ret
           count: 0,
           total: 0,
           has_more: false,
+          total_is_capped: false,
         },
       },
     });

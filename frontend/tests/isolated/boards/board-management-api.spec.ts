@@ -53,6 +53,7 @@ test("Board collection sends bounded filters and returns a validated page", asyn
         count: 1,
         total: 25,
         has_more: true,
+        total_is_capped: false,
       },
     }),
   );
@@ -79,6 +80,7 @@ test("Board collection sends bounded filters and returns a validated page", asyn
       count: 1,
       total: 25,
       hasMore: true,
+      totalIsCapped: false,
     });
     const requestUrl = new URL(
       String(mock.requests[0]?.input),
@@ -232,7 +234,14 @@ test("Board lifecycle rejects private DTO fields and redacts conflict details", 
   const privateList = installFetch(() =>
     jsonResponse({
       items: [{ ...boardResponse(), owner_id: departmentId }],
-      pagination: { limit: 25, offset: 0, count: 1, total: 1, has_more: false },
+      pagination: {
+        limit: 25,
+        offset: 0,
+        count: 1,
+        total: 1,
+        has_more: false,
+        total_is_capped: false,
+      },
     }),
   );
   try {

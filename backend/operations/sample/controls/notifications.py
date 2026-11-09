@@ -205,13 +205,16 @@ class _Run:
             )
             rows = validate_platform_page(body, PAGE_SIZE, step, offset=offset)
             total = body["pagination"]["total"]
+            # Above 10,000 notices the total is a lower bound; `has_more` ends the listing.
+            capped = body["pagination"].get("total_is_capped") is True
             if expected_total is None and total > PAGE_CEILING * PAGE_SIZE:
                 _fail("Notification listing exceeded the bounded page budget", step)
-            if expected_total is not None and total != expected_total:
+            if expected_total is not None and not capped and total != expected_total:
                 _fail("Notification total changed during bounded paging", step)
             expected_total = total
             output.extend(rows)
-            if len(output) == total:
+            done = not body["pagination"]["has_more"] if capped else len(output) == total
+            if done:
                 self.pages[step] = page_number + 1
                 return _validate_rows(output, self.dataset, self.context, actor, step)
             if not rows:

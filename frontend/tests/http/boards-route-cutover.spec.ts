@@ -1316,6 +1316,7 @@ test("an author links a Record using its off-page title field without crawling t
             count: 100,
             total: 101,
             has_more: true,
+            total_is_capped: false,
           },
         },
       });

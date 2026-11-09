@@ -137,7 +137,10 @@ export function ReportDetail({
                 ].slice(0, page.pagination.limit),
                 pagination: {
                   ...page.pagination,
-                  total: page.pagination.total + 1,
+                  // A capped total is a lower bound: it stays (U8).
+                  total: page.pagination.totalIsCapped
+                    ? page.pagination.total
+                    : page.pagination.total + 1,
                 },
               }
             : page,
@@ -167,6 +170,7 @@ export function ReportDetail({
       : savedSchedule.localTime
     : "";
   const total = copies.data?.pagination.total ?? 0;
+  const totalIsCapped = copies.data?.pagination.totalIsCapped ?? false;
   const latest = copies.data?.items[0];
   const recipe = report.recipe;
   const canChange = canManage && !archived;
@@ -216,8 +220,8 @@ export function ReportDetail({
       detail: archived
         ? "Kept while archived"
         : latest
-          ? `${copiesWords(total)} · latest ${shortDate(latest.createdAt, region)}`
-          : copiesWords(total),
+          ? `${copiesWords(total, totalIsCapped)} · latest ${shortDate(latest.createdAt, region)}`
+          : copiesWords(total, totalIsCapped),
     },
   ] as const;
 

@@ -99,6 +99,7 @@ test("My calendar reads the window across boards and pages to completion", async
         count: page.length,
         total: 101,
         has_more: offset + page.length < 101,
+        total_is_capped: false,
       },
     });
   });
@@ -148,6 +149,7 @@ test("an occurrence whose board is not its event's board is refused", async () =
         count: 1,
         total: 1,
         has_more: false,
+        total_is_capped: false,
       },
     }),
   );
@@ -204,6 +206,7 @@ test("My cards · Due reads the person's cards in the window, page by page, with
         count: page.length,
         total: 101,
         has_more: offset + page.length < 101,
+        total_is_capped: false,
       },
     });
   });

@@ -134,10 +134,22 @@ describeContracts("Records and relationships", [
   {
     name: "listOpenViewRecordLinks",
     run: () => listOpenViewRecordLinks(recordId),
+    // Keyset list: on the default order a cursor comes exactly with has_more.
+    responses: {
+      "GET /api/relationships": {
+        pagination: { has_more: true, next_cursor: "c-1" },
+      },
+    },
   },
   {
     name: "listOpenViewFieldLinks",
     run: () => listOpenViewFieldLinks(fieldId, { limit: 25, offset: 0 }),
+    // Keyset list: on the default order a cursor comes exactly with has_more.
+    responses: {
+      "GET /api/relationships": {
+        pagination: { has_more: true, next_cursor: "c-1" },
+      },
+    },
   },
   {
     name: "linkOpenViewRecords",
@@ -169,5 +181,11 @@ describeContracts("Records and relationships", [
     name: "listOpenViewRecordHistory",
     run: () =>
       listOpenViewRecordHistory({ recordId, departmentId, manages: true }),
+    // Keyset list: on the default order a cursor comes exactly with has_more.
+    responses: {
+      "GET /api/audit-logs": {
+        pagination: { has_more: true, next_cursor: "c-1" },
+      },
+    },
   },
 ]);

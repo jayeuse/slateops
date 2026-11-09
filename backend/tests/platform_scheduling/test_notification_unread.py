@@ -106,6 +106,7 @@ def test_unread_list_count_and_read_all_agree_and_cover_more_than_one_page(
         "offset": 1,
         "count": 1,
         "total": 107,
+        "total_is_capped": False,
         "has_more": True,
     }
     assert all(item["status"] == "unread" for item in page.json()["items"])

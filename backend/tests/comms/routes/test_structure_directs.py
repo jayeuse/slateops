@@ -144,6 +144,7 @@ def test_blocks_filter_actor_and_org_before_offset_pages(structure_routes):
         "offset": 0,
         "count": 1,
         "total": 2,
+        "total_is_capped": False,
         "has_more": True,
     }
     assert last["pagination"] == {
@@ -151,6 +152,7 @@ def test_blocks_filter_actor_and_org_before_offset_pages(structure_routes):
         "offset": 1,
         "count": 1,
         "total": 2,
+        "total_is_capped": False,
         "has_more": False,
     }
     assert [r["blocked_user_id"] for r in _ok(peer.get(ROOT + "/direct-blocks"))["items"]] == [

@@ -410,6 +410,7 @@ export async function installMyCalendarApi(
             count: page.length,
             total: items.length,
             has_more: offset + page.length < items.length,
+            total_is_capped: false,
           }),
           boards: boards.map((board) => ({
             board_id: board.id,

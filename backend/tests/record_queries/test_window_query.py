@@ -107,6 +107,7 @@ def test_window_query_route_serializes_a_projected_page(query_db: Session) -> No
         "offset": 0,
         "count": 1,
         "total": 1,
+        "total_is_capped": False,
         "has_more": False,
     }
     assert body["timezone"] is None

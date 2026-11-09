@@ -254,7 +254,8 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
       replaceGroupParam(null);
   }, [selectedRead.error]);
   useEffect(() => {
-    if (!groups.data) return;
+    // A capped total is a lower bound and moves no page (U8).
+    if (!groups.data || groups.data.pagination.total_is_capped) return;
     const lastPage = Math.max(
       0,
       Math.ceil(groups.data.pagination.total / pageSize) - 1,
@@ -548,6 +549,8 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
               ariaLabel="Group pages"
               className="shrink-0 px-3 py-2 lg:py-2"
               total={page.total}
+              totalIsCapped={groups.data?.pagination.total_is_capped}
+              hasMore={groups.data?.pagination.has_more}
               offset={page.offset}
               rowCount={page.items.length}
               pageSize={pageSize}

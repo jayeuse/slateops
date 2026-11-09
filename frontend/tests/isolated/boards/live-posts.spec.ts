@@ -47,7 +47,14 @@ const page: BoardPostPage = {
       updatedAt: publishedAt,
     },
   ],
-  pagination: { limit: 25, offset: 0, count: 1, total: 1, hasMore: false },
+  pagination: {
+    limit: 25,
+    offset: 0,
+    count: 1,
+    total: 1,
+    hasMore: false,
+    totalIsCapped: false,
+  },
   boardRevision: 4,
 };
 
@@ -122,6 +129,7 @@ test("published search sends one applied title/body query while preserving serve
         count: 1,
         total: 7,
         has_more: true,
+        total_is_capped: false,
       }),
     }),
   );
@@ -131,6 +139,7 @@ test("published search sends one applied title/body query while preserving serve
       count: 1,
       total: 7,
       hasMore: true,
+      totalIsCapped: false,
     });
     expect(mock.paths[0]).toContain("search=safety");
     expect(mock.paths).toHaveLength(1);
@@ -164,6 +173,7 @@ test("published sort and page size reach the server before offset paging", async
         count: 0,
         total: 12,
         has_more: true,
+        total_is_capped: false,
       },
     }),
   );
@@ -208,6 +218,7 @@ test("published sort and page size reach the server before offset paging", async
         offset: 10,
         total: 12,
         hasMore: true,
+        totalIsCapped: false,
       });
       if (sort.selection === "title")
         expect(postFeedKey(boardId, 10, authorId, "", null, options)).not.toBe(
@@ -487,6 +498,7 @@ test("scheduled and draft lists split one complete draft read before paging", as
         count: items.length,
         total: all.length,
         has_more: offset + items.length < all.length,
+        total_is_capped: false,
       }),
       board_revision: 4,
     });
@@ -503,6 +515,7 @@ test("scheduled and draft lists split one complete draft read before paging", as
       count: 19,
       total: 44,
       hasMore: false,
+      totalIsCapped: false,
     });
     expect(scheduled.items[0]?.title).toBe("scheduled 75");
     expect(scheduled.items.every((post) => post.status === "scheduled")).toBe(

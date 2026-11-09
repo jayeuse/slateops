@@ -315,7 +315,14 @@ test("job pages preserve requested offsets and refuse mixed organization or inco
   ]) {
     const valid = {
       items: [row.item],
-      pagination: { limit: 1, offset: 2, count: 1, total: 3, has_more: false },
+      pagination: {
+        limit: 1,
+        offset: 2,
+        count: 1,
+        total: 3,
+        has_more: false,
+        total_is_capped: false,
+      },
     };
     let wire: unknown = valid;
     const mock = installFetch(() =>

@@ -70,6 +70,7 @@ const backupsSchema = z.object({
     count: z.number().int().nonnegative(),
     total: z.number().int().nonnegative(),
     has_more: z.boolean(),
+    total_is_capped: z.boolean(),
   }),
 });
 const versionSchema = z.object({

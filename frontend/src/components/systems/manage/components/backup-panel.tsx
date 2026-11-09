@@ -121,6 +121,8 @@ export function BackupPanel({
   useEffect(() => {
     if (
       !page ||
+      // A capped total is a lower bound and moves no page (U8).
+      page.pagination.total_is_capped ||
       page.pagination.offset !== request.offset ||
       page.pagination.limit !== request.limit ||
       request.offset === 0 ||
@@ -286,6 +288,8 @@ export function BackupPanel({
           phone={phone}
           runs={runs}
           total={total}
+          totalIsCapped={page?.pagination.total_is_capped}
+          hasMore={page?.pagination.has_more}
           body={body}
           loading={maintenance.history.isPending && !failure}
           failure={failure}

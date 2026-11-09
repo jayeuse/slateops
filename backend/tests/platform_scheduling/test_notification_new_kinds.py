@@ -116,7 +116,14 @@ def test_invalid_current_source_or_archived_notice_is_hidden_before_all_read_bou
     client = notification_client(db, owner)
     assert client.get("/api/notifications?limit=1&status=unread").json() == {
         "items": [],
-        "pagination": {"limit": 1, "offset": 0, "count": 0, "total": 0, "has_more": False},
+        "pagination": {
+            "limit": 1,
+            "offset": 0,
+            "count": 0,
+            "total": 0,
+            "total_is_capped": False,
+            "has_more": False,
+        },
     }
     assert_notice_hidden(client, notice.id)
     db.refresh(notice)

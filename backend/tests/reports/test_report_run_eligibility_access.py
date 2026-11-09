@@ -366,7 +366,8 @@ def test_retained_run_reads_require_captured_module_read(
         assert denied.status_code == 200
         assert denied.json()["items"] == []
         assert denied.json()["pagination"] == {
-            "limit": 1, "offset": 0, "count": 0, "total": 0, "has_more": False
+            "limit": 1, "offset": 0, "count": 0, "total": 0, "total_is_capped": False,
+            "has_more": False,
         }
     else:
         assert denied.status_code == 404

@@ -9,6 +9,7 @@ import {
   pagination,
   timestamp,
 } from "./fixtures";
+import { cappedWirePagination } from "../../helpers/pagination";
 
 // A Library page that breaks the department contract is refused whole, so the
 // Files screen shows its invalid-response alert and never renders a foreign
@@ -170,7 +171,12 @@ const refused: Row[] = [
     name: "has_more on an empty page",
     body: {
       items: [],
-      pagination: { ...pagination(0), total: 1, has_more: true },
+      pagination: {
+        ...pagination(0),
+        total: 1,
+        has_more: true,
+        total_is_capped: false,
+      },
       creator_labels: {},
       storage_used_bytes: 24,
     },
@@ -245,6 +251,38 @@ for (const row of refused)
     }
   });
 
+test("library file page accepts a capped total whose rows reach row 10,000", async () => {
+  const items = Array.from({ length: 10 }, (_, index) =>
+    libraryFileWire({
+      id: `00000000-0000-4000-8000-${String(900 + index).padStart(12, "0")}`,
+    }),
+  );
+  const mock = installFetch(() =>
+    Response.json({
+      items,
+      pagination: cappedWirePagination({ limit: 10, count: 10 }),
+      creator_labels: labels,
+      storage_used_bytes: 240,
+    }),
+  );
+  try {
+    const page = await listLibraryFiles(ids.department, {
+      limit: 10,
+      offset: 9_990,
+    });
+    expect(page.pagination).toEqual({
+      limit: 10,
+      offset: 9_990,
+      count: 10,
+      total: 10_000,
+      hasMore: true,
+      totalIsCapped: true,
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
 test("library file page reads one department's documents without a cache", async () => {
   const mock = installFetch(() =>
     Response.json({
@@ -286,7 +324,14 @@ test("library file page reads one department's documents without a cache", async
           isDeleted: false,
         },
       ],
-      pagination: { limit: 25, offset: 0, count: 2, total: 2, hasMore: false },
+      pagination: {
+        limit: 25,
+        offset: 0,
+        count: 2,
+        total: 2,
+        hasMore: false,
+        totalIsCapped: false,
+      },
       creatorLabels: labels,
       storageUsedBytes: 72,
     });
@@ -335,6 +380,7 @@ test("library file page accepts an empty terminal page after concurrent removal"
         count: 0,
         total: 20,
         has_more: false,
+        total_is_capped: false,
       },
       creator_labels: {},
       storage_used_bytes: 0,
@@ -349,6 +395,7 @@ test("library file page accepts an empty terminal page after concurrent removal"
       count: 0,
       total: 20,
       hasMore: false,
+      totalIsCapped: false,
     });
   } finally {
     mock.restore();
