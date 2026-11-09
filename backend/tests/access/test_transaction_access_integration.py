@@ -2,6 +2,9 @@
 
 A3: the real writers change each input in one transaction, and the next resolution sees it.
 A7: each lock or fresh read drops the stored resolution, with the reload backup removed.
+The backup itself: a reload of a ``User`` or ``Membership`` row drops it.
+The named content locks (Reports, Dashboards, the Report schedule) resolve again after the
+lock, with the reload backup removed.
 A8: a rebound transaction never answers from another organization's resolution.
 A9: ``Session.close()`` leaves no resolution behind.
 """
@@ -12,13 +15,17 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from sqlalchemy import event, text
+from fastapi import HTTPException
+from sqlalchemy import event, select, text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 import app.systems.access.policy.delegation as delegation
 import app.systems.access.policy.service as policy_service
 import app.systems.access.users.account_operations as account_operations
+import app.systems.openview.dashboards.router as dashboards_router
+import app.systems.openview.reports.router as reports_router
+import app.systems.openview.reports.schedule_router as schedule_router
 from app.common.dependencies.auth import require_fresh_exact_admin
 from app.core.database.organization_scope import scope_session
 from app.systems.access.identity.models import IdentitySession
@@ -31,6 +38,9 @@ from app.systems.access.users.membership import organization_membership
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.access.users.schemas import UserUpdate
 from app.systems.comms.access import fresh_membership
+from app.systems.openview.dashboards.models import Dashboard
+from app.systems.openview.reports.models import Report
+from app.systems.platform.files.access import fresh_user
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.publications.executor import _apply_modules
 from tests.conftest import create_member, create_organization
@@ -184,6 +194,8 @@ def _lock_manager(db: Session, user: User) -> object:
         pytest.param(
             lambda db, user: require_fresh_exact_admin(db, user.id), id="require_fresh_exact_admin"
         ),
+        # The file download recheck, the notification query and the scheduled post rely on it.
+        pytest.param(lambda db, user: fresh_user(db, user.id), id="files_fresh_user"),
     ],
 )
 def test_each_lock_and_fresh_read_drops_the_stored_resolution(
@@ -204,6 +216,77 @@ def test_each_lock_and_fresh_read_drops_the_stored_resolution(
     drop(db, member)
 
     assert effective_levels(db, member).unrestricted is True
+
+
+@pytest.mark.parametrize("model", [User, Membership], ids=["user", "membership"])
+def test_a_reload_of_the_person_drops_the_stored_resolution(
+    integration_db: Session, model: type[User] | type[Membership]
+) -> None:
+    db = integration_db
+    member = add_user(db)
+    sales = add_department(db)
+    make_group_access(db, [member], sales, level=WRITE)
+    assert effective_levels(db, member).unrestricted is False
+    db.connection().execute(
+        text("UPDATE public.memberships SET role = 'admin' WHERE user_id = :user_id"),
+        {"user_id": member.id},
+    )
+    assert effective_levels(db, member).unrestricted is False
+    person = model.id if model is User else Membership.user_id
+
+    # A reload with no helper around it: only the load and refresh events can drop it.
+    db.scalars(
+        select(model).where(person == member.id).execution_options(populate_existing=True)
+    ).all()
+
+    assert effective_levels(db, member).unrestricted is True
+
+
+def _locked_report(db: Session, user: User, report: Report, _dashboard: Dashboard) -> object:
+    return reports_router._report(db, user, report.id, lock=True, manage=True)
+
+
+def _locked_dashboard(db: Session, user: User, _report: Report, dashboard: Dashboard) -> object:
+    return dashboards_router._dashboard(db, user, dashboard.id, lock=True, manage=True)
+
+
+def _schedule_manager(db: Session, user: User, report: Report, _dashboard: Dashboard) -> object:
+    return schedule_router._fresh_manager(db, user.id, report)
+
+
+@pytest.mark.parametrize(
+    "locked_check",
+    [
+        pytest.param(_locked_report, id="reports_report_lock"),
+        pytest.param(_locked_dashboard, id="dashboards_dashboard_lock"),
+        pytest.param(_schedule_manager, id="reports_schedule_fresh_manager"),
+    ],
+)
+def test_each_named_content_lock_checks_the_access_again_after_the_lock(
+    integration_db: Session,
+    without_reload_backup: None,
+    locked_check: Callable[[Session, User, Report, Dashboard], object],
+) -> None:
+    db = integration_db
+    manager = add_user(db)
+    sales = add_department(db)
+    ledger = add_module(db, sales)
+    grant = make_group_access(db, [manager], sales, level=MANAGE)
+    report = Report(org_id=sales.org_id, module_id=ledger.id, name="Lock check", recipe={})
+    dashboard = Dashboard(org_id=sales.org_id, department_id=sales.id, name="Lock check")
+    db.add_all([report, dashboard])
+    db.flush()
+    assert effective_levels(db, manager).department_level(sales.id) is MANAGE
+    # A downgrade that committed before the lock, unseen by the stored resolution. The
+    # manager still reads the department, so the row stays visible and only manage fails.
+    db.connection().execute(
+        text("UPDATE public.group_access SET level = 'read' WHERE id = :id"), {"id": grant.id}
+    )
+
+    with pytest.raises(HTTPException) as refusal:
+        locked_check(db, manager, report, dashboard)
+
+    assert refusal.value.status_code == 403
 
 
 def test_the_fresh_module_check_overwrites_an_earlier_resolution(

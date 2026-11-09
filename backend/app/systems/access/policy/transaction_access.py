@@ -12,7 +12,9 @@ Nothing outlives that transaction:
 - A lock or a fresh read of a person's authority is a change too: :func:`forget_access`
   drops that person's entry and stored membership, so the next check reads both again.
   A check that must see the state after a lock calls it, or passes a fresh membership.
-  As a backup only, every load or reload of a ``User`` or ``Membership`` row drops it.
+  Every load or reload of a ``User`` or ``Membership`` row drops it too. That is the only
+  drop for callers that reload the person with ``populate_existing`` and do not call
+  :func:`forget_access` (the notification query, the scheduled post's author check).
 
 This module never imports the membership or scope modules, so both can call it.
 """
