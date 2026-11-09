@@ -8,6 +8,7 @@ from uuid import UUID
 _ENTITY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 RESYNC_ENTITY = "resync"
 PRIVATE_NOTIFICATION_ENTITY = "in_app_notifications"
+WORK_ENTITIES = frozenset({"work_scheduled", "work_triggers"})
 _PRIVATE_INVALIDATION_ENTITIES = frozenset(
     {
         "reports",
