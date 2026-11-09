@@ -322,14 +322,12 @@ class PostgresInvalidationListener:
                         self._connection = connection
                     connection.execute(f"LISTEN {CHANNEL}")
                     # Work committed while no listener heard it: wake every worker too.
-                    if self._work_signals is not None:
-                        self._work_signals.wake_all()
+                    self._wake(None)
                     self._hub.publish_resync_from_listener()
                     retry_seconds = _CONNECT_RETRY_SECONDS
                     while not self._stop.is_set():
                         for notification in connection.notifies(timeout=0.5, stop_after=1):
-                            if self._work_signals is not None:
-                                self._work_signals.notify(notification.payload)
+                            self._wake(notification.payload)
                             self._hub.publish_from_listener(notification.payload)
             except psycopg.Error:
                 log_event(
@@ -344,6 +342,27 @@ class PostgresInvalidationListener:
             finally:
                 with self._connection_lock:
                     self._connection = None
+
+    def _wake(self, payload: str | None) -> None:
+        """Wake this process's workers: every one (None) or those a payload names.
+
+        A failed wake is logged and skipped; it never ends this thread, which also carries
+        every page's invalidations (P3). The safety poll still finds the work.
+        """
+
+        if self._work_signals is None:
+            return
+        try:
+            if payload is None:
+                self._work_signals.wake_all()
+            else:
+                self._work_signals.notify(payload)
+        except Exception:
+            log_event(
+                "realtime_invalidation_failure",
+                level=logging.WARNING,
+                reason_code="work_signal_failed",
+            )
 
 
 def _psycopg_url(database_url: str) -> str:

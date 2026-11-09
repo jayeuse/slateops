@@ -197,3 +197,68 @@ def test_the_listener_hands_each_notification_to_the_workers_and_wakes_all_on_co
     # notification then handed its organization to the lanes.
     assert attached.work[:2] == [None, frozenset({ORGANIZATION})]
     assert signals.take().everything
+
+
+def test_a_failing_work_signal_never_stops_the_listener(monkeypatch: pytest.MonkeyPatch) -> None:
+    # P3: only database errors restart the connection; any other error in a wake must
+    # not end the thread, or no page would get another invalidation.
+    import app.systems.platform.events.hub as hub_module
+
+    asked = threading.Event()
+    published: list[object] = []
+    reasons: list[object] = []
+    monkeypatch.setattr(
+        hub_module, "log_event", lambda *_a, **values: reasons.append(values.get("reason_code"))
+    )
+
+    class Broken:
+        def wake_all(self) -> None:
+            raise RuntimeError("wake failed")
+
+        def notify(self, _payload: object) -> None:
+            raise RuntimeError("notify failed")
+
+    hub = SimpleNamespace(
+        publish_resync_from_listener=lambda: published.append("resync"),
+        publish_from_listener=published.append,
+    )
+    calls: list[int] = []
+
+    class Connection:
+        def __enter__(self) -> "Connection":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(self, _statement: str) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+        def notifies(self, **_kwargs: object):
+            calls.append(1)
+            if len(calls) == 1:
+                yield SimpleNamespace(payload=_hint("work_triggers"))
+            else:
+                # The listener asked again, so the failed wake did not end it.
+                asked.set()
+                listener._stop.wait(0.5)
+
+    listener = PostgresInvalidationListener(
+        hub,
+        "postgresql://user:secret@db/slateops",
+        connect=lambda *_a, **_k: Connection(),
+        connect_timeout_seconds=3,
+        statement_timeout_ms=15_000,
+        work_signals=Broken(),
+    )
+    listener.start()
+    try:
+        assert asked.wait(10)
+    finally:
+        assert listener.stop()
+
+    assert published == ["resync", _hint("work_triggers")]
+    assert reasons == ["work_signal_failed", "work_signal_failed"]
