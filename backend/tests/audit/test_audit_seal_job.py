@@ -215,7 +215,8 @@ def test_a_failed_chain_is_a_backlog_and_the_next_wake_seals_it(
 
     first = seal_audit(world.engines.runtime, now=now)
     behind = sealed_hours(world.engines, world.first)
-    second = seal_audit(world.engines.runtime, now=now)
+    # The failed chain is tried again when its first back-off (60 s) has passed.
+    second = seal_audit(world.engines.runtime, now=now + seals.BACKOFF_FIRST)
 
     assert (first.backlog, first.failed, first.failures) == (True, world.first, 1)
     assert behind == {}
