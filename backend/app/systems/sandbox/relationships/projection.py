@@ -3,12 +3,17 @@
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import Select, asc, desc, exists, or_, select
 from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session, aliased, joinedload
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.listing import ListQuerySpec, build_standard_list_statements, capped_pagination
+from app.common.listing import (
+    ListQuerySpec,
+    SortOrder,
+    build_standard_list_statements,
+    capped_pagination,
+)
 from app.systems.access.users.models import User
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
@@ -99,16 +104,90 @@ def relationship_response(edge: RelationshipEdge) -> RelationshipResponse:
     )
 
 
+def _listed_edges(db: Session, params: RelationshipListRequest, reader: User) -> Select[Any]:
+    """The edges that the list shows, decided on `relationship_edges` alone.
+
+    Every condition that decides whether an edge is listed sits on the edge or in one EXISTS
+    correlated to it, so the page can be read from the edge index in creation order (K67).
+    """
+
+    field = aliased(Field)
+    source, target = aliased(Record), aliased(Record)
+    source_module, target_module = aliased(Module), aliased(Module)
+    source_record_module, target_record_module = aliased(Module), aliased(Module)
+    linked = (
+        select(field.id)
+        .join(source, source.id == RelationshipEdge.source_record_id)
+        .join(target, target.id == RelationshipEdge.target_record_id)
+        .join(source_module, field.module_id == source_module.id)
+        .join(target_module, field.relationship_target_module_id == target_module.id)
+        .join(source_record_module, source.module_id == source_record_module.id)
+        .join(target_record_module, target.module_id == target_record_module.id)
+        .where(
+            field.id == RelationshipEdge.field_id,
+            readable_link_clause(db, reader, source.module_id, target.module_id),
+        )
+    )
+    if params.source_module_id is not None:
+        linked = linked.where(field.module_id == params.source_module_id)
+    if params.target_module_id is not None:
+        linked = linked.where(field.relationship_target_module_id == params.target_module_id)
+    hidden = or_(
+        field.is_deleted.is_(True),
+        source.is_deleted.is_(True),
+        target.is_deleted.is_(True),
+        source_module.is_deleted.is_(True),
+        target_module.is_deleted.is_(True),
+    )
+    if params.availability is RelationshipAvailability.AVAILABLE:
+        linked = linked.where(~hidden)
+    elif params.availability is RelationshipAvailability.HIDDEN:
+        linked = linked.where(hidden)
+
+    statement = select(
+        RelationshipEdge.id, RelationshipEdge.created_at, RelationshipEdge.updated_at
+    ).where(exists(linked.correlate(RelationshipEdge)))
+    if params.field_id is not None:
+        statement = statement.where(RelationshipEdge.field_id == params.field_id)
+    if params.source_record_id is not None:
+        statement = statement.where(RelationshipEdge.source_record_id == params.source_record_id)
+    if params.target_record_id is not None:
+        statement = statement.where(RelationshipEdge.target_record_id == params.target_record_id)
+    if params.incident_record_id is not None:
+        statement = statement.where(
+            or_(
+                RelationshipEdge.source_record_id == params.incident_record_id,
+                RelationshipEdge.target_record_id == params.incident_record_id,
+            )
+        )
+    return statement
+
+
+RELATIONSHIP_LIST_SPEC = ListQuerySpec(
+    sort_fields={
+        RelationshipSortField.CREATED_AT: cast(ColumnElement[Any], RelationshipEdge.created_at),
+        RelationshipSortField.UPDATED_AT: cast(ColumnElement[Any], RelationshipEdge.updated_at),
+    },
+    default_sort=RelationshipSortField.CREATED_AT,
+    tie_breaker=cast(ColumnElement[Any], RelationshipEdge.id),
+    deleted_field=cast(ColumnElement[bool], RelationshipEdge.is_deleted),
+)
+
+
 def list_relationships(
     db: Session, params: RelationshipListRequest, *, reader: User
 ) -> tuple[list[RelationshipResponse], Any]:
-    source_record = aliased(Record)
-    target_record = aliased(Record)
-    source_module = aliased(Module)
-    target_module = aliased(Module)
-    source_record_module = aliased(Module)
-    target_record_module = aliased(Module)
-    statement = (
+    spec = RELATIONSHIP_LIST_SPEC
+    page_ids, count_statement = build_standard_list_statements(
+        _listed_edges(db, params, reader), params, spec
+    )
+    # Join the records, the field and the modules only for the rows of the page.
+    page = page_ids.subquery("page")
+    source_record, target_record = aliased(Record), aliased(Record)
+    source_record_module, target_record_module = aliased(Module), aliased(Module)
+    direction = asc if params.sort_order is SortOrder.ASC else desc
+    sort_name = (params.sort_by or spec.default_sort).value
+    item_statement = (
         select(
             RelationshipEdge.id.label("id"),
             RelationshipEdge.field_id.label("field_id"),
@@ -125,54 +204,14 @@ def list_relationships(
             source_record_module.is_deleted.label("source_module_is_deleted"),
             target_record_module.is_deleted.label("target_module_is_deleted"),
         )
+        .join(page, page.c.id == RelationshipEdge.id)
         .join(Field, RelationshipEdge.field_id == Field.id)
         .join(source_record, RelationshipEdge.source_record_id == source_record.id)
         .join(target_record, RelationshipEdge.target_record_id == target_record.id)
-        .join(source_module, Field.module_id == source_module.id)
-        .join(target_module, Field.relationship_target_module_id == target_module.id)
         .join(source_record_module, source_record.module_id == source_record_module.id)
         .join(target_record_module, target_record.module_id == target_record_module.id)
-        .where(readable_link_clause(db, reader, source_record.module_id, target_record.module_id))
+        .order_by(direction(page.c[sort_name]), direction(page.c.id))
     )
-    if params.field_id is not None:
-        statement = statement.where(RelationshipEdge.field_id == params.field_id)
-    if params.source_record_id is not None:
-        statement = statement.where(RelationshipEdge.source_record_id == params.source_record_id)
-    if params.target_record_id is not None:
-        statement = statement.where(RelationshipEdge.target_record_id == params.target_record_id)
-    if params.incident_record_id is not None:
-        statement = statement.where(
-            or_(
-                RelationshipEdge.source_record_id == params.incident_record_id,
-                RelationshipEdge.target_record_id == params.incident_record_id,
-            )
-        )
-    if params.source_module_id is not None:
-        statement = statement.where(Field.module_id == params.source_module_id)
-    if params.target_module_id is not None:
-        statement = statement.where(Field.relationship_target_module_id == params.target_module_id)
-    hidden = or_(
-        Field.is_deleted.is_(True),
-        source_record.is_deleted.is_(True),
-        target_record.is_deleted.is_(True),
-        source_module.is_deleted.is_(True),
-        target_module.is_deleted.is_(True),
-    )
-    if params.availability is RelationshipAvailability.AVAILABLE:
-        statement = statement.where(~hidden)
-    elif params.availability is RelationshipAvailability.HIDDEN:
-        statement = statement.where(hidden)
-
-    spec = ListQuerySpec(
-        sort_fields={
-            RelationshipSortField.CREATED_AT: cast(ColumnElement[Any], RelationshipEdge.created_at),
-            RelationshipSortField.UPDATED_AT: cast(ColumnElement[Any], RelationshipEdge.updated_at),
-        },
-        default_sort=RelationshipSortField.CREATED_AT,
-        tie_breaker=cast(ColumnElement[Any], RelationshipEdge.id),
-        deleted_field=cast(ColumnElement[bool], RelationshipEdge.is_deleted),
-    )
-    item_statement, count_statement = build_standard_list_statements(statement, params, spec)
     counted = int(db.scalar(count_statement) or 0)
     rows, pagination = capped_pagination(
         limit=params.limit,

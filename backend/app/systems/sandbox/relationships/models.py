@@ -58,6 +58,8 @@ class RelationshipEdge(BaseModel):
         # partial field-led indexes above cannot serve them.
         Index("ix_relationship_edges_source_record", "org_id", "source_record_id"),
         Index("ix_relationship_edges_target_record", "org_id", "target_record_id"),
+        # The unfiltered link list reads one organization in creation order (K67).
+        Index("ix_relationship_edges_org_created", "org_id", "created_at", "id"),
     )
 
     org_id: Mapped[UUID] = mapped_column(

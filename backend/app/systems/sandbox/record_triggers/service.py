@@ -17,8 +17,11 @@ from app.systems.sandbox.record_triggers.schemas import (
 
 def list_recent_runs(db: Session, *, limit: int, offset: int) -> TriggerRunListResponse:
     live = select(RecordTriggerRun.id).where(RecordTriggerRun.is_deleted.is_(False))
-    counted = int(db.scalar(capped_count(live)) or 0)
     newest_first = (RecordTriggerRun.created_at.desc(), RecordTriggerRun.id.desc())
+    # Unlike the audit count, this count reads in index order: unordered, `LIMIT 10001`
+    # chose a sequential scan that read every run for an organization with none (K64; 345
+    # pages became 3).
+    counted = int(db.scalar(capped_count(live.order_by(*newest_first))) or 0)
     # Page the run IDs first: joining before OFFSET joined every skipped run, so a deep
     # page cost 64 ms at 8,659 runs instead of about 2 ms. One more ID says whether more follow.
     page = live.order_by(*newest_first).offset(offset).limit(limit + 1).subquery()
