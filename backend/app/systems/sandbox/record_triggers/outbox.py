@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
+from app.core.database.organization_scope import bound_organization_column
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.sandbox.record_triggers.models import (
     RecordTrigger,
@@ -110,6 +111,8 @@ def schedule_definitions(db: Session) -> list[ScheduleDefinition]:
             RecordTrigger.schedule_frequency,
             RecordTrigger.schedule_weekday,
         ).where(
+            # Row-level security binds the runtime too; the clause names it (G3).
+            RecordTrigger.org_id == bound_organization_column(),
             RecordTrigger.enabled.is_(True),
             RecordTrigger.is_deleted.is_(False),
             RecordTrigger.suspended_at.is_(None),
