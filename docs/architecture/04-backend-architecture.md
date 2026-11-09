@@ -157,6 +157,23 @@ grant ordinary conversation readability. Capabilities and settings add operation
 a replacement authorization system. Private person, attachment, record-link,
 search and notification projections recheck their current source access.
 
+The access relation in `comms/access.py` answers only for the requested conversations
+and people, and reads each input once for the whole request, not once for each
+(conversation, person) pair (plan step 3.3,
+[`comms/access_inputs.py`](../../backend/app/systems/comms/access_inputs.py)). The
+inputs are the requested people who are active in the bound organization, with their
+role; the requested conversations' departments that are live; each pair's live
+conversation member role; each person's best live department-level group access row
+for those departments; and each person's best added grant (D45) on a conversation or
+its category, given to the person or to one of their live groups. Each input is
+filtered by the requested sets and the bound organization, grouped by its join key
+where a key can match more than one row, and joined once to the pairs; the rules above (the administrator arm, the guest cap,
+department levels, member rows) are unchanged. Each input and the requested
+conversation set are `MATERIALIZED` CTEs, so PostgreSQL computes each once for the
+statement; as plain derived tables the planner may run them again for each outer row.
+`materialized()` keeps the first CTE alive on its copy, because the anonymous name
+holds that object's `id()` and a freed address could give a later CTE the same name.
+
 Report-bound `POST /api/comms/reports/{report_id}/message-removal` and
 `message-restoration` take **no request body** and return only
 `CommsReportResponse`, not a message projection. That response contains report

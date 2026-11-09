@@ -20,14 +20,26 @@ tagged with the root transaction, and read-only. These clear it: a commit of the
 transaction, any rollback (a savepoint's too), the end of the root transaction (the only
 event of `Session.close()`), a lookup under another root transaction, and a flush that
 writes a group, group member, group access row, membership, user, module or department.
-A savepoint release does not clear it. A lock or a fresh read of a person's authority
-drops that person's result and stored membership (`forget_access`): the lock helpers of
-`checks.py` and `delegation.py`, `organization_membership(fresh=True)` (and so
-`fresh_membership` and `require_fresh_exact_admin`), the Report schedule manager check,
-and the locked writes of Views, Reports and Dashboards, whose check after the row lock
-must see a revocation that committed before it. A load or reload of a `User` or
-`Membership` row drops it too, as a backup only. A caller that passes `now` or a
-membership resolves again; the post-lock check of a group delegation passes a fresh
+A savepoint release does not clear it. Only a lock or a fresh read of a person's
+authority resolves it again: `forget_access` drops that person's result and stored
+membership in the lock helpers of `checks.py` and `delegation.py`, in
+`organization_membership(fresh=True)` (and so `fresh_membership` and
+`require_fresh_exact_admin`), in `fresh_user` (`platform/files/access.py`, which file,
+Board card, attachment, record link, avatar and profile routes call), and in the Report schedule
+manager check, which locks the person's `users` row. A lock of a content row does not
+drop it, so a check after such a lock reads the result stored earlier in the
+transaction. Three content locks are named exceptions and resolve again after the lock,
+so a revocation that committed before the lock is seen: Views `get_view(write=True)`
+(update, archive, restore), Reports `_report(lock=True)` (update, archive, restore, a
+Report run) and Dashboards `_dashboard(lock=True)` (update, archive, restore).
+`create_dashboard` is not an exception: it locks the department row and checks again
+with the stored result, which `require_fresh_module_access` replaces with a fresh one
+when the new Dashboard names widget sources. A load or reload of a `User` or
+`Membership` row drops the result too. That is the only drop for the notification
+query (`current_user_notification_query`) and the scheduled post's author check
+(`_current_actor`), which reload the person with `populate_existing`, so a test owns it
+(`test_a_reload_of_the_person_drops_the_stored_resolution`). A caller that passes `now`
+or a membership resolves again; the post-lock check of a group delegation passes a fresh
 membership, and `require_fresh_module_access`, whose locks hold until commit, stores its
 result over any earlier one. Without a lock, a revocation that commits during a request
 is not seen by later checks of the same transaction, and account and membership expiry

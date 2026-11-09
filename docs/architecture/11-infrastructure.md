@@ -65,8 +65,15 @@ post-commit invalidations; each process's existing `LISTEN` connection hands it 
 [`WorkSignals`](../../backend/app/systems/platform/scheduling/work_signals.py), which
 wakes the scheduling worker and the trigger lanes. The scheduling worker probes each
 woken organization with one statement and sleeps until the next due time or a
-30-second safety poll, which covers a missed hint. Trigger lane 0 wakes on its own
-at the next minute in which a published schedule fires. A listener reconnect or a `resync` wakes every organization. Several API
+30-second safety poll, which covers a missed hint. The probe reads only times up to
+60 seconds ahead (two safety polls), so an organization with nothing due does not read
+other organizations' later rows; a later time is seen by a later probe. Trigger lane 0 wakes on its own
+at the next minute in which a published schedule fires. An idle worker makes at most two
+probe rounds a minute, each one organization-list read and one probe for each
+organization (K44). Two reads fall outside that count: each safety poll also runs
+reminder materialization for every organization, and trigger lane 0 re-reads the
+published schedule definitions every 30 seconds (one organization-list read and one
+read for each organization). A listener reconnect or a `resync` wakes every organization. Several API
 processes all wake; `FOR UPDATE SKIP LOCKED` keeps one claim for each row. Durable job state and
 leases live in PostgreSQL, while the bounded publication queue is process-local
 and best effort. Request-buffered events submit after response completion;
