@@ -1,6 +1,7 @@
 """Per-table storage parameters, which `alembic check` does not compare (F12, F18)."""
 
 import os
+import subprocess
 from collections.abc import Iterator
 
 import pytest
@@ -15,6 +16,9 @@ from tests.operations.migration_support import guarded_migration_environment, ru
 pytestmark = pytest.mark.integration
 
 PREVIOUS = "cf8cb7605f48"
+# The revision before `078b17c76d8a` (plan step 3.6), whose downgrade builds two indexes.
+BEFORE_HOT_UPDATES = "b1b3908e844b"
+HOT_UPDATE_INDEXES = ("ix_comms_realtime_grants_expiry", "ix_comms_presence_seen")
 QUEUE_TABLE = {
     "autovacuum_vacuum_scale_factor": "0.02",
     "autovacuum_analyze_scale_factor": "0.01",
@@ -120,3 +124,40 @@ def test_downgrade_resets_the_parameters_and_upgrade_restores_them(
     with engine.connect() as connection:
         assert _storage_parameters(connection) == EXPECTED
     run_alembic(environment, "check")
+
+
+def _index_validity(engine: Engine) -> dict[str, bool]:
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT c.relname, i.indisvalid FROM pg_index AS i "
+                "JOIN pg_class AS c ON c.oid = i.indexrelid "
+                "JOIN pg_namespace AS n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = 'public' AND c.relname = ANY(:names)"
+            ),
+            {"names": list(HOT_UPDATE_INDEXES)},
+        )
+        return {name: valid for name, valid in rows}
+
+
+def test_a_stopped_downgrade_rebuilds_its_invalid_index_on_the_rerun(
+    migration: tuple[dict[str, str], Engine],
+) -> None:
+    # A real stop: a writer on `comms_presence` outlasts the 5 s lock limit, so the
+    # concurrent build fails after its catalog row exists and leaves an INVALID index.
+    environment, engine = migration
+    with engine.connect() as holder:
+        holder.execute(text("SET idle_in_transaction_session_timeout = '30s'"))
+        holder.commit()
+        holder.execute(text("LOCK TABLE public.comms_presence IN ROW EXCLUSIVE MODE"))
+        with pytest.raises(subprocess.CalledProcessError) as failure:
+            run_alembic(environment, "downgrade", BEFORE_HOT_UPDATES)
+        holder.rollback()
+    assert "lock timeout" in failure.value.stderr
+    assert _index_validity(engine) == {
+        "ix_comms_realtime_grants_expiry": True, "ix_comms_presence_seen": False,
+    }
+
+    run_alembic(environment, "downgrade", BEFORE_HOT_UPDATES)
+
+    assert _index_validity(engine) == dict.fromkeys(HOT_UPDATE_INDEXES, True)

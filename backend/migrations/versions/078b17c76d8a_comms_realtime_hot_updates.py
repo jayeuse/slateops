@@ -19,12 +19,17 @@ new row versions on their pages.
 Alembic sees the index drops; it does not compare storage parameters, so
 `tests/migrations/test_table_storage_parameters.py` owns them.
 
+A concurrent build that stops (for example on the lock limit) leaves an INVALID index
+behind. The downgrade keeps a valid index, and drops and rebuilds an invalid one, as
+`65bf3d1eb512` does (N6).
+
 Revision ID: 078b17c76d8a
 Revises: b1b3908e844b
 Create Date: 2026-11-08 10:17:04.266620
 """
 from collections.abc import Sequence
 
+import sqlalchemy as sa
 from alembic import op
 
 revision: str = "078b17c76d8a"
@@ -40,6 +45,16 @@ INDEXES = {
 TABLES = ("comms_realtime_grants", "comms_presence")
 
 
+_VALID = sa.text("SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass(:name)")
+
+
+def _valid(name: str) -> bool | None:
+    """True or False for an existing index; None when there is none."""
+
+    valid: bool | None = op.get_bind().scalar(_VALID, {"name": f"public.{name}"})
+    return valid
+
+
 def upgrade() -> None:
     with op.get_context().autocommit_block():
         for name, (table, _columns) in INDEXES.items():
@@ -53,6 +68,9 @@ def downgrade() -> None:
         op.execute(f"ALTER TABLE {table} RESET (fillfactor)")
     with op.get_context().autocommit_block():
         for name, (table, columns) in INDEXES.items():
-            op.create_index(
-                name, table, columns, postgresql_concurrently=True, if_not_exists=True
-            )
+            valid = _valid(name)
+            if valid:
+                continue
+            if valid is False:
+                op.drop_index(name, table_name=table, postgresql_concurrently=True)
+            op.create_index(name, table, columns, postgresql_concurrently=True)
