@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from enum import StrEnum
 
 import pytest
@@ -6,9 +7,11 @@ from hypothesis import assume, given
 from hypothesis import strategies as st
 from sqlalchemy import func, select
 from sqlalchemy.dialects import postgresql
+from uuid6 import uuid7
 
+from app.common.listing.cursor import encode_cursor
 from app.common.listing.query import ListQuerySpec, build_standard_list_statements
-from app.common.listing.schemas import StandardListRequest
+from app.common.listing.schemas import KeysetListRequest, StandardListRequest
 from app.systems.sandbox.departments.models import Department
 from tests.property_support import PROPERTY
 
@@ -146,6 +149,24 @@ def test_only_a_column_that_can_hold_a_null_sorts_nulls_last(
     )
 
     assert order_by in str(items.compile(dialect=postgresql.dialect()))
+
+
+def test_a_cursor_that_reaches_a_list_without_keyset_gets_the_fixed_422() -> None:
+    # Only the D1 lists page by cursor; a request model that carries one elsewhere is refused
+    # before any condition is built, even when the cursor itself is valid.
+    cursor = encode_cursor(datetime(2026, 11, 9, 12, tzinfo=UTC), uuid7())
+
+    with pytest.raises(HTTPException) as refusal:
+        build_standard_list_statements(
+            select(Department),
+            KeysetListRequest[DepartmentSortField](cursor=cursor),
+            _department_spec(),
+        )
+
+    assert refusal.value.status_code == 422
+    assert refusal.value.detail == [
+        {"loc": ["query", "cursor"], "msg": "Invalid cursor", "type": "value_error"}
+    ]
 
 
 def test_an_empty_list_reports_a_total_of_zero() -> None:

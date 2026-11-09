@@ -1,6 +1,6 @@
 from collections.abc import Callable, Iterable
 from datetime import datetime
-from enum import Enum, StrEnum
+from enum import StrEnum
 from typing import Any, cast
 from uuid import UUID
 
@@ -136,14 +136,6 @@ def readable_audit_entries(db: Session, reader: User) -> ColumnElement[bool]:
     )
 
 
-class AuditOrganization(Enum):
-    """Which rows of the bound organization a statement reads. Every value names some rows."""
-
-    ALL_ROWS = "all rows"
-    OWN_ROWS = "own rows"
-    ACCOUNT_ROWS = "account rows"
-
-
 def _own_rows() -> ColumnElement[bool]:
     return AuditLog.org_id == bound_organization_column()
 
@@ -191,7 +183,6 @@ def _is_admin(db: Session, reader: User) -> bool:
 def audit_log_statement(
     *,
     columns: tuple[Any, ...] = (AuditLog,),
-    organization: AuditOrganization = AuditOrganization.ALL_ROWS,
     action: AuditAction | None = None,
     entity_type: str | None = None,
     entity_id: UUID | None = None,
@@ -204,18 +195,11 @@ def audit_log_statement(
 ) -> Select[Any]:
     """The start of every read of `/api/audit-logs`: it adds the organization condition once.
 
-    ``columns`` selects `AuditLog` columns or expressions over them only. ``organization``
-    is internal: only the administrator's two-arm count reads one arm (contract 1.3 item 4).
+    The condition is `_audit_rows_of_bound_organization`, both arms together; no read states
+    an arm alone. ``columns`` selects `AuditLog` columns or expressions over them only.
     """
 
-    match organization:
-        case AuditOrganization.OWN_ROWS:
-            rows = _own_rows()
-        case AuditOrganization.ACCOUNT_ROWS:
-            rows = _account_rows_of_its_people()
-        case AuditOrganization.ALL_ROWS:
-            rows = _audit_rows_of_bound_organization()
-    conditions: list[ColumnElement[bool]] = [rows]
+    conditions: list[ColumnElement[bool]] = [_audit_rows_of_bound_organization()]
     if action is not None:
         conditions.append(AuditLog.action == action)
     if entity_type is not None:
