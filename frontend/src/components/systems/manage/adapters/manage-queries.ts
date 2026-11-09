@@ -31,6 +31,7 @@ import {
   getManageAuditExportPreview,
   listManageAuditLogs,
   type ManageAuditListRequest,
+  type ManageAuditFilters,
 } from "./audit-api";
 import {
   getManageBackupStatus,
@@ -41,6 +42,7 @@ import {
   type ManageBackupStatus,
 } from "./backup-api";
 import { getSystemStatus } from "./system-status-api";
+import type { AuditPageReader } from "../domain/audit-pages";
 
 // Keep an audit refusal through section remounts for this verified account.
 // Query clients are replaced at the account boundary and are never persisted.
@@ -79,10 +81,11 @@ export const manageKeys = {
     ] as const,
   auditLists: () => ["manage", "audit-logs", "list"] as const,
   audit: () => ["manage", "audit-logs"] as const,
-  auditList: (request: ManageAuditListRequest) =>
-    ["manage", "audit-logs", "list", request] as const,
+  /** One reader's page in one organization (code review check 22). */
+  auditList: (reader: AuditPageReader, request: ManageAuditListRequest) =>
+    ["manage", "audit-logs", "list", reader, request] as const,
   auditOptions: () => ["manage", "audit-logs", "options"] as const,
-  auditExport: (request: Omit<ManageAuditListRequest, "limit" | "offset">) =>
+  auditExport: (request: ManageAuditFilters) =>
     ["manage", "audit-logs", "export", request] as const,
   jobs: () => ["manage", "jobs"] as const,
   jobsList: (request: ManageJobsRequest) =>
@@ -285,9 +288,12 @@ export function prefetchManageWorkspace(client: QueryClient): Promise<void> {
   return client.prefetchQuery(manageWorkspaceOptions());
 }
 
-export const manageAuditListOptions = (request: ManageAuditListRequest) =>
+export const manageAuditListOptions = (
+  reader: AuditPageReader,
+  request: ManageAuditListRequest,
+) =>
   queryOptions({
-    queryKey: manageKeys.auditList(request),
+    queryKey: manageKeys.auditList(reader, request),
     queryFn: ({ signal }) => listManageAuditLogs(request, signal),
   });
 
@@ -327,19 +333,24 @@ export const manageAuditFieldOptions = (fieldId: string) =>
     staleTime: 5 * 60_000,
   });
 
-export const manageAuditExportOptions = (
-  request: Omit<ManageAuditListRequest, "limit" | "offset">,
-) =>
+export const manageAuditExportOptions = (request: ManageAuditFilters) =>
   queryOptions({
     queryKey: manageKeys.auditExport(request),
     queryFn: ({ signal }) => getManageAuditExportPreview(request, signal),
   });
 
 /** Use from Manage navigation intent to prefill the account-scoped list cache. */
-export function prefetchManageAudit(client: QueryClient): Promise<void> {
+export function prefetchManageAudit(
+  client: QueryClient,
+  reader: AuditPageReader,
+): Promise<void> {
   return Promise.all([
     client.prefetchQuery(
-      manageAuditListOptions({ sortOrder: "desc", limit: 10, offset: 0 }),
+      manageAuditListOptions(reader, {
+        sortOrder: "desc",
+        limit: 10,
+        offset: 0,
+      }),
     ),
     client.prefetchQuery(manageAuditOptionsOptions()),
   ]).then(() => undefined);

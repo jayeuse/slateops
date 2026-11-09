@@ -85,11 +85,20 @@ export type ManageAuditListRequest = {
   sortOrder: "asc" | "desc";
   limit: number;
   offset: number;
+  /**
+   * The `next_cursor` of the page before (contract 2.3). It replaces the
+   * offset; the server pages the created_at order this list always reads.
+   */
+  cursor?: string;
 };
 
-function auditFilterParams(
-  request: Omit<ManageAuditListRequest, "limit" | "offset">,
-): URLSearchParams {
+/** The list request without its page: what the export reads. */
+export type ManageAuditFilters = Omit<
+  ManageAuditListRequest,
+  "limit" | "offset" | "cursor"
+>;
+
+function auditFilterParams(request: ManageAuditFilters): URLSearchParams {
   const params = new URLSearchParams();
   if (request.action) params.set("action", request.action);
   if (request.entityType) params.set("entity_type", request.entityType);
@@ -109,7 +118,8 @@ function auditFilterParams(
 export function manageAuditListPath(request: ManageAuditListRequest): string {
   const params = auditFilterParams(request);
   params.set("limit", String(request.limit));
-  params.set("offset", String(request.offset));
+  if (request.cursor) params.set("cursor", request.cursor);
+  else params.set("offset", String(request.offset));
   return `/audit-logs?${params.toString()}`;
 }
 
@@ -142,7 +152,7 @@ export function getManageAuditOptions(
 }
 
 export async function getManageAuditExportPreview(
-  request: Omit<ManageAuditListRequest, "limit" | "offset">,
+  request: ManageAuditFilters,
   signal?: AbortSignal,
 ): Promise<ManageAuditListResponse> {
   const page = await listManageAuditLogs(
@@ -165,7 +175,7 @@ const exportCountSchema = z
   .pipe(z.number().int().nonnegative().max(10_000));
 
 export async function downloadManageAuditCsv(
-  request: Omit<ManageAuditListRequest, "limit" | "offset">,
+  request: ManageAuditFilters,
   signal?: AbortSignal,
 ): Promise<ManageAuditCsv> {
   const response = await apiRequest(

@@ -226,10 +226,13 @@ export function listReadableRelationshipFields(
   });
 }
 
-/** One visible incident-link page; the caller exposes the continuation. */
+/**
+ * One visible incident-link page; the caller exposes the continuation. A
+ * later page sends the `nextCursor` of the page before (contract 2.3).
+ */
 export function listOpenViewRecordLinks(
   recordId: string,
-  options: { limit?: number; offset?: number } = {},
+  options: { limit?: number; cursor?: string } = {},
 ): Promise<OpenViewKeysetPage<OpenViewRelationship>> {
   return listOpenViewLinks({ incidentRecordId: recordId, ...options });
 }
@@ -242,12 +245,13 @@ export function listOpenViewLinks(options: {
   targetRecordId?: string;
   limit?: number;
   offset?: number;
+  /** Opaque; it replaces the offset and pages the default order. */
+  cursor?: string;
   signal?: AbortSignal;
 }): Promise<OpenViewKeysetPage<OpenViewRelationship>> {
-  const query = new URLSearchParams({
-    limit: String(options.limit ?? 100),
-    offset: String(options.offset ?? 0),
-  });
+  const query = new URLSearchParams({ limit: String(options.limit ?? 100) });
+  if (options.cursor) query.set("cursor", options.cursor);
+  else query.set("offset", String(options.offset ?? 0));
   for (const [key, value] of Object.entries({
     incident_record_id: options.incidentRecordId,
     field_id: options.fieldId,

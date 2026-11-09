@@ -42,6 +42,7 @@ import {
   downloadManageAuditCsv,
   type ManageAuditLog,
   type ManageAuditListRequest,
+  type ManageAuditFilters,
 } from "../adapters/audit-api";
 import {
   manageAuditDepartmentsOptions,
@@ -70,9 +71,17 @@ import { AuditExportDialog } from "./audit-export-dialog";
 import { AuditRows, type AuditRowText } from "./audit-rows";
 import { AuditToolbar, type AuditPersonOption } from "./audit-toolbar";
 import {
+  useAdmittedWorkspaceScope,
   useVerifiedWorkspaceUserId,
   useWorkspaceInteractionSuspended,
 } from "../../shared/runtime/workspace-identity";
+import {
+  auditPageCursors,
+  emptyAuditPages,
+  turnAuditPage,
+  type AuditPageTurn,
+  type AuditPages,
+} from "../domain/audit-pages";
 import type { ActivityFilters } from "./audit-data";
 import { apiErrorReference } from "@/lib/api-errors";
 
@@ -152,7 +161,7 @@ function workspaceDayBound(
 
 function auditFiltersFromRequest(
   request: ManageAuditListRequest,
-): Omit<ManageAuditListRequest, "limit" | "offset"> {
+): ManageAuditFilters {
   return {
     search: request.search,
     departmentId: request.departmentId,
@@ -195,6 +204,9 @@ export default function ManageAudit({
 }: ManageAuditProps) {
   const queryClient = useQueryClient();
   const viewerId = useVerifiedWorkspaceUserId();
+  // The admitted organization; null while the shell has not admitted one.
+  const organizationId = useAdmittedWorkspaceScope()?.org_id ?? null;
+  const pageReader = { userId: viewerId, organizationId };
   const workspaceSuspended = useWorkspaceInteractionSuspended();
   const exportAdmitted = managedDepartments === null;
   const securityActive =
@@ -289,7 +301,7 @@ export default function ManageAudit({
         ? managedByName[0]
         : undefined
     : undefined;
-  const [pageIndex, setPageIndex] = useState(0);
+  const [pages, setPages] = useState<AuditPages>(emptyAuditPages);
   const [appliedSearch, setAppliedSearch] = useState("");
   const [actorSearch, setActorSearch] = useState("");
   const [appliedActorSearch, setAppliedActorSearch] = useState("");
@@ -302,10 +314,9 @@ export default function ManageAudit({
     readShowSystemEvents(viewerId),
   );
   const [exportOpen, setExportOpen] = useState(false);
-  const [exportRequest, setExportRequest] = useState<Omit<
-    ManageAuditListRequest,
-    "limit" | "offset"
-  > | null>(null);
+  const [exportRequest, setExportRequest] = useState<ManageAuditFilters | null>(
+    null,
+  );
   const [notice, setNotice] = useState("");
   const detailTrigger = useRef<HTMLButtonElement | null>(null);
   const exportTrigger = useRef<HTMLButtonElement | null>(null);
@@ -317,15 +328,29 @@ export default function ManageAudit({
     ...manageWorkspaceOptions(),
     enabled: historyActive && !workspaceSuspended,
   });
-  const listRequest = auditRequestFromFilters(
+  const firstPageRequest = auditRequestFromFilters(
     { ...filters, query: appliedSearch },
     pageSize,
-    pageIndex * pageSize,
+    0,
     workspaceQuery.data?.timezone,
     departmentId,
   );
+  // Pages after the first send the cursor of the page before (contract 2.3).
+  // The stack belongs to this reader, organization and request; for any
+  // other it is empty, so a change starts again at page 1.
+  const pageRequestKey = JSON.stringify(firstPageRequest);
+  const pageCursors = auditPageCursors(pages, pageReader, pageRequestKey);
+  const pageIndex = pageCursors.length;
+  const listRequest: ManageAuditListRequest =
+    pageIndex === 0
+      ? firstPageRequest
+      : { ...firstPageRequest, cursor: pageCursors[pageIndex - 1] };
+  const turnPage = (turn: AuditPageTurn) =>
+    setPages((current) =>
+      turnAuditPage(current, pageReader, pageRequestKey, turn),
+    );
   const listQuery = useQuery({
-    ...manageAuditListOptions(listRequest),
+    ...manageAuditListOptions(pageReader, listRequest),
     enabled: reading,
   });
   // The unsearched options name the Area filter and the first people; a
@@ -432,12 +457,13 @@ export default function ManageAudit({
     ),
   };
   const total = auditConcealed ? 0 : (listQuery.data?.pagination.total ?? 0);
-  const serverOffset =
-    listQuery.data?.pagination.offset ?? pageIndex * pageSize;
+  const totalIsCapped =
+    !auditConcealed && (listQuery.data?.pagination.total_is_capped ?? false);
+  const hasMore =
+    !auditConcealed && (listQuery.data?.pagination.has_more ?? false);
+  // A cursor page answers offset 0, so the range starts from the page number.
+  const pageOffset = pageIndex * pageSize;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  const safePageIndex = listQuery.data
-    ? Math.min(pageIndex, pageCount - 1)
-    : pageIndex;
   const exportLogs = auditConcealed ? [] : (exportQuery.data?.items ?? []);
   const exportCount = auditConcealed
     ? 0
@@ -534,22 +560,38 @@ export default function ManageAudit({
     if (filters.query === appliedSearch) return;
     const timer = setTimeout(() => {
       setAppliedSearch(filters.query);
-      setPageIndex(0);
+      setPages(emptyAuditPages);
     }, 300);
     return () => clearTimeout(timer);
   }, [filters.query, appliedSearch]);
 
+  const pageAnswer = listQuery.data?.pagination;
   useEffect(() => {
-    if (listQuery.data && safePageIndex !== pageIndex)
-      setPageIndex(safePageIndex);
-  }, [listQuery.data, pageIndex, safePageIndex]);
+    if (!pageAnswer || pageIndex === 0) return;
+    // An exact total that shrank below this page moves to its last page; a
+    // capped total is a lower bound and moves nothing. A cursor page with no
+    // rows while rows remain goes back one page.
+    if (!pageAnswer.total_is_capped && pageIndex > pageCount - 1)
+      setPages((current) =>
+        turnAuditPage(current, pageReader, pageRequestKey, {
+          to: "page",
+          index: pageCount - 1,
+        }),
+      );
+    else if (pageAnswer.count === 0 && pageAnswer.total > 0)
+      setPages((current) =>
+        turnAuditPage(current, pageReader, pageRequestKey, {
+          to: "previous",
+        }),
+      );
+  }, [pageAnswer, pageIndex, pageCount, pageReader, pageRequestKey]);
 
   function updateFilter<Key extends keyof ActivityFilters>(
     key: Key,
     value: ActivityFilters[Key],
   ) {
     setFilters((current) => ({ ...current, [key]: value }));
-    if (key !== "query") setPageIndex(0);
+    if (key !== "query") setPages(emptyAuditPages);
     setNotice("");
   }
 
@@ -562,7 +604,7 @@ export default function ManageAudit({
       order: current.order,
     }));
     setChosenActor(null);
-    setPageIndex(0);
+    setPages(emptyAuditPages);
     setNotice("");
   }
 
@@ -622,7 +664,7 @@ export default function ManageAudit({
     await auditPurge.current;
     try {
       await queryClient.fetchQuery({
-        ...manageAuditListOptions(listRequest),
+        ...manageAuditListOptions(pageReader, listRequest),
         staleTime: 0,
       });
       setManageAuditDenied(queryClient, false);
@@ -787,7 +829,7 @@ export default function ManageAudit({
                           user: "",
                           entity: "",
                         }));
-                        setPageIndex(0);
+                        setPages(emptyAuditPages);
                       },
                     }
                   : null
@@ -891,13 +933,21 @@ export default function ManageAudit({
                       ariaLabel="Activity pages"
                       className="shrink-0 px-3 py-2 lg:py-2"
                       total={total}
-                      offset={serverOffset}
+                      offset={pageOffset}
                       rowCount={logs.length}
                       pageSize={pageSize}
-                      onPageIndexChange={setPageIndex}
+                      hasMore={hasMore}
+                      totalIsCapped={totalIsCapped}
+                      onPageIndexChange={(next) => {
+                        const cursor = listQuery.data?.pagination.next_cursor;
+                        if (next === pageIndex + 1 && cursor)
+                          turnPage({ to: "next", cursor });
+                        else if (next < pageIndex)
+                          turnPage({ to: "page", index: next });
+                      }}
                       onPageSizeChange={(size) => {
                         setPageSize(size);
-                        setPageIndex(0);
+                        setPages(emptyAuditPages);
                       }}
                     />
                   </div>

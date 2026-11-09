@@ -6,6 +6,7 @@ import {
   NativeSelectOption,
 } from "@/components/ui/native-select";
 import { PaginationControls } from "@/components/ui/pagination-controls";
+import { listNumberText, listTotalText } from "@/lib/list-pagination";
 import { cn } from "@/lib/utils";
 
 export const TABLE_PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const;
@@ -22,6 +23,10 @@ type TablePaginationProps = {
   onPageSizeChange?: (pageSize: number) => void;
   disabled?: boolean;
   className?: string;
+  /** Whether the server has rows after this page; Next follows it (U6). */
+  hasMore?: boolean;
+  /** The server capped `total` at 10,000: it is a lower bound (U1 to U5). */
+  totalIsCapped?: boolean;
 };
 
 /** The table footer pattern used across the workspace; callers own paging. */
@@ -35,8 +40,18 @@ export function TablePagination({
   onPageSizeChange,
   disabled = false,
   className,
+  hasMore,
+  totalIsCapped = false,
 }: TablePaginationProps) {
   const id = useId();
+  const first = rowCount === 0 ? 0 : offset + 1;
+  // A capped total is a lower bound, so the range end is never clamped to it.
+  const last =
+    rowCount === 0
+      ? 0
+      : totalIsCapped
+        ? offset + rowCount
+        : Math.min(offset + rowCount, total);
   return (
     <div
       className={cn(
@@ -48,8 +63,8 @@ export function TablePagination({
         className="text-muted-foreground text-sm tabular-nums"
         aria-live="polite"
       >
-        Showing {rowCount === 0 ? 0 : offset + 1}–
-        {rowCount === 0 ? 0 : Math.min(offset + rowCount, total)} of {total}
+        Showing {listNumberText(first)}–{listNumberText(last)} of{" "}
+        {listTotalText(total, totalIsCapped)}
       </p>
       <fieldset
         disabled={disabled}
@@ -85,6 +100,8 @@ export function TablePagination({
           pageCount={Math.max(1, Math.ceil(total / pageSize))}
           pageIndex={Math.floor(offset / pageSize)}
           onPageIndexChange={onPageIndexChange}
+          hasMore={hasMore}
+          pageCountIsLowerBound={totalIsCapped}
         />
       </fieldset>
     </div>

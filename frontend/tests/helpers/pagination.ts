@@ -111,9 +111,24 @@ export function testCursor(nextOffset: number): string {
 }
 
 /**
+ * Where a keyset request starts: the row its test cursor names, or its
+ * offset. A cursor page answers offset 0, as the server does (contract 2.3).
+ */
+export function keysetStart(params: URLSearchParams): {
+  offset: number;
+  cursorPage: boolean;
+} {
+  const cursor = params.get("cursor");
+  return cursor
+    ? { offset: Number(cursor.replace("after-", "")), cursorPage: true }
+    : { offset: Number(params.get("offset") ?? 0), cursorPage: false };
+}
+
+/**
  * One page of a keyset list (audit, record history, relationships), as the
  * API sends it: `pageOf` plus `next_cursor`, a cursor exactly when more
- * items exist.
+ * items exist. `offset` is where the page starts; a `cursorPage` answers
+ * offset 0.
  */
 export function keysetPageOf<T>(
   items: T[],
@@ -123,13 +138,16 @@ export function keysetPageOf<T>(
     total?: number;
     hasMore?: boolean;
     totalIsCapped?: boolean;
+    cursorPage?: boolean;
   },
 ) {
-  const page = pageOf(items, options);
+  const { cursorPage = false, ...pageOptions } = options;
+  const page = pageOf(items, pageOptions);
   return {
     ...page,
     pagination: {
       ...page.pagination,
+      offset: cursorPage ? 0 : page.pagination.offset,
       next_cursor: page.pagination.has_more
         ? testCursor(page.pagination.offset + items.length)
         : null,

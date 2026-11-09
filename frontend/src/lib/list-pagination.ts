@@ -53,3 +53,17 @@ export function hasMoreAgreesWithTotal(page: PageCounts): boolean {
     ? page.hasMore || end >= page.total
     : page.hasMore === end < page.total;
 }
+
+/** A count in list text, grouped in English: "1,234". */
+export function listNumberText(value: number): string {
+  return value.toLocaleString("en-US");
+}
+
+/**
+ * A list total as the UI shows it (U1 to U3): grouped, with "+" when the
+ * server capped it. The plus comes from the flag only; an exact total of
+ * 10,000 shows "10,000". Visible and accessible text are the same string.
+ */
+export function listTotalText(total: number, capped: boolean): string {
+  return `${listNumberText(total)}${capped ? "+" : ""}`;
+}

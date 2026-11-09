@@ -60,6 +60,19 @@ test("D7-C1: the list path finds an entry by its reference", () => {
   );
 });
 
+test("a later page sends the cursor of the page before it in place of the offset", () => {
+  expect(
+    manageAuditListPath({
+      sortOrder: "desc",
+      limit: 10,
+      offset: 0,
+      cursor: "after-10",
+    }),
+  ).toBe(
+    "/audit-logs?sort_by=created_at&sort_order=desc&limit=10&cursor=after-10",
+  );
+});
+
 test("the list path leaves out empty filters and a blank search", () => {
   expect(
     manageAuditListPath({

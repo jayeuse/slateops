@@ -14,7 +14,7 @@ import { fixtureId } from "./helpers/access-api";
 import { openFilters, enterDay } from "./helpers/filters";
 import { mockMfa } from "./helpers/mfa";
 import { profilePreferences, profileSelf } from "./helpers/profile-api";
-import { keysetPageOf, pageOf } from "../helpers/pagination";
+import { keysetPageOf, keysetStart, pageOf } from "../helpers/pagination";
 
 const ACTOR_ID = "00000000-0000-4000-8000-000000000201";
 const NULL_LABEL_ACTOR_ID = "00000000-0000-4000-8000-000000000202";
@@ -330,7 +330,7 @@ function createAuditRoute(logs: AuditLogFixture[]) {
       }
 
       const limit = Number(params.get("limit") ?? 20);
-      const offset = Number(params.get("offset") ?? 0);
+      const { offset, cursorPage } = keysetStart(params);
       const items = filtered.slice(offset, offset + limit);
       // Like the server, the list counts at most 10,000 entries; above that
       // the total is 10,000 with the capped flag, and has_more stays exact.
@@ -341,6 +341,7 @@ function createAuditRoute(logs: AuditLogFixture[]) {
           total: Math.min(filtered.length, 10_000),
           hasMore: offset + items.length < filtered.length,
           totalIsCapped: filtered.length > 10_000,
+          cursorPage,
         }),
       });
     },
@@ -630,8 +631,8 @@ test("Audit rows are 40px sentences, each whole row opens its event, and paging 
   const pages = page.getByRole("navigation", { name: "Activity pages" });
   await pages.getByRole("button", { name: "Go to next page" }).click();
   await expect
-    .poll(() => api.requests.at(-1)?.searchParams.get("offset"))
-    .toBe("5");
+    .poll(() => api.requests.at(-1)?.searchParams.get("cursor"))
+    .toBe("after-5");
   await expect(
     page.getByText("Showing 6–10 of 12", { exact: true }),
   ).toBeVisible();
@@ -655,6 +656,53 @@ test("Audit rows are 40px sentences, each whole row opens its event, and paging 
   await expect(
     page.getByText("Showing 1–5 of 6", { exact: true }),
   ).toBeVisible();
+});
+
+test("Audit pages a capped list forward and back by cursor and counts each range from its page", async ({
+  page,
+}) => {
+  // Above 10,000 entries the total is capped: the footer says "10,000+", a
+  // later page sends the cursor of the page before, and a cursor page
+  // (offset 0 in the answer) still counts its range from the page number.
+  const api = createAuditRoute(makeAuditLogs(10_001));
+  await page.route("**/api/audit-logs**", (route) => api.handle(route));
+  await page.goto("/manage?view=audit");
+  const pages = page.getByRole("navigation", { name: "Activity pages" });
+  const next = pages.getByRole("button", { name: "Go to next page" });
+  const previous = pages.getByRole("button", { name: "Go to previous page" });
+  await expect(
+    page.getByText("Showing 1–10 of 10,000+", { exact: true }),
+  ).toBeVisible();
+  await expect(pages.getByLabel("Page 1 of 1,000+")).toBeVisible();
+  await next.click();
+  await expect(
+    page.getByText("Showing 11–20 of 10,000+", { exact: true }),
+  ).toBeVisible();
+  await next.click();
+  await expect(
+    page.getByText("Showing 21–30 of 10,000+", { exact: true }),
+  ).toBeVisible();
+  await expect(pages.getByLabel("Page 3 of 1,000+")).toBeVisible();
+  expect(
+    api.requests
+      .slice(-2)
+      .map((url) => [
+        url.searchParams.get("cursor"),
+        url.searchParams.get("offset"),
+      ]),
+  ).toEqual([
+    ["after-10", null],
+    ["after-20", null],
+  ]);
+  await previous.click();
+  await expect(
+    page.getByText("Showing 11–20 of 10,000+", { exact: true }),
+  ).toBeVisible();
+  await previous.click();
+  await expect(
+    page.getByText("Showing 1–10 of 10,000+", { exact: true }),
+  ).toBeVisible();
+  await expect(previous).toBeDisabled();
 });
 
 test("the event sheet lists changed values only, as words, then the record and raw values", async ({
@@ -2030,7 +2078,7 @@ test("Audit Export is disabled with its reason above 10,000 events and exports t
   await page.route("**/api/audit-logs**", (route) => api.handle(route));
   await page.goto("/manage?view=audit");
   await expect(
-    page.getByText("Showing 1–10 of 10000", { exact: true }),
+    page.getByText("Showing 1–10 of 10,000+", { exact: true }),
   ).toBeVisible();
   // MD7: the list total says why before anything opens.
   const exportButton = page.getByRole("button", {

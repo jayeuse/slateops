@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import {
   hasMoreAgreesWithTotal,
+  listTotalText,
   pageEndsWithinTotal,
   type PageCounts,
 } from "../../../src/lib/list-pagination";
@@ -123,3 +124,12 @@ for (const { name, page, ends, more } of cases) {
     ]);
   });
 }
+
+test("a list total is grouped in English and capped totals end with a plus", () => {
+  expect([
+    listTotalText(7, false),
+    listTotalText(1234, false),
+    listTotalText(10_000, false),
+    listTotalText(10_000, true),
+  ]).toEqual(["7", "1,234", "10,000", "10,000+"]);
+});

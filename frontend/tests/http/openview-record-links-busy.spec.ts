@@ -14,7 +14,7 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { keysetPageOf, pageOf } from "../helpers/pagination";
+import { keysetPageOf, keysetStart, pageOf } from "../helpers/pagination";
 import { emptyWireQuery } from "../helpers/query-definitions";
 import { wireField, wireRecord, wireView } from "../helpers/wire";
 import { openedSheet } from "./helpers/settled";
@@ -502,11 +502,16 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
           (!source || link.source_record_id === source) &&
           (!target || link.target_record_id === target),
       );
-      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const { offset, cursorPage } = keysetStart(url.searchParams);
       const limit = Number(url.searchParams.get("limit") ?? 100);
       const items = links.slice(offset, offset + limit);
       return route.fulfill({
-        json: keysetPageOf(items, { limit, offset, total: links.length }),
+        json: keysetPageOf(items, {
+          limit,
+          offset,
+          total: links.length,
+          cursorPage,
+        }),
       });
     }
     if (url.pathname === "/api/relationships" && method === "POST") {
@@ -968,12 +973,19 @@ test("incident links load later pages only on request", async ({ page }) => {
     .locator("..");
   await expect(incoming.getByRole("listitem")).toHaveCount(100);
   expect(
-    api.state.relationshipRequests.filter(
-      (url) => new URL(url).searchParams.get("offset") === "100",
+    api.state.relationshipRequests.filter((url) =>
+      new URL(url).searchParams.has("cursor"),
     ),
   ).toHaveLength(0);
   await page.getByRole("button", { name: "Load more linked records" }).click();
   await expect(incoming.getByRole("listitem")).toHaveCount(101);
+  // The next page sends the cursor of the page before, not an offset.
+  expect(
+    api.state.relationshipRequests
+      .map((url) => new URL(url).searchParams)
+      .filter((query) => query.has("cursor"))
+      .map((query) => [query.get("cursor"), query.get("offset")]),
+  ).toEqual([["after-100", null]]);
   await expect(
     page.getByRole("button", { name: "Load more linked records" }),
   ).toHaveCount(0);
