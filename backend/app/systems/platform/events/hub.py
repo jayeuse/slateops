@@ -13,7 +13,7 @@ import psycopg
 from sqlalchemy.engine import make_url
 
 from app.core.config import get_settings
-from app.core.observability import log_event
+from app.core.observability import failure_cause, log_event
 from app.systems.platform.events.models import (
     BOARD_SCOPED_ENTITIES,
     PRIVATE_NOTIFICATION_ENTITY,
@@ -357,11 +357,13 @@ class PostgresInvalidationListener:
                 self._work_signals.wake_all()
             else:
                 self._work_signals.notify(payload)
-        except Exception:
+        except Exception as error:
+            # The class name only (`failure_cause`), never the message or the payload.
             log_event(
                 "realtime_invalidation_failure",
                 level=logging.WARNING,
                 reason_code="work_signal_failed",
+                cause=failure_cause(error),
             )
 
 

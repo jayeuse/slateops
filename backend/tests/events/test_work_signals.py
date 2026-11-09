@@ -208,7 +208,9 @@ def test_a_failing_work_signal_never_stops_the_listener(monkeypatch: pytest.Monk
     published: list[object] = []
     reasons: list[object] = []
     monkeypatch.setattr(
-        hub_module, "log_event", lambda *_a, **values: reasons.append(values.get("reason_code"))
+        hub_module,
+        "log_event",
+        lambda *_a, **values: reasons.append((values.get("reason_code"), values.get("cause"))),
     )
 
     class Broken:
@@ -261,4 +263,7 @@ def test_a_failing_work_signal_never_stops_the_listener(monkeypatch: pytest.Monk
         assert listener.stop()
 
     assert published == ["resync", _hint("work_triggers")]
-    assert reasons == ["work_signal_failed", "work_signal_failed"]
+    # The exception's class only (NB5), never its message.
+    assert reasons == [
+        ("work_signal_failed", "RuntimeError"), ("work_signal_failed", "RuntimeError")
+    ]
