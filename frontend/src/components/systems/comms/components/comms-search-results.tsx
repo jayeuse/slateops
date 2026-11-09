@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { formatWorkspaceDateTime } from "@/lib/date-time-display";
 import type { Page, SearchHit } from "../contract/types";
+import { listTotalText } from "@/lib/list-pagination";
 
 function PlainExcerpt({ hit }: { hit: SearchHit }) {
   const points = Array.from(hit.excerpt);
@@ -53,7 +54,13 @@ export function CommsSearchResults({
   return (
     <>
       <div className="mb-2 flex items-center justify-between gap-3 text-xs">
-        <p className="text-muted-foreground">{page.pagination.total} results</p>
+        <p className="text-muted-foreground">
+          {listTotalText(
+            page.pagination.total,
+            page.pagination.total_is_capped,
+          )}{" "}
+          results
+        </p>
         {refreshing && <span role="status">Updating results…</span>}
       </div>
       {!page.items.length ? (

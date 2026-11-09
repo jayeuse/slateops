@@ -148,6 +148,8 @@ export function ServerBackedBoardActivity({
           ariaLabel="Activity pages"
           className="rounded-lg border p-3"
           total={page.pagination.total}
+          totalIsCapped={page.pagination.totalIsCapped}
+          hasMore={page.pagination.hasMore}
           offset={offset}
           rowCount={page.items.length}
           pageSize={PAGE_SIZE}

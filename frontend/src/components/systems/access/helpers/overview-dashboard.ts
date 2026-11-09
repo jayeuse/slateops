@@ -4,6 +4,7 @@ import {
 } from "@/lib/date-time-display";
 import type { AccessSecurityEvent } from "../adapters/security-events-api";
 import type { AccessGroup, AccessLevel } from "../state/api-contracts";
+import { listTotalText } from "@/lib/list-pagination";
 
 // Pure rules for the Overview dashboard (docs/specs/access-ui-ux-pass.md,
 // Phase 4). Every count comes from an existing read: the user summary for
@@ -269,9 +270,14 @@ export type AttentionCounts = {
   guestsEndingSoon: number;
 };
 
+/** Which counts the server capped at 10,000 (list totals only). */
+export type AttentionCapped = Partial<Record<keyof AttentionCounts, boolean>>;
+
 export type AttentionItem = {
   id: keyof AttentionCounts;
   count: number;
+  /** The count as the line shows it: grouped, "10,000+" when capped (U2). */
+  countText: string;
   /** The words after the count, matched to it ("1 person", "2 people"). */
   text: string;
   /** One more line, only for the last administrator. */
@@ -381,7 +387,10 @@ const attentionRules: AttentionRule[] = [
 ];
 
 /** The items that need attention, in order, and the names of the rest. */
-export function attentionItems(counts: AttentionCounts): {
+export function attentionItems(
+  counts: AttentionCounts,
+  capped: AttentionCapped = {},
+): {
   items: AttentionItem[];
   clear: string[];
 } {
@@ -393,6 +402,7 @@ export function attentionItems(counts: AttentionCounts): {
       items.push({
         id: rule.id,
         count,
+        countText: listTotalText(count, capped[rule.id] ?? false),
         text: count === 1 ? rule.one : rule.many,
         ...(rule.detail ? { detail: rule.detail } : {}),
         verb: rule.verb,

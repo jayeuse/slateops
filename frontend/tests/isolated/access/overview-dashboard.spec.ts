@@ -382,6 +382,18 @@ test("needs attention lists counts above zero, administrators without two-step f
   ]);
 });
 
+test("needs attention writes each count grouped, and a capped count with a plus", () => {
+  // Above 10,000 a list total is capped at 10,000 with its flag (U1 to U3).
+  const { items } = attentionItems(
+    { ...zero, pendingInvitations: 10_000, withoutGroup: 1_234 },
+    { pendingInvitations: true },
+  );
+  expect(items.map((item) => [item.id, item.countText, item.text])).toEqual([
+    ["pendingInvitations", "10,000+", "invitations not accepted"],
+    ["withoutGroup", "1,234", "people in no group"],
+  ]);
+});
+
 test("one active administrator is an attention item; unknown two-step links to its own list", () => {
   const { items, clear } = attentionItems({
     ...zero,

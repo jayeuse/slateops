@@ -54,7 +54,8 @@ export function StatusStrip({
   onChange,
 }: {
   status: DirectoryStatusFilter;
-  totals: Partial<Record<DirectoryStatusFilter, number>>;
+  /** Each status's total as list text (U2), for example "10,000+". */
+  totals: Partial<Record<DirectoryStatusFilter, string>>;
   onChange: Change;
 }) {
   const rare = rareStatusFilters.find((filter) => filter.status === status);

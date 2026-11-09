@@ -60,6 +60,7 @@ import {
   type FeedRow,
 } from "./overview-blocks";
 import { apiErrorReference } from "@/lib/api-errors";
+import { listCountText, listTotalText } from "@/lib/list-pagination";
 
 /** From 1280px the page is still and the feed shows the rows that fit. */
 const stillQuery = "(min-width: 80rem)";
@@ -101,10 +102,6 @@ const overviewDepartmentsOptions = () =>
     deleted: "exclude",
   });
 
-function plural(count: number, one: string, many: string) {
-  return `${count} ${count === 1 ? one : many}`;
-}
-
 /**
  * The Overview's line under the title: its group and department totals.
  * The reads are the Overview's own, so the line costs no request. A space
@@ -115,8 +112,14 @@ export function useOverviewMeta(enabled: boolean): string {
   const departments = useQuery({ ...overviewDepartmentsOptions(), enabled });
   if (!enabled) return "";
   if (!groups.data || !departments.data) return " ";
-  return `${plural(groups.data.pagination.total, "group", "groups")} · ${plural(
+  return `${listCountText(
+    groups.data.pagination.total,
+    groups.data.pagination.total_is_capped,
+    "group",
+    "groups",
+  )} · ${listCountText(
     departments.data.pagination.total,
+    departments.data.pagination.total_is_capped,
     "department",
     "departments",
   )}`;
@@ -396,16 +399,27 @@ export function OverviewView() {
     noAccess.data &&
     noMembers.data &&
     ending.data
-      ? attentionItems({
-          administrators: administrators.data.pagination.total,
-          adminsWithoutTwoStep: month.data.admins_without_mfa,
-          adminsTwoStepUnknown: month.data.admins_mfa_unknown,
-          pendingInvitations: pending.data.pagination.total,
-          withoutGroup: unassigned.data.pagination.total,
-          groupsWithoutAccess: noAccess.data.pagination.total,
-          groupsWithoutMembers: noMembers.data.pagination.total,
-          guestsEndingSoon: ending.data.pagination.total,
-        })
+      ? attentionItems(
+          {
+            administrators: administrators.data.pagination.total,
+            adminsWithoutTwoStep: month.data.admins_without_mfa,
+            adminsTwoStepUnknown: month.data.admins_mfa_unknown,
+            pendingInvitations: pending.data.pagination.total,
+            withoutGroup: unassigned.data.pagination.total,
+            groupsWithoutAccess: noAccess.data.pagination.total,
+            groupsWithoutMembers: noMembers.data.pagination.total,
+            guestsEndingSoon: ending.data.pagination.total,
+          },
+          // Two-step counts come from a summary read and are never capped.
+          {
+            administrators: administrators.data.pagination.total_is_capped,
+            pendingInvitations: pending.data.pagination.total_is_capped,
+            withoutGroup: unassigned.data.pagination.total_is_capped,
+            groupsWithoutAccess: noAccess.data.pagination.total_is_capped,
+            groupsWithoutMembers: noMembers.data.pagination.total_is_capped,
+            guestsEndingSoon: ending.data.pagination.total_is_capped,
+          },
+        )
       : null,
   );
 
@@ -426,9 +440,9 @@ export function OverviewView() {
       administrators: administrators.data?.pagination.total ?? null,
       partial:
         groupTotal > groups.data.items.length
-          ? `Counts from the first ${groups.data.items.length} of ${groupTotal} groups.`
+          ? `Counts from the first ${groups.data.items.length} of ${listTotalText(groupTotal, groups.data.pagination.total_is_capped)} groups.`
           : departmentTotal > rows.length
-            ? `Showing the first ${rows.length} of ${departmentTotal} departments.`
+            ? `Showing the first ${rows.length} of ${listTotalText(departmentTotal, departments.data.pagination.total_is_capped)} departments.`
             : guests.data.pagination.total > guests.data.items.length
               ? `Guests capped at Read from the first ${guests.data.items.length} guests.`
               : null,

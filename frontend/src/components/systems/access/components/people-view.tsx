@@ -90,6 +90,7 @@ import {
 } from "./row-open-button";
 import { PersonAvatar } from "@/components/person-avatar";
 import { apiErrorReference } from "@/lib/api-errors";
+import { listTotalText } from "@/lib/list-pagination";
 
 const sortOptions: readonly { value: DirectorySort; label: string }[] = [
   { value: "name", label: "Name" },
@@ -252,6 +253,8 @@ export function PeopleView() {
     if (!pagination) return;
     // A confirmed edit can shrink the matching population. Keep a valid page;
     // move only an out-of-range page, without changing the selected person.
+    // A capped total is a lower bound and moves no page (U8).
+    if (pagination.total_is_capped) return;
     const lastPage = Math.max(0, Math.ceil(pagination.total / pageSize) - 1);
     setPageIndex((current) => Math.min(current, lastPage));
   }, [pageSize, users.data?.pagination]);
@@ -456,11 +459,11 @@ export function PeopleView() {
           <StatusStrip
             status={filters.status}
             totals={{
-              current: counts.current.data?.pagination.total,
-              active: counts.active.data?.pagination.total,
-              pending: counts.pending.data?.pagination.total,
-              ending: counts.ending.data?.pagination.total,
-              disabled: counts.disabled.data?.pagination.total,
+              current: stripTotal(counts.current.data?.pagination),
+              active: stripTotal(counts.active.data?.pagination),
+              pending: stripTotal(counts.pending.data?.pagination),
+              ending: stripTotal(counts.ending.data?.pagination),
+              disabled: stripTotal(counts.disabled.data?.pagination),
             }}
             onChange={changeFilters}
           />
@@ -589,6 +592,8 @@ export function PeopleView() {
               ariaLabel="People pages"
               className="shrink-0 px-3 py-2 lg:py-2"
               total={page.total}
+              totalIsCapped={users.data?.pagination.total_is_capped}
+              hasMore={users.data?.pagination.has_more}
               offset={page.offset}
               rowCount={page.items.length}
               pageSize={pageSize}
@@ -632,4 +637,13 @@ export function PeopleView() {
       />
     </div>
   );
+}
+
+/** A status total as strip text; undefined while it loads. */
+function stripTotal(
+  pagination: { total: number; total_is_capped: boolean } | undefined,
+): string | undefined {
+  return pagination
+    ? listTotalText(pagination.total, pagination.total_is_capped)
+    : undefined;
 }

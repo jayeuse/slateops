@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useCommsRead } from "../state/runtime";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
+import { listCountText, listTotalText } from "@/lib/list-pagination";
 
 export type WorkspaceSetting =
   | "create-channel"
@@ -51,12 +52,20 @@ export type OpenWorkspaceSetting = (
   opener: HTMLElement,
 ) => void;
 
-function RecoverableBadge({ count }: { count: number }) {
+function RecoverableBadge({
+  count,
+  capped,
+}: {
+  count: number;
+  /** A room's total is capped at 10,000, so the sum is a lower bound. */
+  capped: boolean;
+}) {
   return (
     <Badge variant="warning" className="ml-auto">
-      <span aria-hidden="true">{count}</span>
+      <span aria-hidden="true">{listTotalText(count, capped)}</span>
       <span className="sr-only">
-        {count} removed {count === 1 ? "message" : "messages"} to review
+        {listCountText(count, capped, "removed message", "removed messages")} to
+        review
       </span>
     </Badge>
   );
@@ -89,15 +98,22 @@ export function CommsMenu({
     `moderation-count:${rooms.join(",")}`,
     async (client, signal) => {
       let total = 0;
-      for (const room of rooms)
-        total += (
-          await client.listRemovedMessages(room, { limit: 1 }, { signal })
-        ).pagination.total;
-      return total;
+      let capped = false;
+      for (const room of rooms) {
+        const { pagination } = await client.listRemovedMessages(
+          room,
+          { limit: 1 },
+          { signal },
+        );
+        total += pagination.total;
+        capped ||= pagination.total_is_capped;
+      }
+      return { total, capped };
     },
     open && canAdminister,
   );
-  const recoverableCount = counts.data;
+  const recoverableCount = counts.data?.total;
+  const recoverableCapped = counts.data?.capped ?? false;
   const groups = [
     [
       { id: "personal", label: "My preferences", icon: UserRound },
@@ -193,7 +209,10 @@ export function CommsMenu({
                 <DropdownMenuSubTrigger className="min-h-10">
                   <ShieldCheck aria-hidden="true" /> Admin tools
                   {recoverableCount !== undefined && recoverableCount > 0 && (
-                    <RecoverableBadge count={recoverableCount} />
+                    <RecoverableBadge
+                      count={recoverableCount}
+                      capped={recoverableCapped}
+                    />
                   )}
                   {counts.status === "loading" && (
                     <span
@@ -234,7 +253,10 @@ export function CommsMenu({
                           {id === "moderation" &&
                             recoverableCount !== undefined &&
                             recoverableCount > 0 && (
-                              <RecoverableBadge count={recoverableCount} />
+                              <RecoverableBadge
+                                count={recoverableCount}
+                                capped={recoverableCapped}
+                              />
                             )}
                         </DropdownMenuItem>
                       ))}

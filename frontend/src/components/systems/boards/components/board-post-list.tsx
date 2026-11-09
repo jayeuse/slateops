@@ -43,6 +43,7 @@ import { cn } from "@/lib/utils";
 import type { BoardPostPage } from "../adapters/board-posts-api";
 import { POST_STATE_LABELS, type PostListState } from "../domain/post-list";
 import type { PublishedPostSort } from "../hooks/use-server-board-posts";
+import { listNumberText, listTotalText } from "@/lib/list-pagination";
 
 export const POST_SORT_OPTIONS: readonly {
   value: PublishedPostSort;
@@ -374,8 +375,8 @@ export function BoardPostList({
         >
           <span className="text-muted-foreground text-xs tabular-nums">
             {pagination.count > 0
-              ? `${pagination.offset + 1}–${pagination.offset + pagination.count} of ${pagination.total}`
-              : `0 of ${pagination.total}`}
+              ? `${listNumberText(pagination.offset + 1)}–${listNumberText(pagination.offset + pagination.count)} of ${listTotalText(pagination.total, pagination.totalIsCapped)}`
+              : `0 of ${listTotalText(pagination.total, pagination.totalIsCapped)}`}
           </span>
           <span className="flex items-center gap-1">
             <Button

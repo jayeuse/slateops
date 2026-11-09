@@ -1,4 +1,5 @@
 import type { SecuritySettingsFormFields } from "../adapters/security-api";
+import { listCountText } from "@/lib/list-pagination";
 
 /**
  * The installation defaults of the rare policy settings, as the form shows
@@ -67,12 +68,18 @@ function plural(count: number, one: string, many: string) {
  * held only the first page, so the people are a lower bound.
  */
 export function endAllSessionsSentence(
-  count: { sessions: number; people: number; more: boolean } | null,
+  count: {
+    sessions: number;
+    people: number;
+    more: boolean;
+    /** The session total is capped at 10,000 (U1 to U3). */
+    sessionsCapped?: boolean;
+  } | null,
 ): string {
   const stays = "Your current session stays.";
   if (count === null) return `Signs out every other session. ${stays}`;
   const people = plural(count.people, "person", "people");
-  return `Signs out ${plural(count.sessions, "session", "sessions")} on ${
+  return `Signs out ${listCountText(count.sessions, count.sessionsCapped ?? false, "session", "sessions")} on ${
     count.more ? "at least " : ""
   }${people}. ${stays}`;
 }

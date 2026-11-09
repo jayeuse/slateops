@@ -99,6 +99,7 @@ import {
   BoardEventPurgeDialog,
 } from "./board-event-lifecycle-dialogs";
 import { upcomingGroups } from "../domain/calendar-items";
+import { listNumberText, listTotalText } from "@/lib/list-pagination";
 
 export function canEditBoardEvent(
   event: BoardEvent,
@@ -716,11 +717,18 @@ export function ServerBackedBoardCalendar({
         {canBrowseArchived && archivedPage ? (
           <>
             <p className="text-muted-foreground text-sm" role="status">
-              {archivedPage.pagination.total} archived events · Showing{" "}
+              {listTotalText(
+                archivedPage.pagination.total,
+                archivedPage.pagination.totalIsCapped,
+              )}{" "}
+              archived events · Showing{" "}
               {archivedPage.items.length === 0
                 ? 0
-                : lifecycle.archived.offset + 1}
-              –{lifecycle.archived.offset + archivedPage.items.length}
+                : listNumberText(lifecycle.archived.offset + 1)}
+              –
+              {listNumberText(
+                lifecycle.archived.offset + archivedPage.items.length,
+              )}
             </p>
             <ServerArchivedBoardEventsDisplay
               page={archivedPage}

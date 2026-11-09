@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import {
   hasMoreAgreesWithTotal,
+  listCountText,
   listTotalText,
   pageEndsWithinTotal,
   type PageCounts,
@@ -132,4 +133,16 @@ test("a list total is grouped in English and capped totals end with a plus", () 
     listTotalText(10_000, false),
     listTotalText(10_000, true),
   ]).toEqual(["7", "1,234", "10,000", "10,000+"]);
+});
+
+test("a counted noun stays singular only for an exact 1", () => {
+  expect([
+    listCountText(1, false, "notification", "notifications"),
+    listCountText(6_638, false, "notification", "notifications"),
+    listCountText(10_000, true, "notification", "notifications"),
+  ]).toEqual([
+    "1 notification",
+    "6,638 notifications",
+    "10,000+ notifications",
+  ]);
 });

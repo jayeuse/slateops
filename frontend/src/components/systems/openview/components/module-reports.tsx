@@ -482,7 +482,11 @@ export function ModuleReports({
                     ? "Archived"
                     : schedule === undefined || total === undefined
                       ? "…"
-                      : reportListLine(schedule, total);
+                      : reportListLine(
+                          schedule,
+                          total,
+                          facts?.copies.data?.pagination.totalIsCapped,
+                        );
                   return (
                     <li
                       key={report.id}

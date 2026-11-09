@@ -720,7 +720,8 @@ function AttentionLine({ item }: { item: AttentionItem }) {
       </span>
       <span className="min-w-0">
         <span className="block">
-          <b className="font-semibold tabular-nums">{item.count}</b> {item.text}
+          <b className="font-semibold tabular-nums">{item.countText}</b>{" "}
+          {item.text}
         </span>
         {item.detail ? (
           <span className="text-muted-foreground block text-xs">
@@ -735,7 +736,7 @@ function AttentionLine({ item }: { item: AttentionItem }) {
       >
         <GuardedWorkspaceLink
           href={item.href as Route}
-          aria-label={`${item.verb}: ${item.count} ${item.text}`}
+          aria-label={`${item.verb}: ${item.countText} ${item.text}`}
         >
           {item.verb}
         </GuardedWorkspaceLink>

@@ -21,6 +21,7 @@ import {
 } from "../helpers/search-failure";
 import { ErrorReference } from "@/components/ui/error-reference";
 import { apiErrorReference } from "@/lib/api-errors";
+import { listTotalText } from "@/lib/list-pagination";
 
 type SearchProps = {
   query: string;
@@ -179,14 +180,19 @@ export default function Search({ query, onQueryChange }: SearchProps) {
                       })}
                     </ul>
                     <p className="text-muted-foreground text-xs">
-                      {data.pagination.total} results · showing{" "}
-                      {data.items.length}
+                      {listTotalText(
+                        data.pagination.total,
+                        data.pagination.total_is_capped,
+                      )}{" "}
+                      results · showing {data.items.length}
                     </p>
                     {data.pagination.total > 10 ? (
                       <PaginationControls
                         ariaLabel={`${TITLES[kind]} result pages`}
                         pageCount={Math.ceil(data.pagination.total / 10)}
                         pageIndex={offset / 10}
+                        hasMore={data.pagination.has_more}
+                        pageCountIsLowerBound={data.pagination.total_is_capped}
                         onPageIndexChange={(page) =>
                           setPages({
                             search,

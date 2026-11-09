@@ -38,6 +38,7 @@ import type { OpenViewPage } from "../adapters/views-api";
 import { copyFromCsv, type ReportCopyTable } from "../domain/report-copy";
 import { copyDate } from "../domain/report-words";
 import { useNarrowScreen } from "./live-record-results";
+import { listTotalText } from "@/lib/list-pagination";
 
 /** Rows a copy shows on the page; Print and CSV keep every row. */
 const COPY_ROW_LIMIT = 500;
@@ -509,10 +510,13 @@ export function ReportCopyPanel({
 
   const title = `Copy of ${copyDate(current.createdAt, region)}`;
   const others = listed.filter((run) => run.id !== current.id);
-  const olderCount = Math.max(total - 1, others.length);
+  // A capped total is a lower bound: no subtraction from it, and more older
+  // copies exist exactly when the server says so (U8).
+  const totalIsCapped = copies?.pagination.totalIsCapped ?? false;
+  const olderCount = totalIsCapped ? total : Math.max(total - 1, others.length);
   const hasMoreOlder = loadedOlder
     ? loadedOlder.hasMore
-    : listed.length < total;
+    : (copies?.pagination.hasMore ?? false);
   const actions = (
     <span className="flex flex-wrap items-center gap-1 md:ml-auto">
       {olderCount > 0 ? (
@@ -522,7 +526,7 @@ export function ReportCopyPanel({
               <Button type="button" variant="ghost" className="min-h-11" />
             }
           >
-            Older copies ({olderCount})
+            Older copies ({listTotalText(olderCount, totalIsCapped)})
             <ChevronDown aria-hidden="true" className="text-muted-foreground" />
           </DropdownMenuTrigger>
           <DropdownMenuContent

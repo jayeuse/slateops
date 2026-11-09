@@ -541,6 +541,8 @@ export function SecurityPanel({
                     className="w-auto sm:justify-end"
                     pageCount={pageCount}
                     pageIndex={page.offset / request.limit}
+                    hasMore={response?.pagination.has_more}
+                    pageCountIsLowerBound={response?.pagination.total_is_capped}
                     onPageIndexChange={(index) =>
                       onRequestChange({
                         ...request,

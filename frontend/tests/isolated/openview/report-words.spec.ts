@@ -44,6 +44,16 @@ test("a report's list line says when it runs and how many copies it keeps", () =
   expect(runsWords(null, "08:00")).toBe("When someone makes a copy");
 });
 
+test("a report's copy count is grouped, and a capped count ends with a plus", () => {
+  expect([
+    reportListLine(null, 1_234),
+    reportListLine(null, 10_000, true),
+  ]).toEqual([
+    "When someone makes a copy · 1,234 copies",
+    "When someone makes a copy · 10,000+ copies",
+  ]);
+});
+
 test("step 1 says what a report lists in words", () => {
   const field = (id: string) => (id === statusFieldId ? "Status" : undefined);
   expect(

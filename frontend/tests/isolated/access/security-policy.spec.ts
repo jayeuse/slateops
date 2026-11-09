@@ -151,7 +151,7 @@ for (const row of summaryRows)
 
 const sentenceRows: {
   name: string;
-  count: { sessions: number; people: number; more: boolean } | null;
+  count: Parameters<typeof endAllSessionsSentence>[0];
   sentence: string;
 }[] = [
   {
@@ -170,6 +170,13 @@ const sentenceRows: {
     count: { sessions: 240, people: 61, more: true },
     sentence:
       "Signs out 240 sessions on at least 61 people. Your current session stays.",
+  },
+  {
+    // Above 10,000 the session total is capped and reads as a lower bound.
+    name: "a capped session total",
+    count: { sessions: 10_000, people: 40, more: true, sessionsCapped: true },
+    sentence:
+      "Signs out 10,000+ sessions on at least 40 people. Your current session stays.",
   },
   {
     name: "a count that could not be read",

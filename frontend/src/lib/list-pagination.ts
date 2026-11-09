@@ -67,3 +67,13 @@ export function listNumberText(value: number): string {
 export function listTotalText(total: number, capped: boolean): string {
   return `${listNumberText(total)}${capped ? "+" : ""}`;
 }
+
+/** "1 notification", "6,638 notifications", "10,000+ notifications". */
+export function listCountText(
+  total: number,
+  capped: boolean,
+  one: string,
+  many: string,
+): string {
+  return `${listTotalText(total, capped)} ${total === 1 && !capped ? one : many}`;
+}

@@ -425,6 +425,8 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
           <TablePagination
             ariaLabel="Jobs pages"
             total={p.total}
+            totalIsCapped={p.total_is_capped}
+            hasMore={p.has_more}
             offset={p.offset}
             rowCount={p.count}
             pageSize={limit}

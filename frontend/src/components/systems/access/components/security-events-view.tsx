@@ -493,6 +493,8 @@ export function SecurityEventsView({
                 ariaLabel="Security event pages"
                 className="shrink-0 px-3 py-2 lg:py-2"
                 total={page.pagination.total}
+                totalIsCapped={page.pagination.total_is_capped}
+                hasMore={page.pagination.has_more}
                 offset={page.pagination.offset}
                 rowCount={page.pagination.count}
                 pageSize={page.pagination.limit}
