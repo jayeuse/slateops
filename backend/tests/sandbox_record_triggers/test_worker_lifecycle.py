@@ -100,7 +100,7 @@ def test_claim_failure_logs_context_and_increases_the_next_idle_wait(monkeypatch
     log_event = Mock()
     monkeypatch.setattr("app.systems.sandbox.record_triggers.worker.get_engine", Mock())
     monkeypatch.setattr(
-        "app.systems.sandbox.record_triggers.worker.enqueue_due_schedules",
+        "app.systems.sandbox.record_triggers.worker.claim_due_events",
         Mock(side_effect=RuntimeError("database unavailable")),
     )
     monkeypatch.setattr("app.systems.sandbox.record_triggers.worker.log_event", log_event)
@@ -118,7 +118,7 @@ def test_claim_retry_delay_caps_and_resets_after_a_successful_claim_pass(monkeyp
     worker._claim_retry_seconds = 32
     monkeypatch.setattr("app.systems.sandbox.record_triggers.worker.get_engine", Mock())
     monkeypatch.setattr(
-        "app.systems.sandbox.record_triggers.worker.enqueue_due_schedules",
+        "app.systems.sandbox.record_triggers.worker.claim_due_events",
         Mock(side_effect=RuntimeError("database unavailable")),
     )
 

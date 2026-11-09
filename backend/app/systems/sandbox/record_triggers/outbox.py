@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from dataclasses import dataclass
+from datetime import UTC, datetime, time, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -88,6 +89,72 @@ def enqueue_child_field_event(
         )
     )
     return True
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduleDefinition:
+    """When one published schedule fires: a local minute, daily or on one weekday."""
+
+    timezone: str
+    local_time: str
+    weekday: int | None
+
+
+def schedule_definitions(db: Session) -> list[ScheduleDefinition]:
+    """The live published schedules of the bound organization, in one statement."""
+
+    rows = db.execute(
+        select(
+            RecordTrigger.workspace_timezone,
+            RecordTrigger.schedule_time,
+            RecordTrigger.schedule_frequency,
+            RecordTrigger.schedule_weekday,
+        ).where(
+            RecordTrigger.enabled.is_(True),
+            RecordTrigger.is_deleted.is_(False),
+            RecordTrigger.suspended_at.is_(None),
+            RecordTrigger.event_kind == "schedule",
+        )
+    ).all()
+    return [
+        ScheduleDefinition(
+            zone, str(local_time), weekday if frequency == "weekly" else None
+        )
+        for zone, local_time, frequency, weekday in rows
+        if zone and local_time
+    ]
+
+
+def next_schedule_minute(
+    definitions: list[ScheduleDefinition], *, after: datetime
+) -> datetime | None:
+    """The first minute, from the minute of ``after``, in which a definition fires (UTC).
+
+    It matches ``enqueue_due_schedules``: the local ``HH:MM`` (and ISO weekday) of the
+    instant. A local time that a clock change skips never fires, there or here.
+    """
+
+    floor = after.astimezone(UTC).replace(second=0, microsecond=0)
+    earliest: datetime | None = None
+    for definition in definitions:
+        try:
+            zone = ZoneInfo(definition.timezone)
+            hour, minute = (int(part) for part in definition.local_time.split(":"))
+            clock = time(hour, minute)
+        except (ZoneInfoNotFoundError, ValueError):
+            continue
+        start = floor.astimezone(zone).date()
+        for offset in range(9):
+            day = start + timedelta(days=offset)
+            if definition.weekday is not None and day.isoweekday() != definition.weekday:
+                continue
+            candidate = datetime.combine(day, clock, tzinfo=zone).astimezone(UTC)
+            if candidate.astimezone(zone).strftime("%H:%M") != definition.local_time:
+                continue
+            if candidate >= floor:
+                earliest = candidate if earliest is None else min(earliest, candidate)
+                break
+    return earliest
 
 
 def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> int:

@@ -8,6 +8,7 @@ from sqlalchemy.exc import OperationalError
 from uuid6 import uuid7
 
 from app.systems.manage.audit import seals
+from tests.platform_scheduling.worker_clock import ControlledClock, install, nothing_due
 
 
 def test_a_failed_chain_is_sealed_again_on_the_next_short_wake(
@@ -16,7 +17,7 @@ def test_a_failed_chain_is_sealed_again_on_the_next_short_wake(
     from app.systems.platform.scheduling import worker as module
 
     organization = uuid7()
-    clock = SimpleNamespace(value=0.0)
+    clock = ControlledClock(until=3700)
     attempts: list[float] = []
     outcomes = iter([OperationalError("SELECT", {}, RuntimeError("statement timeout"))])
 
@@ -29,17 +30,9 @@ def test_a_failed_chain_is_sealed_again_on_the_next_short_wake(
             raise outcome
         return outcome
 
-    class ControlledStop:
-        def is_set(self) -> bool:
-            return clock.value > 3700
-
-        def wait(self, seconds: float) -> bool:
-            clock.value += seconds
-            return self.is_set()
-
     monkeypatch.setattr(seals, "chains", lambda _engine: [organization, None])
     monkeypatch.setattr(seals, "seal_chain", seal_chain)
-    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock.value))
+    monkeypatch.setattr(module, "probe_due", nothing_due)
     monkeypatch.setattr(module, "get_engine", lambda: None)
     monkeypatch.setattr(module, "active_organization_ids", lambda _engine: [organization])
     for job in (
@@ -53,7 +46,7 @@ def test_a_failed_chain_is_sealed_again_on_the_next_short_wake(
     logger = Mock()
     monkeypatch.setattr(module, "log_event", logger)
     worker = module.ReportSchedulingWorker(SimpleNamespace(environment="development"))
-    worker._stop = ControlledStop()
+    install(monkeypatch, module, worker, clock)
 
     worker._run()
 
