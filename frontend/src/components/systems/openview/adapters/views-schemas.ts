@@ -42,20 +42,40 @@ const savedViewListRequestSchema = z
     deleted: z.enum(["exclude", "include", "only"]).optional(),
   })
   .strict();
+const wirePaginationShape = {
+  limit: z.number().int().min(1).max(100),
+  offset: z.number().int().min(0),
+  count: z.number().int().min(0),
+  total: z.number().int().min(0),
+  has_more: z.boolean(),
+  total_is_capped: z.boolean(),
+};
 const paginationSchema = z
-  .object({
-    limit: z.number().int().min(1).max(100),
-    offset: z.number().int().min(0),
-    count: z.number().int().min(0),
-    total: z.number().int().min(0),
-    has_more: z.boolean(),
-    total_is_capped: z.boolean(),
-  })
+  .object(wirePaginationShape)
   .strict()
   .transform(({ has_more, total_is_capped, ...pagination }) => ({
     ...pagination,
     hasMore: has_more,
     totalIsCapped: total_is_capped,
+  }));
+/**
+ * A keyset list (relationships, record history). `next_cursor` is opaque and
+ * names the position after the page; on the default order, which the
+ * frontend always reads, it is a string exactly when more rows exist. The
+ * server accepts at most 128 characters back.
+ */
+const keysetPaginationSchema = z
+  .object({
+    ...wirePaginationShape,
+    next_cursor: z.string().min(1).max(128).nullable(),
+  })
+  .strict()
+  .refine(({ has_more, next_cursor }) => has_more === (next_cursor !== null))
+  .transform(({ has_more, total_is_capped, next_cursor, ...pagination }) => ({
+    ...pagination,
+    hasMore: has_more,
+    totalIsCapped: total_is_capped,
+    nextCursor: next_cursor,
   }));
 
 const queryFieldReferenceSchema = z
@@ -405,6 +425,12 @@ function listSchema<Item extends z.ZodType>(item: Item) {
     .strict();
 }
 
+function keysetListSchema<Item extends z.ZodType>(item: Item) {
+  return z
+    .object({ items: z.array(item), pagination: keysetPaginationSchema })
+    .strict();
+}
+
 const dataSourceListSchema = listSchema(dataSourceSchema);
 const savedViewListSchema = listSchema(savedViewResponseSchema);
 const recordListSchema = listSchema(recordSchema);
@@ -466,6 +492,10 @@ export type OpenViewPage<T> = {
   items: T[];
   pagination: z.output<typeof paginationSchema>;
 };
+export type OpenViewKeysetPage<T> = {
+  items: T[];
+  pagination: z.output<typeof keysetPaginationSchema>;
+};
 export type OpenViewDataSource = z.output<typeof dataSourceSchema>;
 export type OpenViewDataSourceField = z.output<typeof fieldSchema>;
 export type OpenViewRecord = z.output<typeof recordSchema>;
@@ -479,6 +509,7 @@ export {
   archiveSchema,
   dataSourceListSchema,
   fieldSchema,
+  keysetListSchema,
   listSchema,
   pageRequestSchema,
   presentationSchema,

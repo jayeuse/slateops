@@ -382,6 +382,7 @@ def _page_metadata(payload: Mapping[str, Any]) -> tuple[Any, ...]:
         page.get("offset"),
         page.get("count"),
         page.get("has_more", page.get("hasMore")),
+        page.get("next_cursor", page.get("nextCursor")),
     )
 
 
@@ -392,7 +393,11 @@ def list_all_rows(
     page_size: int = 100,
     params: Mapping[str, Any] | None = None,
 ) -> list[Mapping[str, Any]]:
-    """Read every page. Above 10,000 rows the total is a lower bound, so `has_more` ends it."""
+    """Read every page. Above 10,000 rows the total is a lower bound, so `has_more` ends it.
+
+    A D1 keyset list (audit, relationships, trigger runs) names the next page by cursor; the
+    walk follows it, and each cursor page reports offset 0.
+    """
 
     if not 1 <= page_size <= 100:
         raise ValueError("Sample verification page size must be between 1 and 100")
@@ -400,14 +405,14 @@ def list_all_rows(
     output: list[Mapping[str, Any]] = []
     expected_total: int | None = None
     capped = False
-    offset = 0
+    cursor: Any = None
     has_more = True
     while has_more:
-        response = client.request(
-            "GET",
-            path,
-            params={**base_params, "limit": page_size, "offset": offset},
-        )
+        offset = 0 if cursor is not None else len(output)
+        page_params = {**base_params, "limit": page_size, "offset": offset}
+        if cursor is not None:
+            page_params["cursor"] = cursor
+        response = client.request("GET", path, params=page_params)
         if response.status_code != 200:
             raise SampleVerificationError(f"GET {path} returned HTTP {response.status_code}")
         try:
@@ -416,18 +421,21 @@ def list_all_rows(
             raise SampleVerificationError(f"GET {path} returned invalid JSON") from None
         if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
             raise SampleVerificationError(f"GET {path} returned an invalid list response")
-        total, page_capped, limit, reported_offset, count, has_more = _page_metadata(payload)
+        total, page_capped, limit, reported_offset, count, has_more, cursor = _page_metadata(
+            payload
+        )
         if not isinstance(total, int) or isinstance(total, bool) or total < 0:
             raise SampleVerificationError(f"GET {path} returned an invalid total")
         rows = payload["items"]
         # A capped total is a lower bound: a page short of it must report more rows.
-        short = offset + len(rows) < total
+        short = len(output) + len(rows) < total
         if (
             limit != page_size
             or reported_offset != offset
             or count != len(rows)
             or not isinstance(has_more, bool)
             or not isinstance(page_capped, bool)
+            or not (cursor is None or isinstance(cursor, str) and cursor and has_more)
             or (not page_capped and has_more != short)
             or (page_capped and (total != TOTAL_CAP or (short and not has_more)))
         ):
@@ -442,7 +450,6 @@ def list_all_rows(
         if has_more and not rows:
             raise SampleVerificationError(f"GET {path} ended before its reported total")
         output.extend(rows)
-        offset += len(rows)
     if not capped and len(output) != expected_total:
         raise SampleVerificationError(f"GET {path} did not return its reported total")
     if capped and len(output) <= TOTAL_CAP:

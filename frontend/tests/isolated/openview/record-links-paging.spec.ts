@@ -28,8 +28,15 @@ test("record links return one explicit page and preserve its continuation", asyn
     const offset = Number(url.searchParams.get("offset") ?? "0");
     offsets.push(String(offset));
     const items = all.slice(offset, offset + 100);
+    const page = pageOf(items, { limit: 100, offset, total: all.length });
     return Promise.resolve(
-      Response.json(pageOf(items, { limit: 100, offset, total: all.length })),
+      Response.json({
+        ...page,
+        pagination: {
+          ...page.pagination,
+          next_cursor: page.pagination.has_more ? "cursor-100" : null,
+        },
+      }),
     );
   }) as typeof fetch;
   try {
@@ -45,6 +52,47 @@ test("record links return one explicit page and preserve its continuation", asyn
     expect(next.items).toHaveLength(1);
     expect(next.pagination.hasMore).toBe(false);
     expect(offsets).toEqual(["0", "100"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("record links read a capped keyset page and refuse more links without a cursor", async () => {
+  const { listOpenViewRecordLinks } =
+    await import("../../../src/components/systems/openview/adapters/records-api");
+  const { ApiContractError } = await import("../../../src/lib/api");
+  const pagination = {
+    limit: 100,
+    offset: 0,
+    count: 1,
+    total: 10_000,
+    has_more: true,
+    total_is_capped: true,
+  };
+  let cursor: string | null = "cursor-after-1";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (() =>
+    Promise.resolve(
+      Response.json({
+        items: [edge(1)],
+        pagination: { ...pagination, next_cursor: cursor },
+      }),
+    )) as typeof fetch;
+  try {
+    const page = await listOpenViewRecordLinks(recordId);
+    expect(page.pagination).toEqual({
+      limit: 100,
+      offset: 0,
+      count: 1,
+      total: 10_000,
+      hasMore: true,
+      totalIsCapped: true,
+      nextCursor: "cursor-after-1",
+    });
+    cursor = null;
+    await expect(listOpenViewRecordLinks(recordId)).rejects.toBeInstanceOf(
+      ApiContractError,
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

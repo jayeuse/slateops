@@ -817,3 +817,34 @@ test("loads bounded recent published trigger activity", async () => {
     mock.restore();
   }
 });
+
+test("trigger runs read a capped page with its cursor", async () => {
+  const run = {
+    id: "00000000-0000-4000-8000-000000000701",
+    createdAt: "2026-11-09T12:00:00Z",
+    triggerId: "00000000-0000-4000-8000-000000000702",
+    triggerName: "Notify the owner",
+    eventKind: "record-created",
+    state: "succeeded",
+    details: {},
+    attempts: 1,
+  };
+  const mock = installFetch(() =>
+    Response.json({
+      items: [run],
+      limit: 1,
+      offset: 0,
+      count: 1,
+      total: 10_000,
+      totalIsCapped: true,
+      hasMore: true,
+      nextCursor: "cursor-after-1",
+    }),
+  );
+  try {
+    const page = await listSandboxTriggerRuns({ limit: 1 });
+    expect(page.items).toEqual([run]);
+  } finally {
+    mock.restore();
+  }
+});

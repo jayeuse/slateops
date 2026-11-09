@@ -87,6 +87,7 @@ async function mockAudit(page: Page) {
           total: items.length,
           has_more: false,
           total_is_capped: false,
+          next_cursor: null,
         },
       },
     });

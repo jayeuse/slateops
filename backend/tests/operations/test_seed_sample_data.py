@@ -188,6 +188,43 @@ def test_api_read_follows_has_more_past_a_capped_total(tmp_path: Path) -> None:
     assert rows[-1] == {"id": "row-10049"}
 
 
+@pytest.mark.parametrize("flat", [False, True], ids=["standard-list", "trigger-runs"])
+def test_api_read_follows_the_cursor_where_the_route_gives_one(
+    tmp_path: Path, flat: bool
+) -> None:
+    # D1 keyset lists name the next page by cursor; a later page has offset 0.
+    requests: list[tuple[str, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        offset, cursor = request.url.params["offset"], request.url.params.get("cursor")
+        requests.append((offset, cursor))
+        start = 0 if cursor is None else int(cursor.removeprefix("after-"))
+        if offset != "0":
+            return httpx.Response(422)
+        rows = [{"id": f"row-{index}"} for index in range(start, min(start + 2, 5))]
+        more = start + len(rows) < 5
+        page = {
+            "limit": 2, "offset": 0, "count": len(rows), "total": 5,
+            ("totalIsCapped" if flat else "total_is_capped"): False,
+            ("hasMore" if flat else "has_more"): more,
+            ("nextCursor" if flat else "next_cursor"): f"after-{start + 2}" if more else None,
+        }
+        return httpx.Response(200, json={"items": rows, **page} if flat else {
+            "items": rows, "pagination": page,
+        })
+
+    with SampleClient(
+        "http://api.example.test",
+        "http://workspace.example.test",
+        tmp_path / "requests.jsonl",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        rows = list_all_rows(client, "/api/audit-logs", page_size=2)
+
+    assert [row["id"] for row in rows] == [f"row-{index}" for index in range(5)]
+    assert requests == [("0", None), ("0", "after-2"), ("0", "after-4")]
+
+
 def test_api_read_rejects_inconsistent_pagination_metadata(tmp_path: Path) -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(

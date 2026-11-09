@@ -1148,6 +1148,7 @@ async function mockAuditHistory(page: Page) {
           total: 0,
           has_more: false,
           total_is_capped: false,
+          next_cursor: null,
         },
       },
     });

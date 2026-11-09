@@ -16,7 +16,7 @@ from sqlalchemy import Connection, event, text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.listing import SortOrder, StandardListRequest
+from app.common.listing import KeysetListRequest, SortOrder
 from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
 from app.systems.access.policy.models import AccessLevel
@@ -37,6 +37,7 @@ from tests.migrations.audit_partition_support import (
     AuditEngines,
     month_starts,
     partition_name,
+    prepared_plan_pages,
 )
 from tests.migrations.audit_partition_support import (
     audit_engines as audit_engines,
@@ -59,6 +60,8 @@ LINK_ENTRIES = 9_000
 # The department's other entries, which have no link to look for.
 OTHER_ENTRIES = 9_000
 FEW_MONTHS, MANY_MONTHS = 2, 6
+# A deep cursor page reads one more index descent for each leaf at most.
+DEPTH_PAGE_MARGIN = 20
 LINK_TABLES = {"relationship_edges", "records"}
 PARENT_INDEX = {
     "department_id": "ix_audit_logs_department_created_at_id",
@@ -193,6 +196,7 @@ def _captured_list(
     *,
     order: SortOrder = SortOrder.ASC,
     workers: bool = False,
+    cursor: str | None = None,
     **filters: Any,
 ) -> list[dict[str, Any]]:
     """Run the real list, then read the plan of each of its audit statements as the runtime."""
@@ -211,8 +215,8 @@ def _captured_list(
         try:
             list_audit_logs(
                 db,
-                StandardListRequest[AuditLogSortField](
-                    sort_by=AuditLogSortField.CREATED_AT, sort_order=order
+                KeysetListRequest[AuditLogSortField](
+                    sort_by=AuditLogSortField.CREATED_AT, sort_order=order, cursor=cursor
                 ),
                 reader=reader,
                 **filters,
@@ -234,6 +238,26 @@ def _captured_list(
             plans.append(raw.fetchone()[0][0]["Plan"])
         db.rollback()
     return plans
+
+
+def _cursor_after(world: Any, org_id: UUID, reader_id: UUID, rows: int, **filters: Any) -> str:
+    """The cursor that the newest-first list gives after its first `rows` rows."""
+
+    with AuditSession(bind=world.engines.runtime) as db:
+        scope_session(db, org_id)
+        result = list_audit_logs(
+            db,
+            KeysetListRequest[AuditLogSortField](
+                sort_by=AuditLogSortField.CREATED_AT, sort_order=SortOrder.DESC,
+                limit=1, offset=rows - 1,
+            ),
+            reader=db.get_one(User, reader_id),
+            **filters,
+        )
+        db.rollback()
+    cursor = getattr(result.pagination, "next_cursor", None)
+    assert isinstance(cursor, str)
+    return cursor
 
 
 def _child_indexes(world: _Plans, parent_index: str) -> dict[str, str]:
@@ -325,6 +349,72 @@ def test_the_capped_count_of_a_small_organization_stays_small_with_workers_on_c5
     count, _page = _captured_list(world, world.small, world.small_admin, workers=True)
 
     assert _pages(count) <= SMALL_ORGANIZATION_PAGE_CEILING, _pages(count)
+
+
+@pytest.mark.parametrize(
+    ("reader", "rows"),
+    # The department holds 240 entries in the fixture, so its cursor sits after 200.
+    [("admin", 2_500), ("department manager", 200)],
+)
+def test_a_page_after_many_rows_reads_as_few_pages_as_page_1_p2(
+    plans: _Plans, reader: str, rows: int
+) -> None:
+    world = plans
+    user, filters = {
+        "admin": (world.large_admin, {}),
+        "department manager": (world.manager, {"department_id": world.department}),
+    }[reader]
+    cursor = _cursor_after(world, world.large, user, rows, **filters)
+
+    *_counts, first = _captured_list(world, world.large, user, order=SortOrder.DESC, **filters)
+    *_counts, deep = _captured_list(
+        world, world.large, user, order=SortOrder.DESC, cursor=cursor, **filters
+    )
+
+    assert _pages(deep) <= _pages(first) + DEPTH_PAGE_MARGIN, (_pages(first), _pages(deep))
+
+
+@pytest.mark.parametrize("reader", ["admin", "department manager"])
+def test_a_page_statement_run_again_keeps_its_custom_plan_p8(plans: _Plans, reader: str) -> None:
+    # psycopg prepares a statement after five runs; a generic plan would not see the bound
+    # organization or the cursor (K71). After 12 runs PostgreSQL still plans it per value.
+    world = plans
+    user, filters = {
+        "admin": (world.large_admin, {}),
+        "department manager": (world.manager, {"department_id": world.department}),
+    }[reader]
+    cursor = _cursor_after(world, world.large, user, 200, **filters)
+    captured: list[tuple[str, Any]] = []
+
+    def capture(_connection, _cursor, statement, parameters, _context, _many) -> None:
+        if "FROM audit_logs" in statement:
+            captured.append((statement, parameters))
+
+    runtime = world.engines.runtime
+    with AuditSession(bind=runtime) as db:
+        scope_session(db, world.large)
+        event.listen(runtime, "before_cursor_execute", capture)
+        try:
+            list_audit_logs(
+                db,
+                KeysetListRequest[AuditLogSortField](sort_order=SortOrder.DESC, cursor=cursor),
+                reader=db.get_one(User, user),
+                **filters,
+            )
+        finally:
+            event.remove(runtime, "before_cursor_execute", capture)
+        # The count runs first; the page statement is the last one.
+        statement, parameters = captured[-1]
+        generic, generic_pages = prepared_plan_pages(
+            db.connection().connection.cursor(), statement, parameters
+        )
+        db.rollback()
+    *_counts, first = _captured_list(world, world.large, user, order=SortOrder.DESC, **filters)
+
+    # P8: no generic plan, or a generic plan within the P2 ceiling.
+    assert generic == 0 or generic_pages <= _pages(first) + DEPTH_PAGE_MARGIN, (
+        generic, generic_pages, _pages(first),
+    )
 
 
 @pytest.mark.parametrize("name", sorted(PARENT_INDEX))
@@ -447,13 +537,9 @@ def _spread_entries(world: _LinkHistory, month_count: int) -> None:
     """The same audit entries, now over `month_count` months."""
 
     with world.engines.owner.begin() as connection:
-        connection.execute(
-            text(
-                "DELETE FROM public.audit_logs WHERE org_id = :org "
-                "AND entity_type IN ('relationship_edges', 'reports')"
-            ),
-            {"org": world.org},
-        )
+        # The pages count audit leaves, so each spread starts on empty leaves; rows that other
+        # tests deleted would leave dead tuples. The fixture's `downgrade base` removes all.
+        connection.execute(text("TRUNCATE public.audit_logs"))
         connection.execute(
             text(
                 "INSERT INTO public.audit_logs (id, org_id, created_at, action, entity_type, "
@@ -678,3 +764,50 @@ def test_activity_readers_read_their_identities_once_at_any_month_count(
 
     assert pages[FEW_MONTHS] > 0, pages
     assert pages[MANY_MONTHS] <= pages[FEW_MONTHS] * 5 // 4, pages
+
+
+def _link_scans_under_leaves(plan: dict[str, Any], leaves: set[str]) -> list[str]:
+    """Link table scans inside an audit leaf scan, where each month would repeat them."""
+
+    found = []
+    for node in _nodes(plan):
+        if node.get("Relation Name") in leaves:
+            found += [
+                inner["Relation Name"]
+                for inner in _nodes(node)
+                if inner.get("Relation Name") in LINK_TABLES
+            ]
+    return found
+
+
+def test_the_keyset_page_and_count_cost_the_same_at_any_month_count_p4_p5(
+    link_history: _LinkHistory,
+) -> None:
+    # A row comparison does not prune months, so each populated leaf adds one index descent to
+    # the page (contract 2.7). The capped count and the link check stay within a quarter, and
+    # the link check stays above the leaves on both statements (REQ-0006).
+    world = link_history
+    leaves = {partition_name(first_day) for first_day in world.months}
+    pages = {}
+    for month_count in (FEW_MONTHS, MANY_MONTHS):
+        _spread_entries(world, month_count)
+        cursor = _cursor_after(
+            world, world.org, world.manager, 2_500, department_id=world.department
+        )
+        count, page = _captured_list(
+            world, world.org, world.manager, order=SortOrder.DESC, cursor=cursor,
+            department_id=world.department,
+        )
+        assert _link_scans_under_leaves(count, leaves) == []
+        assert _link_scans_under_leaves(page, leaves) == []
+        leaf_pages = sum(
+            _pages(node) for node in _nodes(page) if node.get("Relation Name") in leaves
+        )
+        link_pages = max(_link_pages(count), _link_pages(page))
+        pages[month_count] = (_pages(count), leaf_pages, link_pages)
+
+    (few_count, few_leaves, few_links) = pages[FEW_MONTHS]
+    (many_count, many_leaves, many_links) = pages[MANY_MONTHS]
+    assert many_count <= few_count * 5 // 4, pages
+    assert many_links <= few_links * 5 // 4, pages
+    assert many_leaves <= few_leaves * 5 // 4 + (MANY_MONTHS - FEW_MONTHS), pages

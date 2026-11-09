@@ -31,14 +31,19 @@ const auditLogSchema = z.object({
 
 const auditLogListSchema = z.object({
   items: z.array(auditLogSchema),
-  pagination: z.object({
-    limit: z.number().int().positive(),
-    offset: z.number().int().nonnegative(),
-    count: z.number().int().nonnegative(),
-    total: z.number().int().nonnegative(),
-    has_more: z.boolean(),
-    total_is_capped: z.boolean(),
-  }),
+  pagination: z
+    .object({
+      limit: z.number().int().positive(),
+      offset: z.number().int().nonnegative(),
+      count: z.number().int().nonnegative(),
+      total: z.number().int().nonnegative(),
+      has_more: z.boolean(),
+      total_is_capped: z.boolean(),
+      // Opaque; on the created_at order that this list always reads it is a
+      // string exactly when more entries exist. The server takes back 128.
+      next_cursor: z.string().min(1).max(128).nullable(),
+    })
+    .refine(({ has_more, next_cursor }) => has_more === (next_cursor !== null)),
 });
 
 const auditLogOptionsSchema = z.object({

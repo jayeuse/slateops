@@ -14,7 +14,7 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { pageOf } from "../helpers/pagination";
+import { keysetPageOf, pageOf } from "../helpers/pagination";
 import { emptyWireQuery } from "../helpers/query-definitions";
 import { wireField, wireRecord, wireView } from "../helpers/wire";
 import { openedSheet } from "./helpers/settled";
@@ -506,7 +506,7 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
       const limit = Number(url.searchParams.get("limit") ?? 100);
       const items = links.slice(offset, offset + limit);
       return route.fulfill({
-        json: pageOf(items, { limit, offset, total: links.length }),
+        json: keysetPageOf(items, { limit, offset, total: links.length }),
       });
     }
     if (url.pathname === "/api/relationships" && method === "POST") {

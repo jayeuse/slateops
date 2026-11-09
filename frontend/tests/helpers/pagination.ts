@@ -101,3 +101,38 @@ export function pageOf<T>(
     },
   };
 }
+
+/**
+ * An opaque test cursor that names the row after a page. The frontend sends
+ * a cursor back unchanged and never reads it.
+ */
+export function testCursor(nextOffset: number): string {
+  return `after-${nextOffset}`;
+}
+
+/**
+ * One page of a keyset list (audit, record history, relationships), as the
+ * API sends it: `pageOf` plus `next_cursor`, a cursor exactly when more
+ * items exist.
+ */
+export function keysetPageOf<T>(
+  items: T[],
+  options: {
+    limit: number;
+    offset?: number;
+    total?: number;
+    hasMore?: boolean;
+    totalIsCapped?: boolean;
+  },
+) {
+  const page = pageOf(items, options);
+  return {
+    ...page,
+    pagination: {
+      ...page.pagination,
+      next_cursor: page.pagination.has_more
+        ? testCursor(page.pagination.offset + items.length)
+        : null,
+    },
+  };
+}

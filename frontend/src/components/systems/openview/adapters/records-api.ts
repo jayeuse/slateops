@@ -14,10 +14,12 @@ import type {
 import { openViewReadFetch } from "./openview-access";
 import { serializeOpenViewQueryDefinition } from "./views-serialization";
 import {
+  keysetListSchema,
   listSchema,
   recordListSchema,
   recordSchema,
   uuidSchema,
+  type OpenViewKeysetPage,
   type OpenViewPage,
   type OpenViewQueryDefinition,
   type OpenViewRecord,
@@ -228,7 +230,7 @@ export function listReadableRelationshipFields(
 export function listOpenViewRecordLinks(
   recordId: string,
   options: { limit?: number; offset?: number } = {},
-): Promise<OpenViewPage<OpenViewRelationship>> {
+): Promise<OpenViewKeysetPage<OpenViewRelationship>> {
   return listOpenViewLinks({ incidentRecordId: recordId, ...options });
 }
 
@@ -241,7 +243,7 @@ export function listOpenViewLinks(options: {
   limit?: number;
   offset?: number;
   signal?: AbortSignal;
-}): Promise<OpenViewPage<OpenViewRelationship>> {
+}): Promise<OpenViewKeysetPage<OpenViewRelationship>> {
   const query = new URLSearchParams({
     limit: String(options.limit ?? 100),
     offset: String(options.offset ?? 0),
@@ -253,16 +255,20 @@ export function listOpenViewLinks(options: {
     target_record_id: options.targetRecordId,
   }))
     if (value) query.set(key, uuidSchema.parse(value));
-  return apiFetch(`/relationships?${query}`, listSchema(relationshipSchema), {
-    cache: "no-store",
-    signal: options.signal,
-  });
+  return apiFetch(
+    `/relationships?${query}`,
+    keysetListSchema(relationshipSchema),
+    {
+      cache: "no-store",
+      signal: options.signal,
+    },
+  );
 }
 
 export function listOpenViewFieldLinks(
   fieldId: string,
   options: { limit: number; offset: number },
-): Promise<OpenViewPage<OpenViewRelationship>> {
+): Promise<OpenViewKeysetPage<OpenViewRelationship>> {
   return listOpenViewLinks({ fieldId, ...options });
 }
 
@@ -352,7 +358,7 @@ export async function listOpenViewRecordHistory(input: {
   );
   const page = await apiFetch(
     `/audit-logs?${query.toString()}`,
-    listSchema(auditEntrySchema),
+    keysetListSchema(auditEntrySchema),
     { cache: "no-store" },
   );
   return page.items;

@@ -5,6 +5,7 @@ import {
   AuditExportLimitError,
   downloadManageAuditCsv,
   getManageAuditExportPreview,
+  listManageAuditLogs,
   manageAuditListPath,
 } from "../../../src/components/systems/manage/adapters/audit-api";
 import { installFetch } from "../platform/fixtures";
@@ -80,9 +81,53 @@ function auditPage(total: number, totalIsCapped = false) {
       total,
       total_is_capped: totalIsCapped,
       has_more: total > 0,
+      next_cursor: total > 0 ? "cursor-after-0" : null,
     },
   };
 }
+
+test("the list reads a capped keyset page with its opaque cursor", async () => {
+  const body = {
+    items: [],
+    pagination: {
+      limit: 10,
+      offset: 0,
+      count: 0,
+      total: 10_000,
+      total_is_capped: true,
+      has_more: true,
+      next_cursor: "MjAyNi0xMS0wOVQxMjowMDowMCswMDowMHw",
+    },
+  };
+  const mock = installFetch(() => Response.json(body));
+  try {
+    const page = await listManageAuditLogs({
+      sortOrder: "desc",
+      limit: 10,
+      offset: 0,
+    });
+    expect(page.pagination).toEqual(body.pagination);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("the list refuses more entries without a cursor to reach them", async () => {
+  const body = auditPage(25);
+  const mock = installFetch(() =>
+    Response.json({
+      ...body,
+      pagination: { ...body.pagination, next_cursor: null },
+    }),
+  );
+  try {
+    await expect(
+      listManageAuditLogs({ sortOrder: "desc", limit: 10, offset: 0 }),
+    ).rejects.toBeInstanceOf(ApiContractError);
+  } finally {
+    mock.restore();
+  }
+});
 
 test("the export preview reads the first 10 entries of the filters", async () => {
   const mock = installFetch(() => Response.json(auditPage(10_000)));

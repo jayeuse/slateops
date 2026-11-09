@@ -73,6 +73,7 @@ AUDIT_LOG_LIST_SPEC = ListQuerySpec(
     },
     default_sort=AuditLogSortField.CREATED_AT,
     tie_breaker=cast(ColumnElement[Any], AuditLog.id),
+    keyset=True,
     search_fields=(
         cast(ColumnElement[str], sql_cast(AuditLog.action, String)),
         cast(ColumnElement[str], AuditLog.entity_type),

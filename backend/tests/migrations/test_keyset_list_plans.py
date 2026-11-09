@@ -32,6 +32,7 @@ from tests.migrations.audit_partition_support import (
     committed_history,
     plan_nodes,
     plan_pages,
+    prepared_plan_pages,
 )
 from tests.sandbox_record_triggers.support import document_baseline, publish_trigger
 
@@ -46,6 +47,8 @@ SMALL_ORGANIZATION_PAGE_CEILING = 60
 TABLES = {"runs": "record_trigger_runs", "relationships": "relationship_edges"}
 # The largest page that the reads below ask for, with its extra row.
 PAGE_ROWS = 26
+# A deep cursor page reads one more index descent at most; offset 2,500 read 75,899 pages.
+DEPTH_PAGE_MARGIN = 10
 
 
 @dataclass(frozen=True)
@@ -183,12 +186,33 @@ def _plans(world: _Lists, org_id: UUID, table: str, read: Callable[[Session], An
     return plans
 
 
-def _read(name: str, reader: UUID) -> Callable[[Session], Any]:
+def _read(
+    name: str, reader: UUID, *, cursor: str | None = None, limit: int = 25, offset: int = 0
+) -> Callable[[Session], Any]:
     if name == "runs":
-        return lambda db: list_recent_runs(db, limit=20, offset=0)
+        return lambda db: list_recent_runs(
+            db, limit=min(limit, 20), offset=offset, cursor=cursor
+        )
     return lambda db: list_relationships(
-        db, RelationshipListRequest(limit=25), reader=db.get_one(User, reader)
+        db,
+        RelationshipListRequest(limit=limit, offset=offset, cursor=cursor),
+        reader=db.get_one(User, reader),
     )
+
+
+def _cursor_after(world: _Lists, name: str, rows: int) -> str:
+    """The cursor that the list gives after its first `rows` rows."""
+
+    with AuditSession(bind=world.engines.runtime) as db:
+        scope_session(db, world.large)
+        answer = _read(name, world.large_admin, limit=1, offset=rows - 1)(db)
+        db.rollback()
+    if name == "runs":
+        cursor = answer.next_cursor
+    else:
+        cursor = answer[1].next_cursor
+    assert isinstance(cursor, str)
+    return cursor
 
 
 @pytest.mark.parametrize("name", sorted(TABLES))
@@ -227,3 +251,55 @@ def test_the_first_page_of_each_list_reads_in_index_order_with_no_sort_p1(
             if "Sort" in node["Node Type"]
         ]
         assert [rows for rows in sorted_rows if rows > PAGE_ROWS] == []
+
+
+@pytest.mark.parametrize("name", sorted(TABLES))
+def test_a_page_after_2500_rows_reads_as_few_pages_as_page_1_p2(
+    lists: _Lists, name: str
+) -> None:
+    # The cursor condition sits in the index condition, so depth costs no pages (DBI-1).
+    world = lists
+    cursor = _cursor_after(world, name, 2_500)
+
+    _count, first = _plans(world, world.large, TABLES[name], _read(name, world.large_admin))
+    _count, deep = _plans(
+        world, world.large, TABLES[name], _read(name, world.large_admin, cursor=cursor)
+    )
+
+    assert plan_pages(deep) <= plan_pages(first) + DEPTH_PAGE_MARGIN, (
+        plan_pages(first), plan_pages(deep),
+    )
+
+
+@pytest.mark.parametrize("name", sorted(TABLES))
+def test_a_page_statement_run_again_keeps_its_custom_plan_p8(lists: _Lists, name: str) -> None:
+    # psycopg prepares a statement after five runs; PostgreSQL may then plan it generically,
+    # without the organization or the cursor (K71). After 12 runs it must still plan per value.
+    world = lists
+    cursor = _cursor_after(world, name, 2_500)
+    captured: list[tuple[str, Any]] = []
+
+    def capture(_connection, _cursor, statement, parameters, _context, _many) -> None:
+        if f"FROM {TABLES[name]}" in statement and "LIMIT" in statement:
+            captured.append((statement, parameters))
+
+    runtime = world.engines.runtime
+    with AuditSession(bind=runtime) as db:
+        scope_session(db, world.large)
+        event.listen(runtime, "before_cursor_execute", capture)
+        try:
+            _read(name, world.large_admin, cursor=cursor)(db)
+        finally:
+            event.remove(runtime, "before_cursor_execute", capture)
+        # The count statement runs first; the page statement is the last one.
+        statement, parameters = captured[-1]
+        generic, generic_pages = prepared_plan_pages(
+            db.connection().connection.cursor(), statement, parameters
+        )
+        db.rollback()
+    _count, first = _plans(world, world.large, TABLES[name], _read(name, world.large_admin))
+
+    # P8: no generic plan, or a generic plan within the P2 ceiling.
+    assert generic == 0 or generic_pages <= plan_pages(first) + DEPTH_PAGE_MARGIN, (
+        generic, generic_pages, plan_pages(first),
+    )

@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, JsonValue, field_validator
 
-from app.common.listing import StandardListResponse
+from app.common.listing import KeysetListResponse, StandardListResponse
 from app.systems.manage.audit.models import AuditAction, SecurityEventOutcome
 
 _MAX_MAP_ITEMS = 20
@@ -91,7 +91,7 @@ class AuditLogResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class AuditLogListResponse(StandardListResponse[AuditLogResponse]):
+class AuditLogListResponse(KeysetListResponse[AuditLogResponse]):
     pass
 
 

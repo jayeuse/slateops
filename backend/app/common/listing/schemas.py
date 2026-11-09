@@ -3,6 +3,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.common.listing.cursor import CURSOR_MAX_LENGTH
+
 
 class SortOrder(StrEnum):
     ASC = "asc"
@@ -32,6 +34,12 @@ class StandardListRequest[SortFieldT: StrEnum](BaseModel):
         return value
 
 
+class KeysetListRequest[SortFieldT: StrEnum](StandardListRequest[SortFieldT]):
+    """A D1 keyset list: ``cursor`` replaces ``offset`` on the default created_at order."""
+
+    cursor: str | None = Field(default=None, max_length=CURSOR_MAX_LENGTH)
+
+
 class PaginationMetadata(BaseModel):
     limit: int = Field(ge=1, le=100)
     offset: int = Field(ge=0)
@@ -45,3 +53,13 @@ class PaginationMetadata(BaseModel):
 class StandardListResponse[ResponseItemT](BaseModel):
     items: list[ResponseItemT]
     pagination: PaginationMetadata
+
+
+class KeysetPaginationMetadata(PaginationMetadata):
+    # The cursor after the last row of this page; None when no row follows.
+    next_cursor: str | None
+
+
+class KeysetListResponse[ResponseItemT](BaseModel):
+    items: list[ResponseItemT]
+    pagination: KeysetPaginationMetadata

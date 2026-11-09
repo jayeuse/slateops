@@ -4,10 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.common.listing import (
-    StandardListRequest,
-    StandardListResponse,
-)
+from app.common.listing import KeysetListRequest, KeysetListResponse
 
 
 class RelationshipVisibility(StrEnum):
@@ -48,7 +45,7 @@ class RelationshipAssignment(BaseModel):
     target_record_id: UUID | None
 
 
-class RelationshipListRequest(StandardListRequest[RelationshipSortField]):
+class RelationshipListRequest(KeysetListRequest[RelationshipSortField]):
     model_config = ConfigDict(extra="forbid")
 
     field_id: UUID | None = None
@@ -76,7 +73,7 @@ class RelationshipResponse(BaseModel):
     hidden_reasons: list[RelationshipHiddenReason] = Field(default_factory=list)
 
 
-class RelationshipListResponse(StandardListResponse[RelationshipResponse]):
+class RelationshipListResponse(KeysetListResponse[RelationshipResponse]):
     pass
 
 

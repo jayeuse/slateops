@@ -13,10 +13,12 @@ from sqlalchemy.orm import Session
 from app.common.dependencies import get_current_user, require_admin
 from app.common.listing import (
     DeletedFilter,
-    PaginationMetadata,
+    KeysetListRequest,
     SortOrder,
     StandardListRequest,
     execute_standard_list,
+    keyset_condition,
+    list_pagination,
 )
 from app.core.config import get_settings
 from app.core.database import get_db
@@ -108,7 +110,7 @@ def _audit_log_responses(db: Session, user: User, logs: list[AuditLog]) -> list[
     return responses
 
 
-class AuditLogListRequest(StandardListRequest[AuditLogSortField]):
+class AuditLogListRequest(KeysetListRequest[AuditLogSortField]):
     sort_order: SortOrder = SortOrder.DESC
 
 
@@ -167,10 +169,11 @@ def _record_history(
 ) -> AuditLogListResponse:
     found = record_access(db, user, record_id)
     if found is None:
-        # The same empty page that a missing ID gives an admin.
-        return AuditLogListResponse(items=[], pagination=PaginationMetadata(
-            limit=params.limit, offset=params.offset, count=0, total=0, has_more=False,
-        ))
+        # The same empty page that a missing ID gives an admin, after the same cursor checks.
+        keyset_condition(params, READER_LIST_SPEC)
+        no_rows: list[AuditLog] = []
+        _rows, empty = list_pagination(params, READER_LIST_SPEC, no_rows, 0)
+        return AuditLogListResponse(items=[], pagination=empty)
     record, _level = found
     require_reader_sort(params.sort_by)
     field_ids = readable_field_ids(db, record)

@@ -127,6 +127,12 @@ describeContracts("Manage", [
   {
     name: "listManageAuditLogs",
     run: () => listManageAuditLogs({ ...auditFilters, limit: 25, offset: 0 }),
+    // Keyset list: on the default order a cursor comes exactly with has_more.
+    responses: {
+      "GET /api/audit-logs": {
+        pagination: { has_more: true, next_cursor: "c-1" },
+      },
+    },
   },
   { name: "getManageAuditOptions", run: () => getManageAuditOptions() },
   {
@@ -138,6 +144,12 @@ describeContracts("Manage", [
   {
     name: "getManageAuditExportPreview",
     run: () => getManageAuditExportPreview(auditFilters),
+    // Keyset list: on the default order a cursor comes exactly with has_more.
+    responses: {
+      "GET /api/audit-logs": {
+        pagination: { has_more: true, next_cursor: "c-1" },
+      },
+    },
     refusesCapped:
       "the export takes at most 10,000 events; tests/isolated/manage/audit-api.spec.ts owns the refusal",
   },

@@ -30,3 +30,5 @@ class TriggerRunListResponse(StrictModel):
     total: Annotated[int, Field(ge=0)]
     total_is_capped: bool = Field(alias="totalIsCapped")
     has_more: bool = Field(alias="hasMore")
+    # The cursor after the last run of this page; None when no run follows (D1).
+    next_cursor: str | None = Field(alias="nextCursor")

@@ -21,6 +21,7 @@ import {
   tableCardGaps,
   toolbarLines,
 } from "./helpers/layout";
+import { testCursor } from "../helpers/pagination";
 
 // Who sees which Manage section, the section header, and the still page from
 // 1280px. The navigation rule itself is owned by the isolated
@@ -96,6 +97,10 @@ async function mockAudit(page: Page, count = 24) {
           total: items.length,
           has_more: offset + limit < items.length,
           total_is_capped: false,
+          next_cursor:
+            offset + limit < items.length
+              ? testCursor(offset + page.length)
+              : null,
         },
       },
     });

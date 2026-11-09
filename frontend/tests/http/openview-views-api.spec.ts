@@ -16,7 +16,7 @@ import {
 } from "./helpers/openview-event-source";
 import { readFile } from "node:fs/promises";
 import { hideDevOverlay } from "./helpers/test-styles";
-import { pageOf, wirePagination } from "../helpers/pagination";
+import { keysetPageOf, pageOf, wirePagination } from "../helpers/pagination";
 import { gate } from "./helpers/gate";
 import { wireField, wireRecord, wireView } from "../helpers/wire";
 import { openedSheet } from "./helpers/settled";
@@ -3856,7 +3856,7 @@ test.describe("OpenView workspace regional dates", () => {
     api.workspace.timezone = "America/Los_Angeles";
     await page.route("**/api/audit-logs?**", (route) =>
       route.fulfill({
-        json: pageOf(
+        json: keysetPageOf(
           [
             {
               id: "00000000-0000-4000-8000-000000000199",
@@ -3907,7 +3907,7 @@ test.describe("OpenView workspace regional dates", () => {
     await page.route("**/api/audit-logs?**", (route) => {
       historyReads.push(new URL(route.request().url()).searchParams);
       return route.fulfill({
-        json: pageOf(
+        json: keysetPageOf(
           [
             // S4-C4: a redacted value counts as hidden for a reader, so
             // the panel leaves this entry out; other fields the server

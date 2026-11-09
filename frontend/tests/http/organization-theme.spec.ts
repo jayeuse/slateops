@@ -538,6 +538,7 @@ test("Organization accepted Manage tab transition suspends the preview and retur
           total: 0,
           has_more: false,
           total_is_capped: false,
+          next_cursor: null,
         },
       },
     });

@@ -55,7 +55,7 @@ def list_relationships(
         items, pagination = list_relationships_service(db, params, reader=user)
     except RelationshipError as error:
         raise _raise_service_error(error) from error
-    return RelationshipListResponse(items=items, pagination=pagination)
+    return RelationshipListResponse.model_validate({"items": items, "pagination": pagination})
 
 
 @router.get("/{relationship_id}", response_model=RelationshipResponse)

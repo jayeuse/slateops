@@ -14,7 +14,7 @@ import { fixtureId } from "./helpers/access-api";
 import { openFilters, enterDay } from "./helpers/filters";
 import { mockMfa } from "./helpers/mfa";
 import { profilePreferences, profileSelf } from "./helpers/profile-api";
-import { pageOf } from "../helpers/pagination";
+import { keysetPageOf, pageOf } from "../helpers/pagination";
 
 const ACTOR_ID = "00000000-0000-4000-8000-000000000201";
 const NULL_LABEL_ACTOR_ID = "00000000-0000-4000-8000-000000000202";
@@ -335,7 +335,7 @@ function createAuditRoute(logs: AuditLogFixture[]) {
       // Like the server, the list counts at most 10,000 entries; above that
       // the total is 10,000 with the capped flag, and has_more stays exact.
       await route.fulfill({
-        json: pageOf(items.map(wireAuditLog), {
+        json: keysetPageOf(items.map(wireAuditLog), {
           limit,
           offset,
           total: Math.min(filtered.length, 10_000),

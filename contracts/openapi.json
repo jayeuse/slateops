@@ -1346,7 +1346,7 @@
             "type": "array"
           },
           "pagination": {
-            "$ref": "#/components/schemas/PaginationMetadata"
+            "$ref": "#/components/schemas/KeysetPaginationMetadata"
           }
         },
         "required": [
@@ -11377,6 +11377,61 @@
         "type": "string"
       },
       "JsonValue": {},
+      "KeysetPaginationMetadata": {
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "limit": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "total_is_capped": {
+            "default": false,
+            "title": "Total Is Capped",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "limit",
+          "offset",
+          "count",
+          "total",
+          "has_more",
+          "next_cursor"
+        ],
+        "title": "KeysetPaginationMetadata",
+        "type": "object"
+      },
       "LabelCreate": {
         "additionalProperties": false,
         "properties": {
@@ -17684,7 +17739,7 @@
             "type": "array"
           },
           "pagination": {
-            "$ref": "#/components/schemas/PaginationMetadata"
+            "$ref": "#/components/schemas/KeysetPaginationMetadata"
           }
         },
         "required": [
@@ -23124,6 +23179,17 @@
             "title": "Limit",
             "type": "integer"
           },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          },
           "offset": {
             "minimum": 0.0,
             "title": "Offset",
@@ -23146,7 +23212,8 @@
           "count",
           "total",
           "totalIsCapped",
-          "hasMore"
+          "hasMore",
+          "nextCursor"
         ],
         "title": "TriggerRunListResponse",
         "type": "object"
@@ -27233,6 +27300,23 @@
             "schema": {
               "$ref": "#/components/schemas/DeletedFilter",
               "default": "exclude"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           },
           {
@@ -57525,6 +57609,23 @@
           },
           {
             "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
             "name": "field_id",
             "required": false,
             "schema": {
@@ -60053,6 +60154,23 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           },
           {

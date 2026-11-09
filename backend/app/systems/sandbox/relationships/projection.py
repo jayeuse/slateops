@@ -12,7 +12,7 @@ from app.common.listing import (
     ListQuerySpec,
     SortOrder,
     build_standard_list_statements,
-    capped_pagination,
+    list_pagination,
 )
 from app.systems.access.users.models import User
 from app.systems.sandbox.fields.models import Field
@@ -171,6 +171,7 @@ RELATIONSHIP_LIST_SPEC = ListQuerySpec(
     default_sort=RelationshipSortField.CREATED_AT,
     tie_breaker=cast(ColumnElement[Any], RelationshipEdge.id),
     deleted_field=cast(ColumnElement[bool], RelationshipEdge.is_deleted),
+    keyset=True,
 )
 
 
@@ -213,12 +214,7 @@ def list_relationships(
         .order_by(direction(page.c[sort_name]), direction(page.c.id))
     )
     counted = int(db.scalar(count_statement) or 0)
-    rows, pagination = capped_pagination(
-        limit=params.limit,
-        offset=params.offset,
-        rows=db.execute(item_statement).all(),
-        counted=counted,
-    )
+    rows, pagination = list_pagination(params, spec, db.execute(item_statement).all(), counted)
     return [_projected_relationship_response(row) for row in rows], pagination
 
 
