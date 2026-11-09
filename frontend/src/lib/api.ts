@@ -9,6 +9,8 @@ export type Pagination = {
   count: number;
   total: number;
   has_more: boolean;
+  /** `total` is a lower bound: the server counted more than 10,000 rows. */
+  total_is_capped: boolean;
 };
 export type ListResponse<T> = { items: T[]; pagination: Pagination };
 export type BaseEntity = {

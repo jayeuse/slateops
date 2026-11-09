@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from typing import Any, cast
 
+from app.common.listing import TOTAL_CAP
 from app.systems.access.users.schemas import AppearancePreferences
 from operations.sample.blueprint import SampleDataset
 from operations.sample.packs.phase_types import PhaseAction
@@ -19,14 +20,19 @@ def validate_platform_page(
         or not isinstance(page, Mapping)
     ):
         raise SamplePhaseActionError("Platform page is malformed", step=step)
+    capped = page.get("total_is_capped", False)
     if (
         any(type(page.get(key)) is not int for key in ("limit", "offset", "count", "total"))
+        or type(capped) is not bool
         or page.get("limit") != limit
         or page.get("offset") != offset
         or page.get("count") != len(rows)
         or page.get("total", -1) < len(rows)
-        or page.get("count") != min(limit, max(page["total"] - offset, 0))
-        or page.get("has_more") is not (page["total"] > offset + len(rows))
+        or (not capped and page.get("count") != min(limit, max(page["total"] - offset, 0)))
+        or (not capped and page.get("has_more") is not (page["total"] > offset + len(rows)))
+        # A capped total is a lower bound: a page short of it is full and reports more.
+        or (capped and (page["total"] != TOTAL_CAP or type(page.get("has_more")) is not bool))
+        or (capped and page["total"] > offset + len(rows) and not page["has_more"])
     ):
         raise SamplePhaseActionError("Platform pagination differs from its request", step=step)
     return cast(list[dict[str, Any]], rows)

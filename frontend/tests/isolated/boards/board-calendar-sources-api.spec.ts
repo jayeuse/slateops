@@ -225,6 +225,7 @@ test("Cards · Due reads the visible window and pages to completion", async () =
               count: 100,
               total: 102,
               has_more: true,
+              total_is_capped: false,
             },
           }
         : {
@@ -235,6 +236,7 @@ test("Cards · Due reads the visible window and pages to completion", async () =
               count: 2,
               total: 102,
               has_more: false,
+              total_is_capped: false,
             },
           },
     );

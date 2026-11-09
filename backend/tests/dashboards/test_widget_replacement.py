@@ -62,6 +62,7 @@ def test_dashboard_list_uses_bounded_offset_pagination(integration_owner_db: Ses
         "offset": 2,
         "count": 1,
         "total": 3,
+        "total_is_capped": False,
         "has_more": False,
     }
 

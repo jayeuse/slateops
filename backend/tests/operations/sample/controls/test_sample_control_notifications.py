@@ -198,11 +198,13 @@ class NotificationServer:
             self.pages.append((actor_id, offset))
             rows = self.rows[actor_id]
             items = copy.deepcopy(rows[offset : offset + limit])
+            # As the API pages: above 10,000 notices the total stops there (plan step 3.1).
             page = {
                 "limit": limit,
                 "offset": offset,
                 "count": len(items),
-                "total": len(rows),
+                "total": min(len(rows), 10_000),
+                "total_is_capped": len(rows) > 10_000,
                 "has_more": offset + limit < len(rows),
             }
             if actor_id == PRIMARY and not self.writes:
@@ -357,6 +359,17 @@ def test_recipient_above_2500_notices_is_read_whole_and_its_receipts_verify(
         dataset, _manifest(context), action, result, ADMIN, set(), observed, issues
     )
     assert issues == [] and observed["notification_receipt_actions_verified"] == 1
+
+
+def test_recipient_above_the_capped_total_is_read_whole_by_has_more(
+    tmp_path: Path, request
+) -> None:
+    # Above 10,000 notices the total is a lower bound, so the listing ends on `has_more`.
+    dataset, action, context, server = _setup(tmp_path, request, primary_rows=10_030)
+    result = notifications.execute_notification_control(action, dataset, context)
+    assert len(result["notification_before"]["primary"]) == 10_030
+    assert result["notification_pages"]["primary_before"] == 402
+    assert result["unread_after_all"] == 0
 
 
 def test_listing_total_above_the_safety_ceiling_stops_on_its_first_page(

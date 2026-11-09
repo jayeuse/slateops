@@ -287,6 +287,7 @@ test("card activity reads the newest rows first, a page at a time", async () => 
         count: 1,
         total: 1,
         has_more: false,
+        total_is_capped: false,
       },
     }),
   );

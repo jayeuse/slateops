@@ -129,7 +129,14 @@ test("bound client sends templates and settings history to their live routes", a
     return Response.json(
       {
         items: [],
-        pagination: { limit, offset, count: 0, total: 0, has_more: false },
+        pagination: {
+          limit,
+          offset,
+          count: 0,
+          total: 0,
+          has_more: false,
+          total_is_capped: false,
+        },
       },
       { headers: { "Cache-Control": "private, no-store" } },
     );
@@ -229,6 +236,7 @@ test("activity filters the existing notification service before paging and fence
         count: 3,
         total: 3,
         has_more: false,
+        total_is_capped: false,
       },
     }),
   );
@@ -237,7 +245,14 @@ test("activity filters the existing notification service before paging and fence
       client.listActivity({ limit: 1, offset: 1, sort_order: "asc" }),
     ).resolves.toEqual({
       items: [second],
-      pagination: { limit: 1, offset: 1, count: 1, total: 2, has_more: false },
+      pagination: {
+        limit: 1,
+        offset: 1,
+        count: 1,
+        total: 2,
+        has_more: false,
+        total_is_capped: false,
+      },
     });
     expect(new Headers(fetch.requests[0].init?.headers).get("X-Org")).toBe(
       context.org_id,

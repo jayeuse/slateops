@@ -306,6 +306,7 @@ export function page<T>(
       count: values.length,
       total: items.length,
       has_more: request.offset + values.length < items.length,
+      total_is_capped: false,
     },
   };
 }

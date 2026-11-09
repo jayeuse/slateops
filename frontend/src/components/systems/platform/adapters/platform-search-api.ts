@@ -2,6 +2,7 @@ import type { Route } from "next";
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { apiFetch, apiContractError } from "@/lib/api";
+import { pageEndsWithinTotal, wirePageCounts } from "@/lib/list-pagination";
 
 export const SEARCH_KINDS = ["record", "person", "post", "event"] as const;
 export type SearchKind = (typeof SEARCH_KINDS)[number];
@@ -33,6 +34,7 @@ const pageSchema = z
         count: z.number().int().nonnegative(),
         total: z.number().int().nonnegative(),
         has_more: z.boolean(),
+        total_is_capped: z.boolean(),
       })
       .strict(),
   })
@@ -63,8 +65,8 @@ export async function readPlatformSearch(
     page.pagination.offset !== offset ||
     page.pagination.count !== page.items.length ||
     page.items.length > 10 ||
-    (page.pagination.total < offset + page.items.length &&
-      page.items.length > 0)
+    (page.items.length > 0 &&
+      !pageEndsWithinTotal(wirePageCounts(page.pagination)))
   )
     throw apiContractError(page);
   return page;

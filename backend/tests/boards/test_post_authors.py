@@ -187,6 +187,7 @@ def test_author_choices_page_every_visible_author_without_a_global_cap(
         "offset": 0,
         "count": 100,
         "total": 501,
+        "total_is_capped": False,
         "has_more": True,
     }
     assert body["items"][0]["label"] == "authors_bounded_000"
@@ -334,6 +335,7 @@ def test_author_ids_intersect_visible_eligible_authors_before_search_and_paging(
             "offset": offset,
             "count": 1,
             "total": 2,
+            "total_is_capped": False,
             "has_more": offset == 0,
         }
         assert response.json()["items"][0]["label"] == "Lookup same label"

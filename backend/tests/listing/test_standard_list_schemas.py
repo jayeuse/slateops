@@ -94,6 +94,7 @@ def test_standard_list_response_contains_pagination_metadata() -> None:
             "offset": 0,
             "count": 1,
             "total": 1,
+            "total_is_capped": False,
             "has_more": False,
         },
     }

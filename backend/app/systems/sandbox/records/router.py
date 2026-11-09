@@ -73,6 +73,7 @@ RECORD_LIST_SPEC = ListQuerySpec(
     default_sort=RecordSortField.CREATED_AT,
     tie_breaker=cast(ColumnElement[Any], Record.id),
     deleted_field=cast(ColumnElement[bool], Record.is_deleted),
+    exact_total=True,
 )
 
 

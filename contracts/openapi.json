@@ -702,6 +702,11 @@
             "minimum": 0.0,
             "title": "Total",
             "type": "integer"
+          },
+          "total_is_capped": {
+            "default": false,
+            "title": "Total Is Capped",
+            "type": "boolean"
           }
         },
         "required": [
@@ -760,6 +765,11 @@
             "minimum": 0.0,
             "title": "Total",
             "type": "integer"
+          },
+          "total_is_capped": {
+            "default": false,
+            "title": "Total Is Capped",
+            "type": "boolean"
           }
         },
         "required": [
@@ -14131,6 +14141,11 @@
             "minimum": 0.0,
             "title": "Total",
             "type": "integer"
+          },
+          "total_is_capped": {
+            "default": false,
+            "title": "Total Is Capped",
+            "type": "boolean"
           }
         },
         "required": [
@@ -23118,6 +23133,10 @@
             "minimum": 0.0,
             "title": "Total",
             "type": "integer"
+          },
+          "totalIsCapped": {
+            "title": "Totaliscapped",
+            "type": "boolean"
           }
         },
         "required": [
@@ -23126,6 +23145,7 @@
           "offset",
           "count",
           "total",
+          "totalIsCapped",
           "hasMore"
         ],
         "title": "TriggerRunListResponse",

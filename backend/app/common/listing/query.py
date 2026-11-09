@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -15,6 +15,9 @@ from app.common.listing.schemas import (
     StandardListRequest,
 )
 
+# D1: a list counts at most this many rows; above it the total is a lower bound.
+TOTAL_CAP = 10_000
+
 
 @dataclass(frozen=True, slots=True)
 class ListQuerySpec[SortFieldT: StrEnum]:
@@ -23,6 +26,8 @@ class ListQuerySpec[SortFieldT: StrEnum]:
     tie_breaker: ColumnElement[Any]
     search_fields: tuple[ColumnElement[str], ...] = ()
     deleted_field: ColumnElement[bool] | None = None
+    # Records lists keep their exact count (D1, K61). Never a request field.
+    exact_total: bool = False
 
     def __post_init__(self) -> None:
         if not self.sort_fields:
@@ -106,15 +111,47 @@ def build_standard_list_statements[ModelT, SortFieldT: StrEnum](
     if conditions:
         filtered = filtered.where(*conditions)
 
-    count_statement = select(func.count()).select_from(filtered.subquery())
+    count_statement = (
+        select(func.count()).select_from(filtered.subquery())
+        if spec.exact_total
+        else capped_count(filtered)
+    )
     sort_column = spec.sort_fields[request.sort_by or spec.default_sort]
     sort_function = asc if request.sort_order is SortOrder.ASC else desc
     item_statement = filtered.order_by(
         sort_function(sort_column).nulls_last(),
         sort_function(spec.tie_breaker).nulls_last(),
     )
-    item_statement = item_statement.offset(request.offset).limit(request.limit)
+    # One row more than the page says whether more follow, with no extra statement.
+    item_statement = item_statement.offset(request.offset).limit(request.limit + 1)
     return item_statement, count_statement
+
+
+def capped_count(statement: Select[Any]) -> Select[tuple[int]]:
+    """Count the rows of ``statement``, but stop after one row more than ``TOTAL_CAP``."""
+
+    return select(func.count()).select_from(statement.limit(TOTAL_CAP + 1).subquery())
+
+
+def capped_pagination[RowT](
+    *, limit: int, offset: int, rows: Sequence[RowT], counted: int, exact: bool = False
+) -> tuple[list[RowT], PaginationMetadata]:
+    """The page without its extra row, and its metadata.
+
+    ``rows`` holds up to ``limit + 1`` rows; the extra row only says that more follow.
+    ``counted`` is the capped count, or the exact count when ``exact`` is set.
+    """
+
+    page = list(rows[:limit])
+    capped = not exact and counted > TOTAL_CAP
+    return page, PaginationMetadata(
+        limit=limit,
+        offset=offset,
+        count=len(page),
+        total=counted if exact else min(counted, TOTAL_CAP),
+        total_is_capped=capped,
+        has_more=len(rows) > limit,
+    )
 
 
 def execute_standard_list[ModelT, SortFieldT: StrEnum](
@@ -124,13 +161,12 @@ def execute_standard_list[ModelT, SortFieldT: StrEnum](
     spec: ListQuerySpec[SortFieldT],
 ) -> ListQueryResult[ModelT]:
     item_statement, count_statement = build_standard_list_statements(statement, request, spec)
-    total = int(db.scalar(count_statement) or 0)
-    items = list(db.scalars(item_statement).all())
-    pagination = PaginationMetadata(
+    counted = int(db.scalar(count_statement) or 0)
+    items, pagination = capped_pagination(
         limit=request.limit,
         offset=request.offset,
-        count=len(items),
-        total=total,
-        has_more=request.offset + len(items) < total,
+        rows=db.scalars(item_statement).all(),
+        counted=counted,
+        exact=spec.exact_total,
     )
     return ListQueryResult(items=items, pagination=pagination)

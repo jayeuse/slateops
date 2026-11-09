@@ -97,7 +97,14 @@ const json = (body: unknown) =>
   });
 const emptyPage = {
   items: [],
-  pagination: { limit: 50, offset: 0, count: 0, total: 0, has_more: false },
+  pagination: {
+    limit: 50,
+    offset: 0,
+    count: 0,
+    total: 0,
+    has_more: false,
+    total_is_capped: false,
+  },
 };
 
 test("S4-C5: a manager reads the department's history; a reader reads the record's alone", async () => {

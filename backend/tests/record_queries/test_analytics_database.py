@@ -419,5 +419,6 @@ def test_date_series_route_returns_the_complete_bounded_window(query_db, day_cou
         "offset": 0,
         "count": day_count,
         "total": day_count,
+        "total_is_capped": False,
         "has_more": False,
     }

@@ -40,6 +40,7 @@ const page = (items: SignInEvent[], hasMore: boolean, offset = 0) => ({
     count: items.length,
     total: offset + items.length + (hasMore ? 1 : 0),
     has_more: hasMore,
+    total_is_capped: false,
   },
 });
 

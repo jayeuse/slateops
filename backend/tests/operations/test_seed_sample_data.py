@@ -153,6 +153,41 @@ def test_api_read_consumes_every_page_and_honors_the_full_server_total(tmp_path:
     assert offsets == [0, 2]
 
 
+def test_api_read_follows_has_more_past_a_capped_total(tmp_path: Path) -> None:
+    # Above 10,000 rows the total is a lower bound; `has_more` says whether rows remain (K62).
+    rows_on_server = 10_050
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        offset = int(request.url.params["offset"])
+        last = min(offset + 100, rows_on_server)
+        rows = [{"id": f"row-{index}"} for index in range(offset, last)]
+        return httpx.Response(
+            200,
+            json={
+                "items": rows,
+                "pagination": {
+                    "limit": 100,
+                    "offset": offset,
+                    "count": len(rows),
+                    "total": 10_000,
+                    "total_is_capped": True,
+                    "has_more": offset + len(rows) < rows_on_server,
+                },
+            },
+        )
+
+    with SampleClient(
+        "http://api.example.test",
+        "http://workspace.example.test",
+        tmp_path / "requests.jsonl",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        rows = list_all_rows(client, "/api/relationships")
+
+    assert len(rows) == 10_050
+    assert rows[-1] == {"id": "row-10049"}
+
+
 def test_api_read_rejects_inconsistent_pagination_metadata(tmp_path: Path) -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(

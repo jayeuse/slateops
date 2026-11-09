@@ -60,7 +60,14 @@ const mutation = {
   post_revision: 2,
   board_revision: 4,
 };
-const page = { limit: 25, offset: 0, count: 1, total: 1, has_more: false };
+const page = {
+  limit: 25,
+  offset: 0,
+  count: 1,
+  total: 1,
+  has_more: false,
+  total_is_capped: false,
+};
 
 test("post published list uses bounded query and immutable published fields", async () => {
   const mock = installFetch(() =>
@@ -90,6 +97,7 @@ test("post published list uses bounded query and immutable published fields", as
       count: 1,
       total: 1,
       hasMore: false,
+      totalIsCapped: false,
     });
     expect(result.boardRevision).toBe(4);
     expect(String(mock.requests[0]?.input)).toBe(

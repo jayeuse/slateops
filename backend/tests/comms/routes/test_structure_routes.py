@@ -200,6 +200,7 @@ def test_category_and_channel_competing_etags_preserve_complete_changes(structur
         "offset": 0,
         "count": 1,
         "total": 2,
+        "total_is_capped": False,
         "has_more": True,
     }
     assert second["pagination"] == {
@@ -207,6 +208,7 @@ def test_category_and_channel_competing_etags_preserve_complete_changes(structur
         "offset": 1,
         "count": 1,
         "total": 2,
+        "total_is_capped": False,
         "has_more": False,
     }
     assert _ok(admin.get(categories, params={"search": "Creation"}))["pagination"]["total"] == 1

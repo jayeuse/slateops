@@ -319,6 +319,7 @@ const adminSessionsSchema = z.object({
     count: z.number().int().nonnegative(),
     total: z.number().int().nonnegative(),
     has_more: z.boolean(),
+    total_is_capped: z.boolean(),
   }),
 });
 export type AccessAdminSession = z.output<typeof adminSessionSchema>;

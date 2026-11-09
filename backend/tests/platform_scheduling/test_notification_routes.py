@@ -59,6 +59,7 @@ def test_notification_list_is_actor_scoped_bounded_and_reference_only(
         "offset": 0,
         "count": 1,
         "total": 2,
+        "total_is_capped": False,
         "has_more": True,
     }
     assert response.json()["items"][0]["id"] == str(second.id)
@@ -270,6 +271,7 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
                 "offset": 0,
                 "count": limit,
                 "total": 4,
+                "total_is_capped": False,
                 "has_more": limit < 4,
             }
             expected_page = ordered_expected[:limit]

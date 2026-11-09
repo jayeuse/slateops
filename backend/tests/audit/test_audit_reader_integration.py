@@ -123,7 +123,14 @@ def test_s4_c3_c4_a_reader_gets_readable_history_and_a_non_reader_an_empty_page(
     assert real.status_code == missing.status_code == 200
     assert real.json() == missing.json() == {
         "items": [],
-        "pagination": {"limit": 25, "offset": 0, "count": 0, "total": 0, "has_more": False},
+        "pagination": {
+            "limit": 25,
+            "offset": 0,
+            "count": 0,
+            "total": 0,
+            "total_is_capped": False,
+            "has_more": False,
+        },
     }
 
 

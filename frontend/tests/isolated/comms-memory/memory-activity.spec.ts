@@ -59,7 +59,11 @@ test("Activity filters the bound user's unreadable and deleted sources before st
     const before = f.store.exportSnapshot();
     const page = await client.listActivity({ limit: 1 });
     expect(page.items.map((row) => row.id)).toEqual([id(1001)]);
-    expect(page.pagination).toMatchObject({ total: 2, has_more: true });
+    expect(page.pagination).toMatchObject({
+      total: 2,
+      has_more: true,
+      total_is_capped: false,
+    });
     expect(
       (await client.listActivity({ limit: 1, offset: 1 })).items.map(
         (row) => row.id,

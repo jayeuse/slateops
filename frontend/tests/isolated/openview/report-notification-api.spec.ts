@@ -74,6 +74,7 @@ test("lists current-user notification references with bounded paging and no cach
         count: 1,
         total: 1,
         hasMore: false,
+        totalIsCapped: false,
       },
     });
     expect(String(mock.requests[0]?.input)).toBe(

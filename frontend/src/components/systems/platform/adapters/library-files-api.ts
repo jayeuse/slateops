@@ -13,6 +13,10 @@ import {
   throwFileRequestError,
   uploadFileContent,
 } from "../../shared/adapters/files-api";
+import {
+  hasMoreAgreesWithTotal,
+  pageEndsWithinTotal,
+} from "@/lib/list-pagination";
 
 const uuid = z.string().uuid();
 export type LibraryFileSort = "created_at" | "updated_at" | "name" | "size";
@@ -48,9 +52,14 @@ const pagination = z
     count: z.number().int().min(0),
     total: z.number().int().min(0),
     has_more: z.boolean(),
+    total_is_capped: z.boolean(),
   })
   .strict()
-  .transform(({ has_more, ...page }) => ({ ...page, hasMore: has_more }));
+  .transform(({ has_more, total_is_capped, ...page }) => ({
+    ...page,
+    hasMore: has_more,
+    totalIsCapped: total_is_capped,
+  }));
 
 function libraryFileSchema(departmentId: string) {
   return fileWireSchema
@@ -135,10 +144,8 @@ export async function listLibraryFiles(
         metadata.offset !== input.offset ||
         metadata.count !== page.items.length ||
         metadata.count > metadata.limit ||
-        (metadata.count > 0 &&
-          metadata.total < metadata.offset + metadata.count) ||
-        metadata.hasMore !==
-          metadata.offset + metadata.count < metadata.total ||
+        (metadata.count > 0 && !pageEndsWithinTotal(metadata)) ||
+        !hasMoreAgreesWithTotal(metadata) ||
         (metadata.hasMore && metadata.count === 0) ||
         Object.keys(page.creator_labels).some((id) => !creatorIds.has(id))
       )

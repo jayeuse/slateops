@@ -94,6 +94,7 @@ test("serializes a 366-day Calendar window and preserves DATE values and paginat
         count: 1,
         total: 8,
         hasMore: false,
+        totalIsCapped: false,
       },
       timezone: null,
     });
@@ -132,6 +133,7 @@ test("serializes Timeline refs and preserves offset DATETIME strings and timezon
       count: 1,
       total: 2,
       has_more: true,
+      total_is_capped: false,
     }),
     timezone: "America/New_York",
   };
@@ -148,6 +150,7 @@ test("serializes Timeline refs and preserves offset DATETIME strings and timezon
       count: 1,
       total: 2,
       hasMore: true,
+      totalIsCapped: false,
     });
     expect(result.timezone).toBe("America/New_York");
 
@@ -197,7 +200,14 @@ test("accepts workspace timezone for a projected DATETIME deadline with DATE int
         },
       },
     ],
-    pagination: { limit: 25, offset: 0, count: 1, total: 1, has_more: false },
+    pagination: {
+      limit: 25,
+      offset: 0,
+      count: 1,
+      total: 1,
+      has_more: false,
+      total_is_capped: false,
+    },
     timezone: "Asia/Manila",
   };
   const mock = installFetch(() => Response.json(response));

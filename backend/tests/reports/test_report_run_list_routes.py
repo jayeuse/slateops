@@ -39,6 +39,7 @@ def test_report_run_list_is_newest_first_paginated_metadata_only(
         "offset": 0,
         "count": 2,
         "total": 3,
+        "total_is_capped": False,
         "has_more": True,
     }
     assert second.json()["pagination"] == {
@@ -46,6 +47,7 @@ def test_report_run_list_is_newest_first_paginated_metadata_only(
         "offset": 2,
         "count": 1,
         "total": 3,
+        "total_is_capped": False,
         "has_more": False,
     }
     assert set(first.json()["items"][0]) == {

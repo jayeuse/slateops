@@ -51,6 +51,7 @@ def test_recent_runs_are_administrator_only(monkeypatch) -> None:
         offset=0,
         count=1,
         total=1,
+        totalIsCapped=False,
         hasMore=False,
     )
     monkeypatch.setattr(trigger_router, "list_recent_runs", lambda *_args, **_kw: response_model)

@@ -138,6 +138,8 @@ describeContracts("Manage", [
   {
     name: "getManageAuditExportPreview",
     run: () => getManageAuditExportPreview(auditFilters),
+    refusesCapped:
+      "the export takes at most 10,000 events; tests/isolated/manage/audit-api.spec.ts owns the refusal",
   },
   {
     name: "downloadManageAuditCsv",

@@ -1,5 +1,10 @@
 import { z } from "zod";
 import { ApiError, apiFetch, keepRequestId, apiContractError } from "@/lib/api";
+import {
+  hasMoreAgreesWithTotal,
+  pageEndsWithinTotal,
+  wirePageCounts,
+} from "@/lib/list-pagination";
 
 const uuid = z.string().uuid();
 const authorSchema = z
@@ -23,6 +28,7 @@ const choicesSchema = z
         count: z.number().int().min(0),
         total: z.number().int().min(0),
         has_more: z.boolean(),
+        total_is_capped: z.boolean(),
       })
       .strict(),
   })
@@ -32,9 +38,8 @@ const choicesSchema = z
       pagination.count !== items.length ||
       pagination.count > pagination.limit ||
       (pagination.count > 0 &&
-        pagination.offset + pagination.count > pagination.total) ||
-      pagination.has_more !==
-        pagination.offset + pagination.count < pagination.total ||
+        !pageEndsWithinTotal(wirePageCounts(pagination))) ||
+      !hasMoreAgreesWithTotal(wirePageCounts(pagination)) ||
       (pagination.has_more && items.length === 0) ||
       new Set(items.map((choice) => choice.id)).size !== items.length
     )
@@ -43,10 +48,16 @@ const choicesSchema = z
         message: "Author page is inconsistent",
       });
   })
-  .transform(({ items, pagination: { has_more, ...pagination } }) => ({
-    items,
-    pagination: { ...pagination, hasMore: has_more },
-  }));
+  .transform(
+    ({ items, pagination: { has_more, total_is_capped, ...pagination } }) => ({
+      items,
+      pagination: {
+        ...pagination,
+        hasMore: has_more,
+        totalIsCapped: total_is_capped,
+      },
+    }),
+  );
 export type BoardPostAuthorChoice = z.infer<typeof authorSchema>;
 export type BoardPostAuthorPage = z.output<typeof choicesSchema>;
 export type BoardPostAuthorListOptions = {

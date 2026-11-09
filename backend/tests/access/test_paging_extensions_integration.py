@@ -99,6 +99,7 @@ def test_group_filters_and_member_sort_apply_before_the_page(group_page):
             "offset": offset,
             "count": 1,
             "total": 5,
+            "total_is_capped": False,
             "has_more": offset < 4,
         }
 
@@ -266,6 +267,7 @@ def test_group_member_lookup_pages_all_memberships_including_no_access_groups(pa
             "offset": offset,
             "count": count,
             "total": 27,
+            "total_is_capped": False,
             "has_more": has_more,
         }
         assert response.headers["cache-control"] == "private, no-store"

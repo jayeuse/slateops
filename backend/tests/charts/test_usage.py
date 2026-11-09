@@ -77,6 +77,7 @@ def test_usage_filters_distinct_consumers_before_count_page_and_search(chart_wor
                 "offset": offset,
                 "count": 1,
                 "total": 2,
+                "total_is_capped": False,
                 "has_more": offset == 0,
             }
             assert body["has_restricted_usage"] is True

@@ -33,7 +33,14 @@ const board = {
   scope: "department",
   department_id: departmentId,
 };
-const page = { limit: 25, offset: 0, count: 1, total: 1, has_more: false };
+const page = {
+  limit: 25,
+  offset: 0,
+  count: 1,
+  total: 1,
+  has_more: false,
+  total_is_capped: false,
+};
 const purgeImpact = {
   target_type: "board",
   target_id: boardId,

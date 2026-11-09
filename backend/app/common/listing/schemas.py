@@ -37,6 +37,8 @@ class PaginationMetadata(BaseModel):
     offset: int = Field(ge=0)
     count: int = Field(ge=0)
     total: int = Field(ge=0)
+    # True when more rows match than the count reads; ``total`` is then a lower bound (D1).
+    total_is_capped: bool = False
     has_more: bool
 
 

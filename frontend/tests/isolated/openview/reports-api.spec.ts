@@ -141,6 +141,7 @@ test("lists and reads department Reports with strict recipe mapping", async () =
       count: 1,
       total: 1,
       hasMore: false,
+      totalIsCapped: false,
     });
     expect(String(mock.requests[0]?.input)).toBe(
       "/api/reports?module_id=00000000-0000-4000-8000-000000000101&limit=25&offset=0&sort_by=updated_at&sort_order=desc&search=active+work&deleted=include",
@@ -341,7 +342,7 @@ test("lists bounded retained runs only for the requested Report", async () => {
       listOpenViewReportRuns(reportId, { limit: 25, offset: 0 }),
     ).resolves.toMatchObject({
       items: [{ id: runId, reportId, rowCount: 2 }],
-      pagination: { total: 1, hasMore: false },
+      pagination: { total: 1, hasMore: false, totalIsCapped: false },
     });
     expect(String(mock.requests[0]?.input)).toBe(
       `/api/reports/${reportId}/runs?limit=25&offset=0`,
@@ -393,6 +394,7 @@ test("discovers only bounded, metadata-only shared Report runs", async () => {
         count: 1,
         total: 1,
         hasMore: false,
+        totalIsCapped: false,
       },
     });
     expect(String(mock.requests[0]?.input)).toBe(

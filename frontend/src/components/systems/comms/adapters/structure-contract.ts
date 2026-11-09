@@ -2,6 +2,11 @@ import { z } from "zod";
 import { type ApiFetchMetadata, apiContractError } from "@/lib/api";
 import { pageSchema, preconditionSchema } from "../contract/schemas";
 import type * as C from "../contract/types";
+import {
+  hasMoreAgreesWithTotal,
+  pageEndsWithinTotal,
+  wirePageCounts,
+} from "@/lib/list-pagination";
 
 // Structure-family boundary checks only; HTTP requests remain in structure-api.
 export function requestOptions(
@@ -41,8 +46,8 @@ export function structurePageSchema<Item extends z.ZodType>(
       p.offset === request.offset &&
       p.count === items.length &&
       p.count <= p.limit &&
-      (p.count === 0 || p.offset + p.count <= p.total) &&
-      p.has_more === p.offset + p.count < p.total,
+      (p.count === 0 || pageEndsWithinTotal(wirePageCounts(p))) &&
+      hasMoreAgreesWithTotal(wirePageCounts(p)),
   );
 }
 

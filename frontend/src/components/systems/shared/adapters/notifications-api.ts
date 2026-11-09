@@ -7,6 +7,10 @@ import {
   keepRequestId,
   apiContractError,
 } from "@/lib/api";
+import {
+  hasMoreAgreesWithTotal,
+  pageEndsWithinTotal,
+} from "@/lib/list-pagination";
 
 const uuidSchema = z.string().uuid();
 const utcTimestampSchema = z.iso
@@ -234,11 +238,13 @@ const paginationSchema = z
     count: z.number().int().min(0),
     total: z.number().int().min(0),
     has_more: z.boolean(),
+    total_is_capped: z.boolean(),
   })
   .strict()
-  .transform(({ has_more, ...pagination }) => ({
+  .transform(({ has_more, total_is_capped, ...pagination }) => ({
     ...pagination,
     hasMore: has_more,
+    totalIsCapped: total_is_capped,
   }));
 
 const wireNotificationListSchema = z
@@ -303,11 +309,9 @@ export async function listNotifications(
     pagination.offset !== options.offset ||
     pagination.count !== page.items.length ||
     pagination.count > pagination.limit ||
-    (pagination.count > 0 &&
-      pagination.offset + pagination.count > pagination.total) ||
+    (pagination.count > 0 && !pageEndsWithinTotal(pagination)) ||
     (pagination.hasMore && pagination.count === 0) ||
-    pagination.hasMore !==
-      pagination.offset + pagination.count < pagination.total ||
+    !hasMoreAgreesWithTotal(pagination) ||
     new Set(page.items.map((item) => item.id)).size !== page.items.length ||
     (options.status === "unread" &&
       page.items.some((item) => item.status !== "unread")) ||

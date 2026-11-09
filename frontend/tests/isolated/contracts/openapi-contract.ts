@@ -280,6 +280,11 @@ export type ContractCase = {
    * Route, method, query, headers and JSON body are still checked.
    */
   requestOnly?: string;
+  /**
+   * Why the adapter refuses a capped page on purpose (for example the audit
+   * export above 10,000 events). The capped response must then be refused.
+   */
+  refusesCapped?: string;
 };
 
 function capture(
@@ -305,6 +310,22 @@ function capture(
     body: parsed,
     rawBody: body !== undefined && body !== null && typeof body !== "string",
   };
+}
+
+const CAPPED_FLAGS = new Set(["total_is_capped", "totalIsCapped"]);
+
+/** The same body with every capped-total flag set to true. */
+function capTotals(body: Json): Json {
+  if (Array.isArray(body)) return body.map(capTotals);
+  if (body === null || typeof body !== "object") return body;
+  return Object.fromEntries(
+    Object.entries(body).map(([key, value]) => [
+      key,
+      CAPPED_FLAGS.has(key) && typeof value === "boolean"
+        ? true
+        : capTotals(value),
+    ]),
+  );
 }
 
 /** Runs one adapter call against the snapshot; returns a readable failure report. */
@@ -346,6 +367,8 @@ export async function checkContract(
       return new Response(null, { status: 500 });
     }
     problems.push(...planned.problems);
+    if (mode === "capped" && planned.kind === "json")
+      planned = { ...planned, body: capTotals(planned.body) };
     const headers = {
       ...planned.headers,
       "Content-Type": "application/json",
@@ -373,15 +396,21 @@ export async function checkContract(
       return undefined;
     },
   });
+  let accepted = false;
   try {
     await contract.run();
+    accepted = true;
   } catch (error) {
     const description =
       error instanceof Error
         ? `${error.name}: ${error.message}`
         : String(error);
-    // A request-only case expects the adapter to refuse the placeholder response.
-    if (contract.requestOnly === undefined)
+    // A request-only case expects the adapter to refuse the placeholder
+    // response; a refusesCapped case expects it to refuse the capped one.
+    if (
+      contract.requestOnly === undefined &&
+      !(mode === "capped" && contract.refusesCapped !== undefined)
+    )
       problems.push(
         `adapter rejected the ${mode} response (${description})`,
         ...zodIssues.map((line) => `  zod ${line}`),
@@ -392,17 +421,24 @@ export async function checkContract(
     z.config({ customError: previousCustomError });
   }
   if (requests === 0) problems.push("the adapter made no API request");
+  if (mode === "capped" && contract.refusesCapped !== undefined && accepted)
+    problems.push(
+      `adapter accepted the capped response (${contract.refusesCapped})`,
+    );
   return problems;
 }
 
-/** Registers one Playwright test per adapter call, each checked with both response modes. */
+/** Registers one Playwright test per adapter call, each checked with every response mode. */
 export function describeContracts(area: string, cases: ContractCase[]): void {
   test.describe(`${area} adapters match contracts/openapi.json`, () => {
     for (const contract of cases) {
       test(contract.name, async () => {
         const problems = await checkContract(contract, "values");
         if (contract.requestOnly === undefined)
-          problems.push(...(await checkContract(contract, "nulls")));
+          problems.push(
+            ...(await checkContract(contract, "nulls")),
+            ...(await checkContract(contract, "capped")),
+          );
         expect(
           problems,
           `${contract.name} disagrees with the backend. If the backend changed on purpose, ` +

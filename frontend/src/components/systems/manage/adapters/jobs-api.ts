@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { apiFetch, apiFetchWithMetadata, apiContractError } from "@/lib/api";
+import { hasMoreAgreesWithTotal, wirePageCounts } from "@/lib/list-pagination";
 
 const uuid = z
   .string()
@@ -63,6 +64,7 @@ const pageSchema = z.strictObject({
     count: z.number().int().nonnegative(),
     total: z.number().int().nonnegative(),
     has_more: z.boolean(),
+    total_is_capped: z.boolean(),
   }),
 });
 const querySchema = z.strictObject({
@@ -99,8 +101,10 @@ export async function listManageJobs(
     p.limit !== query.limit ||
     p.offset !== query.offset ||
     p.count !== result.items.length ||
-    p.count !== Math.min(p.limit, Math.max(0, p.total - p.offset)) ||
-    p.has_more !== p.offset + p.count < p.total ||
+    // A capped total is a lower bound, so it cannot size the page.
+    (!p.total_is_capped &&
+      p.count !== Math.min(p.limit, Math.max(0, p.total - p.offset))) ||
+    !hasMoreAgreesWithTotal(wirePageCounts(p)) ||
     new Set(result.items.map(manageJobIdentity)).size !== p.count
   )
     throw apiContractError(result);

@@ -241,6 +241,7 @@ async function installPeriods(page: Page, items = periods) {
             count: shown.length,
             total: items.length,
             has_more: offset + shown.length < items.length,
+            total_is_capped: false,
           },
           oldest_sample_at: "2026-10-03T11:00:00Z",
         },

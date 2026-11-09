@@ -338,6 +338,7 @@ async function installPostBrowserApi(page: Page) {
           count: visible.length,
           total: items.length,
           has_more: offset + visible.length < items.length,
+          total_is_capped: false,
         },
       });
     }

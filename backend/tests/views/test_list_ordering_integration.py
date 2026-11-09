@@ -59,6 +59,7 @@ def test_implicit_order_discovers_off_page_default_before_pagination(view_list):
         "offset": 0,
         "count": 100,
         "total": 103,
+        "total_is_capped": False,
         "has_more": True,
     }
     second = read_page(world, limit=100, offset=100)
@@ -68,6 +69,7 @@ def test_implicit_order_discovers_off_page_default_before_pagination(view_list):
         "offset": 100,
         "count": 3,
         "total": 103,
+        "total_is_capped": False,
         "has_more": False,
     }
 

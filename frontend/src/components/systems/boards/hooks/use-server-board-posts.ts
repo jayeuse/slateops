@@ -544,6 +544,7 @@ export function pageOfCollection(
       count: visible.length,
       total: items.length,
       hasMore: offset + visible.length < items.length,
+      totalIsCapped: false,
     },
   };
 }

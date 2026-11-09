@@ -38,7 +38,14 @@ const namedEntry: BoardActivity = {
 };
 const page: BoardToolsPage<BoardActivity> = {
   items: [entry, namedEntry],
-  pagination: { limit: 25, offset: 0, count: 2, total: 26, hasMore: true },
+  pagination: {
+    limit: 25,
+    offset: 0,
+    count: 2,
+    total: 26,
+    hasMore: true,
+    totalIsCapped: false,
+  },
 };
 const initial: BoardActivityState = {
   key: null,

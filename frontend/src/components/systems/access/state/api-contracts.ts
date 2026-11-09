@@ -20,6 +20,7 @@ const paginationSchema = z.strictObject({
   count: z.number().int().nonnegative(),
   total: z.number().int().nonnegative(),
   has_more: z.boolean(),
+  total_is_capped: z.boolean(),
 });
 
 /** `app/common/listing/schemas.py` StandardListResponse. */

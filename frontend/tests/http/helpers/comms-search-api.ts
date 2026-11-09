@@ -136,6 +136,7 @@ export async function installCommsSearchApi(
                 count: items.length,
                 total,
                 has_more: offset + items.length < total,
+                total_is_capped: false,
               },
             }
           : {
@@ -177,6 +178,7 @@ export async function searchIdentity(page: Page) {
           count: 0,
           total: 0,
           has_more: false,
+          total_is_capped: false,
         },
       },
     });

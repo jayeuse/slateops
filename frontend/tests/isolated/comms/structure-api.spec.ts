@@ -14,7 +14,9 @@ import {
   user,
   peer,
   page,
+  category,
 } from "./structure-fixtures";
+import { cappedWirePagination } from "../../helpers/pagination";
 
 for (const row of calls()) {
   test(`structure transport: ${row.name}`, async () => {
@@ -66,10 +68,46 @@ for (const row of calls()) {
   });
 }
 
+test("structure list accepts a capped total whose rows reach row 10,000", async () => {
+  const items = Array.from({ length: 10 }, (_, index) => ({
+    ...category,
+    id: `00000000-0000-4000-8000-${String(900 + index).padStart(12, "0")}`,
+  }));
+  const mock = installFetch(() =>
+    Response.json({
+      items,
+      pagination: cappedWirePagination({ limit: 10, count: 10 }),
+    }),
+  );
+  try {
+    const result = await api.listCategories(context, {
+      limit: 10,
+      offset: 9_990,
+    });
+    expect(result.pagination).toEqual({
+      limit: 10,
+      offset: 9_990,
+      count: 10,
+      total: 10_000,
+      has_more: true,
+      total_is_capped: true,
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
 test("structure list requests parse filters and omit explicit undefined values", async () => {
   const result = {
     ...page([]),
-    pagination: { limit: 2, offset: 4, count: 0, total: 4, has_more: false },
+    pagination: {
+      limit: 2,
+      offset: 4,
+      count: 0,
+      total: 4,
+      has_more: false,
+      total_is_capped: false,
+    },
   };
   const mock = installFetch(() => Response.json(result));
   try {

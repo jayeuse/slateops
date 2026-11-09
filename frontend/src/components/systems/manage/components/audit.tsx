@@ -449,7 +449,10 @@ export default function ManageAudit({
   const dateTimezoneUnavailable =
     Boolean(filters.from || filters.to) && !workspaceQuery.data;
   // MD7: the list total is free, so Export says why before it opens.
-  const exportBlocked = listQuery.data ? auditExportBlockedReason(total) : null;
+  const exportBlocked =
+    listQuery.data && !auditConcealed
+      ? auditExportBlockedReason(listQuery.data.pagination)
+      : null;
   const canDownloadExport =
     Boolean(exportQuery.data) &&
     exportQuery.isSuccess &&

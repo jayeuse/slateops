@@ -210,7 +210,14 @@ test("maps validated catalog, saved-view, and record pages", async () => {
           titleFieldId: fieldId,
         },
       ],
-      pagination: { limit: 20, offset: 0, count: 1, total: 1, hasMore: false },
+      pagination: {
+        limit: 20,
+        offset: 0,
+        count: 1,
+        total: 1,
+        hasMore: false,
+        totalIsCapped: false,
+      },
     });
     await expect(listOpenViewDataSourceFields(moduleId)).resolves.toEqual({
       items: [
@@ -251,7 +258,14 @@ test("maps validated catalog, saved-view, and record pages", async () => {
           config: {},
         },
       ],
-      pagination: { limit: 20, offset: 0, count: 1, total: 1, hasMore: false },
+      pagination: {
+        limit: 20,
+        offset: 0,
+        count: 1,
+        total: 1,
+        hasMore: false,
+        totalIsCapped: false,
+      },
     });
     await expect(listOpenViewSavedViews({ moduleId })).resolves.toEqual({
       items: [
@@ -265,7 +279,14 @@ test("maps validated catalog, saved-view, and record pages", async () => {
           presentation,
         }),
       ],
-      pagination: { limit: 20, offset: 0, count: 1, total: 1, hasMore: false },
+      pagination: {
+        limit: 20,
+        offset: 0,
+        count: 1,
+        total: 1,
+        hasMore: false,
+        totalIsCapped: false,
+      },
     });
     await expect(getOpenViewSavedView(viewId)).resolves.toMatchObject({
       isDefault: true,
@@ -283,7 +304,14 @@ test("maps validated catalog, saved-view, and record pages", async () => {
           isDeleted: false,
         },
       ],
-      pagination: { limit: 25, offset: 0, count: 1, total: 1, hasMore: false },
+      pagination: {
+        limit: 25,
+        offset: 0,
+        count: 1,
+        total: 1,
+        hasMore: false,
+        totalIsCapped: false,
+      },
     });
     expect(mock.requests.map(({ input }) => String(input))).toEqual([
       "/api/views/data-sources?limit=20&offset=0",
@@ -350,7 +378,14 @@ test("lists only module-scoped assignable user labels without caching", async ()
           username: "alex.reader",
         },
       ],
-      pagination: { limit: 100, offset: 0, count: 1, total: 1, hasMore: false },
+      pagination: {
+        limit: 100,
+        offset: 0,
+        count: 1,
+        total: 1,
+        hasMore: false,
+        totalIsCapped: false,
+      },
     });
     expect(String(mock.requests[0]?.input)).toBe(
       `/api/modules/${moduleId}/assignable-users?limit=100&offset=0&search=Alex+Reader`,
@@ -391,7 +426,14 @@ test("requests archived saved views when the restore list includes deleted views
       listOpenViewSavedViews({ moduleId, deleted: "include" }),
     ).resolves.toEqual({
       items: [],
-      pagination: { limit: 20, offset: 0, count: 0, total: 0, hasMore: false },
+      pagination: {
+        limit: 20,
+        offset: 0,
+        count: 0,
+        total: 0,
+        hasMore: false,
+        totalIsCapped: false,
+      },
     });
     expect(String(mock.requests[0]?.input)).toBe(
       `/api/views?module_id=${moduleId}&limit=20&offset=0&deleted=include`,

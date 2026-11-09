@@ -66,7 +66,8 @@ def _execute(tmp_path: Path, *, operation="audit_review", pack_key="harbor", fau
                 items[0]["target_label"] = module_id
             if fault == "list_identity":
                 items[0]["entity_id"] = str(uuid4())
-            total = 10_001 if fault == "over_cap" else len(rows)
+            # Above 10,000 entries the total stops at 10,000 and says it is capped (K65).
+            total = 10_000 if fault == "over_cap" else len(rows)
             return httpx.Response(
                 200,
                 json={
@@ -76,6 +77,7 @@ def _execute(tmp_path: Path, *, operation="audit_review", pack_key="harbor", fau
                         "offset": 0,
                         "count": len(items),
                         "total": total,
+                        "total_is_capped": fault == "over_cap",
                         "has_more": len(items) < total,
                     },
                 },

@@ -50,6 +50,7 @@ function dailyAggregateResult(
     count: number;
     total: number;
     has_more: boolean;
+    total_is_capped: boolean;
   }>,
 ) {
   return {
@@ -66,6 +67,7 @@ function dailyAggregateResult(
       count: days.length,
       total: days.length,
       has_more: false,
+      total_is_capped: false,
       ...paginationOverride,
     },
   };
@@ -241,6 +243,7 @@ test("sends aggregate groups through the shared definition serializer and preser
         count: 1,
         total: 1,
         hasMore: false,
+        totalIsCapped: false,
       },
     });
 
@@ -304,6 +307,7 @@ test("keeps the complete workspace-local daily date series and rejects a missing
         count: 4,
         total: 4,
         hasMore: false,
+        totalIsCapped: false,
       },
     });
     const body = JSON.parse(String(mock.requests[0]?.init?.body));
@@ -441,6 +445,7 @@ test("sends complete grouped aggregate snapshots without pagination and preserve
         count: 2,
         total: 2,
         hasMore: false,
+        totalIsCapped: false,
       },
     });
 
@@ -473,6 +478,7 @@ test("sends complete grouped aggregate snapshots without pagination and preserve
         count: 0,
         total: 0,
         hasMore: false,
+        totalIsCapped: false,
       },
     });
   } finally {
@@ -510,6 +516,7 @@ test("sends a full explicit 366-day date-series aggregate snapshot", async () =>
       count: 366,
       total: 366,
       hasMore: false,
+      totalIsCapped: false,
     });
     expect(JSON.parse(String(mock.requests[0]?.init?.body))).toEqual({
       mode: "date_series",
@@ -592,6 +599,7 @@ test("rejects incomplete and oversized snapshot pages and preserves structured A
         count: 1,
         total: 1,
         has_more: true,
+        total_is_capped: false,
       }),
     }),
     Response.json({

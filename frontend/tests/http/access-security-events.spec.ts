@@ -643,7 +643,14 @@ test("Events malformed invalid outcome response is unavailable rather than trust
   const state = await mockSecurityEvents(page);
   state.malformedList = {
     items: [{ ...securityEvent(0), outcome: "unknown" }],
-    pagination: { limit: 10, offset: 0, count: 1, total: 1, has_more: false },
+    pagination: {
+      limit: 10,
+      offset: 0,
+      count: 1,
+      total: 1,
+      has_more: false,
+      total_is_capped: false,
+    },
   };
   await page.goto("/manage?view=audit&audit=security-events");
   await expect(feed(page).getByRole("alert")).toContainText(
@@ -1140,6 +1147,7 @@ async function mockAuditHistory(page: Page) {
           count: 0,
           total: 0,
           has_more: false,
+          total_is_capped: false,
         },
       },
     });

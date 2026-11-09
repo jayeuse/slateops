@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { hasMoreAgreesWithTotal, wirePageCounts } from "@/lib/list-pagination";
 
 /**
  * The board Kanban's wire shapes (BE7): stages, labels, and cards, shared by
@@ -31,6 +32,7 @@ export const pagination = z
     count: z.number().int().min(0),
     total: z.number().int().min(0),
     has_more: z.boolean(),
+    total_is_capped: z.boolean(),
   })
   .strict();
 
@@ -176,7 +178,7 @@ export function cardPageWire<Item extends z.ZodType>(item: Item) {
     .refine(
       ({ items, pagination: page }) =>
         items.length === page.count &&
-        page.has_more === page.offset + page.count < page.total,
+        hasMoreAgreesWithTotal(wirePageCounts(page)),
     );
 }
 

@@ -325,6 +325,7 @@ export const test = base.extend({
               count: 0,
               total: 0,
               has_more: false,
+              total_is_capped: false,
             },
           },
         });
@@ -347,6 +348,7 @@ export const test = base.extend({
               count: 0,
               total: 0,
               has_more: false,
+              total_is_capped: false,
             },
             oldest_sample_at: null,
           },
@@ -372,6 +374,7 @@ export const test = base.extend({
                   count: 0,
                   total: 0,
                   has_more: false,
+                  total_is_capped: false,
                 },
               },
             })
@@ -390,6 +393,7 @@ export const test = base.extend({
         count: 0,
         total: 0,
         has_more: false,
+        total_is_capped: false,
       },
     });
     await context.route(
@@ -421,6 +425,7 @@ export const test = base.extend({
             count: 0,
             total: 0,
             has_more: false,
+            total_is_capped: false,
           },
         },
       });

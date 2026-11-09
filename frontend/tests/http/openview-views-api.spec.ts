@@ -1636,6 +1636,7 @@ async function installViewsApi(
                 count: items.length,
                 total: selectedRows.length,
                 has_more: offset + items.length < selectedRows.length,
+                total_is_capped: false,
               },
         groups: groups.slice(groupOffset, groupOffset + groupLimit),
         group_pagination: {
@@ -1644,6 +1645,7 @@ async function installViewsApi(
           count: Math.min(groupLimit, Math.max(0, groups.length - groupOffset)),
           total: groups.length,
           has_more: groupOffset + groupLimit < groups.length,
+          total_is_capped: false,
         },
         selected_group: selectedGroup,
       }),
@@ -3081,6 +3083,7 @@ test("the quick filter narrows the view by the first choice field with counts th
           count: 2,
           total: 2,
           has_more: false,
+          total_is_capped: false,
         },
       },
     });

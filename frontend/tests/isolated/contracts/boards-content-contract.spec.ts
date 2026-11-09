@@ -64,7 +64,14 @@ const startAt = "2026-01-02T03:00:00Z";
 // Overrides below keep the frontend's cross-field rules true: echoed ids,
 // page counts that match the items, a timed one-off event, a draft post,
 // links with real URLs, and a ready file on this Board.
-const page = { limit: 25, offset: 0, count: 1, total: 1, has_more: false };
+const page = {
+  limit: 25,
+  offset: 0,
+  count: 1,
+  total: 1,
+  has_more: false,
+  total_is_capped: false,
+};
 const timedEvent = {
   id: eventId,
   board_id: boardId,

@@ -39,6 +39,7 @@ def test_jobs_union_pages_every_kind_with_global_totals_and_safe_subjects(
             "offset": index,
             "count": 1,
             "total": 4,
+            "total_is_capped": False,
             "has_more": index < 3,
         }
     assert all(row["state"] == "failed" and row["can_retry"] for row in rows)

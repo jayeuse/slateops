@@ -8,8 +8,7 @@ from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session, aliased, joinedload
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.listing import ListQuerySpec, build_standard_list_statements
-from app.common.listing.schemas import PaginationMetadata
+from app.common.listing import ListQuerySpec, build_standard_list_statements, capped_pagination
 from app.systems.access.users.models import User
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
@@ -174,17 +173,14 @@ def list_relationships(
         deleted_field=cast(ColumnElement[bool], RelationshipEdge.is_deleted),
     )
     item_statement, count_statement = build_standard_list_statements(statement, params, spec)
-    total = int(db.scalar(count_statement) or 0)
-    rows = db.execute(item_statement).all()
-    items = [_projected_relationship_response(row) for row in rows]
-    pagination = PaginationMetadata(
+    counted = int(db.scalar(count_statement) or 0)
+    rows, pagination = capped_pagination(
         limit=params.limit,
         offset=params.offset,
-        count=len(items),
-        total=total,
-        has_more=params.offset + len(items) < total,
+        rows=db.execute(item_statement).all(),
+        counted=counted,
     )
-    return items, pagination
+    return [_projected_relationship_response(row) for row in rows], pagination
 
 
 def _projected_relationship_response(row: Row[tuple[Any, ...]]) -> RelationshipResponse:

@@ -8,6 +8,7 @@ import {
   type OpenViewDashboardWidgetType,
 } from "./dashboard-widget-config";
 import type { InlineChartEditorValue } from "../domain/chart-query";
+import { pageEndsWithinTotal } from "@/lib/list-pagination";
 
 const uuid = z.string().uuid();
 const timestamp = z.iso.datetime({ offset: true });
@@ -109,7 +110,7 @@ export async function listOpenViewCharts(
   if (
     page.pagination.offset !== request.offset ||
     page.pagination.count !== page.items.length ||
-    page.pagination.total < request.offset + page.items.length ||
+    !pageEndsWithinTotal(page.pagination) ||
     (page.pagination.hasMore && !page.items.length) ||
     new Set(page.items.map((chart) => chart.id)).size !== page.items.length ||
     page.items.some(
@@ -293,7 +294,7 @@ export async function getOpenViewChartUsage(
   if (
     page.pagination.offset !== offset ||
     page.pagination.count !== page.items.length ||
-    page.pagination.total < offset + page.items.length ||
+    !pageEndsWithinTotal(page.pagination) ||
     (page.pagination.hasMore && !page.items.length) ||
     new Set(page.items.map((item) => `${item.kind}:${item.id}`)).size !==
       page.items.length

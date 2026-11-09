@@ -70,6 +70,7 @@ def test_numeric_title_and_search_use_browser_display_before_pagination(
                     "offset": 0,
                     "count": 1,
                     "total": 1,
+                    "total_is_capped": False,
                     "has_more": False,
                 }
                 assert ids(result) == {str(rows[0].id)}

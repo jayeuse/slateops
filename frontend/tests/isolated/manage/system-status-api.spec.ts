@@ -356,7 +356,14 @@ const periodsPage = {
       ended_at: "2026-11-01T08:12:00Z",
     },
   ],
-  pagination: { limit: 5, offset: 0, count: 2, total: 2, has_more: false },
+  pagination: {
+    limit: 5,
+    offset: 0,
+    count: 2,
+    total: 2,
+    has_more: false,
+    total_is_capped: false,
+  },
   oldest_sample_at: "2026-10-04T00:00:00Z",
 };
 
@@ -374,7 +381,14 @@ test("S5-C3: the periods read asks for one page and accepts the contract's page"
   }
   const older = {
     items: [],
-    pagination: { limit: 10, offset: 5, count: 0, total: 5, has_more: false },
+    pagination: {
+      limit: 10,
+      offset: 5,
+      count: 0,
+      total: 5,
+      has_more: false,
+      total_is_capped: false,
+    },
     oldest_sample_at: null,
   };
   const olderStub = installFetch(() => json(older));

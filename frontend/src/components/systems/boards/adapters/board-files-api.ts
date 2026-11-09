@@ -20,6 +20,11 @@ import {
   throwFileRequestError,
   uploadFileContent,
 } from "../../shared/adapters/files-api";
+import {
+  hasMoreAgreesWithTotal,
+  pageEndsWithinTotal,
+  wirePageCounts,
+} from "@/lib/list-pagination";
 
 export const MAX_BOARD_ATTACHMENT_BYTES = MAX_FILE_BYTES;
 
@@ -273,6 +278,7 @@ const unlinkedPageWire = z
         count: z.number().int().min(0),
         total: z.number().int().min(0),
         has_more: z.boolean(),
+        total_is_capped: z.boolean(),
       })
       .strict(),
   })
@@ -281,13 +287,19 @@ const unlinkedPageWire = z
     ({ items, pagination: p }) =>
       items.length === p.count &&
       p.count <= p.limit &&
-      p.offset + p.count <= Math.max(p.total, p.offset) &&
-      p.has_more === p.offset + p.count < p.total,
+      (p.count === 0 || pageEndsWithinTotal(wirePageCounts(p))) &&
+      hasMoreAgreesWithTotal(wirePageCounts(p)),
   )
-  .transform(({ items, pagination: { has_more, ...page } }) => ({
-    items,
-    pagination: { ...page, hasMore: has_more },
-  }));
+  .transform(
+    ({ items, pagination: { has_more, total_is_capped, ...page } }) => ({
+      items,
+      pagination: {
+        ...page,
+        hasMore: has_more,
+        totalIsCapped: total_is_capped,
+      },
+    }),
+  );
 export type BoardUnlinkedFile = z.output<typeof unlinkedFileWire>;
 export type BoardUnlinkedFilePage = z.output<typeof unlinkedPageWire>;
 

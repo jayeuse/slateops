@@ -37,6 +37,7 @@ def empty_snapshot(query):
             "offset": 0,
             "count": len(items),
             "total": len(items),
+            "total_is_capped": False,
             "has_more": False,
         },
     }

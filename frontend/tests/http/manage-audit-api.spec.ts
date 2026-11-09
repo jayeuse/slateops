@@ -332,11 +332,15 @@ function createAuditRoute(logs: AuditLogFixture[]) {
       const limit = Number(params.get("limit") ?? 20);
       const offset = Number(params.get("offset") ?? 0);
       const items = filtered.slice(offset, offset + limit);
+      // Like the server, the list counts at most 10,000 entries; above that
+      // the total is 10,000 with the capped flag, and has_more stays exact.
       await route.fulfill({
         json: pageOf(items.map(wireAuditLog), {
           limit,
           offset,
-          total: filtered.length,
+          total: Math.min(filtered.length, 10_000),
+          hasMore: offset + items.length < filtered.length,
+          totalIsCapped: filtered.length > 10_000,
         }),
       });
     },
@@ -2026,7 +2030,7 @@ test("Audit Export is disabled with its reason above 10,000 events and exports t
   await page.route("**/api/audit-logs**", (route) => api.handle(route));
   await page.goto("/manage?view=audit");
   await expect(
-    page.getByText("Showing 1–10 of 10001", { exact: true }),
+    page.getByText("Showing 1–10 of 10000", { exact: true }),
   ).toBeVisible();
   // MD7: the list total says why before anything opens.
   const exportButton = page.getByRole("button", {

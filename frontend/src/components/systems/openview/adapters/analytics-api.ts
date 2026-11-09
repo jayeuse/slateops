@@ -51,9 +51,14 @@ const paginationSchema = z
     count: z.number().int().min(0),
     total: z.number().int().min(0),
     has_more: z.boolean(),
+    total_is_capped: z.boolean(),
   })
   .strict()
-  .transform(({ has_more, ...page }) => ({ ...page, hasMore: has_more }));
+  .transform(({ has_more, total_is_capped, ...page }) => ({
+    ...page,
+    hasMore: has_more,
+    totalIsCapped: total_is_capped,
+  }));
 const wirePaginationSchema = z
   .object({
     limit: z.number().int().min(1).max(100),
@@ -61,6 +66,7 @@ const wirePaginationSchema = z
     count: z.number().int().min(0),
     total: z.number().int().min(0),
     has_more: z.boolean(),
+    total_is_capped: z.boolean(),
   })
   .strict();
 const wireDateSeriesPaginationSchema = z
@@ -70,10 +76,15 @@ const wireDateSeriesPaginationSchema = z
     count: z.number().int().min(0),
     total: z.number().int().min(0),
     has_more: z.boolean(),
+    total_is_capped: z.boolean(),
   })
   .strict();
 const dateSeriesPaginationSchema = wireDateSeriesPaginationSchema.transform(
-  ({ has_more, ...page }) => ({ ...page, hasMore: has_more }),
+  ({ has_more, total_is_capped, ...page }) => ({
+    ...page,
+    hasMore: has_more,
+    totalIsCapped: total_is_capped,
+  }),
 );
 
 const wireRecordSchema = z
@@ -156,13 +167,17 @@ const wireAggregateSnapshotPaginationSchema = z
     count: z.number().int().min(0),
     total: z.number().int().min(0),
     has_more: z.boolean(),
+    total_is_capped: z.boolean(),
   })
   .strict();
 const aggregateSnapshotPaginationSchema =
-  wireAggregateSnapshotPaginationSchema.transform(({ has_more, ...page }) => ({
-    ...page,
-    hasMore: has_more,
-  }));
+  wireAggregateSnapshotPaginationSchema.transform(
+    ({ has_more, total_is_capped, ...page }) => ({
+      ...page,
+      hasMore: has_more,
+      totalIsCapped: total_is_capped,
+    }),
+  );
 const wireAggregateSnapshotResponseSchema = z
   .object({
     items: z.array(aggregateDatumSchema),

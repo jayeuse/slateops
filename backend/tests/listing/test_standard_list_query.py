@@ -41,8 +41,10 @@ def test_list_query_escapes_search_and_counts_before_pagination() -> None:
     assert "is_deleted IS true" in str(compiled)
     assert "departments.id DESC NULLS LAST" in str(compiled)
     assert "LIMIT" in str(compiled) and "OFFSET" in str(compiled)
-    count_sql = str(count.compile(dialect=postgresql.dialect()))
-    assert all(keyword not in count_sql for keyword in ("ORDER BY", "LIMIT", "OFFSET"))
+    count_compiled = count.compile(dialect=postgresql.dialect())
+    # The count stops one row above the cap (D1); it never sorts or skips.
+    assert all(keyword not in str(count_compiled) for keyword in ("ORDER BY", "OFFSET"))
+    assert 10_001 in count_compiled.params.values()
 
 
 @pytest.mark.parametrize(
@@ -101,7 +103,8 @@ def test_default_list_hides_deleted_rows_sorts_ascending_and_counts_every_match(
         "ORDER BY departments.department_name ASC NULLS LAST, departments.id ASC NULLS LAST"
         in item_sql
     )
-    assert item_sql.endswith("LIMIT 10 OFFSET 20")
+    # One row more than the page says whether more follow.
+    assert item_sql.endswith("LIMIT 11 OFFSET 20")
     count_sql = str(count.compile(dialect=postgresql.dialect()))
     assert count_sql.startswith("SELECT count(*) AS count_1")
 

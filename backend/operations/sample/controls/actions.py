@@ -160,7 +160,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
 
 def _audit_page(
     body: Mapping[str, Any], *, module_id: str, label: str, limit: int, step: str
-) -> tuple[list[dict[str, Any]], int]:
+) -> tuple[list[dict[str, Any]], PaginationMetadata]:
     rows = body.get("items")
     try:
         pagination = PaginationMetadata.model_validate(body.get("pagination"))
@@ -185,7 +185,7 @@ def _audit_page(
             or row.get("target_label") != label
         ):
             raise SamplePhaseActionError("Audit target identity or label differs", step=step)
-    return cast(list[dict[str, Any]], rows), pagination.total
+    return cast(list[dict[str, Any]], rows), pagination
 
 
 def _csv_cell(value: str) -> str:
@@ -282,7 +282,7 @@ def _execute_audit(
         on_substep=on_substep,
         params={**filters, "limit": limit, "offset": 0},
     )
-    rows, total = _audit_page(
+    rows, pagination = _audit_page(
         page,
         module_id=module_id,
         label=label,
@@ -291,7 +291,8 @@ def _execute_audit(
     )
     extra: dict[str, object] = dict(action.expected_end_state)
     if exporting:
-        if total > 10_000:
+        # A capped total is exactly 10,000, so the cap flag, not the number, blocks (K65).
+        if pagination.total_is_capped:
             raise SamplePhaseActionError(
                 "Audit export exceeds its supported count", step="audit_preview"
             )
@@ -307,7 +308,7 @@ def _execute_audit(
             on_substep=on_substep,
             params=filters,
         )
-        extra["row_count"] = _audit_csv(response, rows, total, label)
+        extra["row_count"] = _audit_csv(response, rows, pagination.total, label)
     else:
         audit_id = _id(rows[0], "id", label="audit", step="audit_list")
         options = _request_object(

@@ -217,7 +217,14 @@ def test_s5_c3_i6_every_person_reads_the_same_periods_and_a_signed_out_one_none(
     ]
     assert answers["member"] == {
         "items": expected,
-        "pagination": {"limit": 5, "offset": 0, "count": 2, "total": 2, "has_more": False},
+        "pagination": {
+            "limit": 5,
+            "offset": 0,
+            "count": 2,
+            "total": 2,
+            "total_is_capped": False,
+            "has_more": False,
+        },
         "oldest_sample_at": _z(email_from),
     }
     assert all(answer == answers["member"] for answer in answers.values())

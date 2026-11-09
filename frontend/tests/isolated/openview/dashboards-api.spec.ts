@@ -14,6 +14,7 @@ import {
 import { getOpenViewDashboardLayoutIssues } from "../../../src/components/systems/openview/adapters/dashboard-layout-issues";
 import { wirePagination } from "../../helpers/pagination";
 import { installSyncFetch as installFetch } from "../helpers/fake-fetch";
+import { cappedWirePagination } from "../../helpers/pagination";
 
 const moduleId = "00000000-0000-4000-8000-000000000001";
 const dimensionId = "00000000-0000-4000-8000-000000000002";
@@ -175,6 +176,32 @@ function expectedDashboard(): OpenViewDashboard {
   };
 }
 
+test("Dashboard list accepts a capped total whose rows reach row 10,000", async () => {
+  const fetch = installFetch(() =>
+    jsonResponse({
+      items: [dashboardResponse()],
+      pagination: cappedWirePagination({ limit: 25, offset: 9_999, count: 1 }),
+    }),
+  );
+  try {
+    const listed = await listOpenViewDashboards({
+      sortOrder: "desc",
+      deleted: "exclude",
+      offset: 9_999,
+    });
+    expect(listed.pagination).toEqual({
+      limit: 25,
+      offset: 9_999,
+      count: 1,
+      total: 10_000,
+      hasMore: true,
+      totalIsCapped: true,
+    });
+  } finally {
+    fetch.restore();
+  }
+});
+
 test("lists and reads department Dashboards with strict ordered chart mapping", async () => {
   const fetch = installFetch((input) => {
     const path = String(input);
@@ -197,6 +224,7 @@ test("lists and reads department Dashboards with strict ordered chart mapping", 
       count: 1,
       total: 1,
       hasMore: false,
+      totalIsCapped: false,
     });
     expect(String(fetch.requests[0]?.input)).toContain(
       `/dashboards?limit=25&offset=0&sort_by=updated_at&sort_order=desc&search=operations&deleted=include&department_id=${departmentId}`,

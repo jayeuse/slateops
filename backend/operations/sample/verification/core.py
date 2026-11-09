@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import UUID
 
+from app.common.listing import TOTAL_CAP
 from operations.sample.blueprint import SampleDataset, SampleEdge, SampleRecord
 from operations.sample.client import SampleClient
 from operations.sample.verification.named_scenarios import named_scenario_issues
@@ -369,6 +370,21 @@ def _string(value: object, label: str) -> str:
     return value
 
 
+def _page_metadata(payload: Mapping[str, Any]) -> tuple[Any, ...]:
+    """Pagination of a standard list, or of a flat list such as the trigger runs."""
+
+    pagination = payload.get("pagination")
+    page = pagination if isinstance(pagination, dict) else payload
+    return (
+        page.get("total"),
+        page.get("total_is_capped", page.get("totalIsCapped", False)),
+        page.get("limit"),
+        page.get("offset"),
+        page.get("count"),
+        page.get("has_more", page.get("hasMore")),
+    )
+
+
 def list_all_rows(
     client: SampleClient,
     path: str,
@@ -376,13 +392,17 @@ def list_all_rows(
     page_size: int = 100,
     params: Mapping[str, Any] | None = None,
 ) -> list[Mapping[str, Any]]:
+    """Read every page. Above 10,000 rows the total is a lower bound, so `has_more` ends it."""
+
     if not 1 <= page_size <= 100:
         raise ValueError("Sample verification page size must be between 1 and 100")
     base_params = dict(params or {})
     output: list[Mapping[str, Any]] = []
     expected_total: int | None = None
+    capped = False
     offset = 0
-    while expected_total is None or offset < expected_total:
+    has_more = True
+    while has_more:
         response = client.request(
             "GET",
             path,
@@ -396,41 +416,36 @@ def list_all_rows(
             raise SampleVerificationError(f"GET {path} returned invalid JSON") from None
         if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
             raise SampleVerificationError(f"GET {path} returned an invalid list response")
-        pagination = payload.get("pagination")
-        if isinstance(pagination, dict):
-            total = pagination.get("total")
-            limit = pagination.get("limit")
-            reported_offset = pagination.get("offset")
-            count = pagination.get("count")
-            has_more = pagination.get("has_more")
-        else:
-            total = payload.get("total")
-            limit = payload.get("limit")
-            reported_offset = payload.get("offset")
-            count = payload.get("count")
-            has_more = payload.get("hasMore", payload.get("has_more"))
+        total, page_capped, limit, reported_offset, count, has_more = _page_metadata(payload)
         if not isinstance(total, int) or isinstance(total, bool) or total < 0:
             raise SampleVerificationError(f"GET {path} returned an invalid total")
         rows = payload["items"]
+        # A capped total is a lower bound: a page short of it must report more rows.
+        short = offset + len(rows) < total
         if (
             limit != page_size
             or reported_offset != offset
             or count != len(rows)
             or not isinstance(has_more, bool)
-            or has_more != (offset + len(rows) < total)
+            or not isinstance(page_capped, bool)
+            or (not page_capped and has_more != short)
+            or (page_capped and (total != TOTAL_CAP or (short and not has_more)))
         ):
             raise SampleVerificationError(f"GET {path} returned inconsistent pagination metadata")
+        capped = capped or page_capped
         if expected_total is None:
             expected_total = total
-        elif total != expected_total:
+        elif not capped and total != expected_total:
             raise SampleVerificationError(f"GET {path} changed while pages were being read")
         if len(rows) > page_size or any(not isinstance(row, dict) for row in rows):
             raise SampleVerificationError(f"GET {path} returned an invalid page")
-        if offset < expected_total and not rows:
+        if has_more and not rows:
             raise SampleVerificationError(f"GET {path} ended before its reported total")
         output.extend(rows)
         offset += len(rows)
-    if len(output) != expected_total:
+    if not capped and len(output) != expected_total:
+        raise SampleVerificationError(f"GET {path} did not return its reported total")
+    if capped and len(output) <= TOTAL_CAP:
         raise SampleVerificationError(f"GET {path} did not return its reported total")
     return output
 

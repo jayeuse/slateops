@@ -46,10 +46,15 @@ const paginationSchema = z
     count: z.number().int().min(0),
     total: z.number().int().min(0),
     has_more: z.boolean(),
+    total_is_capped: z.boolean(),
   })
   .strict()
   .refine(({ count, limit }) => count <= limit)
-  .transform(({ has_more, ...page }) => ({ ...page, hasMore: has_more }));
+  .transform(({ has_more, total_is_capped, ...page }) => ({
+    ...page,
+    hasMore: has_more,
+    totalIsCapped: total_is_capped,
+  }));
 export const boardListSchema = z
   .object({ items: z.array(boardSchema), pagination: paginationSchema })
   .strict()

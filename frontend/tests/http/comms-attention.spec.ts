@@ -251,6 +251,7 @@ test("the focused open conversation raises no alert until its tab loses focus", 
             count: listed.length,
             total: listed.length,
             has_more: false,
+            total_is_capped: false,
           },
         },
       });

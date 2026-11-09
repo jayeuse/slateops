@@ -228,7 +228,9 @@ def test_channel_lifecycle_filters_visible_rows_before_stable_pages_and_totals(s
     query = {"search": "Lifecycle", "sort_by": "position", "sort_order": "asc", "limit": 2}
     page = _ok(peer.get(collection, params=query))
     assert [row["id"] for row in page["items"]] == twins
-    assert page["pagination"] == {"limit": 2, "offset": 0, "count": 2, "total": 3, "has_more": True}
+    assert page["pagination"] == {
+        "limit": 2, "offset": 0, "count": 2, "total": 3, "total_is_capped": False, "has_more": True,
+    }
     tail = _ok(peer.get(collection, params=query | {"offset": 2}))
     assert [row["id"] for row in tail["items"]] == [restricted["id"]]
     assert tail["pagination"] == {
@@ -236,6 +238,7 @@ def test_channel_lifecycle_filters_visible_rows_before_stable_pages_and_totals(s
         "offset": 2,
         "count": 1,
         "total": 3,
+        "total_is_capped": False,
         "has_more": False,
     }
     old = _read(peer, first_path)

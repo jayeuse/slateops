@@ -28,4 +28,5 @@ class TriggerRunListResponse(StrictModel):
     offset: Annotated[int, Field(ge=0)]
     count: Annotated[int, Field(ge=0)]
     total: Annotated[int, Field(ge=0)]
+    total_is_capped: bool = Field(alias="totalIsCapped")
     has_more: bool = Field(alias="hasMore")

@@ -116,6 +116,7 @@ function boardPage(
       count: items.length,
       total: items.length,
       hasMore: false,
+      totalIsCapped: false,
     },
     boardRevision: board.revision,
     nextOccurrence: null,

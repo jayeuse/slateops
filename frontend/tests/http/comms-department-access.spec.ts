@@ -587,6 +587,7 @@ test("the Members tab says while members load, and when no one can use the chann
               count: 0,
               total: 0,
               has_more: false,
+              total_is_capped: false,
             },
           },
         });
@@ -635,6 +636,7 @@ test("a department channel whose department the viewer cannot name shows Departm
             count: 0,
             total: 0,
             has_more: false,
+            total_is_capped: false,
           },
         },
       }),

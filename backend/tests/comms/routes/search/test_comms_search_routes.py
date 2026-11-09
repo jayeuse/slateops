@@ -100,6 +100,7 @@ def test_search_filters_and_plain_excerpts_preserve_thread_context(search_case):
             "offset": 0,
             "count": len(expected),
             "total": len(expected),
+            "total_is_capped": False,
             "has_more": False,
         }, filters
     hits = {hit["message_id"]: hit for hit in search(api)["items"]}
@@ -143,6 +144,7 @@ def test_search_filters_and_plain_excerpts_preserve_thread_context(search_case):
         "offset": 0,
         "count": 1,
         "total": 1,
+        "total_is_capped": False,
         "has_more": False,
     }
     case.revoke_search_record_access()
@@ -153,6 +155,7 @@ def test_search_filters_and_plain_excerpts_preserve_thread_context(search_case):
             "offset": 0,
             "count": 0,
             "total": 0,
+            "total_is_capped": False,
             "has_more": False,
         },
     }
@@ -166,6 +169,7 @@ def test_search_filters_and_plain_excerpts_preserve_thread_context(search_case):
         "offset": 0,
         "count": 7,
         "total": 7,
+        "total_is_capped": False,
         "has_more": False,
     }
     hit = next(hit for hit in ordinary["items"] if hit["message_id"] == str(ids["record"]))
@@ -183,6 +187,7 @@ def test_search_offset_pages_are_bounded_and_stable_on_ties(search_case):
         "offset": 0,
         "count": 100,
         "total": 102,
+        "total_is_capped": False,
         "has_more": True,
     }
     assert len(set(message_ids(first))) == 100
@@ -195,6 +200,7 @@ def test_search_offset_pages_are_bounded_and_stable_on_ties(search_case):
         "offset": 100,
         "count": 2,
         "total": 102,
+        "total_is_capped": False,
         "has_more": False,
     }
     assert set(message_ids(first)).isdisjoint(message_ids(tail))
@@ -205,6 +211,7 @@ def test_search_offset_pages_are_bounded_and_stable_on_ties(search_case):
             "offset": 102,
             "count": 0,
             "total": 102,
+            "total_is_capped": False,
             "has_more": False,
         },
     }
@@ -241,6 +248,7 @@ def test_search_rechecks_current_source_access_without_leaking_hidden_hits(searc
         "offset": 0,
         "count": 2,
         "total": 2,
+        "total_is_capped": False,
         "has_more": False,
     }
     case.routes.hide_other_conversation()
@@ -251,6 +259,7 @@ def test_search_rechecks_current_source_access_without_leaking_hidden_hits(searc
         "offset": 0,
         "count": 1,
         "total": 1,
+        "total_is_capped": False,
         "has_more": False,
     }
     assert after["items"][0]["excerpt"] == "kumquat surviving"
@@ -264,6 +273,7 @@ def test_search_rechecks_current_source_access_without_leaking_hidden_hits(searc
         "offset": 0,
         "count": 1,
         "total": 1,
+        "total_is_capped": False,
         "has_more": False,
     }
     assert search(reader, limit=1, offset=1) == {
@@ -273,6 +283,7 @@ def test_search_rechecks_current_source_access_without_leaking_hidden_hits(searc
             "offset": 1,
             "count": 0,
             "total": 1,
+            "total_is_capped": False,
             "has_more": False,
         },
     }

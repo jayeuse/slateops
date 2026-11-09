@@ -37,6 +37,7 @@ const auditLogListSchema = z.object({
     count: z.number().int().nonnegative(),
     total: z.number().int().nonnegative(),
     has_more: z.boolean(),
+    total_is_capped: z.boolean(),
   }),
 });
 
@@ -143,7 +144,8 @@ export async function getManageAuditExportPreview(
     { ...request, limit: 10, offset: 0 },
     signal,
   );
-  if (page.pagination.total > 10_000) throw new AuditExportLimitError();
+  // Above 10,000 entries the total is capped at 10,000 and carries the flag.
+  if (page.pagination.total_is_capped) throw new AuditExportLimitError();
   return page;
 }
 

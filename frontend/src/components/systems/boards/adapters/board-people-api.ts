@@ -1,5 +1,10 @@
 import { z } from "zod";
 import { apiFetch, apiContractError } from "@/lib/api";
+import {
+  hasMoreAgreesWithTotal,
+  pageEndsWithinTotal,
+  wirePageCounts,
+} from "@/lib/list-pagination";
 
 const uuid = z.string().uuid();
 /** The board people read sends at most this many people a page. */
@@ -27,6 +32,7 @@ const pageWire = z
         count: z.number().int().min(0),
         total: z.number().int().min(0),
         has_more: z.boolean(),
+        total_is_capped: z.boolean(),
       })
       .strict(),
   })
@@ -36,9 +42,8 @@ const pageWire = z
       pagination.count !== items.length ||
       pagination.count > pagination.limit ||
       (pagination.count > 0 &&
-        pagination.offset + pagination.count > pagination.total) ||
-      pagination.has_more !==
-        pagination.offset + pagination.count < pagination.total ||
+        !pageEndsWithinTotal(wirePageCounts(pagination))) ||
+      !hasMoreAgreesWithTotal(wirePageCounts(pagination)) ||
       new Set(items.map((person) => person.id)).size !== items.length
     )
       context.addIssue({
@@ -46,10 +51,16 @@ const pageWire = z
         message: "People page is inconsistent",
       });
   })
-  .transform(({ items, pagination: { has_more, ...pagination } }) => ({
-    items,
-    pagination: { ...pagination, hasMore: has_more },
-  }));
+  .transform(
+    ({ items, pagination: { has_more, total_is_capped, ...pagination } }) => ({
+      items,
+      pagination: {
+        ...pagination,
+        hasMore: has_more,
+        totalIsCapped: total_is_capped,
+      },
+    }),
+  );
 
 export type BoardPerson = z.output<typeof personWire>;
 export type BoardPeoplePage = z.output<typeof pageWire>;

@@ -15,6 +15,7 @@ import {
   uploadFileContent,
 } from "../../shared/adapters/files-api";
 import { getWorkspaceBrand } from "./workspace-api";
+import { hasMoreAgreesWithTotal, wirePageCounts } from "@/lib/list-pagination";
 
 export const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 const uuid = z.uuid();
@@ -165,6 +166,7 @@ const pagination = z
     count: z.number().int().min(0),
     total: z.number().int().min(0),
     has_more: z.boolean(),
+    total_is_capped: z.boolean(),
   })
   .strict();
 export type WorkspaceLogoListInput = z.output<typeof listInput>;
@@ -195,7 +197,7 @@ export function listWorkspaceLogoFiles(
         meta.offset !== input.offset ||
         meta.count !== page.items.length ||
         meta.total < meta.count ||
-        meta.has_more !== meta.offset + meta.count < meta.total ||
+        !hasMoreAgreesWithTotal(wirePageCounts(meta)) ||
         new Set(page.items.map((file) => file.id)).size !== page.items.length
       ) {
         context.addIssue({

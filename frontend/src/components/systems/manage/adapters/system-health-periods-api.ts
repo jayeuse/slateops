@@ -34,6 +34,7 @@ const healthPeriodsPageSchema = z
         count: z.number().int().nonnegative(),
         total: z.number().int().nonnegative(),
         has_more: z.boolean(),
+        total_is_capped: z.boolean(),
       })
       .strict(),
     oldest_sample_at: instant.nullable(),

@@ -361,7 +361,14 @@ test("a revoked notification 404 clears old references before a failed first-pag
   const followUp = heldResponse();
   const oldPage = {
     items: [notification("unread")],
-    pagination: { limit: 25, offset: 0, count: 1, total: 1, has_more: false },
+    pagination: {
+      limit: 25,
+      offset: 0,
+      count: 1,
+      total: 1,
+      has_more: false,
+      total_is_capped: false,
+    },
   };
   await notificationRoute(page, async (route) => {
     if (route.request().method() === "POST") {
@@ -475,6 +482,7 @@ test("a revoked notice on a later page reloads the authorized first page", async
           count: items.length,
           total: 26,
           has_more: offset === "0",
+          total_is_capped: false,
         },
       }),
     });
@@ -525,6 +533,7 @@ test("Report notification paging remains bounded to the server page", async ({
           count: items.length,
           total: 26,
           has_more: offset === 0,
+          total_is_capped: false,
         },
       }),
     });

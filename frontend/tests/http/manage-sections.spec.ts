@@ -95,6 +95,7 @@ async function mockAudit(page: Page, count = 24) {
           count: page.length,
           total: items.length,
           has_more: offset + limit < items.length,
+          total_is_capped: false,
         },
       },
     });
@@ -140,6 +141,7 @@ async function mockJobs(page: Page, rows: readonly JobRow[] = reportRows) {
           count: page.length,
           total: items.length,
           has_more: offset + limit < items.length,
+          total_is_capped: false,
         },
       },
     });

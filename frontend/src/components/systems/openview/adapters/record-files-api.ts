@@ -15,6 +15,7 @@ import {
 } from "../../shared/adapters/files-api";
 import { openViewReadFetch, trackOpenViewRead } from "./openview-access";
 import { listSchema, pageRequestSchema, uuidSchema } from "./views-schemas";
+import { pageEndsWithinTotal } from "@/lib/list-pagination";
 
 function recordFileSchema(recordId: string) {
   return fileWireSchema
@@ -73,8 +74,7 @@ export async function listRecordFiles(
         pagination.offset !== page.offset ||
         pagination.count !== result.items.length ||
         pagination.count > pagination.limit ||
-        (pagination.count > 0 &&
-          pagination.total < pagination.offset + pagination.count) ||
+        (pagination.count > 0 && !pageEndsWithinTotal(pagination)) ||
         (pagination.hasMore && pagination.count === 0)
       )
         context.addIssue({

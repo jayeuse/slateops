@@ -29,6 +29,7 @@ function page<T>(items: T[], url: URL) {
       count: items.length,
       total: items.length,
       has_more: false,
+      total_is_capped: false,
     },
   };
 }

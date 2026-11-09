@@ -71,7 +71,7 @@ def test_board_activity_lists_metadata_and_groups_without_content(
 
     page = reader_client.get(f"{root}?limit=1&offset=1").json()
     assert page["pagination"] == {
-        "limit": 1, "offset": 1, "count": 1, "total": 2, "has_more": False
+        "limit": 1, "offset": 1, "count": 1, "total": 2, "total_is_capped": False, "has_more": False
     }
     assert client(db, outsider, router).get(root).status_code == 404
     assert reader_client.get(f"/api/boards/{uuid7()}/activity").json() == {

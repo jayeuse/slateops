@@ -23,7 +23,14 @@ const hit = {
 };
 const page = {
   items: [hit],
-  pagination: { limit: 25, offset: 0, count: 1, total: 1, has_more: false },
+  pagination: {
+    limit: 25,
+    offset: 0,
+    count: 1,
+    total: 1,
+    has_more: false,
+    total_is_capped: false,
+  },
 };
 
 test("search maps parsed D16 filters to one readonly organization-bound request", async () => {
@@ -36,6 +43,7 @@ test("search maps parsed D16 filters to one readonly organization-bound request"
       count: 1,
       total: 126,
       has_more: false,
+      total_is_capped: false,
     },
   };
   const mock = installFetch(() => Response.json(response));
@@ -236,7 +244,7 @@ test("search binds response paging and refuses more than one bounded page", asyn
     { ...page.pagination, limit: 10 },
     { ...page.pagination, offset: 1, total: 2 },
     { ...page.pagination, count: 2 },
-    { ...page.pagination, total: 2, has_more: false },
+    { ...page.pagination, total: 2, has_more: false, total_is_capped: false },
   ]) {
     const mock = installFetch(() => Response.json({ ...page, pagination }));
     try {
@@ -259,6 +267,7 @@ test("search binds response paging and refuses more than one bounded page", asyn
         count: 101,
         total: 101,
         has_more: false,
+        total_is_capped: false,
       },
     }),
   );

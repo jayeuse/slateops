@@ -62,7 +62,7 @@ def test_s4_c1_own_history_lists_every_kind_newest_first_in_pages(event_world):
     assert page.status_code == rest.status_code == 200, page.text
     assert page.headers["cache-control"] == "no-store"
     assert page.json()["pagination"] == {
-        "limit": 3, "offset": 0, "count": 3, "total": 5, "has_more": True,
+        "limit": 3, "offset": 0, "count": 3, "total": 5, "total_is_capped": False, "has_more": True,
     }
     rows = page.json()["items"] + rest.json()["items"]
     assert [(row["kind"], row["id"]) for row in rows] == [

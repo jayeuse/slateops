@@ -612,6 +612,7 @@ export async function installKanbanApi(
           count: items.length,
           total: readers.length,
           has_more: offset + items.length < readers.length,
+          total_is_capped: false,
         }),
       });
     }

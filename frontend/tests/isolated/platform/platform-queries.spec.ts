@@ -392,7 +392,14 @@ for (const row of [
     const countKey = notificationCountOptions().queryKey;
     queries.setQueryData(pageKey, {
       items: [],
-      pagination: { limit: 25, offset: 0, count: 0, total: 0, hasMore: false },
+      pagination: {
+        limit: 25,
+        offset: 0,
+        count: 0,
+        total: 0,
+        hasMore: false,
+        totalIsCapped: false,
+      },
     });
     queries.setQueryData(countKey, 1);
     const mock = installFetch(() =>

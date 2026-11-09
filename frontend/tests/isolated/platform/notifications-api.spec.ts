@@ -10,7 +10,7 @@ import {
 } from "../../../src/components/systems/shared/adapters/notifications-api";
 import { setCurrentOrganizationId } from "../../../src/lib/organization-context";
 import { ids, installFetch, notificationWire, pagination } from "./fixtures";
-import { wirePagination } from "../../helpers/pagination";
+import { cappedWirePagination, wirePagination } from "../../helpers/pagination";
 
 // The shell bell, its popover and the inbox trust only a confirmed unread
 // count, a confirmed read-all result and a page that matches the request.
@@ -203,6 +203,7 @@ const refusedPages: PageRow[] = [
         ...pagination(0, { limit: 10 }),
         total: 1,
         has_more: true,
+        total_is_capped: false,
       },
     },
   },
@@ -271,7 +272,35 @@ test("notification page accepts an empty terminal page after concurrent removal"
         count: 0,
         total: 0,
         hasMore: false,
+        totalIsCapped: false,
       },
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("notification page accepts a capped total whose rows reach row 10,000", async () => {
+  const items = Array.from({ length: 10 }, (_, index) =>
+    notificationWire({
+      id: `00000000-0000-4000-8000-${String(900 + index).padStart(12, "0")}`,
+    }),
+  );
+  const mock = installFetch(() =>
+    Response.json({
+      items,
+      pagination: cappedWirePagination({ limit: 10, count: 10 }),
+    }),
+  );
+  try {
+    const page = await listNotifications({ limit: 10, offset: 9_990 });
+    expect(page.pagination).toEqual({
+      limit: 10,
+      offset: 9_990,
+      count: 10,
+      total: 10_000,
+      hasMore: true,
+      totalIsCapped: true,
     });
   } finally {
     mock.restore();
