@@ -50,9 +50,12 @@ collection removes unreferenced anchors. An expired-send identity fence prevents
 replaying the old client key as a new message. Restoration refuses content marked
 `retention_erased_at`; retaining an anchor does not retain recoverable content.
 
-The existing scheduling worker polls scheduled sends, exports, retention and
-optional previews per active organization via
-[`jobs/worker.py`](../../backend/app/systems/comms/jobs/worker.py). `ScheduledWork`
+The existing scheduling worker runs scheduled sends, exports and optional previews
+per active organization via
+[`jobs/worker.py`](../../backend/app/systems/comms/jobs/worker.py) when its
+[due probe](../../backend/app/systems/platform/scheduling/due_probe.py) finds that
+work due, or a work hint wakes it. Retention runs on the five-minute retention timer,
+and again after one second while a batch reports more work. `ScheduledWork`
 holds durable source/claim state, not permanent permission. Lease tokens fence
 claims; executors recheck source versions or captured authority for their job kind.
 Expired claims can be recovered, while stale claims,

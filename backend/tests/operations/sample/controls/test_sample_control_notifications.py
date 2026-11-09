@@ -91,7 +91,7 @@ def test_plan_stops_without_two_owned_assignment_notice_sources() -> None:
 
 
 class NotificationServer:
-    def __init__(self, dataset, action, fault: str | None = None) -> None:
+    def __init__(self, dataset, action, fault: str | None = None, primary_rows: int = 28) -> None:
         self.action, self.fault = action, fault
         self.other_key = action.values["observer_key"]
         self.identities = {action.actor_key: PRIMARY, self.other_key: OBSERVER}
@@ -147,7 +147,7 @@ class NotificationServer:
                 ids.append((identifier, self.modules[record.module_key]))
             self.rows[actor_id] = [
                 {
-                    "id": str(UUID(int=1001 + actor_index * 100 + index)),
+                    "id": str(UUID(int=1001 + actor_index * 100_000 + index)),
                     "kind": "record-assigned",
                     "subject_type": "record",
                     "subject_id": ids[index % 2][0],
@@ -157,7 +157,7 @@ class NotificationServer:
                     "scheduled_for": None,
                     "read_at": READ_STAMP if actor_id == PRIMARY and index == 27 else None,
                 }
-                for index in range(28 if actor_id == PRIMARY else 2)
+                for index in range(primary_rows if actor_id == PRIMARY else 2)
             ]
         self.before = copy.deepcopy(self.rows)
 
@@ -196,17 +196,19 @@ class NotificationServer:
             limit, offset = int(request.url.params["limit"]), int(request.url.params["offset"])
             assert limit == 25
             self.pages.append((actor_id, offset))
-            rows = copy.deepcopy(self.rows[actor_id])
+            rows = self.rows[actor_id]
+            items = copy.deepcopy(rows[offset : offset + limit])
             page = {
                 "limit": limit,
                 "offset": offset,
-                "count": len(rows[offset : offset + limit]),
+                "count": len(items),
                 "total": len(rows),
                 "has_more": offset + limit < len(rows),
             }
-            items = rows[offset : offset + limit]
             if actor_id == PRIMARY and not self.writes:
-                if self.fault == "malformed_page":
+                if self.fault == "endless_total":
+                    page.update(total=25_001, has_more=True)
+                elif self.fault == "malformed_page":
                     page["limit"] = True
                 elif self.fault == "incomplete_page":
                     items, page["count"] = [], 0
@@ -215,7 +217,7 @@ class NotificationServer:
                 elif self.fault == "changed_total" and offset:
                     page["total"] += 1
                 elif self.fault == "duplicate_notice" and offset:
-                    items[0] = rows[0]
+                    items[0] = copy.deepcopy(rows[0])
                 elif self.fault == "wrong_subject":
                     items[0]["subject_id"] = str(UUID(int=777))
                 elif self.fault == "private_recipient_notice":
@@ -239,7 +241,7 @@ class NotificationServer:
             if self.fault == "unknown_read_all":
                 raise httpx.ReadError("Synthetic lost read-all response", request=request)
             return self.response(
-                {"updated_count": 99 if self.fault == "wrong_updated_count" else 26}
+                {"updated_count": 99 if self.fault == "wrong_updated_count" else len(unread)}
             )
         identifier = path.removeprefix("/api/notifications/").removesuffix("/read")
         row = next(row for row in self.rows[PRIMARY] if row["id"] == identifier)
@@ -255,10 +257,16 @@ class NotificationServer:
         return self.response(result)
 
 
-def _setup(tmp_path: Path, request, fault: str | None = None, pack: str = "harbor"):
+def _setup(
+    tmp_path: Path,
+    request,
+    fault: str | None = None,
+    pack: str = "harbor",
+    primary_rows: int = 28,
+):
     dataset = _dataset(pack)
     action = notifications.plan_notification_controls(dataset)[0]
-    server = NotificationServer(dataset, action, fault)
+    server = NotificationServer(dataset, action, fault, primary_rows)
     clients = {}
     for key, actor_id in server.identities.items():
         client = SampleClient(
@@ -313,6 +321,52 @@ def test_complete_recipient_journey_reads_all_pages_and_preserves_other_recipien
     assert (
         result["notification_readback"]["verification_boundary"] == "immediate-recipient-readback"
     )
+
+
+def _manifest(context: PhaseExecutionContext) -> dict[str, object]:
+    return {
+        "actor_ids": dict(context.user_ids),
+        "mappings": dict(context.runtime_mappings),
+        "people": {
+            key: {"user_id": identifier, "role": "member", "status": "active"}
+            for key, identifier in context.user_ids.items()
+            if key != "admin"
+        },
+    }
+
+
+def test_recipient_above_2500_notices_is_read_whole_and_its_receipts_verify(
+    tmp_path: Path, request
+) -> None:
+    # Clinic and School at Large give one recipient 5,044 and 6,638 notices; the old
+    # fixed budget of 100 pages of 25 stopped at 2,500.
+    dataset, action, context, server = _setup(tmp_path, request, primary_rows=2_526)
+    result = notifications.execute_notification_control(action, dataset, context)
+    assert result["unread_before"] == 2_525
+    assert result["unread_after_one"] == 2_524
+    assert result["unread_after_all"] == 0
+    assert len(result["notification_before"]["primary"]) == 2_526
+    assert result["notification_pages"]["primary_before"] == 102
+    assert result["notification_pages"]["primary_verify"] == 102
+    assert result["notification_pages"]["observer_before"] == 1
+    assert (PRIMARY, 2_525) in server.pages
+    assert all(row["status"] == "read" for row in server.rows[PRIMARY])
+    assert server.rows[OBSERVER] == server.before[OBSERVER]
+    observed, issues = {"control_requests_verified": 0}, []
+    notifications.verify_notification_evidence(
+        dataset, _manifest(context), action, result, ADMIN, set(), observed, issues
+    )
+    assert issues == [] and observed["notification_receipt_actions_verified"] == 1
+
+
+def test_listing_total_above_the_safety_ceiling_stops_on_its_first_page(
+    tmp_path: Path, request
+) -> None:
+    dataset, action, context, server = _setup(tmp_path, request, "endless_total")
+    with pytest.raises(SamplePhaseActionError, match="exceeded the bounded page budget"):
+        notifications.execute_notification_control(action, dataset, context)
+    assert server.pages == [(PRIMARY, 0)]
+    assert server.writes == []
 
 
 @pytest.mark.parametrize(

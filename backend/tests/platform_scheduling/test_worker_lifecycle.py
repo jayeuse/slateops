@@ -17,6 +17,7 @@ from app.core.database.session import AuditSession
 from app.systems.manage.audit.seals import SealPass
 from app.systems.openview.reports.models import ReportRun
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork, WorkState
+from tests.platform_scheduling.worker_clock import ControlledClock, install, nothing_due
 
 pytest_plugins = ("tests.platform_scheduling.test_execution",)
 NOW = datetime(2026, 1, 1, 12, tzinfo=UTC)
@@ -192,22 +193,13 @@ def test_post_backoff_does_not_delay_healthy_report_polls(monkeypatch) -> None:
     from app.systems.platform.scheduling import worker as module
 
     worker = module.ReportSchedulingWorker(SimpleNamespace(environment="development"))
-    clock = SimpleNamespace(value=0.0)
+    clock = ControlledClock(until=2.5)
+    install(monkeypatch, module, worker, clock)
     report_polls: list[float] = []
     post_polls: list[float] = []
-
-    class ControlledStop:
-        def is_set(self) -> bool:
-            return clock.value >= 3
-
-        def wait(self, seconds: float) -> bool:
-            assert seconds > 0
-            clock.value += seconds
-            return self.is_set()
-
-    worker._stop = ControlledStop()
+    # Both kinds stay due, so each runs as often as the worker allows.
     monkeypatch.setattr(
-        module, "time", SimpleNamespace(monotonic=lambda: clock.value), raising=False
+        module, "probe_due", lambda _e: {"reports": clock.utc(), "posts": clock.utc()}
     )
     monkeypatch.setattr(module, "get_engine", lambda: object())
     monkeypatch.setattr(
@@ -235,25 +227,15 @@ def test_retention_wakes_every_five_minutes_and_reports_a_failure_once(monkeypat
     from app.systems.platform.scheduling import worker as module
 
     worker = module.ReportSchedulingWorker(SimpleNamespace(environment="development"))
-    clock = SimpleNamespace(value=0.0)
+    clock = ControlledClock(until=600)
+    install(monkeypatch, module, worker, clock)
+    monkeypatch.setattr(module, "probe_due", nothing_due)
     wakes: list[float] = []
-
-    class ControlledStop:
-        def is_set(self) -> bool:
-            return clock.value > 600
-
-        def wait(self, seconds: float) -> bool:
-            clock.value += seconds
-            return self.is_set()
 
     def fail_sweep(*_args, **_kwargs) -> None:
         wakes.append(clock.value)
         raise RuntimeError("temporary retention fault")
 
-    worker._stop = ControlledStop()
-    monkeypatch.setattr(
-        module, "time", SimpleNamespace(monotonic=lambda: clock.value), raising=False
-    )
     monkeypatch.setattr(module, "get_engine", lambda: object())
     monkeypatch.setattr(module, "execute_due_report_runs", Mock(return_value=[]))
     monkeypatch.setattr(module, "execute_due_post_publications", Mock(return_value=[]))
@@ -278,7 +260,10 @@ def _partition_worker(monkeypatch, *, until: float, outcomes):
     from app.systems.platform.scheduling import worker as module
 
     worker = module.ReportSchedulingWorker(SimpleNamespace(environment="development"))
-    clock = SimpleNamespace(value=0.0)
+    clock = ControlledClock(until=until)
+    install(monkeypatch, module, worker, clock)
+    # Reports stay due, so the other polls are seen to go on between the timers.
+    monkeypatch.setattr(module, "probe_due", lambda _e: {"reports": clock.utc()})
     wakes: list[tuple[float, bool]] = []
     remaining = iter(outcomes)
     binding = SimpleNamespace(active=False)
@@ -291,14 +276,6 @@ def _partition_worker(monkeypatch, *, until: float, outcomes):
         finally:
             binding.active = False
 
-    class ControlledStop:
-        def is_set(self) -> bool:
-            return clock.value > until
-
-        def wait(self, seconds: float) -> bool:
-            clock.value += seconds
-            return self.is_set()
-
     def ensure(_db) -> int:
         wakes.append((clock.value, binding.active))
         outcome = next(remaining)
@@ -306,10 +283,6 @@ def _partition_worker(monkeypatch, *, until: float, outcomes):
             raise outcome
         return outcome
 
-    worker._stop = ControlledStop()
-    monkeypatch.setattr(
-        module, "time", SimpleNamespace(monotonic=lambda: clock.value), raising=False
-    )
     monkeypatch.setattr(module, "get_engine", lambda: None)
     reports = Mock(return_value=[])
     monkeypatch.setattr(module, "execute_due_report_runs", reports)
@@ -610,8 +583,8 @@ def test_a_failed_poll_logs_its_first_organization_cause_and_count_once(monkeypa
         sqlstate = "40P01"
 
     worker._comms_poll = Mock(side_effect=OperationalError("UPDATE", {}, _Deadlock()))
-    worker._poll(now=NOW, reports=False, posts=False, reminders=False, comms=True)
-    worker._poll(now=NOW, reports=False, posts=False, reminders=False, comms=True)
+    worker._poll(now=NOW, kinds=frozenset({"comms"}))
+    worker._poll(now=NOW, kinds=frozenset({"comms"}))
 
     assert events == [(("operational_attention",), {
         "reason_code": "comms_scheduling_poll_failed", "upstream": "comms-jobs",

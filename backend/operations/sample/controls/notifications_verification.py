@@ -151,7 +151,12 @@ def verify_notification_evidence(
     observed: dict[str, int],
     issues: list[str],
 ) -> None:
-    from operations.sample.controls.notifications import EVIDENCE_KEYS, _bindings
+    from operations.sample.controls.notifications import (
+        EVIDENCE_KEYS,
+        PAGE_CEILING,
+        PAGE_SIZE,
+        _bindings,
+    )
 
     start = len(issues)
     try:
@@ -204,11 +209,16 @@ def verify_notification_evidence(
             expected.append((step, actor, "GET", "/api/auth/me"))
 
         def listing(actor: str, step: str, rows: list[dict[str, Any]], count_step: str) -> None:
-            total_pages = max(1, (len(rows) + 24) // 25)
-            if type(pages[step]) is not int or pages[step] != total_pages or total_pages > 100:
+            total_pages = max(1, -(-len(rows) // PAGE_SIZE))
+            if (
+                type(pages[step]) is not int
+                or pages[step] != total_pages
+                or total_pages > PAGE_CEILING
+            ):
                 raise ValueError
             for index in range(total_pages):
-                expected.append((f"{step}_page_{index * 25}", actor, "GET", "/api/notifications"))
+                offset = index * PAGE_SIZE
+                expected.append((f"{step}_page_{offset}", actor, "GET", "/api/notifications"))
             expected.append((count_step, actor, "GET", "/api/notifications/unread-count"))
 
         identity(primary, "primary_identity_before")

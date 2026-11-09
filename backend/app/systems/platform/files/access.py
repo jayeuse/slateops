@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.systems.access.policy.checks import module_level
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.policy.scope import includes, level_for
+from app.systems.access.policy.scope import forget_access, includes, level_for
 from app.systems.access.users.eligibility import is_active_account
 from app.systems.access.users.membership import bound_organization, current_membership
 from app.systems.access.users.models import User, UserRole
@@ -96,9 +96,13 @@ def authorize(
 
 
 def fresh_user(db: Session, actor_id: UUID) -> User:
+    """Reload the person; the next check resolves their access again (plan step 3.4)."""
+
     user = db.scalar(
         select(User).where(User.id == actor_id).execution_options(populate_existing=True)
     )
+    # The reload events drop it too, as a backup only; this drop does not rely on them.
+    forget_access(db, actor_id)
     if (
         user is None
         or user.is_deleted

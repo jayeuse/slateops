@@ -170,8 +170,8 @@ def test_compound_constraint_failure_rolls_back_both_values_and_item_effects(
     first, rejected, last = [create(world, name) for name in ("First", "Rejected", "Last")]
     original = batch_router.notify_record_assignments
 
-    def fail_constraint(db, record, *, previous, fields):
-        original(db, record, previous=previous, fields=fields)
+    def fail_constraint(db, record, *, previous, fields, readers=None):
+        original(db, record, previous=previous, fields=fields, readers=readers)
         if str(record.id) == rejected["id"]:
             event = db.scalar(
                 select(RecordTriggerEvent).where(

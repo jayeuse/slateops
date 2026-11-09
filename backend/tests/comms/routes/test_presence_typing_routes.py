@@ -237,6 +237,35 @@ def test_presence_sweep_uses_the_120_second_grace_and_publishes_only_state_chang
     ]
 
 
+def test_presence_sweep_turns_only_rows_past_the_grace_offline(presence_case, monkeypatch):
+    # Plan step 3.6 drops the `last_seen_at` index; the sweep reads the organization's rows
+    # through its unique key and still changes only the stale ones (C2).
+    from app.systems.comms.realtime import publisher
+
+    case, clock = presence_case
+    org = case.world.first
+    stale, fresh = case.client(org.peer, org.id), case.client(org.author, org.id)
+    worker, events = stale.app.state.comms_publisher, []
+    worker.submit = lambda rows: events.extend(rows)
+    monkeypatch.setattr(publisher, "get_engine", lambda: case.world.runtime)
+    heartbeat(stale)
+    clock[0] = NOW + timedelta(seconds=60)
+    heartbeat(fresh)
+    events.clear()
+    clock[0] = NOW + timedelta(seconds=120)
+
+    worker._sweep()
+
+    assert [event["payload"] for event in events] == [
+        {"user_id": str(org.peer), "state": "offline"}
+    ]
+    read = stale.get(PRESENCE, params={"user_ids": [str(org.peer), str(org.author)]})
+    assert read.status_code == 200
+    assert sorted((item["user_id"], item["state"]) for item in read.json()["items"]) == sorted(
+        [(str(org.peer), "offline"), (str(org.author), "online")]
+    )
+
+
 def test_late_sweep_does_not_disclose_a_departed_member_to_new_presence_subscribers(
     presence_case, monkeypatch
 ):
@@ -318,7 +347,8 @@ def test_heartbeat_head_projection_is_one_query_at_two_and_103_conversations(pre
 
     def observe(_connection, _cursor, statement, _params, _context, _many):
         if (
-            statement.lstrip().upper().startswith("SELECT")
+            # The access inputs are CTEs (plan step 3.3), so the read starts with WITH.
+            statement.lstrip().upper().startswith(("SELECT", "WITH"))
             and "comms_conversation_counters" in statement
         ):
             selects.append(True)

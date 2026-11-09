@@ -19,6 +19,7 @@ class AuditSession(Session):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         from app.systems.comms.realtime import publication as _comms_publication  # noqa: F401
         from app.systems.manage.audit import listeners as _audit_listeners  # noqa: F401
+        from app.systems.platform.scheduling import work_hints as _work_hints  # noqa: F401
 
         super().__init__(*args, **kwargs)
 

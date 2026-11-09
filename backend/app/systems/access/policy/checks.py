@@ -16,7 +16,13 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.core.base_model import utc_now
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
-from app.systems.access.policy.scope import allowed_module_ids, effective_levels, includes
+from app.systems.access.policy.scope import (
+    allowed_module_ids,
+    effective_levels,
+    forget_access,
+    includes,
+    seed_access,
+)
 from app.systems.access.users.eligibility import is_active_account
 from app.systems.access.users.membership import organization_membership
 from app.systems.access.users.models import User
@@ -161,6 +167,8 @@ def _lock_authority(db: Session, actor_id: UUID) -> User | None:
         .execution_options(populate_existing=True)
         .with_for_update(of=User, read=True)
     )
+    # After the locks: the next resolution reads the locked rows (plan step 3.4).
+    forget_access(db, actor_id)
     return actor if isinstance(actor, User) else None
 
 
@@ -191,9 +199,10 @@ def require_fresh_module_access(
         if membership is None:
             db.rollback()
             raise forbidden()
-        granted = effective_levels(db, actor, now=timestamp, membership=membership).module_level(
-            module_id
-        )
+        access = effective_levels(db, actor, now=timestamp, membership=membership)
+        # The rows stay locked until commit, so this result holds for the transaction.
+        seed_access(db, actor.id, access)
+        granted = access.module_level(module_id)
     except SQLAlchemyError as error:
         db.rollback()
         raise HTTPException(

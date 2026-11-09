@@ -6,7 +6,7 @@ import re
 from time import perf_counter
 
 import pytest
-from sqlalchemy import event, text
+from sqlalchemy import event, func, literal, select, text
 from uuid6 import uuid7
 
 from app.systems.comms.messages.models import CommsMessage
@@ -17,40 +17,49 @@ from tests.repository import REPOSITORY_ROOT
 pytestmark = pytest.mark.integration
 
 SEARCH_INDEX = "ix_comms_messages_body_search"
+SEARCH_FUNCTION = "public.comms_search_message_ids"
 # A word only the rows below hold. "history" must stay out of them: the seeded total is exact.
 SELECTIVE_TERM = "quillwort"
 SELECTIVE_ROWS = 50
-# 2 x 4,003, the pages read in CI on 5 runs (4,002 locally, and 4,719 beside 120,000 rows of
-# another organization). It is this high because row security keeps `@@` from using the search
-# index, so even a rare word reads every row of the organization (REQ-0005). When that fix
-# lands, this ceiling falls and an assertion that the plan uses the index returns.
-SELECTIVE_PAGE_CEILING = 8_006
+# About 3 x 13, the most pages a statement read locally on 3 runs (10 to 13; no CI figure yet).
+# The D22 definer function finds the matches through the search index, so the pages follow the
+# 50 matches, not the 100,000 rows of the organization (REQ-0005; it was 8,006 while row
+# security kept `@@` from the index). Another organization's matches for the same word still
+# add pages (D22-1); the two-organization test below records them.
+SELECTIVE_PAGE_CEILING = 40
 BROAD_PAGE_FACTOR = 3
 
 
-def _add_selective_rows(connection, org) -> None:
+def _add_selective_rows(
+    connection, org, term: str = SELECTIVE_TERM, rows: int = SELECTIVE_ROWS, conversation=None
+) -> None:
     connection.execute(CommsMessage.__table__.insert(), [
         {
-            "id": uuid7(), "org_id": org.id, "conversation_id": org.conversation,
+            "id": uuid7(), "org_id": org.id,
+            "conversation_id": conversation or org.conversation,
             "author_id": org.author, "client_key": uuid7(), "seq": 100_000 + position,
-            "body": f"Rare {SELECTIVE_TERM} note", "send_fingerprint": "c" * 64,
+            "body": f"Rare {term} note", "send_fingerprint": "c" * 64,
             "created_at": NOW,
         }
-        for position in range(1, SELECTIVE_ROWS + 1)
+        for position in range(1, rows + 1)
     ])
 
 
-def _search_sql(case, api, term: str) -> tuple[dict, list]:
+def _search_sql(
+    case, api, term: str, marker: str = SEARCH_FUNCTION + "(", **filters
+) -> tuple[dict, list]:
     """One real search, and its count and page statements with their bound parameters."""
     captured = []
 
     def capture(_connection, _cursor, statement, parameters, _context, _many):
-        if "plainto_tsquery" in statement:
+        # The count statement names only the function (K52); the page also ranks. A search
+        # inside one conversation names `plainto_tsquery(` in both instead.
+        if marker in statement:
             captured.append((statement, parameters))
 
     event.listen(case.world.runtime, "before_cursor_execute", capture)
     try:
-        page = _ok(api.get(ROOT + "/search", params={"q": term, "limit": 50}))
+        page = _ok(api.get(ROOT + "/search", params={"q": term, "limit": 50, **filters}))
     finally:
         event.remove(case.world.runtime, "before_cursor_execute", capture)
     assert len(captured) == 2, captured
@@ -67,6 +76,41 @@ def _root_plans(case, org, statements) -> list[dict]:
             cursor.execute("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + sql, parameters)
             plans.append(cursor.fetchone()[0][0]["Plan"])
         db.rollback()
+    return plans
+
+
+def _nodes(plan: dict):
+    yield plan
+    for child in plan.get("Plans", []):
+        yield from _nodes(child)
+
+
+def _body_plans(case, org, term: str) -> dict[str, dict]:
+    """The function body's plans as its owner, bound to `org`: with the values, and generic.
+
+    The outer plan shows only a function scan. PostgreSQL 17 plans a SQL function body
+    once with parameters, not values, so the generic plan is the one that runs.
+    """
+    plans = {}
+    with case.world.owner.connect() as connection:
+        assert connection.scalar(text("SELECT current_user")) == "slateops_owner"
+        connection.execute(
+            text("SELECT set_config('slateops.org_id', :org, true)"), {"org": str(org.id)}
+        )
+        body = connection.scalar(text(
+            f"SELECT prosrc FROM pg_proc WHERE oid = '{SEARCH_FUNCTION}(text, uuid[])'"
+            "::regprocedure"
+        ))
+        connection.exec_driver_sql("SET LOCAL max_parallel_workers_per_gather = 0")
+        connection.exec_driver_sql("PREPARE comms_search_body(text, uuid[]) AS " + body)
+        for mode in ("force_custom_plan", "force_generic_plan"):
+            connection.exec_driver_sql(f"SET LOCAL plan_cache_mode = {mode}")
+            plans[mode] = connection.exec_driver_sql(
+                "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) EXECUTE comms_search_body("
+                f"'{term}', ARRAY['{org.conversation}']::uuid[])"
+            ).scalar_one()[0]["Plan"]
+        connection.exec_driver_sql("DEALLOCATE comms_search_body")
+        connection.rollback()
     return plans
 
 
@@ -157,6 +201,7 @@ def test_search_over_one_hundred_thousand_messages_is_bounded_and_measured(
     selective_page, selective_sql = _search_sql(case, api, SELECTIVE_TERM)
     assert selective_page["pagination"]["total"] == SELECTIVE_ROWS
     selective = _root_plans(case, org, selective_sql)
+    body = _body_plans(case, org, SELECTIVE_TERM)
     _, broad_sql = _search_sql(case, api, "history")
     broad = _root_plans(case, org, broad_sql)
     broad_ceiling = BROAD_PAGE_FACTOR * _table_and_index_pages(case)
@@ -164,6 +209,7 @@ def test_search_over_one_hundred_thousand_messages_is_bounded_and_measured(
         "selective_count_and_page": [_pages_read(plan) for plan in selective],
         "broad_count_and_page": [_pages_read(plan) for plan in broad],
         "broad_ceiling": broad_ceiling,
+        "selective_body_custom_and_generic": [_pages_read(plan) for plan in body.values()],
     }
     path = (
         REPOSITORY_ROOT
@@ -177,15 +223,106 @@ def test_search_over_one_hundred_thousand_messages_is_bounded_and_measured(
     record_property("search_handler_p95_ms", evidence["handler_p95_ms"])
     record_property("search_pages_read", json.dumps(evidence["pages_read"]))
     # Page counts do not depend on runner speed, so they block in every run, CI included.
+    for mode, plan in body.items():
+        used = {node.get("Index Name") for node in _nodes(plan)}
+        assert SEARCH_INDEX in used, (mode, plan)
+    for plan in selective:
+        # The function runs in a ProjectSet node, whose buffers hold the pages its body read,
+        # so the ceiling covers them.
+        calls = [node for node in _nodes(plan) if node["Node Type"] == "ProjectSet"]
+        assert calls and all(_pages_read(call) > 0 for call in calls), plan
     for plan in selective:
         assert _pages_read(plan) <= SELECTIVE_PAGE_CEILING, evidence["pages_read"]
     for plan in broad:
         assert _pages_read(plan) <= broad_ceiling, evidence["pages_read"]
         assert plan["Temp Read Blocks"] + plan["Temp Written Blocks"] == 0, plan
-    # A shared CI runner reports this wall-clock limit (docs/plans/ci-speed.md B1). Every
-    # other run enforces it. The SELECT and row bounds above block in every run.
+    # The page counts, the index assertions and the temp-block check above block in every run.
+    # The wall-clock p95 is a report in every run (job summary in CI, the record_property
+    # values above elsewhere): the broad case reads its matches twice by design, in the
+    # function and then by primary key (D22, accepted by the Human Owner on 2026-11-09).
     if job_summary := os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(job_summary, "a", encoding="utf-8") as summary:
-            summary.write(f"Search p95: {evidence['request_p95_ms']:.1f} ms (limit 300 ms)\n")
-        return
-    assert evidence["request_p95_ms"] <= 300, evidence
+            summary.write(f"Search p95: {evidence['request_p95_ms']:.1f} ms (report only)\n")
+
+
+FOREIGN_MATCHES = 20_000
+# S4's own word, so its 20,000 rows (and their index entries until a vacuum) never reach the
+# selective search above when both tests run on one database (NB1).
+FOREIGN_TERM = "bladderwort"
+
+
+def _add_foreign_matches(connection, org) -> None:
+    """One set-based statement: `FOREIGN_MATCHES` rows of `org` that match `FOREIGN_TERM`."""
+    series = func.generate_series(1, FOREIGN_MATCHES).table_valued("value").render_derived()
+    connection.execute(CommsMessage.__table__.insert().from_select(
+        [
+            "id", "org_id", "conversation_id", "author_id", "client_key", "seq", "body",
+            "send_fingerprint", "created_at",
+        ],
+        select(
+            func.gen_random_uuid(), literal(org.id), literal(org.conversation),
+            literal(org.author), func.gen_random_uuid(), series.c.value + 1_000,
+            literal(f"Foreign {FOREIGN_TERM} note"), literal("c" * 64), literal(NOW),
+        ),
+    ))
+
+
+def _settle(case) -> None:
+    with case.world.owner.begin() as connection:
+        connection.execute(text("ANALYZE comms_messages"))
+        connection.execute(text(f"SELECT gin_clean_pending_list('{SEARCH_INDEX}')"))
+
+
+def test_another_organizations_matches_do_not_change_a_search_and_its_pages_are_recorded(
+    message_routes, record_property
+):
+    """D22-1: the search index has no `org_id`, so another organization's matches for the
+    same word add pages to this search. The results must not change; the pages are recorded
+    for the trigger (a second client organization in one production installation)."""
+    case, org, other = message_routes, message_routes.world.first, message_routes.world.second
+    with case.world.owner.begin() as connection:
+        _add_selective_rows(connection, org, FOREIGN_TERM)
+    _settle(case)
+    api = case.client(org.peer, org.id)
+    alone, alone_sql = _search_sql(case, api, FOREIGN_TERM)
+    alone_pages = [_pages_read(plan) for plan in _root_plans(case, org, alone_sql)]
+    with case.world.owner.begin() as connection:
+        _add_foreign_matches(connection, other)
+    _settle(case)
+    beside, beside_sql = _search_sql(case, api, FOREIGN_TERM)
+    beside_pages = [_pages_read(plan) for plan in _root_plans(case, org, beside_sql)]
+    pages = {"foreign_0": alone_pages, f"foreign_{FOREIGN_MATCHES}": beside_pages}
+    print("D22-1 count and page statement pages:", json.dumps(pages))
+    record_property("search_pages_beside_foreign_matches", json.dumps(pages))
+    assert alone["pagination"]["total"] == SELECTIVE_ROWS
+    assert beside == alone
+
+
+SMALL_CONVERSATION_ROWS = 20
+
+
+def test_a_search_inside_one_conversation_reads_that_conversations_matches(
+    message_routes, record_property
+):
+    """NB3: a common word searched inside a small conversation reads that conversation's
+    rows under row-level security, as before step 3.8, not every match of the word first
+    (100,000 in the large conversation): the function's generic plan cannot use the
+    conversation index, so this search does not call it."""
+    case, org = message_routes, message_routes.world.first
+    case.seed_large_history()
+    with case.world.owner.begin() as connection:
+        _add_selective_rows(
+            connection, org, "history", SMALL_CONVERSATION_ROWS, org.other_conversation
+        )
+    _settle(case)
+    api = case.client(org.peer, org.id)
+    inside, statements = _search_sql(
+        case, api, "history", "plainto_tsquery(", **{"in": str(org.other_conversation)}
+    )
+    assert not any(SEARCH_FUNCTION in sql for sql, _ in statements), statements
+    pages = [_pages_read(plan) for plan in _root_plans(case, org, statements)]
+    print("NB3 filtered broad search, count and page statement pages:", pages)
+    record_property("search_pages_inside_one_conversation", json.dumps(pages))
+    assert inside["pagination"]["total"] == SMALL_CONVERSATION_ROWS
+    for count in pages:
+        assert count <= SELECTIVE_PAGE_CEILING, pages

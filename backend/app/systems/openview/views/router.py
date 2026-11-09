@@ -20,7 +20,12 @@ from app.common.listing import (
 from app.core.database import get_db
 from app.systems.access.policy.checks import require_module_access
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.policy.scope import EffectiveAccess, effective_levels, includes
+from app.systems.access.policy.scope import (
+    EffectiveAccess,
+    effective_levels,
+    forget_access,
+    includes,
+)
 from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.openview.views.access import visible_to
@@ -201,6 +206,8 @@ def get_view(db: Session, user: User, view_id: UUID, *, write: bool = False) -> 
     if view is None:
         raise _not_found()
     if write:
+        # The check after the lock reads the access again (plan step 3.4, K57).
+        forget_access(db, user.id)
         require_module_access(db, user, view.module_id, AccessLevel.MANAGE)
     return view
 

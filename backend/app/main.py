@@ -88,6 +88,7 @@ from app.systems.platform.files.lifecycle_router import router as file_lifecycle
 from app.systems.platform.files.router import router as files_router
 from app.systems.platform.realtime.router import router as realtime_router
 from app.systems.platform.scheduling.notification_router import router as notifications_router
+from app.systems.platform.scheduling.work_signals import WorkSignals
 from app.systems.platform.search.router import router as search_router
 from app.systems.sandbox.departments.router import router as departments_router
 from app.systems.sandbox.designs.router import router as sandbox_designs_router
@@ -194,9 +195,13 @@ def create_app() -> FastAPI:
     app.state.static_site = static_site
     events_hub = EventHub(max_subscribers=subscriber_capacity(settings.server_max_concurrency))
     app.state.events_hub = events_hub
-    app.state.events_listener = PostgresInvalidationListener(events_hub)
+    # One wake state per process: the listener's work hints wake both workers.
+    app.state.work_signals = WorkSignals()
+    app.state.events_listener = PostgresInvalidationListener(
+        events_hub, work_signals=app.state.work_signals
+    )
     app.state.invalidation_publisher = InvalidationPublisher()
-    app.state.trigger_worker = TriggerWorker(settings)
+    app.state.trigger_worker = TriggerWorker(settings, work_signals=app.state.work_signals)
     app.state.provider_signout_worker = ProviderSignoutWorker(settings)
     app.state.health_worker = SystemHealthWorker(settings)
     relaxed_development = is_relaxed_development(settings)
@@ -320,7 +325,9 @@ def create_app() -> FastAPI:
         )
 
     install_publication(app, settings)
-    app.state.report_scheduling_worker = comms_scheduler(settings, app.state.comms_publisher.submit)
+    app.state.report_scheduling_worker = comms_scheduler(
+        settings, app.state.comms_publisher.submit, app.state.work_signals
+    )
     return app
 
 

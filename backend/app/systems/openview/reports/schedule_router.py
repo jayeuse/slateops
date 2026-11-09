@@ -19,6 +19,7 @@ from app.core.base_model import utc_now
 from app.core.database import get_db
 from app.systems.access.policy.checks import forbidden, module_filter, require_module_access
 from app.systems.access.policy.models import AccessLevel
+from app.systems.access.policy.scope import forget_access
 from app.systems.access.users.eligibility import is_active_account
 from app.systems.access.users.models import User
 from app.systems.manage.jobs.registry import failure_label
@@ -85,6 +86,8 @@ def _fresh_manager(db: Session, actor_id: UUID, report: Report) -> None:
     )
     if actor is None or not is_active_account(db, actor) or actor.deleted_at is not None:
         raise forbidden()
+    # The check after the lock reads the access and the membership again (plan step 3.4, R1).
+    forget_access(db, actor_id)
     require_module_access(db, actor, report.module_id, AccessLevel.MANAGE)
 
 

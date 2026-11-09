@@ -1,6 +1,7 @@
 """Explicit single/compound record updates with independent item savepoints."""
 
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -14,7 +15,11 @@ from app.systems.access.users.models import User
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.record_triggers.outbox import enqueue_record_event
 from app.systems.sandbox.records.assignment_notifications import notify_record_assignments
-from app.systems.sandbox.records.display import FieldDisplayResolver, displayed_record
+from app.systems.sandbox.records.display import (
+    FieldDisplayResolver,
+    displayed_record,
+    label_readers,
+)
 from app.systems.sandbox.records.mutation_validation import RecordValidationError
 from app.systems.sandbox.records.router import (
     _lock_active_module,
@@ -60,6 +65,7 @@ def _update_item(
     item: RecordBatchInput,
     fields: list[Field],
     resolver: FieldDisplayResolver,
+    readers: frozenset[UUID] | None,
 ) -> RecordBatchResult:
     try:
         with db.begin_nested():
@@ -77,9 +83,13 @@ def _update_item(
                 else {str(change.field_id): change.value for change in item.changes}
             )
             requested = {**previous, **changes}
-            record.data = _merge_patch_data(db, payload.module_id, previous, requested, fields)
+            record.data = _merge_patch_data(
+                db, payload.module_id, previous, requested, fields, readers=readers
+            )
             enqueue_record_event(db, record, previous=previous)
-            notify_record_assignments(db, record, previous=previous, fields=fields)
+            notify_record_assignments(
+                db, record, previous=previous, fields=fields, readers=readers
+            )
             db.flush()
             return RecordBatchUpdated(
                 record_id=item.record_id,
@@ -127,9 +137,13 @@ def batch_update_records(
         # Keep module and authority locks outside item savepoints until the final commit.
         _lock_active_module(db, payload.module_id)
         fields = _module_fields(db, payload.module_id)
-        resolver = FieldDisplayResolver(db, payload.module_id, fields)
+        # One read of the module's readers serves every item's validation, notifications
+        # and labels, as the single create and edit routes do.
+        readers = label_readers(db, payload.module_id, fields)
+        resolver = FieldDisplayResolver(db, payload.module_id, fields, readers=readers)
         results = [
-            _update_item(db, user, payload, item, fields, resolver) for item in payload.items
+            _update_item(db, user, payload, item, fields, resolver, readers)
+            for item in payload.items
         ]
         db.commit()
     except HTTPException:

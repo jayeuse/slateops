@@ -165,6 +165,10 @@ still locks, replans and performs individual audited ORM mutations. These read
 changes add no per-field indexes or materialized result cache; index selection
 for dynamic fields still requires workload-specific query-plan evidence.
 
+## Comms realtime rows
+
+A grant renewal changes only `comms_realtime_grants.expires_at`, and a presence heartbeat changes `comms_presence.last_seen_at` and sometimes `state`. No index holds those columns, so these frequent updates can be HOT, and both tables keep `fillfactor = 80` for the new row versions ([`078b17c76d8a`](../../backend/migrations/versions/078b17c76d8a_comms_realtime_hot_updates.py), plan step 3.6, decision D11). The 30-second sweeps read their organization's rows through the unique keys that start with `org_id`. Realtime authorization does not depend on the dropped indexes: `can_join_realtime_topic` looks a grant up by `(org_id, user_id)` and the topic.
+
 ## Schema workflow
 
 1. Change the registered SQLAlchemy model.

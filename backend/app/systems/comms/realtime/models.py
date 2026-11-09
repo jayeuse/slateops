@@ -21,6 +21,13 @@ from app.core.database.base import Base
 
 
 class CommsRealtimeGrant(Base):
+    """A renewal changes only ``expires_at``, which no index holds, so it is a HOT update.
+
+    The expiry sweep reads its organization through ``uq_comms_realtime_grants_subject``,
+    and ``can_join_realtime_topic`` reads by ``(org_id, user_id)`` (plan step 3.6).
+    The table keeps ``fillfactor = 80`` for the new row versions (revision, not model).
+    """
+
     __tablename__ = "comms_realtime_grants"
     __audit_enabled__: ClassVar[bool] = False
     __table_args__ = (
@@ -34,7 +41,6 @@ class CommsRealtimeGrant(Base):
             name="fk_comms_realtime_grants_conversation",
             ondelete="CASCADE",
         ),
-        Index("ix_comms_realtime_grants_expiry", "org_id", "expires_at"),
         Index("ix_comms_realtime_grants_conversation", "org_id", "conversation_id"),
         Index("ix_comms_realtime_grants_user", "user_id"),
     )
@@ -64,13 +70,17 @@ class CommsRealtimeAdmission(Base):
 
 
 class CommsPresence(Base):
+    """A heartbeat changes ``last_seen_at`` and ``state``, which no index holds (step 3.6).
+
+    The sweep reads its organization through ``uq_comms_presence_user``; ``fillfactor = 80``.
+    """
+
     __tablename__ = "comms_presence"
     __audit_enabled__: ClassVar[bool] = False
     __table_args__ = (
         UniqueConstraint("org_id", "id", name="uq_comms_presence_org_id_id"),
         UniqueConstraint("org_id", "user_id", name="uq_comms_presence_user"),
         CheckConstraint("state IN ('online','away','offline')", name="ck_comms_presence_state"),
-        Index("ix_comms_presence_seen", "org_id", "last_seen_at"),
         Index("ix_comms_presence_user", "user_id"),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid7)

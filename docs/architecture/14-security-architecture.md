@@ -12,6 +12,43 @@ Slate Operations profile. A provider account or matching email alone never grant
 application access. FastAPI owns the local profile, roles, groups, permissions,
 and domain authorization.
 
+[`effective_levels`](../../backend/app/systems/access/policy/scope.py) resolves a
+person's access once for each transaction (plan step 3.4,
+[`transaction_access.py`](../../backend/app/systems/access/policy/transaction_access.py)).
+The stored result is keyed by the transaction's current organization and the person,
+tagged with the root transaction, and read-only. These clear it: a commit of the root
+transaction, any rollback (a savepoint's too), the end of the root transaction (the only
+event of `Session.close()`), a lookup under another root transaction, and a flush that
+writes a group, group member, group access row, membership, user, module or department.
+A savepoint release does not clear it. Only a lock or a fresh read of a person's
+authority resolves it again: `forget_access` drops that person's result and stored
+membership in the lock helpers of `checks.py` and `delegation.py`, in
+`organization_membership(fresh=True)` (and so `fresh_membership` and
+`require_fresh_exact_admin`), in `fresh_user` (`platform/files/access.py`, which file,
+Board card, attachment, record link, avatar and profile routes call), and in the Report schedule
+manager check, which locks the person's `users` row. A lock of a content row does not
+drop it, so a check after such a lock reads the result stored earlier in the
+transaction. Three content locks are named exceptions and resolve again after the lock,
+so a revocation that committed before the lock is seen: Views `get_view(write=True)`
+(update, archive, restore), Reports `_report(lock=True)` (update, archive, restore, a
+Report run) and Dashboards `_dashboard(lock=True)` (update, archive, restore).
+`create_dashboard` is not an exception: it locks the department row and checks again
+with the stored result, which `require_fresh_module_access` replaces with a fresh one
+when the new Dashboard names widget sources. A load or reload of a `User` or
+`Membership` row drops the result too. That is the only drop for the notification
+query (`current_user_notification_query`) and the scheduled post's author check
+(`_current_actor`), which reload the person with `populate_existing`, so a test owns it
+(`test_a_reload_of_the_person_drops_the_stored_resolution`). Two more callers reload the
+person with `populate_existing`: the Comms protected-job password check (`password_admin`
+in `comms/jobs/protected.py`) and the Realtime grant cleanup (`revoke_stale` in
+`comms/realtime/grants.py`). Both then read the membership fresh
+(`require_fresh_exact_admin`, `fresh_membership`), so for them the reload drop is a backup. A caller that passes `now`
+or a membership resolves again; the post-lock check of a group delegation passes a fresh
+membership, and `require_fresh_module_access`, whose locks hold until commit, stores its
+result over any earlier one. Without a lock, a revocation that commits during a request
+is not seen by later checks of the same transaction, and account and membership expiry
+are checked once for each transaction: the same as one check at the start of the request.
+
 Production browsers use a same-origin Caddy gateway with one FastAPI upstream.
 The [cookie helpers](../../backend/app/systems/access/auth/cookies.py) set
 Secure, HttpOnly cookies in production. `slateops_access` contains the provider
@@ -130,7 +167,10 @@ four streams per user and a process ceiling of
 HTTPX timeout configuration, and disables redirects/environment proxies. Its
 [transaction buffer](../../backend/app/systems/comms/realtime/publication.py)
 is capped at 1024 events. Full queues report safe reason codes and may lose
-invalidations; clients must recover through authorized reads. The
+invalidations; clients must recover through authorized reads. Work hints
+(`work_scheduled`, `work_triggers`) carry an organization only and travel on the
+same channel to wake background workers; the hub refuses them for every subscriber,
+administrators included, before any other rule. The
 [Compose tenant ceilings](../../infra/supabase/compose.yaml) are 500 concurrent
 Realtime users and 1000 events/second, not a guarantee of application throughput.
 

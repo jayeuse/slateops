@@ -13,6 +13,7 @@ same constants. The runtime reads and writes seals bound to one organization at 
 from __future__ import annotations
 
 import hashlib
+import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -68,6 +69,9 @@ _HOURS = (
     "GROUP BY 1"
 )
 CATALOG_PATH = text("SET LOCAL search_path = pg_catalog, pg_temp")
+# The hour read of a busy hour can outlast the API's request limit (REQ-0009). The seal
+# transaction sets the same limit as `operations/verify_audit_seals.py`, for itself only.
+STATEMENT_LIMIT = text("SET LOCAL statement_timeout = '120s'")
 
 
 class SealChainError(RuntimeError):
@@ -181,6 +185,7 @@ def seal_span(db: AuditSession, org_id: UUID | None, now: datetime) -> SpanResul
 
     connection = db.connection(execution_options={"schema_translate_map": {None: "public"}})
     connection.execute(CATALOG_PATH)
+    connection.execute(STATEMENT_LIMIT)
     locked = db.scalar(
         select(func.pg_try_advisory_xact_lock(_LOCK_CLASS, func.hashtext(str(org_id or ""))))
     )
@@ -227,8 +232,12 @@ def chains(engine: Engine) -> list[UUID | None]:
     return [*organizations, None]
 
 
-def seal_chain(engine: Engine, org_id: UUID | None, now: datetime) -> bool:
-    """Seal up to `WAKE_HOURS` hours, one transaction a span. True when hours remain."""
+def seal_chain(engine: Engine, org_id: UUID | None, now: datetime) -> bool | None:
+    """Seal up to `WAKE_HOURS` hours, one transaction a span. True when hours remain.
+
+    None when another process holds the chain's lock: it is sealing the chain, so this
+    pass learns nothing about whether the chain fails or succeeds.
+    """
 
     for _span in range(WAKE_HOURS // SPAN_HOURS):
         try:
@@ -241,6 +250,8 @@ def seal_chain(engine: Engine, org_id: UUID | None, now: datetime) -> bool:
             if getattr(error.orig, "sqlstate", None) != _UNIQUE_VIOLATION:
                 raise
             continue  # Another process sealed the same hour first; read its seals again.
+        if result.skipped:
+            return None
         if not result.more:
             return False
     return True
@@ -265,19 +276,72 @@ class SealPass:
     failures: int = 0
 
 
+BACKOFF_FIRST = timedelta(seconds=60)
+BACKOFF_MAX = timedelta(seconds=3600)
+
+
+class ChainBackoff:
+    """When each failing chain may be sealed again: 60 s, doubling to 3,600 s.
+
+    One attempt of a failing chain can hold the scheduler thread for the statement limit
+    (120 s), so a chain that fails on every wake must not be tried every minute. Success
+    resets it. Process memory only: a restart tries every chain at once.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        # Chain -> (the time it may be tried again, the delay that set it, its last cause).
+        self._failing: dict[UUID | None, tuple[datetime, timedelta, str]] = {}
+
+    def waiting(self, chain: UUID | None, now: datetime) -> str | None:
+        """The last cause while the chain is still backing off, else None."""
+
+        with self._lock:
+            entry = self._failing.get(chain)
+        return entry[2] if entry is not None and now < entry[0] else None
+
+    def failed(self, chain: UUID | None, now: datetime, cause: str) -> None:
+        with self._lock:
+            entry = self._failing.get(chain)
+            delay = BACKOFF_FIRST if entry is None else min(entry[1] * 2, BACKOFF_MAX)
+            self._failing[chain] = (now + delay, delay, cause)
+
+    def succeeded(self, chain: UUID | None) -> None:
+        with self._lock:
+            self._failing.pop(chain, None)
+
+
+_BACKOFF = ChainBackoff()
+
+
 def seal_audit(engine: Engine, *, now: datetime) -> SealPass:
     """Seal every chain up to the horizon; one chain's failure does not stop the others."""
 
+    backoff = _BACKOFF
     backlog = False
     failures: list[tuple[UUID | None, str]] = []
     for org_id in chains(engine):
+        waiting = backoff.waiting(org_id, now)
+        if waiting is not None:
+            # Still failing as far as anyone knows: it stays in the failure count.
+            failures.append((org_id, waiting))
+            continue
         try:
-            backlog = seal_chain(engine, org_id, now) or backlog
+            behind = seal_chain(engine, org_id, now)
         except Exception as error:
-            failures.append((org_id, failure_cause(error)))
+            cause = failure_cause(error)
+            failures.append((org_id, cause))
+            backoff.failed(org_id, now, cause)
+            continue
+        # A lock miss (None) is neither: another process seals the chain (G2).
+        if behind is not None:
+            backoff.succeeded(org_id)
+        backlog = bool(behind) or backlog
     if not failures:
         return SealPass(backlog)
-    return SealPass(backlog, failures[0][0], failures[0][1], len(failures))
+    # A failed chain keeps its hours, so it is a backlog: the worker wakes every minute,
+    # and ``ChainBackoff`` decides when the failed chain is tried again (REQ-0009).
+    return SealPass(True, failures[0][0], failures[0][1], len(failures))
 
 
 def read_seal_heads(connection: Connection) -> list[dict[str, Any]]:

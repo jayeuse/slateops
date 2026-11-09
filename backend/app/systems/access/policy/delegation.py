@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 from app.common.dependencies import require_fresh_exact_admin
 from app.systems.access.policy.checks import forbidden
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
-from app.systems.access.policy.scope import effective_levels
+from app.systems.access.policy.scope import effective_levels, forget_access
 from app.systems.access.policy.service import (
     commit,
     conflict,
@@ -43,7 +43,10 @@ from app.systems.access.policy.service import (
     require_match,
     unavailable,
 )
-from app.systems.access.users.membership import require_current_membership
+from app.systems.access.users.membership import (
+    organization_membership,
+    require_current_membership,
+)
 from app.systems.access.users.models import User, UserRole
 from app.systems.comms.realtime.grants import lock_projection, revoke_stale
 
@@ -75,6 +78,8 @@ def _lock_manager_authority(db: Session, actor_id: UUID) -> User | None:
         .execution_options(populate_existing=True)
         .with_for_update(of=User)
     )
+    # After the locks: the next resolution reads the locked rows (plan step 3.4).
+    forget_access(db, actor_id)
     return manager if isinstance(manager, User) else None
 
 
@@ -87,7 +92,10 @@ def _lock_for_manager(db: Session, group_id: UUID, actor: User) -> Group:
         row = lock_group(db, group_id)
         reach = frozenset(item.department_id for item in locked_access(db, row.id))
         manager = _lock_manager_authority(db, actor.id)
-        if manager is None or not effective_levels(db, manager).manages_all(reach):
+        # Resolve again with the membership read after the locks, never the earlier result.
+        if manager is None or not effective_levels(
+            db, manager, membership=organization_membership(db, manager.id, fresh=True)
+        ).manages_all(reach):
             raise _deny(db)
     except SQLAlchemyError as error:
         raise unavailable(db) from error

@@ -6,21 +6,25 @@ import random
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import psycopg
 from sqlalchemy.engine import make_url
 
 from app.core.config import get_settings
-from app.core.observability import log_event
+from app.core.observability import failure_cause, log_event
 from app.systems.platform.events.models import (
     BOARD_SCOPED_ENTITIES,
     PRIVATE_NOTIFICATION_ENTITY,
     RESYNC_ENTITY,
+    WORK_ENTITIES,
     InvalidationEvent,
     parse_invalidation_payload,
 )
+
+if TYPE_CHECKING:
+    from app.systems.platform.scheduling.work_signals import WorkSignals
 
 CHANNEL = "slateops_invalidation"
 _CONNECT_RETRY_SECONDS = 0.25
@@ -198,6 +202,9 @@ class EventHub:
 
 
 def _can_receive(subscription: EventSubscription, event: InvalidationEvent) -> bool:
+    if event.entity in WORK_ENTITIES:
+        # Work hints only wake this process's workers; no subscriber receives one.
+        return False
     viewer = subscription.viewer
     if viewer.role is None:
         return False
@@ -253,8 +260,10 @@ class PostgresInvalidationListener:
         connect: Callable[..., Any] = psycopg.connect,
         connect_timeout_seconds: int | None = None,
         statement_timeout_ms: int | None = None,
+        work_signals: "WorkSignals | None" = None,
     ) -> None:
         self._hub = hub
+        self._work_signals = work_signals
         if database_url is None:
             database_url = _psycopg_url(get_settings().database_url)
         if connect_timeout_seconds is None:
@@ -312,10 +321,13 @@ class PostgresInvalidationListener:
                     with self._connection_lock:
                         self._connection = connection
                     connection.execute(f"LISTEN {CHANNEL}")
+                    # Work committed while no listener heard it: wake every worker too.
+                    self._wake(None)
                     self._hub.publish_resync_from_listener()
                     retry_seconds = _CONNECT_RETRY_SECONDS
                     while not self._stop.is_set():
                         for notification in connection.notifies(timeout=0.5, stop_after=1):
+                            self._wake(notification.payload)
                             self._hub.publish_from_listener(notification.payload)
             except psycopg.Error:
                 log_event(
@@ -330,6 +342,29 @@ class PostgresInvalidationListener:
             finally:
                 with self._connection_lock:
                     self._connection = None
+
+    def _wake(self, payload: str | None) -> None:
+        """Wake this process's workers: every one (None) or those a payload names.
+
+        A failed wake is logged and skipped; it never ends this thread, which also carries
+        every page's invalidations (P3). The safety poll still finds the work.
+        """
+
+        if self._work_signals is None:
+            return
+        try:
+            if payload is None:
+                self._work_signals.wake_all()
+            else:
+                self._work_signals.notify(payload)
+        except Exception as error:
+            # The class name only (`failure_cause`), never the message or the payload.
+            log_event(
+                "realtime_invalidation_failure",
+                level=logging.WARNING,
+                reason_code="work_signal_failed",
+                cause=failure_cause(error),
+            )
 
 
 def _psycopg_url(database_url: str) -> str:
