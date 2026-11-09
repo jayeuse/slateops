@@ -8,7 +8,9 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import Field, field_validator, model_validator
-from sqlalchemy import Select, case, exists, false, func, literal, or_, select
+from sqlalchemy import Select, any_, bindparam, case, exists, false, func, literal, or_, select
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -117,7 +119,15 @@ def _candidates(
         m.deleted_at.is_(None),
     )
     if request.q:
-        query = query.where(m.body_tsv.op("@@")(func.plainto_tsquery("simple", request.q)))
+        # Under row-level security `@@` cannot use the search index, so the D22 definer finds
+        # the bound organization's matches in the readable conversations. Its second argument
+        # is always this server-side `readable` set, bound as `uuid[]` (an empty set finds
+        # nothing); the conditions above still apply. Called in the select list, the
+        # function streams its ids into one array, which the primary key reads in order:
+        # `IN (SELECT id FROM ...)` stores them first and probes the key once for each.
+        readable_ids = bindparam("search_readable", list(readable), type_=ARRAY(PostgreSQLUUID()))
+        matches = select(func.public.comms_search_message_ids(request.q, readable_ids))
+        query = query.where(m.id == any_(func.array(matches.scalar_subquery())))
     if request.sender_id:
         query = query.where(m.author_id == request.sender_id)
     if request.conversation_id:
