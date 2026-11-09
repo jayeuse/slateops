@@ -165,6 +165,20 @@ still locks, replans and performs individual audited ORM mutations. These read
 changes add no per-field indexes or materialized result cache; index selection
 for dynamic fields still requires workload-specific query-plan evidence.
 
+## List paging
+
+Lists that use the shared helper (`backend/app/common/listing/query.py`) count at most 10,000 rows (`TOTAL_CAP`, decision D1). The count reads the filtered statement with `LIMIT 10001`; above the cap, `total` is 10,000 and `total_is_capped` is true, so `total` is a lower bound. `has_more` comes from the page itself: the page statement reads one row more than the limit, and `capped_pagination` drops that row. Every `pagination` object carries `total_is_capped`. Records lists keep their exact count: `RECORD_LIST_SPEC` sets `exact_total`, and the Record query compiler above keeps its own count.
+
+A sort on a `NOT NULL` table column uses PostgreSQL's default null order, which a forward or backward index scan gives; a nullable column or an expression sorts nulls last.
+
+Three lists also accept a keyset cursor (D1): the audit log (`GET /api/audit-logs`, list and record history), the relationship list (`GET /api/relationships`) and the recent trigger runs (`GET /api/sandbox/trigger-runs`). Their request model is `KeysetListRequest`, and their spec sets `ListQuerySpec.keyset`; notifications keep offset paging (D23). The cursor is base64url, with no padding, of the last row's `created_at` with its offset and its id (`backend/app/common/listing/cursor.py`). It replaces `offset` and pages only the default `created_at` order. The decoder checks the length (128 characters at most) before it decodes, and every bad value gets one fixed 422 that echoes nothing. The condition `(created_at, id) > or < (cursor)` binds typed values on the page statement only; the count stays the count of the whole filter. The response names the next position in `next_cursor` (`nextCursor` for trigger runs), or null when no row follows.
+
+- **Audit log.** `audit_log_statement` in `backend/app/systems/manage/audit/service.py` is the start of every audit read (list, count, options, record history, export and detail) and adds the bound-organization condition exactly once. Row-level security passes every row with no organization, so this condition is the only filter for account and installation rows. `_member_link_scope` adds a department manager's link check above the partitions (REQ-0006) and no organization condition. A page reads the audit leaves through an index in creation order (the department index for a manager), with no Sort.
+- **Relationships.** The page is chosen from `relationship_edges` alone: the readable check, availability and module filters sit in one `EXISTS` correlated to the edge, and the edge index `ix_relationship_edges_org_created (org_id, created_at, id)` gives the order. The records, the field and the modules are joined only for the rows of the page.
+- **Trigger runs.** `ix_record_trigger_runs_org_created (org_id, created_at, id)` serves the page and the count. The count reads in that index order, because an unordered `LIMIT 10001` chose a sequential scan of every organization's runs.
+
+Revision `2bbcb1deeee9` builds both indexes concurrently, before it drops `ix_record_trigger_runs_created`, so record and link writes continue during the build.
+
 ## Comms realtime rows
 
 A grant renewal changes only `comms_realtime_grants.expires_at`, and a presence heartbeat changes `comms_presence.last_seen_at` and sometimes `state`. No index holds those columns, so these frequent updates can be HOT, and both tables keep `fillfactor = 80` for the new row versions ([`078b17c76d8a`](../../backend/migrations/versions/078b17c76d8a_comms_realtime_hot_updates.py), plan step 3.6, decision D11). The 30-second sweeps read their organization's rows through the unique keys that start with `org_id`. Realtime authorization does not depend on the dropped indexes: `can_join_realtime_topic` looks a grant up by `(org_id, user_id)` and the topic.
