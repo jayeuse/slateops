@@ -9,18 +9,20 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+import pytest
 
-from app.systems.openview.dashboards.schemas import DashboardCreate
+from app.systems.openview.dashboards.schemas import DashboardUpdate
 from operations.sample.client import SampleClient
+from operations.sample.population.content import SampleContentError
 from operations.sample.population.openview import populate_openview
 
 ORIGIN = "https://workspace.example.test"
 BASE_URL = "https://api.example.test"
 
 
-def test_openview_population_uses_ui_routes_and_captures_disabled_schedule_runs(
-    tmp_path: Path,
-) -> None:
+def _structure() -> tuple[
+    dict[str, dict[str, str]], dict[str, dict[str, str]], dict[str, list[dict[str, Any]]]
+]:
     departments: dict[str, dict[str, str]] = {}
     modules: dict[str, dict[str, str]] = {}
     fields: dict[str, list[dict[str, Any]]] = {}
@@ -69,6 +71,54 @@ def test_openview_population_uses_ui_routes_and_captures_disabled_schedule_runs(
                     "position": 4,
                 },
             ]
+    return departments, modules, fields
+
+
+def _derived_home(department_id: str, **changes: Any) -> dict[str, Any]:
+    """The empty home Dashboard that a publish derives for a new department (SD12)."""
+    return {
+        "id": str(uuid4()),
+        "department_id": department_id,
+        "name": "Derived dashboard",
+        "position": 0,
+        "refresh_cadence": "manual",
+        "revision": 1,
+        "is_home": True,
+        "is_deleted": False,
+        "widgets": [],
+        **changes,
+    }
+
+
+def _page(items: list[dict[str, Any]], request: httpx.Request) -> httpx.Response:
+    limit, offset = int(request.url.params["limit"]), int(request.url.params["offset"])
+    rows = items[offset : offset + limit]
+    pagination = {"limit": limit, "offset": offset, "count": len(rows), "total": len(items)}
+    pagination["has_more"] = offset + len(rows) < len(items)
+    return httpx.Response(200, json={"items": rows, "pagination": pagination})
+
+
+def _login(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={"authenticated": True, "setup_required": False},
+        headers=[
+            ("set-cookie", "slateops_access=sample-access; Path=/; HttpOnly"),
+            ("set-cookie", "slateops_refresh=sample-refresh; Path=/api/auth; HttpOnly"),
+            ("set-cookie", "slateops_csrf=sample-csrf; Path=/"),
+        ],
+    )
+
+
+def test_openview_population_uses_ui_routes_and_captures_disabled_schedule_runs(
+    tmp_path: Path,
+) -> None:
+    departments, modules, fields = _structure()
+    # SD-C16: each department already has one Dashboard, the empty derived home.
+    homes = {
+        department["id"]: _derived_home(department["id"], revision=3)
+        for department in departments.values()
+    }
 
     seen: list[httpx.Request] = []
     created_id = 0
@@ -81,25 +131,22 @@ def test_openview_population_uses_ui_routes_and_captures_disabled_schedule_runs(
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         if request.url.path == "/api/auth/login":
-            return httpx.Response(
-                200,
-                json={"authenticated": True, "setup_required": False},
-                headers=[
-                    ("set-cookie", "slateops_access=sample-access; Path=/; HttpOnly"),
-                    ("set-cookie", "slateops_refresh=sample-refresh; Path=/api/auth; HttpOnly"),
-                    ("set-cookie", "slateops_csrf=sample-csrf; Path=/"),
-                ],
-            )
+            return _login(request)
         assert request.headers["origin"] == ORIGIN
         body = json.loads(request.content) if request.content else {}
         if request.method == "POST" and request.url.path == "/api/views":
             return httpx.Response(201, json={"id": next_id(), "module_id": body["module_id"]})
-        if request.method == "POST" and request.url.path == "/api/dashboards":
+        if request.method == "GET" and request.url.path == "/api/dashboards":
+            department_id = request.url.params["department_id"]
+            return _page([homes[department_id]], request)
+        if request.method == "PATCH" and request.url.path.startswith("/api/dashboards/"):
+            home = next(row for row in homes.values() if row["id"] == request.url.path[16:])
             widgets = [
                 {"id": next_id(), "position": position}
                 for position, _ in enumerate(body["widgets"])
             ]
-            return httpx.Response(201, json={"id": next_id(), "widgets": widgets})
+            home.update(name=body["name"], widgets=widgets, revision=home["revision"] + 1)
+            return httpx.Response(200, json=home)
         if request.method == "POST" and request.url.path == "/api/reports":
             return httpx.Response(201, json={"id": next_id(), "module_id": body["module_id"]})
         if request.method == "POST" and request.url.path.endswith("/runs"):
@@ -150,7 +197,19 @@ def test_openview_population_uses_ui_routes_and_captures_disabled_schedule_runs(
     dashboard_bodies = [
         json.loads(request.content)
         for request in seen
-        if request.method == "POST" and request.url.path == "/api/dashboards"
+        if request.method == "PATCH" and request.url.path.startswith("/api/dashboards/")
+    ]
+    # SD12: population fills the derived home and never posts a second Dashboard.
+    assert not [r for r in seen if r.method == "POST" and r.url.path == "/api/dashboards"]
+    assert len(dashboard_bodies) == 6
+    assert {body["revision"] for body in dashboard_bodies} == {3}
+    assert sorted(body["name"] for body in dashboard_bodies) == [
+        "Field overview",
+        "Finance overview",
+        "Inventory overview",
+        "Purchasing overview",
+        "Sales overview",
+        "Service overview",
     ]
     report_bodies = [
         json.loads(request.content)
@@ -186,7 +245,7 @@ def test_openview_population_uses_ui_routes_and_captures_disabled_schedule_runs(
         for body in grouped
     )
     for body in dashboard_bodies:
-        DashboardCreate.model_validate(body)
+        DashboardUpdate.model_validate(body)
         widgets = body["widgets"]
         # Spec R8: the Overview preset, with the first 2 x 2 of rows 4-5 left free.
         assert [
@@ -210,3 +269,47 @@ def test_openview_population_uses_ui_routes_and_captures_disabled_schedule_runs(
     assert len({request.headers["idempotency-key"] for request in run_requests}) == 12
     assert {body["cadence"] for body in schedule_bodies} == {"daily", "weekly"}
     assert all(body["enabled"] is False for body in schedule_bodies)
+
+
+@pytest.mark.parametrize(
+    "homes",
+    (
+        pytest.param([], id="missing-derived-home"),
+        pytest.param([{}, {"is_home": False, "position": 1}], id="second-dashboard"),
+        pytest.param([{"widgets": [{"id": str(uuid4())}]}], id="home-already-filled"),
+        pytest.param([{"is_deleted": True}], id="archived-home"),
+    ),
+)
+def test_openview_population_refuses_a_department_without_one_empty_derived_home(
+    tmp_path: Path, homes: list[dict[str, Any]]
+) -> None:
+    """SD-C16: the pack fills the derived home; it never adds or overwrites another one."""
+    departments, modules, fields = _structure()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/login":
+            return _login(request)
+        if request.method == "POST" and request.url.path == "/api/views":
+            return httpx.Response(201, json={"id": str(uuid4())})
+        if request.method == "GET" and request.url.path == "/api/dashboards":
+            department_id = request.url.params["department_id"]
+            return _page([_derived_home(department_id, **row) for row in homes], request)
+        raise AssertionError(f"Unexpected fixture request: {request.method} {request.url.path}")
+
+    client = SampleClient(
+        BASE_URL,
+        ORIGIN,
+        tmp_path / "private" / "requests.jsonl",
+        transport=httpx.MockTransport(handler),
+    )
+    with client:
+        assert client.login("sample@example.test", "synthetic-password").status_code == 200
+        with pytest.raises(SampleContentError, match="derived home Dashboard"):
+            populate_openview(
+                client,
+                departments=departments,
+                modules=modules,
+                fields=fields,
+                anchor_date=date(2026, 9, 29),
+                seed=42,
+            )

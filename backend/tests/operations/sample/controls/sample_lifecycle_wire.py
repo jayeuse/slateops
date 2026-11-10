@@ -14,6 +14,7 @@ from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.designs.service import canonical_document
 from app.systems.sandbox.fields.schemas import FieldResponse
 from app.systems.sandbox.modules.schemas import ModuleResponse
+from tests.operations.sample.controls.sample_lifecycle_derived_wire import DerivedSetWire
 from tests.operations.sample.controls.test_sample_control_sandbox import ADMIN_ID
 
 
@@ -26,6 +27,7 @@ class _LifecycleWire:
         self.live, self.identities, self.challenges = {}, {}, {}
         self.version_id, self.board_id = str(uuid4()), str(uuid4())
         self.board, self.final_mode = None, False
+        self.derived = DerivedSetWire(self)
 
     def _bindings(self):
         rows = []
@@ -94,6 +96,8 @@ class _LifecycleWire:
     def handle(self, request):
         method, path = request.method, request.url.path
         headers = {"X-Request-ID": str(uuid4())}
+        if (derived := self.derived.handle(request)) is not None:
+            return derived
         if method == "PUT" and path == "/api/sandbox/document":
             body = json.loads(request.content)
             assert body["expectedRevision"] == self.initial_revision()
@@ -341,6 +345,7 @@ class _LifecycleWire:
                 "impact_digest": "b" * 64,
             }
             if resource == "departments" and operation == "purge":
+                impact["blockers"] = self.derived.blockers(live_id)
                 impact["rows"].append(
                     {
                         "entity_type": "boards",
@@ -395,6 +400,8 @@ class _LifecycleWire:
                         ),
                     },
                 )
+            if impact["blockers"]:
+                return httpx.Response(409, json={"detail": {"code": "preflight_failed"}})
             body = json.loads(request.content)
             if operation == "reopen":
                 assert body == {"confirmed": True} and row["is_deleted"]

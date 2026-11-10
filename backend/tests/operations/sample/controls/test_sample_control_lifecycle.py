@@ -121,6 +121,10 @@ def _route(request: httpx.Request) -> tuple[str, str]:
                 "purge_disabled",
                 "purge_draft_remains",
                 "board_page_types",
+                # SD20, OQ2 (a): the fixture's derived channel, category and groups go first.
+                "derived_missing_blocker",
+                "derived_channel_messages",
+                "derived_group_member",
                 "final_history_missing",
                 "final_history_actor",
                 "final_history_query",
@@ -134,6 +138,7 @@ def _route(request: httpx.Request) -> tuple[str, str]:
                 "final_request",
                 "final_document_shape",
                 "final_mapping_shape",
+                "final_derived",
             )
         ),
     ],
@@ -161,6 +166,9 @@ def test_sandbox_controls_use_ui_shapes_and_recreate_exact_test_vectors(
                 "purge_disabled": "preview_purge_field",
                 "purge_draft_remains": "read_after_purge_field",
                 "board_page_types": "read_lifecycle_department_board",
+                "derived_missing_blocker": "preview_blocked_purge_department",
+                "derived_channel_messages": "preview_purge_derived_channel",
+                "derived_group_member": "find_derived_groups",
             }
 
             def run_controls() -> None:
@@ -308,6 +316,12 @@ def test_sandbox_controls_use_ui_shapes_and_recreate_exact_test_vectors(
         assert counts["sandbox_lifecycle_targets_purged"] == 4
         assert counts["sandbox_lifecycle_boards_purged"] == 1
         assert counts["sandbox_lifecycle_versions_verified"] == 1
+        # SD20, OQ2 (a), R7: the derived channel is purged, the category detached, groups deleted.
+        assert counts["sandbox_lifecycle_derived_released"] == 1
+        derived = lifecycle.derived.state
+        assert derived["channel"]["purged"] is True
+        assert derived["category"]["department_id"] is None
+        assert all(group["is_deleted"] for group in derived["groups"].values())
         assert {
             row["server_id"]
             for row in by_key[lifecycle_actions[0].key]["mappings"]

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
 
+from app.systems.sandbox.derived.actions import GROUP_LEVELS, derived_name
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.designs.service import canonical_document
 from operations.sample.blueprint import SampleDataset
@@ -52,6 +53,47 @@ def _ids_match(rows: Sequence[Mapping[str, Any]], expected: Mapping[str, str]) -
     return len(actual) == len(expected) and set(actual) == set(expected.values())
 
 
+def _derived_group_ids(
+    rows: Sequence[Mapping[str, Any]],
+    department_ids: Mapping[str, str],
+    live_departments: Sequence[Mapping[str, Any]],
+) -> set[str]:
+    """The groups a publish derived for the sample's departments (setup spec R2, SD3, SD12).
+
+    Each is named by the R2 pattern, has only its one department access row and no members.
+    The initial publish creates every sample department open, so every department has its
+    three groups. An organization populated before derived setup has none (SD5, SD-C15); any
+    other share means a later publish derived items, and none of them is accepted.
+    """
+    names = {row.get("id"): row.get("department_name") for row in live_departments}
+    expected = {
+        derived_name(role, label): (department_id, level.value)
+        for department_id in department_ids.values()
+        if isinstance(label := names.get(department_id), str)
+        for role, level in GROUP_LEVELS.items()
+    }
+    found: dict[str, str] = {}
+    for row in rows:
+        name, access = row.get("name"), row.get("access")
+        if not isinstance(name, str) or (target := expected.get(name)) is None:
+            continue
+        if (
+            name not in found
+            and row.get("member_ids") == []
+            and row.get("is_deleted") is False
+            and isinstance(access, list)
+            and [
+                (item.get("department_id"), item.get("module_id"), item.get("level"))
+                for item in access
+                if isinstance(item, dict)
+            ]
+            == [(target[0], None, target[1])]
+            and isinstance(row.get("id"), str)
+        ):
+            found[name] = row["id"]
+    return set(found.values()) if len(found) == len(expected) else set()
+
+
 def _group_issues(
     client: SampleClient,
     dataset: SampleDataset,
@@ -66,7 +108,8 @@ def _group_issues(
     if set(groups) != set(group_access) or len(set(groups.values())) != len(group_access):
         issues.append("Access group ID mapping does not cover every planned group")
     rows = list_all_rows(client, "/api/access/groups")
-    if not _ids_match(rows, groups):
+    derived = _derived_group_ids(rows, departments, list_all_rows(client, "/api/departments"))
+    if not _ids_match([row for row in rows if row.get("id") not in derived], groups):
         issues.append("live Access groups differ from the sample run")
     count = 0
     for slug, entries in group_access.items():

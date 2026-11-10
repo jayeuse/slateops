@@ -15,7 +15,7 @@ from app.systems.access.users.sessions_schemas import AdminSessionListRequest
 from app.systems.boards.schemas import BoardCreate, BoardRevisionRequest
 from app.systems.openview.dashboards.placement import Placement, layout_issues, widget_kind
 from app.systems.openview.dashboards.router import archive_dashboard
-from app.systems.openview.dashboards.schemas import DashboardCreate, DashboardRestore
+from app.systems.openview.dashboards.schemas import DashboardRestore, DashboardUpdate
 from app.systems.openview.reports.router import archive_report
 from app.systems.openview.reports.schedule_schemas import ScheduleCreate
 from app.systems.openview.reports.schemas import ReportCreate, ReportRevisionRequest
@@ -101,12 +101,11 @@ def validate_openview_payloads(dataset: SampleDataset, document: SandboxDocument
                     "presentation": _view_presentation(layout, selected_fields),
                 }
             )
-        dashboard = DashboardCreate.model_validate(
+        # Population fills the department's derived home Dashboard (setup spec SD12).
+        dashboard = DashboardUpdate.model_validate(
             {
-                "department_id": department["id"],
+                "revision": 1,
                 "name": dashboard_name(str(department["name"]), organization=pack),
-                "position": 0,
-                "refresh_cadence": "manual",
                 "widgets": _dashboard_widgets(sources, dataset.anchor_date),
             }
         )
