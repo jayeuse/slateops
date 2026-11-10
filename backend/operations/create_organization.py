@@ -60,6 +60,12 @@ def _resume_invitation(
     return org
 
 
+def _username_from_email(email: str) -> str:
+    """The invite dialog's suggestion (`usernameFromEmail`), so a resume derives the same name."""
+    local = email.split("@")[0]
+    return re.sub(r"^_+|_+$", "", re.sub(r"[^a-zA-Z0-9_-]+", "_", local))[:100].lower()
+
+
 def provision(
     db: Session, *, name: str, slug: str, admin_user_id: UUID | None = None,
     invitation: InvitationCreate | None = None, provider_user_id: UUID | None = None,
@@ -145,6 +151,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     identity.add_argument("--email")
     parser.add_argument("--username")
     args = parser.parse_args(argv)
+    username = args.username
+    if args.email and username is None:
+        username = _username_from_email(args.email)
+        if len(username) < 3:
+            parser.error("Pass --username: the email gives no usable username")
     try:
         settings = get_settings()
         if settings.environment not in {"development", "dev", "local"} and not args.confirm:
@@ -154,7 +165,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             expected_user="slateops_runtime",
         )
         invitation = (
-            InvitationCreate(email=args.email, username=args.username) if args.email else None
+            InvitationCreate(email=args.email, username=username) if args.email else None
         )
         with AuditSession(get_engine()) as db:
             org = provision(db, name=args.name, slug=args.slug, admin_user_id=args.admin_user_id,
