@@ -45,6 +45,7 @@ from tests.migrations.audit_partition_support import (
 from tests.migrations.audit_partition_support import committed_history as _committed_history
 from tests.migrations.audit_partition_support import plan_nodes as _nodes
 from tests.migrations.audit_partition_support import plan_pages as _pages
+from tests.migrations.plan_profiles import PROFILES, apply_profile
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -214,6 +215,7 @@ def _captured_list(
     order: SortOrder = SortOrder.ASC,
     workers: bool = False,
     cursor: str | None = None,
+    profile: str = "development",
     **filters: Any,
 ) -> list[dict[str, Any]]:
     """Run the real list, then read the plan of each of its audit statements as the runtime."""
@@ -249,6 +251,7 @@ def _captured_list(
             # they are not, so the plan read lets the planner weigh a parallel plan (K64).
             raw.execute("SET LOCAL min_parallel_table_scan_size = 0")
             raw.execute("SET LOCAL min_parallel_index_scan_size = 0")
+        apply_profile(raw, profile)
         plans = []
         for statement, parameters in captured:
             raw.execute("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + statement, parameters)
@@ -357,8 +360,11 @@ def _assert_reads_only_the_two_arms(world: _Plans, plan: dict[str, Any]) -> None
     assert own_arm <= ORGANIZATION_ARM_PAGES_PER_LEAF * len(world.leaves), own_arm
 
 
+@pytest.mark.parametrize("profile", PROFILES)
 @pytest.mark.parametrize("reader", ["admin", "department manager", "small organization"])
-def test_the_first_page_reads_in_index_order_with_no_sort_p1(plans: _Plans, reader: str) -> None:
+def test_the_first_page_reads_in_index_order_with_no_sort_p1(
+    plans: _Plans, reader: str, profile: str
+) -> None:
     # The page needs no Sort when the sort matches an index: no NULLS LAST on a NOT NULL
     # column, and the organization condition stated once (contract 2.4, the Harbor shape).
     world = plans
@@ -369,7 +375,9 @@ def test_the_first_page_reads_in_index_order_with_no_sort_p1(plans: _Plans, read
     }[reader]
 
     # Newest first, as the audit route reads it.
-    *_counts, page = _captured_list(world, org, user, order=SortOrder.DESC, **filters)
+    *_counts, page = _captured_list(
+        world, org, user, order=SortOrder.DESC, profile=profile, **filters
+    )
 
     sorts = [node for node in _nodes(page) if "Sort" in node["Node Type"]]
     if reader != "small organization":
@@ -391,15 +399,18 @@ def test_the_first_page_reads_in_index_order_with_no_sort_p1(plans: _Plans, read
     _assert_reads_only_the_two_arms(world, page)
 
 
+@pytest.mark.parametrize("profile", PROFILES)
 def test_the_capped_count_of_a_small_organization_stays_small_with_workers_on_c5(
-    plans: _Plans,
+    plans: _Plans, profile: str
 ) -> None:
     # K64: `LIMIT 10001` lets the planner pick a parallel sequential scan that stops after
     # 10,001 matches, so its cost follows the heap order. The small organization's rows are
     # written after the large one's, and parallel workers stay on, as in production.
     world = plans
 
-    count, _page = _captured_list(world, world.small, world.small_admin, workers=True)
+    count, _page = _captured_list(
+        world, world.small, world.small_admin, workers=True, profile=profile
+    )
 
     assert _pages(count) <= SMALL_ORGANIZATION_PAGE_CEILING, _pages(count)
     _assert_reads_only_the_two_arms(world, count)

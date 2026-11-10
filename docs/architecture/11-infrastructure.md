@@ -28,7 +28,7 @@ The stack has no pgweb service or `slateops_inspector` login. Supabase Studio re
 
 ## Database and application authority
 
-PostgreSQL remains the relational engine. Provider initialization owns Supabase schemas and roles; [`backend/migrations/env.py`](../../backend/migrations/env.py) and Alembic own only Slate Operations application schema. A fresh Supabase baseline and explicit migration-scope checks keep provider objects outside application migration ownership.
+PostgreSQL remains the relational engine. The production overlay sets the server's memory and planner values in the `db` command (`shared_buffers`, `effective_cache_size`, `work_mem`, `maintenance_work_mem`, `random_page_cost`, `effective_io_concurrency`; [`infra/supabase/README.md`](../../infra/supabase/README.md)), and development keeps PostgreSQL's defaults. Provider initialization owns Supabase schemas and roles; [`backend/migrations/env.py`](../../backend/migrations/env.py) and Alembic own only Slate Operations application schema. A fresh Supabase baseline and explicit migration-scope checks keep provider objects outside application migration ownership.
 
 The application database uses three separate connections:
 

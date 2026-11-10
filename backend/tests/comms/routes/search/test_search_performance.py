@@ -12,6 +12,7 @@ from uuid6 import uuid7
 from app.systems.comms.messages.models import CommsMessage
 from tests.comms.conftest import NOW
 from tests.comms.routes.structure_support import ROOT, _ok
+from tests.migrations.plan_profiles import apply_profile
 from tests.repository import REPOSITORY_ROOT
 
 pytestmark = pytest.mark.integration
@@ -66,12 +67,13 @@ def _search_sql(
     return page, captured
 
 
-def _root_plans(case, org, statements) -> list[dict]:
+def _root_plans(case, org, statements, profile: str = "development") -> list[dict]:
     """Replay captured SQL under the same organization scope; the plan's root nodes."""
     plans = []
     with case.world.session(org) as db:
         cursor = db.connection().connection.cursor()
         cursor.execute("SET LOCAL max_parallel_workers_per_gather = 0")
+        apply_profile(cursor, profile)
         for sql, parameters in statements:
             cursor.execute("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + sql, parameters)
             plans.append(cursor.fetchone()[0][0]["Plan"])
@@ -204,12 +206,17 @@ def test_search_over_one_hundred_thousand_messages_is_bounded_and_measured(
     selective_page, selective_sql = _search_sql(case, api, SELECTIVE_TERM)
     assert selective_page["pagination"]["total"] == SELECTIVE_ROWS
     selective = _root_plans(case, org, selective_sql)
+    # A41b: the same ceiling under the production overlay's planner values.
+    selective_production = _root_plans(case, org, selective_sql, profile="production")
     body = _body_plans(case, org, SELECTIVE_TERM)
     _, broad_sql = _search_sql(case, api, "history")
     broad = _root_plans(case, org, broad_sql)
     broad_ceiling = BROAD_PAGE_FACTOR * _table_and_index_pages(case)
     evidence["pages_read"] = {
         "selective_count_and_page": [_pages_read(plan) for plan in selective],
+        "selective_count_and_page_production_planner": [
+            _pages_read(plan) for plan in selective_production
+        ],
         "broad_count_and_page": [_pages_read(plan) for plan in broad],
         "broad_ceiling": broad_ceiling,
         "selective_body_custom_and_generic": [_pages_read(plan) for plan in body.values()],
@@ -234,7 +241,7 @@ def test_search_over_one_hundred_thousand_messages_is_bounded_and_measured(
         # so the ceiling covers them.
         calls = [node for node in _nodes(plan) if node["Node Type"] == "ProjectSet"]
         assert calls and all(_pages_read(call) > 0 for call in calls), plan
-    for plan in selective:
+    for plan in (*selective, *selective_production):
         assert _pages_read(plan) <= SELECTIVE_PAGE_CEILING, evidence["pages_read"]
     for plan in broad:
         assert _pages_read(plan) <= broad_ceiling, evidence["pages_read"]
