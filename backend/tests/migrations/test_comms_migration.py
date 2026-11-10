@@ -49,7 +49,9 @@ def test_message_search_and_feed_indexes_exist_on_the_actual_database(integratio
         for method, names, predicate in indexes
     )
     assert any(names[-2:] == ["parent_id", "seq"] for _, names, _ in indexes)
-    assert any(
+    # Plan step 4.2 dropped the live-roots partial index: no reader's filter implies its
+    # predicate (`test_comms_live_roots_drop.py`). It must not come back unnoticed.
+    assert not any(
         names[:2] == ["org_id", "conversation_id"]
         and "seq" in names
         and predicate
