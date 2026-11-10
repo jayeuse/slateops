@@ -184,7 +184,7 @@ Read items F5 and F6 and the section "Fixes ranked by risk" in the ignored revie
 **S02 — H1.**
 1. Add an account-wide MFA verification budget in `identity_rate_limit_buckets`, keyed by the account. Use one key per account, plus one key per source.
 2. Check the budget **before** the provider call in `identity/mfa.py`.
-3. Write each failure in its own short transaction. Follow `append_committed_security_event` (`audit/service.py:354`).
+3. Write each failure in its own short transaction. Follow `append_committed_security_event` (`audit/security_events.py:119`).
 4. When the budget is spent, return 429 with `Retry-After`, and write a security event.
 5. A correct code clears the per-account budget.
 
