@@ -53,6 +53,7 @@ services:
       GOTRUE_API_PORT: "9999"
       API_EXTERNAL_URL: ${API_EXTERNAL_URL:?Set the external Auth issuer URL}
       GOTRUE_DB_DRIVER: postgres
+      GOTRUE_AUDIT_LOG_DISABLE_POSTGRES: "true"
       GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD:?Generate POSTGRES_PASSWORD}@db:5432/postgres
       GOTRUE_SITE_URL: ${SITE_URL:?Set the Slate Operations browser origin}
       GOTRUE_URI_ALLOW_LIST: ${SITE_URL:?Set the Slate Operations browser origin}/auth/*
