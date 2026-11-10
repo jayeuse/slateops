@@ -105,3 +105,39 @@ def test_auth_keeps_its_audit_events_out_of_the_database_and_sign_in_works_a45(
                      "OR actor_id = :user"),
                 {"user": local_id},
             )
+
+
+def test_auth_holds_the_session_limits_and_sign_in_and_refresh_work_a46c(
+    provider_account,
+) -> None:
+    email, password, provider_id, local_id, owner = provider_account
+    for name, expected in (
+        ("GOTRUE_SESSIONS_INACTIVITY_TIMEOUT", "9h"),
+        ("GOTRUE_DB_CLEANUP_ENABLED", "true"),
+    ):
+        if _auth_variable(name) != expected:
+            pytest.fail(f"Auth must set {name} to {expected}", pytrace=False)
+
+    settings = get_settings()
+    with Session(owner) as db:
+        db.get_one(User, local_id).supabase_user_id = provider_id
+        db.commit()
+    browser = TestClient(create_app(), base_url=settings.public_origin)
+    browser.headers["Origin"] = settings.public_origin
+    try:
+        login = browser.post("/api/auth/login", json={"email": email, "password": password})
+        assert login.status_code == 200, "Real Supabase email login must succeed"
+        refreshed = browser.post(
+            "/api/auth/refresh",
+            headers={"X-CSRF-Token": browser.cookies.get("slateops_csrf") or ""},
+        )
+        assert refreshed.status_code == 200, "A live session must refresh"
+        assert browser.get("/api/auth/me").status_code == 200
+    finally:
+        browser.close()
+        with owner.begin() as connection:
+            connection.execute(
+                text("DELETE FROM public.security_events WHERE subject_id = :user "
+                     "OR actor_id = :user"),
+                {"user": local_id},
+            )
