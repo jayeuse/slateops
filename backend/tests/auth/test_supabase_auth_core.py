@@ -423,3 +423,41 @@ def test_ambiguous_refresh_persistence_failure_revokes_the_local_session(
     assert session.revoked_at is not None
     assert db.commit.call_count == 2
     client.sign_out.assert_called_once_with("new-access")
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "header", "expected"),
+    [
+        (400, {"error_code": "session_expired", "msg": "Session Expired"}, None, "session_expired"),
+        (403, {"msg": "Session Expired"}, "session_expired", "session_expired"),
+        (400, {"error_code": "refresh_token_not_found"}, "session_expired",
+         "refresh_token_not_found"),
+        (400, b"not json", "session_expired", "session_expired"),
+        (400, {"msg": "session_expired"}, None, None),
+        (422, {"error_code": "x" * 65}, None, None),
+        (400, {"error_code": 5}, "session_expired", None),
+        (401, {"message": "Invalid authentication credentials"}, None, None),
+    ],
+    ids=[
+        "body", "header when the body has none", "body before header", "header, body not json",
+        "message text only", "longer than 64", "not a string", "gateway refusal",
+    ],
+)
+def test_a_refused_exchange_carries_only_auths_exact_error_code_a46e(
+    status, body, header, expected
+) -> None:
+    from app.core.integrations.supabase_auth import (
+        InvalidProviderCredentials,
+        SupabaseAuthClient,
+    )
+
+    def refuse(_request: httpx.Request) -> httpx.Response:
+        headers = {"x-sb-error-code": header} if header else {}
+        if isinstance(body, bytes):
+            return httpx.Response(status, content=body, headers=headers)
+        return httpx.Response(status, json=body, headers=headers)
+
+    client = SupabaseAuthClient(provider_settings(), transport=httpx.MockTransport(refuse))
+    with pytest.raises(InvalidProviderCredentials) as refused:
+        client.refresh("opaque-provider-refresh")
+    assert refused.value.error_code == expected

@@ -323,3 +323,85 @@ def test_a_definite_auth_refusal_still_revokes_the_session(monkeypatch):
         provider_sessions.refresh_provider_session(db, "r" * 48, client, now=now)
     assert refused.value.reason == "provider_refused"
     assert session.revoked_at == now
+
+
+@pytest.mark.parametrize(
+    ("path", "reason", "schedules"),
+    [
+        # No provider tokens: nothing could sign the provider session out.
+        ("tokens_missing", "provider_tokens_missing", False),
+        # Unreadable tokens: the worker could never decrypt them either (contract Q5).
+        ("tokens_unreadable", "provider_tokens_unreadable", False),
+        # The provider session is still live in these three.
+        ("current_refused", "current_account_ineligible", True),
+        ("provider_refused", "provider_refused", True),
+        ("rotated_mismatch", "rotated_None", True),
+    ],
+)
+def test_a_refused_refresh_schedules_provider_signout_with_the_revocation_a46b(
+    monkeypatch, path, reason, schedules
+):
+    from app.core.integrations.supabase_auth import (
+        InvalidProviderCredentials,
+        InvalidProviderToken,
+    )
+
+    now, user, membership, session, _claims, client = _subject(monkeypatch, expired=False)
+    db = _identity_database(user, membership, now, session=session)
+    if path == "tokens_missing":
+        session.provider_access_token_encrypted = None
+    elif path == "tokens_unreadable":
+        session.provider_refresh_token_encrypted = "not a token"
+    elif path == "current_refused":
+        user.status = UserStatus.DISABLED.value
+    else:
+        client.verify_access_token.side_effect = [
+            InvalidProviderToken("expired"), client.verify_access_token.return_value
+        ]
+        if path == "provider_refused":
+            client.refresh.side_effect = InvalidProviderCredentials("refused")
+        else:
+            other = client.password_grant.return_value
+            client.refresh.return_value = type(other)(
+                other.access_token, other.refresh_token, uuid4(), other.expires_in
+            )
+    scheduled_at_commit = []
+    db.commit.side_effect = lambda: scheduled_at_commit.append(
+        (session.revoked_at, session.provider_signout_pending_at)
+    )
+
+    with pytest.raises(InvalidCredentials) as refused:
+        provider_sessions.refresh_provider_session(db, "r" * 48, client, now=now)
+
+    assert refused.value.reason == reason
+    # One commit holds the revocation and, where it applies, the scheduled sign-out (C7).
+    assert scheduled_at_commit == [(now, now if schedules else None)]
+
+
+def test_auths_error_code_never_changes_a_login_or_refresh_refusal_c11(monkeypatch):
+    # The login, refresh and bearer routes answer from these refusals, so the code that Auth
+    # sends cannot reach a response, and a caller learns nothing about why Auth refused.
+    from app.core.integrations.supabase_auth import (
+        InvalidProviderCredentials,
+        InvalidProviderToken,
+    )
+
+    refusals = []
+    for code in ("invalid_credentials", "user_banned", "session_expired",
+                 "refresh_token_not_found"):
+        now, user, membership, session, _claims, client = _subject(monkeypatch, expired=False)
+        client.password_grant.side_effect = InvalidProviderCredentials("no", error_code=code)
+        client.refresh.side_effect = InvalidProviderCredentials("no", error_code=code)
+        client.verify_access_token.side_effect = InvalidProviderToken("expired")
+        db = _identity_database(user, membership, now, session=session)
+        with pytest.raises(InvalidCredentials) as login:
+            login_with_provider(
+                db, user.email, "wrong password", client, now=now, enforce_rate_limit=False
+            )
+        with pytest.raises(InvalidCredentials) as refresh:
+            provider_sessions.refresh_provider_session(db, "r" * 48, client, now=now)
+        refusals.append(
+            [(str(error.value), vars(error.value)) for error in (login, refresh)]
+        )
+
+    assert refusals[1:] == refusals[:1] * 3
