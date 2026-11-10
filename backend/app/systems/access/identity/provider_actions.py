@@ -29,7 +29,7 @@ from app.systems.access.users.acceptance import accept_verified_invitation
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.eligibility import is_active_account
 from app.systems.access.users.models import Membership, User, UserStatus
-from app.systems.manage.audit import service as audit_service
+from app.systems.manage.audit import security_events
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.security_failures import canonical_source
@@ -115,7 +115,7 @@ def request_recovery(
     if not permitted:
         return
     operation_id = uuid7()
-    audit_service.append_committed_security_event(
+    security_events.append_committed_security_event(
         _action_event(
             "recovery_request",
             SecurityEventOutcome.ATTEMPT,
@@ -138,7 +138,7 @@ def request_recovery(
                 signals.record_signal("email_failed")
             raise
         stage = "event_commit"
-        audit_service.append_committed_security_event(
+        security_events.append_committed_security_event(
             _action_event(
                 "recovery_request",
                 SecurityEventOutcome.SUCCESS,
@@ -148,9 +148,9 @@ def request_recovery(
                 source,
             )
         )
-    except (SupabaseAuthUnavailable, audit_service.SecurityEventPersistenceError):
+    except (SupabaseAuthUnavailable, security_events.SecurityEventPersistenceError):
         db.rollback()
-        audit_service.append_committed_security_event(
+        security_events.append_committed_security_event(
             _action_event(
                 "recovery_request",
                 SecurityEventOutcome.PARTIAL,
@@ -192,7 +192,7 @@ def complete_recovery(
         ):
             raise ActionTokenInvalid("Recovery token is invalid")
         person_id, operation_id = local.id, uuid7()
-        audit_service.append_committed_security_event(
+        security_events.append_committed_security_event(
             _action_event(
                 "recovery_complete",
                 SecurityEventOutcome.ATTEMPT,
@@ -209,7 +209,7 @@ def complete_recovery(
         password_updated = True
         stage = "local_commit"
         revoke_user_sessions(db, local.id, except_session_id=None)
-        audit_service.append_security_event(
+        security_events.append_security_event(
             db,
             _action_event(
                 "recovery_complete",
@@ -226,7 +226,7 @@ def complete_recovery(
         ActionTokenInvalid,
         SupabaseAuthUnavailable,
         SQLAlchemyError,
-        audit_service.SecurityEventPersistenceError,
+        security_events.SecurityEventPersistenceError,
     ) as error:
         db.rollback()
         if operation_id is not None and effect_started:
@@ -235,7 +235,7 @@ def complete_recovery(
                 if isinstance(error, InvalidProviderCredentials)
                 else SecurityEventOutcome.PARTIAL
             )
-            audit_service.append_committed_security_event(
+            security_events.append_committed_security_event(
                 _action_event(
                     "recovery_complete",
                     outcome,
@@ -405,7 +405,7 @@ def change_password(
                 db.commit()
             raise InvalidCredentials("Invalid credentials")
         operation_id = uuid7()
-        audit_service.append_committed_security_event(
+        security_events.append_committed_security_event(
             _action_event(
                 "password_change",
                 SecurityEventOutcome.ATTEMPT,
@@ -425,7 +425,7 @@ def change_password(
             db.delete(bucket)
         if enforce_rate_limit:
             rate_limits.clear_login_account_budget(db, user.email)
-        audit_service.append_security_event(
+        security_events.append_security_event(
             db,
             _action_event(
                 "password_change",
@@ -442,7 +442,7 @@ def change_password(
         InvalidCredentials,
         SupabaseAuthUnavailable,
         SQLAlchemyError,
-        audit_service.SecurityEventPersistenceError,
+        security_events.SecurityEventPersistenceError,
     ) as error:
         db.rollback()
         if operation_id is not None and effect_started:
@@ -451,7 +451,7 @@ def change_password(
                 if isinstance(error, InvalidProviderCredentials)
                 else SecurityEventOutcome.PARTIAL
             )
-            audit_service.append_committed_security_event(
+            security_events.append_committed_security_event(
                 _action_event(
                     "password_change",
                     outcome,

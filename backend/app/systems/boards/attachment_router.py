@@ -21,7 +21,7 @@ from app.systems.boards.attachment_service import (
 )
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import (
+from app.systems.manage.audit.security_events import (
     SecurityEventPersistenceError,
     append_committed_security_event,
 )

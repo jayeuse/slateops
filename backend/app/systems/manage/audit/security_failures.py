@@ -18,7 +18,10 @@ from app.core.config import get_settings
 from app.core.database.session import AuditSession, get_engine
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import SecurityEventPersistenceError, append_security_event
+from app.systems.manage.audit.security_events import (
+    SecurityEventPersistenceError,
+    append_security_event,
+)
 
 FailureType = Literal["identity.sign_in_failure", "identity.ip_blocked"]
 

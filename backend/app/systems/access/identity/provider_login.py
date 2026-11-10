@@ -27,11 +27,11 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_sessions import admit_provider_session
 from app.systems.access.users.models import User
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
+from app.systems.manage.audit.security_events import append_security_event
 from app.systems.manage.audit.security_failures import (
     append_representative_failure,
     canonical_source,
 )
-from app.systems.manage.audit.service import append_security_event
 from app.systems.manage.workspace.security_policy import load_platform_policy
 
 

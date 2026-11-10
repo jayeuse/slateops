@@ -183,7 +183,7 @@ def test_expired_membership_blocks_invitation_but_not_bound_account_recovery(mon
         db.commit.assert_not_called()
     else:
         monkeypatch.setattr(
-            provider_actions.audit_service, "append_committed_security_event", Mock()
+            provider_actions.security_events, "append_committed_security_event", Mock()
         )
         client.update_password.return_value = client.get_user.return_value
         provider_actions.complete_recovery(db, "a" * 56, "Replacement password", client)

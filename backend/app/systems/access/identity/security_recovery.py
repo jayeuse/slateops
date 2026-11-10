@@ -31,7 +31,7 @@ from app.systems.access.users.eligibility import established_user_clause, is_act
 from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import (
+from app.systems.manage.audit.security_events import (
     SecurityEventPersistenceError,
     append_committed_security_event,
     append_security_event,

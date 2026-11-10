@@ -53,17 +53,19 @@ from app.systems.manage.audit.schemas import (
     SecurityEventListResponse,
     SecurityEventResponse,
 )
+from app.systems.manage.audit.security_events import (
+    SecurityEventSortField,
+    append_security_event,
+    list_security_events,
+    security_events_of_bound_organization,
+)
 from app.systems.manage.audit.service import (
     AuditLogSortField,
-    SecurityEventSortField,
-    _security_events_of_bound_organization,
     active_actor_names,
-    append_security_event,
     audit_log_statement,
     export_audit_log_rows,
     list_audit_log_options,
     list_audit_logs,
-    list_security_events,
 )
 from app.systems.sandbox.records.access import record_access
 
@@ -351,7 +353,7 @@ def get_security_event(
     response.headers["Cache-Control"] = "no-store"
     event = db.scalar(select(SecurityEvent).where(
         SecurityEvent.id == security_event_id,
-        _security_events_of_bound_organization(operator=is_platform_operator(db, _.id)),
+        security_events_of_bound_organization(operator=is_platform_operator(db, _.id)),
     ))
     if event is None:
         raise HTTPException(

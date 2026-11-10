@@ -11,7 +11,7 @@ from uuid6 import uuid7
 from app.systems.access.identity.models import IdentitySession
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.audit.security_events import append_security_event
 from app.systems.manage.workspace.models import PlatformSettings
 
 _BATCH_LIMIT = 1000

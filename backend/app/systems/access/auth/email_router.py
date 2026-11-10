@@ -27,7 +27,7 @@ from app.systems.access.identity.contracts import (
 )
 from app.systems.access.identity.mfa import MFARequired
 from app.systems.access.identity.schemas import EmailChangeCompleteRequest, EmailChangeRequest
-from app.systems.manage.audit.service import SecurityEventPersistenceError
+from app.systems.manage.audit.security_events import SecurityEventPersistenceError
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

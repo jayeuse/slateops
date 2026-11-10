@@ -16,8 +16,8 @@ from app.core.config import get_settings
 from app.core.database.session import AuditSession, get_engine
 from app.systems.access.identity.models import IdentityRateLimitBucket
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
+from app.systems.manage.audit.security_events import append_security_event
 from app.systems.manage.audit.security_failures import canonical_source
-from app.systems.manage.audit.service import append_security_event
 from app.systems.manage.workspace.models import PlatformSettings
 
 LOGIN_WINDOW = timedelta(minutes=15)

@@ -16,7 +16,7 @@ from app.systems.access.users.membership import is_platform_operator
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.audit.security_events import append_security_event
 from app.systems.manage.backups import service as backups
 from app.systems.manage.jobs import registry
 from app.systems.manage.jobs.schemas import JobResponse, JobsListRequest, JobSort

@@ -29,8 +29,8 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
+from app.systems.manage.audit.security_events import append_security_event
 from app.systems.manage.audit.security_failures import canonical_source
-from app.systems.manage.audit.service import append_security_event
 from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 from app.systems.manage.workspace.security_policy import (
     clamp_session_deadlines,

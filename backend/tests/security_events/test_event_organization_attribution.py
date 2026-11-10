@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.database.organization_scope import scope_session
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.audit.security_events import append_security_event
 from app.systems.platform.files import delivery
 from tests.conftest import create_member, create_organization
 

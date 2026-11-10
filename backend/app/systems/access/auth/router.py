@@ -93,7 +93,7 @@ from app.systems.access.users.service import (
     invite_user,
     resend_invitation,
 )
-from app.systems.manage.audit.service import SecurityEventPersistenceError
+from app.systems.manage.audit.security_events import SecurityEventPersistenceError
 from app.systems.manage.workspace.security_policy import PasswordPolicyViolation
 
 auth_router = APIRouter(prefix="/auth", tags=["auth"])

@@ -23,7 +23,7 @@ from app.systems.comms.realtime.grants import lock_projection, revoke_stale
 from app.systems.manage.audit.context import get_audit_context, set_audit_actor
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.audit.security_events import append_security_event
 from app.systems.openview.charts.models import Chart
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow

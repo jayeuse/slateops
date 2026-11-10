@@ -16,7 +16,7 @@ from app.core.database.organization_scope import bound_organization_column
 from app.systems.access.users.membership import current_membership, is_platform_operator
 from app.systems.access.users.models import User, UserRole
 from app.systems.manage.audit.models import SecurityEvent
-from app.systems.manage.audit.service import _security_events_of_bound_organization
+from app.systems.manage.audit.security_events import security_events_of_bound_organization
 from app.systems.manage.backups.models import BackupPolicy, BackupRun
 from app.systems.manage.backups.service import BackupStateError, installation_id
 from app.systems.manage.health.installation import storage_used_bytes
@@ -99,7 +99,7 @@ def _sign_in_counts(db: Session, since: datetime) -> tuple[int, int]:
         .where(
             SecurityEvent.event_type.in_(("identity.sign_in_failure", "identity.lockout")),
             SecurityEvent.occurred_at >= since,
-            _security_events_of_bound_organization(),
+            security_events_of_bound_organization(),
         )
         .group_by(SecurityEvent.event_type)
     ).all()

@@ -13,7 +13,7 @@ from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User, UserRole
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.audit.security_events import append_security_event
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.records.models import Record

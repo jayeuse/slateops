@@ -40,7 +40,7 @@ from app.systems.access.users.membership import eligible_memberships
 from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.audit.security_events import append_security_event
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.security_policy import (
     effective_session_expiry,

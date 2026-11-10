@@ -44,7 +44,7 @@ from app.systems.access.users.sessions_schemas import (
 from app.systems.access.users.sign_in_history import list_sign_in_events
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.audit.security_events import append_security_event
 from app.systems.manage.workspace.security_policy import (
     effective_session_expiry,
     load_platform_policy,
