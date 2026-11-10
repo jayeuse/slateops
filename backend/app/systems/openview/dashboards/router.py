@@ -1,7 +1,8 @@
 """Revisioned department Dashboards and their widgets on the 4 x 5 grid.
 
-Every user who can read something in a department reads its Dashboards. Only a
-user with ``manage`` on the department (or an administrator) changes them. One active
+Every user who can read something in an open department reads its Dashboards. Only a
+user with ``manage`` on the department (or an administrator) changes them. A closed
+department's Dashboards are read and changed by administrators only. One active
 Dashboard per department is its home.
 """
 
@@ -10,7 +11,7 @@ from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -92,6 +93,21 @@ def _stale_revision(current_revision: int) -> HTTPException:
     )
 
 
+def _dashboard_departments(
+    db: Session, user: User, column: ColumnElement[Any] | Any
+) -> ColumnElement[bool]:
+    """Departments whose Dashboards the user reads: open ones, or every one for an administrator.
+
+    A closed department answers like an unreadable one (404).
+    """
+
+    readable = department_filter(db, user, column)
+    if effective_levels(db, user).unrestricted:
+        return readable
+    open_departments = select(Department.id).where(Department.is_deleted.is_(False))
+    return and_(readable, column.in_(open_departments))
+
+
 def _require_manager(db: Session, user: User, department_id: UUID) -> None:
     """404 when the user reads nothing in the department, 403 without ``manage``."""
 
@@ -114,7 +130,7 @@ def _dashboard(
 ) -> Dashboard:
     statement = select(Dashboard).where(
         Dashboard.id == dashboard_id,
-        department_filter(db, user, Dashboard.department_id),
+        _dashboard_departments(db, user, Dashboard.department_id),
     )
     if lock:
         statement = statement.with_for_update(nowait=nowait).execution_options(
@@ -272,7 +288,9 @@ def list_dashboards(
     db: Database,
     params: Annotated[DashboardListRequest, Query()],
 ) -> StandardListResponse[DashboardResponse]:
-    statement = select(Dashboard).where(department_filter(db, user, Dashboard.department_id))
+    statement = select(Dashboard).where(
+        _dashboard_departments(db, user, Dashboard.department_id)
+    )
     if params.department_id is not None:
         statement = statement.where(Dashboard.department_id == params.department_id)
     if params.home is not None:
