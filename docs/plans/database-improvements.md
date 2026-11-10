@@ -294,6 +294,7 @@ Development data, all seven packs at Large (1,328,920 rows in the November audit
 - The audit options statements (Phase 5 item 5): above 100 ms for three of four accounts; meeting it needs a covering index or a narrower result.
 - The relationship list with no record filter (Phase 5 item 6); only the sample tool and API clients read it.
 - Never-refreshed Auth sessions that end by local expiry, or are revoked after Auth's 9-hour limit: Auth refuses them, but its cleanup does not delete them, so each row keeps an IP address and user agent.
+- A provider sign-out that Auth refuses with a code other than `session_expired` (for example `user_banned`) stops after 5 attempts; retention then keeps that local session row and its encrypted provider refresh token. The local session stays revoked and Auth refuses the token.
 - The Auth container log has no rotation.
 - The production settings of step 4.1 have not run on Large data on a target host.
 - D22-1 (search cost across organizations), the step 4.3 pooler review above 3 workers, and D5 (point-in-time recovery).
