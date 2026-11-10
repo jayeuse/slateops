@@ -4884,6 +4884,7 @@ test("an administrator can preview and confirm deleted-record purging with a fre
       },
     ],
     key_strips: [],
+    derived_changes: [],
     blockers: [],
     impact_digest: "b".repeat(64),
   };
@@ -5071,6 +5072,7 @@ test("a blocked record purge lists the dependency and hides password confirmatio
           ],
           external_impacts: [],
           key_strips: [],
+          derived_changes: [],
           impact_digest: "b".repeat(64),
           blockers: [
             {

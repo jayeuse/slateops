@@ -45,6 +45,7 @@ const entityLabels: Record<string, readonly [string, string]> = {
     "automation history entries",
   ],
   sandbox_bindings: ["design binding", "design bindings"],
+  sandbox_derived_objects: ["setup link", "setup links"],
 };
 
 type LifecyclePurgeReviewProps = {
@@ -115,7 +116,15 @@ export function LifecyclePurgeReview({
       {impact.blockers.length > 0 ? (
         <Alert variant="warning" role="alert">
           <p className="font-medium">Delete forever is blocked</p>
-          <p className="mt-1">Resolve these dependencies, then review again.</p>
+          {/* No fix exists for content in OpenComms, so its blocker
+              gets no "resolve" line (OQ2). */}
+          {impact.blockers.some(
+            (blocker) => blocker.code !== "comms_department_content",
+          ) ? (
+            <p className="mt-1">
+              Resolve these dependencies, then review again.
+            </p>
+          ) : null}
           <ul className="mt-2 list-disc space-y-2 pl-5">
             {impact.blockers.map((blocker) => (
               <li

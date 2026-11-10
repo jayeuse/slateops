@@ -96,7 +96,8 @@ export type LifecycleBlockerCode =
   | "purge_report_run_dependency"
   | "purge_trigger_dependency"
   | "purge_external_schema_dependency"
-  | "purge_file_dependency";
+  | "purge_file_dependency"
+  | "comms_department_content";
 export type LifecycleErrorCode =
   | LifecycleBlockerCode
   | "already_closed"
@@ -162,6 +163,18 @@ export type LifecycleBlocker = {
   department_id: string | null;
   department_name: string | null;
 };
+/**
+ * A department's setup item that a lifecycle change touches (BE-SD7). On a
+ * close preview, `close` archives the setup channel and `keep` names another
+ * channel of the department that stays open; a reopen result lists `reopen`.
+ */
+export type LifecycleDerivedChange = {
+  role:
+    "managers" | "members" | "viewers" | "dashboard" | "category" | "channel";
+  target_id: string;
+  name: string;
+  action: "close" | "reopen" | "keep";
+};
 export type LifecycleImpact = {
   target_type: LifecycleTargetType;
   target_id: string;
@@ -171,6 +184,7 @@ export type LifecycleImpact = {
   external_impacts: LifecycleExternalImpact[];
   key_strips: LifecycleKeyStrip[];
   blockers: LifecycleBlocker[];
+  derived_changes: LifecycleDerivedChange[];
   impact_digest: string;
 };
 export type LifecyclePreviewResponse = {

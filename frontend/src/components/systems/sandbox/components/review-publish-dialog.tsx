@@ -23,10 +23,11 @@ import {
   PublishChangeGroups,
   type PublishReviewDesign,
 } from "./publish-change-groups";
-import type {
-  SandboxPublication,
-  SandboxPublicationBlocker,
-  SandboxPublicationPreview,
+import {
+  publicationRefusalBlockers,
+  type SandboxPublication,
+  type SandboxPublicationBlocker,
+  type SandboxPublicationPreview,
 } from "../state/api";
 import { useErrorText } from "@/lib/use-error-text";
 import { ErrorReference } from "@/components/ui/error-reference";
@@ -64,6 +65,19 @@ function errorCode(error: unknown): string {
   return typeof error === "object" && error !== null && "code" in error
     ? String(error.code)
     : "";
+}
+
+/**
+ * A publish refused because something blocks it now (SD-C7) turns the
+ * review into a blocked review, so the blockers show as they would at
+ * review time. Null for any other failure.
+ */
+export function blockedReview(
+  preview: SandboxPublicationPreview,
+  reason: unknown,
+): SandboxPublicationPreview | null {
+  const blockers = publicationRefusalBlockers(reason);
+  return blockers ? { ...preview, blockers } : null;
 }
 
 function errorMessage(error: unknown): string {
@@ -171,8 +185,12 @@ export function ReviewPublishDialog({
       setNote("");
       onOpenChange(false);
     } catch (reason) {
-      setPublishError(errorMessage(reason), reason);
-      setPasswordRejected(errorCode(reason) === "invalid_password");
+      const refused = blockedReview(preview, reason);
+      if (refused) setPreview(refused);
+      else {
+        setPublishError(errorMessage(reason), reason);
+        setPasswordRejected(errorCode(reason) === "invalid_password");
+      }
     } finally {
       setBusy(null);
     }

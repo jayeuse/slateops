@@ -2,9 +2,14 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { LifecyclePreviewResponse } from "@/lib/api";
+import type {
+  LifecycleDerivedChange,
+  LifecycleMutationResponse,
+  LifecyclePreviewResponse,
+} from "@/lib/api";
 import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-api";
 import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -30,6 +35,63 @@ import {
   type SandboxLifecycleRequest,
 } from "../state/lifecycle-api";
 import { useErrorText } from "@/lib/use-error-text";
+import { ChangeGroup } from "./publish-change-groups";
+
+const CHANNEL_NOUNS = ["channel", "channels"] as const;
+
+/**
+ * What a department close does to its channels (BE-SD7, SD17): the setup
+ * channel is archived, and the department's other channels stay open for
+ * administrators and people given access.
+ */
+export function LifecycleChannelChanges({
+  changes,
+}: {
+  changes: readonly LifecycleDerivedChange[];
+}) {
+  const channels = changes.filter((change) => change.role === "channel");
+  const rows = [
+    ...channels.filter((change) => change.action === "close"),
+    ...channels.filter((change) => change.action === "keep"),
+  ];
+  return (
+    <ChangeGroup
+      title="Channels"
+      note={
+        rows.some((change) => change.action === "keep")
+          ? "Administrators and people given access can still post in open channels."
+          : undefined
+      }
+      noun={CHANNEL_NOUNS}
+      items={rows}
+      itemKey={(change) => `${change.action}-${change.target_id}`}
+      render={(change) => (
+        <div className="flex items-start gap-2">
+          <Badge
+            variant={change.action === "close" ? "warning" : "outline"}
+            className="w-24 shrink-0 justify-center whitespace-nowrap"
+          >
+            {change.action === "close" ? "Archived" : "Stays open"}
+          </Badge>
+          <span className="min-w-0 wrap-anywhere">{change.name}</span>
+        </div>
+      )}
+    />
+  );
+}
+
+/** The page notice after a confirmed change; a reopen names its channel. */
+export function lifecycleDoneNotice(result: LifecycleMutationResponse): string {
+  const restored =
+    result.impact.operation === "reopen"
+      ? result.impact.derived_changes.find(
+          (change) => change.role === "channel" && change.action === "reopen",
+        )
+      : undefined;
+  return restored
+    ? `Live change confirmed · Channel ${restored.name} restored`
+    : "Live change confirmed";
+}
 
 type Props = {
   request: SandboxLifecycleRequest | null;
@@ -197,6 +259,7 @@ export function SandboxLifecycleDialog({
               This close affects {preview.impact.rows.length} items. Existing
               records are kept.
             </p>
+            <LifecycleChannelChanges changes={preview.impact.derived_changes} />
             {binding.kind === "relationship" ? (
               <p>
                 {recordLinkCount} record link

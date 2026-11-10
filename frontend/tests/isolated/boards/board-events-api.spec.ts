@@ -575,6 +575,7 @@ const purgeImpact = {
   rows: [],
   external_impacts: [],
   key_strips: [],
+  derived_changes: [],
   blockers: [],
   impact_digest: "a".repeat(64),
 };
