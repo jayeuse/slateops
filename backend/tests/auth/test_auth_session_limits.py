@@ -22,6 +22,8 @@ FORBIDDEN = re.compile(
     r"^GOTRUE_(SESSIONS_TIMEBOX|SESSIONS_ALLOW_LOW_AAL|SESSIONS_SINGLE_PER_USER|SAML_\w+)$"
 )
 LIMIT_SETTINGS = ("GOTRUE_SESSIONS_INACTIVITY_TIMEOUT", "GOTRUE_DB_CLEANUP_ENABLED")
+# Only the base file sets these; an overlay that sets one could undo it (C19, C22 for D26).
+BASE_ONLY = (*LIMIT_SETTINGS, "GOTRUE_AUDIT_LOG_DISABLE_POSTGRES")
 
 
 class _ComposeLoader(yaml.SafeLoader):
@@ -91,7 +93,7 @@ def test_no_compose_file_adds_a_timebox_or_overrides_the_limits_a46a(tmp_path: P
     )
     overlays = {label: names for label, names in named.items() if label != "compose.yaml"}
     overridden = {
-        label: [name for name in names if name in LIMIT_SETTINGS]
+        label: [name for name in names if name in BASE_ONLY]
         for label, names in overlays.items()
     }
     assert overridden == dict.fromkeys(overlays, [])
