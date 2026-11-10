@@ -6,7 +6,6 @@ from pydantic import ValidationError
 import app.systems.manage.audit.listeners as audit_listeners
 import app.systems.manage.audit.models as audit_models
 import app.systems.manage.audit.security_events as security_events
-import app.systems.manage.audit.service as audit_service
 from app.core.database.session import AuditSession
 
 from .support import (
@@ -79,7 +78,7 @@ def test_security_event_payload_rejects_invalid_metadata(
 def test_committed_security_event_uses_an_independent_audit_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    writer = getattr(audit_service, "append_committed_security_event", None)
+    writer = getattr(security_events, "append_committed_security_event", None)
     assert callable(writer), "append_committed_security_event is not implemented"
 
     independent_session = Mock()

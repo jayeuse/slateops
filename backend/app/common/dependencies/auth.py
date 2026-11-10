@@ -39,8 +39,8 @@ from app.systems.access.users.membership import (
 from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.access.users.schemas import DefaultOrganizationBlocked
 from app.systems.manage.audit.context import set_audit_actor
+from app.systems.manage.audit.security_events import SecurityEventPersistenceError
 from app.systems.manage.audit.security_failures import append_committed_failure
-from app.systems.manage.audit.service import SecurityEventPersistenceError
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.security_policy import (
     ip_allowed,

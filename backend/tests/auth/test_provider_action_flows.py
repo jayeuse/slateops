@@ -35,8 +35,8 @@ from tests.auth.local_identity_support import contract_user
 @pytest.fixture(autouse=True)
 def event_writers(monkeypatch):
     # Real committed event behavior is covered by provider_outcomes_integration.
-    monkeypatch.setattr(provider_actions.audit_service, "append_committed_security_event", Mock())
-    monkeypatch.setattr(provider_actions.audit_service, "append_security_event", Mock())
+    monkeypatch.setattr(provider_actions.security_events, "append_committed_security_event", Mock())
+    monkeypatch.setattr(provider_actions.security_events, "append_security_event", Mock())
 
 
 ORIGIN = "https://app.example.test"
@@ -221,8 +221,8 @@ TERMINAL = {"rejected": "failure", "unavailable": "partial", "wrong_subject": "p
 
 def _written():
     """Events committed on their own, and events written in the action's own transaction."""
-    committed = provider_actions.audit_service.append_committed_security_event.call_args_list
-    local = provider_actions.audit_service.append_security_event.call_args_list
+    committed = provider_actions.security_events.append_committed_security_event.call_args_list
+    local = provider_actions.security_events.append_security_event.call_args_list
     return [call.args[0] for call in committed], [call.args[1] for call in local]
 
 

@@ -19,7 +19,7 @@ from app.main import create_app
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.audit.security_events import append_security_event
 from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 from tests.auth.session_policy_support import DEFAULTS, POLICY_FIELDS
 from tests.conftest import membership_of

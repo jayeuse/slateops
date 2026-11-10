@@ -53,6 +53,7 @@ services:
       GOTRUE_API_PORT: "9999"
       API_EXTERNAL_URL: ${API_EXTERNAL_URL:?Set the external Auth issuer URL}
       GOTRUE_DB_DRIVER: postgres
+      GOTRUE_AUDIT_LOG_DISABLE_POSTGRES: "true"
       GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD:?Generate POSTGRES_PASSWORD}@db:5432/postgres
       GOTRUE_SITE_URL: ${SITE_URL:?Set the Slate Operations browser origin}
       GOTRUE_URI_ALLOW_LIST: ${SITE_URL:?Set the Slate Operations browser origin}/auth/*
@@ -61,6 +62,9 @@ services:
       GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: "10"
       GOTRUE_SECURITY_REFRESH_TOKEN_ALGORITHM_VERSION: "2"
       GOTRUE_SECURITY_REFRESH_TOKEN_ALLOW_REUSE: "false"
+      # Idle limit: at least 480 min (longest workspace idle limit) + 2 x JWT_EXPIRY; no timebox.
+      GOTRUE_SESSIONS_INACTIVITY_TIMEOUT: "9h"
+      GOTRUE_DB_CLEANUP_ENABLED: "true"
       GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
       GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
       GOTRUE_EXTERNAL_PHONE_ENABLED: "false"

@@ -12,6 +12,32 @@ services:
     # A production application uses db:5432 on the provider network. Keep the
     # database out of host networking even if a future base file adds a port.
     ports: !reset []
+    # Compose replaces `command`, so this repeats the base command and adds the production
+    # settings (database plan step 4.1). Development keeps PostgreSQL's defaults. Memory
+    # budget on a 16 GB host, about 5 GB at worst: 2 GB shared buffers; up to 3 autovacuum
+    # workers x 512 MB (autovacuum_work_mem = -1 uses maintenance_work_mem); work_mem for
+    # each sort and hash node; about 300 MB for each API worker; Auth, Storage and Realtime.
+    # Recreate `db` to apply a change here.
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - cluster_name=${SLATEOPS_INSTANCE_ID:?Set the owned Slate Operations instance ID}
+      - -c
+      - log_min_messages=fatal
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - effective_cache_size=8GB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=512MB
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
 
   api:
     image: ${SLATEOPS_SERVER_IMAGE:?Set a versioned Slate Operations server image name}

@@ -89,7 +89,7 @@ def test_s5_c5_i8_a_recovery_request_records_only_an_auth_server_failure(
         provider_actions.rate_limits, "recovery_request_permitted", Mock(return_value=True)
     )
     monkeypatch.setattr(
-        provider_actions.audit_service, "append_committed_security_event", lambda payload: None
+        provider_actions.security_events, "append_committed_security_event", lambda payload: None
     )
 
     def request() -> None:

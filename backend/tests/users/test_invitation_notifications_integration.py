@@ -10,7 +10,7 @@ from app.systems.access.users import acceptance
 from app.systems.access.users.models import Membership, UserRole, UserStatus
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.audit.security_events import append_security_event
 from app.systems.platform.scheduling.models import InAppNotification
 from tests.conftest import create_member, create_organization, membership_of
 from tests.platform_scheduling.support import notification_client as _client

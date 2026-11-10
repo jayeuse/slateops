@@ -25,7 +25,7 @@ from app.systems.access.identity.contracts import (
     IssuedSession,
 )
 from app.systems.access.users.models import User
-from app.systems.manage.audit import service as audit_service
+from app.systems.manage.audit import security_events
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.security_failures import canonical_source
@@ -71,7 +71,7 @@ def synchronize_confirmed_email(
     if email == user.email:
         return
     user.email = email
-    audit_service.append_security_event(
+    security_events.append_security_event(
         db,
         _event("email_change_confirmed", user.id, uuid7(), "success", "local_admission").model_copy(
             update={"occurred_at": timestamp}
@@ -144,7 +144,7 @@ def request_email_change(
         ):
             raise InvalidCredentials("Invalid credentials")
         stage = "provider_request"
-        audit_service.append_committed_security_event(
+        security_events.append_committed_security_event(
             _event("email_change_request", person_id, operation_id, "attempt", stage)
         )
         effect_started = True
@@ -156,7 +156,7 @@ def request_email_change(
             db.delete(bucket)
         if enforce_rate_limit:
             rate_limits.clear_login_account_budget(db, user.email)
-        audit_service.append_security_event(
+        security_events.append_security_event(
             db,
             _event("email_change_request", person_id, operation_id, "success", "provider_accepted"),
         )
@@ -164,7 +164,7 @@ def request_email_change(
     except (InvalidProviderCredentials, InvalidCredentials, InvalidProviderToken) as error:
         if effect_started:
             db.rollback()
-            audit_service.append_committed_security_event(
+            security_events.append_committed_security_event(
                 _event("email_change_request", person_id, operation_id, "failure", stage)
             )
         elif fingerprint is not None:
@@ -184,11 +184,11 @@ def request_email_change(
     except (
         SupabaseAuthUnavailable,
         SQLAlchemyError,
-        audit_service.SecurityEventPersistenceError,
+        security_events.SecurityEventPersistenceError,
     ) as error:
         db.rollback()
         if effect_started:
-            audit_service.append_committed_security_event(
+            security_events.append_committed_security_event(
                 _event("email_change_request", person_id, operation_id, "partial", stage)
             )
             raise EmailChangeIncomplete(unavailable=True) from error
@@ -234,12 +234,16 @@ def complete_email_change(
         InvalidProviderCredentials,
         SQLAlchemyError,
         SupabaseAuthUnavailable,
-        audit_service.SecurityEventPersistenceError,
+        security_events.SecurityEventPersistenceError,
     ) as error:
         db.rollback()
         _close_new_session(client, tokens.access_token)
         unavailable = isinstance(
             error,
-            (SQLAlchemyError, SupabaseAuthUnavailable, audit_service.SecurityEventPersistenceError),
+            (
+                SQLAlchemyError,
+                SupabaseAuthUnavailable,
+                security_events.SecurityEventPersistenceError,
+            ),
         ) and not isinstance(error, IntegrityError)
         raise EmailChangeIncomplete(unavailable=unavailable) from error

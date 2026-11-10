@@ -34,6 +34,7 @@ from tests.migrations.audit_partition_support import (
     plan_pages,
     prepared_plan_pages,
 )
+from tests.migrations.plan_profiles import PROFILES, apply_profile
 from tests.sandbox_record_triggers.support import document_baseline, publish_trigger
 
 pytestmark = pytest.mark.integration
@@ -156,7 +157,13 @@ def lists() -> Iterator[_Lists]:
         yield world
 
 
-def _plans(world: _Lists, org_id: UUID, table: str, read: Callable[[Session], Any]) -> list[Any]:
+def _plans(
+    world: _Lists,
+    org_id: UUID,
+    table: str,
+    read: Callable[[Session], Any],
+    profile: str = "development",
+) -> list[Any]:
     """Run the real read as the runtime, then read the plan of each statement on `table`."""
 
     captured: list[tuple[str, Any]] = []
@@ -178,6 +185,7 @@ def _plans(world: _Lists, org_id: UUID, table: str, read: Callable[[Session], An
         # The fixture's tables are below the parallel size limits; production ones are not.
         cursor.execute("SET LOCAL min_parallel_table_scan_size = 0")
         cursor.execute("SET LOCAL min_parallel_index_scan_size = 0")
+        apply_profile(cursor, profile)
         plans = []
         for statement, parameters in captured:
             cursor.execute("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + statement, parameters)
@@ -215,13 +223,16 @@ def _cursor_after(world: _Lists, name: str, rows: int) -> str:
     return cursor
 
 
+@pytest.mark.parametrize("profile", PROFILES)
 @pytest.mark.parametrize("name", sorted(TABLES))
 def test_a_small_organization_reads_a_few_pages_of_each_list_c5(
-    lists: _Lists, name: str
+    lists: _Lists, name: str, profile: str
 ) -> None:
     world = lists
 
-    count, page = _plans(world, world.small, TABLES[name], _read(name, world.small_admin))
+    count, page = _plans(
+        world, world.small, TABLES[name], _read(name, world.small_admin), profile
+    )
 
     pages = (plan_pages(count), plan_pages(page))
     assert max(pages) <= SMALL_ORGANIZATION_PAGE_CEILING, pages
@@ -236,13 +247,14 @@ def test_a_small_organization_reads_a_few_pages_of_each_list_c5(
     assert scans == []
 
 
+@pytest.mark.parametrize("profile", PROFILES)
 @pytest.mark.parametrize("name", sorted(TABLES))
 def test_the_first_page_of_each_list_reads_in_index_order_with_no_sort_p1(
-    lists: _Lists, name: str
+    lists: _Lists, name: str, profile: str
 ) -> None:
     world = lists
     for org, reader in ((world.large, world.large_admin), (world.small, world.small_admin)):
-        _count, page = _plans(world, org, TABLES[name], _read(name, reader))
+        _count, page = _plans(world, org, TABLES[name], _read(name, reader), profile)
 
         # The run list sorts its joined page rows (page ids first); never the list itself.
         sorted_rows = [

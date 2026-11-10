@@ -31,7 +31,11 @@ def attempt_provider_signout(
     *,
     now: datetime | None = None,
 ) -> bool:
-    """Return true once the exact provider session is confirmed absent."""
+    """Return true once the provider session can issue no further token.
+
+    It was signed out, it is gone, or Auth refused its refresh as `session_expired`; in that
+    last case its `auth.sessions` row can remain (contract 5.2 items 4 and 6).
+    """
 
     timestamp = now or utc_now()
     session = db.get(IdentitySession, session_id, with_for_update=True, populate_existing=True)
@@ -56,7 +60,13 @@ def attempt_provider_signout(
             raise InvalidToken
         cipher = Fernet(get_settings().supabase_session_encryption_key.get_secret_value())
         refresh_token = cipher.decrypt(encrypted_refresh.encode()).decode()
-        tokens = client.refresh(refresh_token)
+        try:
+            tokens = client.refresh(refresh_token)
+        except InvalidProviderCredentials as refusal:
+            if _refusal_ends_session(db, session, refusal):
+                _complete(db, session, timestamp)
+                return True
+            raise
         claims = client.verify_access_token(tokens.access_token)
         if (
             tokens.user_id != session.provider_user_id
@@ -107,6 +117,21 @@ def drain_provider_signouts(db: Session, client: SupabaseAuthClient) -> int:
         if attempt_provider_signout(db, session_id, client, now=timestamp):
             completed += 1
     return completed
+
+
+def _refusal_ends_session(
+    db: Session, session: IdentitySession, refusal: InvalidProviderCredentials
+) -> bool:
+    """Only a refresh refusal qualifies: the row is gone, or Auth's exact code is final.
+
+    A gateway refusal, any other code, or no code keeps the retry path, so a generic or
+    spoofed refusal cannot mark a live provider session as ended.
+    """
+
+    assert session.provider_user_id is not None and session.provider_session_id is not None
+    if not _provider_session_exists(db, session.provider_user_id, session.provider_session_id):
+        return True
+    return refusal.error_code == "session_expired"
 
 
 def _complete(db: Session, session: IdentitySession, timestamp: datetime) -> None:

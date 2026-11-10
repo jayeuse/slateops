@@ -51,7 +51,7 @@ from app.systems.access.users.schemas import (
 )
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import (
+from app.systems.manage.audit.security_events import (
     SecurityEventPersistenceError,
     append_committed_security_event,
     append_security_event,

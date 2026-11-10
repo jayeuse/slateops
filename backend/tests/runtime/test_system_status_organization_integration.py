@@ -16,7 +16,7 @@ from app.core.database.session import get_db
 from app.main import create_app
 from app.systems.access.users.models import User
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.audit.security_events import append_security_event
 from app.systems.manage.backups.models import BackupPolicy, BackupRun
 from app.systems.manage.backups.service import BackupStateError
 from app.systems.manage.health import organization as organization_part

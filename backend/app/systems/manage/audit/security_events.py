@@ -38,7 +38,7 @@ def bound_members() -> Select[tuple[UUID]]:
     return select(Membership.user_id).where(Membership.org_id == bound_organization_column())
 
 
-def _security_events_of_bound_organization(*, operator: bool = False) -> ColumnElement[bool]:
+def security_events_of_bound_organization(*, operator: bool = False) -> ColumnElement[bool]:
     """Events of the bound organization, and account events about its own people."""
 
     return or_(
@@ -151,7 +151,7 @@ def list_security_events(
     occurred_before: datetime | None = None,
     reference: str | None = None,
 ) -> ListQueryResult[SecurityEvent]:
-    conditions: list[ColumnElement[bool]] = [_security_events_of_bound_organization(
+    conditions: list[ColumnElement[bool]] = [security_events_of_bound_organization(
         operator=reader is not None and is_platform_operator(db, reader.id),
     )]
     if operation_id is not None:

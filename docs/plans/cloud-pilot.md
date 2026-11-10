@@ -1,6 +1,6 @@
 # Cloud pilot deployment
 
-Status: **proposed**. Nothing here is built or deployed. Work starts after Database Improvements (Part 1), Sandbox as Heart (Part 2) and System Observability (Part 3) are done. Pull request 2d of Part 1 is deferred (database plan D18), so it does not gate this plan.
+Status: **proposed**. Nothing here is built or deployed. Work starts after Database Improvements (Part 1), Sandbox as Heart (Part 2) and System Observability (Part 3) are done. Pull request 2d of Part 1 moved into this plan as C13 (database plan D25).
 
 This plan is the pilot scope of Phase 3, "Cloud launch", from the Supabase integration decisions of 2026-10-15 (cloud on Supabase Cloud, with FastAPI as a container near the Supabase region). The code work in step C is therefore part of the planned cloud target. It is not a temporary pilot fork. The on-premise-first priority does not change.
 
@@ -10,7 +10,7 @@ Checked on 2026-11-07.
 
 | Item | State |
 |---|---|
-| Part 1, Database improvements | Pull requests 1 (#81), the follow-up (#91) and 2a (#94) are merged. 2b, 2c, 3a, 3b and 4 remain, in that order. 2d is deferred (D18). No decision is open. |
+| Part 1, Database improvements | Closed on 2026-11-10 with pull request 4. Pull request 2d moved into this plan as C13 (database plan D25). |
 | Part 2, Sandbox as Heart | The direction is agreed. The spec `docs/specs/sandbox-department-setup.md` is proposed. No slice is built. |
 | Part 3, System observability | Client side merged: slices S1 to S6 of `docs/specs/system-health.md` (#87, #88, #89). The developer side is deferred. |
 | Rebrand to Slate Operations | Done (pull requests 84 and 85). This plan uses the new names, for example `SLATEOPS_INSTANCE_ID`. |
@@ -77,6 +77,7 @@ Found by a read-only inventory of the current code on 2026-11-02. Size: S is und
 | C10 | Compose and TLS | The production overlay depends on `db` and `api-gw` and the provider networks. Caddy supports only `internal` and `custom` TLS (`infra/caddy/generate_config.py:130-143`). | Add a standalone API and Caddy Compose file that keeps the `app-private` subnet, so forwarded client IPs and rate limits stay correct. Add an ACME (Let's Encrypt) TLS mode. | M |
 | C11 | Image build | CI builds amd64 only, with `push: false` (`.github/workflows/backend.yml:279-298`). File-type validation is pure Python. | Build amd64 and arm64 with buildx and push to GHCR on a release tag. Never build the frontend on the 2 GB instance. | S |
 | C12 | Memory | One worker, `FILE_MEMORY_BUDGET_MIB=256`, 4 file slots, 512 MiB address limit for each validation child (`app/core/config/settings.py:159-169`). | Set `FILE_PROCESSING_SLOTS=2` and a budget of 128 MiB, add 2 GB swap, and measure the API memory on a Large sample pack before launch. | S |
+| C13 | Audit archive (database plan 2d, D25) | Steps 2.6 (archive and drop audit months), 2.7 (archive old security events) and the 1.5 file check schedule of the database plan; DBI-11. `public.retain_security_events()` already deletes security events at 365 days with no archive, so 2.7 must archive before that cutoff or replace it. | Build it with the cloud backup route (the archive format and its verified-copy proof depend on it: Restic on-premise, R2 upload on Cloud), before any installation holds 12 months of audit data. | L |
 
 ## Spikes
 
@@ -112,9 +113,9 @@ These parts are not finished. Each one must stay compatible with external-provid
 | Part | Item | Cloud effect |
 |---|---|---|
 | 1 | Step 4.1 server settings (`shared_buffers` and others), pull request 4 | Not settable on Supabase Free. Keep them in `infra/supabase/compose.production.yaml` only. |
-| 1 | Steps 1.5 (schedule), 2.6 and 2.7 run from the backup runner with the owner role, pull request 2d (deferred, D18) | The cloud topology has no backup runner. Run them from `cloud_backup.py` or a systemd timer with the migration role. |
-| 1 | Step 2.6 archive needs a verified Restic snapshot before a drop, pull request 2d (deferred, D18) | Use the verified R2 upload as the equivalent proof. |
-| 1 | Steps 4.5 and 4.6 Auth settings in `compose.yaml`, pull request 4 | Push them with the C7 command. The Auth audit table is in the `auth` schema; check in S1 that `postgres` can delete old rows. |
+| 1 | Steps 1.5 (schedule), 2.6 and 2.7 run from the backup runner with the owner role, C13 (database plan D25) | The cloud topology has no backup runner. Run them from `cloud_backup.py` or a systemd timer with the migration role. |
+| 1 | Step 2.6 archive needs a verified Restic snapshot before a drop, C13 (database plan D25) | Use the verified R2 upload as the equivalent proof. |
+| 1 | Steps 4.5 and 4.6 Auth settings in `compose.yaml`, pull request 4 | Push them with the C7 command. Auth's audit copy in the database is off on-premise (database plan D26); in S1, set the same option in the Cloud project if Cloud offers it (not checked). |
 | 1 | Audit growth with 13 months online, plus seals | Counts against the 500 MB read-only limit (see risk R1). |
 | 1 | Step 2.5 chain heads: the backup runner saves them before the stop, pull request 2c | `cloud_backup.py` calls `read_seal_heads` and uploads `{"heads": [...]}` as `audit/seal-heads.json` beside the dump. Until then, the operator runs `verify_audit_seals.py --write-heads`. |
 | 3 | Backup freshness for admins (spec slice S3) | The slice reads `BackupRun` rows (`app/systems/manage/backups/models.py`). `installation_id()` (`service.py:46-56`) fences that data with `cluster_name`, which Cloud does not have. So `cloud_backup.py` must write `BackupRun` rows, and the C1 project-reference check must also replace the check in `installation_id()`. If not, the health page shows no backups on Cloud, and C8 hides the backup controls. |

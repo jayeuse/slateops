@@ -35,7 +35,7 @@ from app.systems.comms.messages.interaction_schemas import TimeList, TimeSort
 from app.systems.comms.moderation.router import no_body
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.audit.security_events import append_security_event
 from app.systems.platform.files.providers import (
     ProviderUnavailable,
     StorageBackend,

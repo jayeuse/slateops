@@ -35,7 +35,7 @@ def email_boundary(monkeypatch, unit_workspace_policy, unit_platform_policy):
     from app.systems.access.auth import request_security
     from app.systems.access.auth.aggregate_router import router
     from app.systems.access.identity import provider_actions
-    from app.systems.manage.audit import service as audit_service
+    from app.systems.manage.audit import security_events
     from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 
     # Pin the browser origin so the strict test environment matches this client.
@@ -136,12 +136,14 @@ def email_boundary(monkeypatch, unit_workspace_policy, unit_platform_policy):
     monkeypatch.setattr(dependencies, "get_supabase_auth_client", lambda: client)
     monkeypatch.setattr(provider_actions, "anonymous_rate_limits_enabled", lambda: False)
     monkeypatch.setattr(
-        audit_service,
+        security_events,
         "append_committed_security_event",
         lambda payload: state["events"].append(payload),
     )
     monkeypatch.setattr(
-        audit_service, "append_security_event", lambda _db, payload: state["events"].append(payload)
+        security_events,
+        "append_security_event",
+        lambda _db, payload: state["events"].append(payload),
     )
     app = FastAPI()
     app.include_router(router, prefix="/api")

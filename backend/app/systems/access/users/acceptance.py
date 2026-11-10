@@ -19,7 +19,7 @@ from app.systems.access.users.service import (
 )
 from app.systems.manage.audit.models import SecurityEvent, SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.audit.security_events import append_security_event
 from app.systems.manage.workspace.security_policy import accepted_mfa_episode
 from app.systems.platform.scheduling.notification_creation import notify_invitation_accepted
 

@@ -20,7 +20,7 @@ from app.main import create_app
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditAction, AuditLog, SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.audit.security_events import append_security_event
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.conftest import create_member, create_organization
 from tests.organization_scope_support import scoped_override

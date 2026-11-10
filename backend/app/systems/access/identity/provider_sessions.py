@@ -44,7 +44,11 @@ from app.systems.access.identity.session_credentials import (
     _fernet,
     _provider_session_exists,
 )
-from app.systems.access.identity.session_revocation import reconcile_session_cap, revoke_session
+from app.systems.access.identity.session_revocation import (
+    _schedule_provider_signout,
+    reconcile_session_cap,
+    revoke_session,
+)
 from app.systems.access.users.eligibility import is_active_account
 from app.systems.access.users.membership import eligible_memberships
 from app.systems.access.users.models import User, UserStatus
@@ -341,14 +345,15 @@ def refresh_provider_session(
     if csrf_token is not None and session.csrf_token_digest != _digest(csrf_token):
         raise InvalidCredentials(reason="csrf_mismatch")
     if not session.provider_access_token_encrypted or not session.provider_refresh_token_encrypted:
-        _revoke_locked_session(db, session, timestamp)
+        _revoke_locked_session(db, session, timestamp, provider_signout=False)
         raise InvalidCredentials(reason="provider_tokens_missing")
     cipher = _fernet()
     try:
         current_access = cipher.decrypt(session.provider_access_token_encrypted.encode()).decode()
         current_refresh = cipher.decrypt(session.provider_refresh_token_encrypted.encode()).decode()
     except (InvalidToken, UnicodeDecodeError):
-        _revoke_locked_session(db, session, timestamp)
+        # The sign-out worker could not decrypt them either; Auth ends the session when idle.
+        _revoke_locked_session(db, session, timestamp, provider_signout=False)
         raise InvalidCredentials(reason="provider_tokens_unreadable") from None
     try:
         current_claims = client.verify_access_token(current_access)
@@ -362,7 +367,7 @@ def refresh_provider_session(
     ):
         resolved = _resolved_provider_session(db, current_claims, client, now=now, allow_aal1=True)
         if resolved is None:
-            _revoke_locked_session(db, session, timestamp)
+            _revoke_locked_session(db, session, timestamp, provider_signout=True)
             raise InvalidCredentials(reason=f"current_{_resolution_refusal.get()}")
         timestamp = now or utc_now()
         session.expires_at = renewed_session_expiry(session, load_platform_policy(db), timestamp)
@@ -380,7 +385,7 @@ def refresh_provider_session(
         tokens = client.refresh(current_refresh)
         claims = client.verify_access_token(tokens.access_token)
     except InvalidProviderCredentials as error:
-        _revoke_locked_session(db, session, timestamp)
+        _revoke_locked_session(db, session, timestamp, provider_signout=True)
         raise InvalidCredentials(reason="provider_refused") from error
     except InvalidProviderToken as error:
         # Auth issued the pair but its fresh access token failed local validation. Keep
@@ -406,7 +411,7 @@ def refresh_provider_session(
         or claims.session_id != session.provider_session_id
         or resolved is None
     ):
-        _revoke_locked_session(db, session, timestamp)
+        _revoke_locked_session(db, session, timestamp, provider_signout=True)
         reason = "rotated_identity_mismatch" if resolved is not None else "rotated"
         raise InvalidCredentials(reason=f"{reason}_{_resolution_refusal.get()}")
     timestamp = now or utc_now()
@@ -471,8 +476,14 @@ def revoke_provider_refresh_session(
     return session.id
 
 
-def _revoke_locked_session(db: Session, session: IdentitySession, timestamp: datetime) -> None:
+def _revoke_locked_session(
+    db: Session, session: IdentitySession, timestamp: datetime, *, provider_signout: bool
+) -> None:
+    """Revoke in one commit; with `provider_signout`, the same commit schedules the sign-out."""
+
     session.revoked_at = timestamp
+    if provider_signout:
+        _schedule_provider_signout(session, timestamp)
     try:
         db.commit()
     except SQLAlchemyError as error:

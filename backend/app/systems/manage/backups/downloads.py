@@ -30,7 +30,7 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, get_audit_context
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.audit.security_events import append_security_event
 from app.systems.manage.backups import service
 from app.systems.manage.backups.models import BackupExportOperation
 from app.systems.manage.workspace.security_policy import (

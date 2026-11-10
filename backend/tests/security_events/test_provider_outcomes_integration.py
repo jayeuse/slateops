@@ -16,7 +16,7 @@ from app.core.integrations.supabase_auth import (
     get_supabase_auth_client,
 )
 from app.systems.access.identity.models import IdentitySession
-from app.systems.manage.audit import service as audit_service
+from app.systems.manage.audit import security_events
 from app.systems.manage.audit.models import SecurityEvent
 
 pytest_plugins = ("tests.security_events.event_support",)
@@ -81,9 +81,9 @@ def test_event_store_refusal_prevents_recovery_provider_effect(event_world, monk
     monkeypatch.setattr(provider, "request_recovery", lambda email: calls.append(True))
 
     def unavailable(payload):
-        raise audit_service.SecurityEventPersistenceError("private storage failure")
+        raise security_events.SecurityEventPersistenceError("private storage failure")
 
-    monkeypatch.setattr(audit_service, "append_committed_security_event", unavailable)
+    monkeypatch.setattr(security_events, "append_committed_security_event", unavailable)
     with request_client(event_world) as client:
         response = client.post("/api/auth/recovery/request", json={"email": event_world.email})
     assert response.status_code == 503 and not calls
@@ -220,14 +220,14 @@ def test_password_action_attempt_store_failure_cannot_claim_a_possible_provider_
     world = event_world
     before = {r.id for r in world.records(f"identity.{kind}")}
     effects = prepare_action(world, monkeypatch, kind, "none")
-    original = audit_service.append_committed_security_event
+    original = security_events.append_committed_security_event
 
     def refuse_attempt(payload):
         if payload.outcome == "attempt":
-            raise audit_service.SecurityEventPersistenceError("private logging failure")
+            raise security_events.SecurityEventPersistenceError("private logging failure")
         return original(payload)
 
-    monkeypatch.setattr(audit_service, "append_committed_security_event", refuse_attempt)
+    monkeypatch.setattr(security_events, "append_committed_security_event", refuse_attempt)
     if kind == "password_change":
         result = world.client.post(
             "/api/auth/password/change",
@@ -254,14 +254,14 @@ def test_accepted_recovery_with_terminal_event_store_failure_is_partial_without_
     monkeypatch.setattr(
         get_supabase_auth_client(), "request_recovery", lambda email: calls.append(True)
     )
-    original = audit_service.append_committed_security_event
+    original = security_events.append_committed_security_event
 
     def fail_terminal(payload):
         if payload.outcome == "success":
-            raise audit_service.SecurityEventPersistenceError("private terminal event failure")
+            raise security_events.SecurityEventPersistenceError("private terminal event failure")
         return original(payload)
 
-    monkeypatch.setattr(audit_service, "append_committed_security_event", fail_terminal)
+    monkeypatch.setattr(security_events, "append_committed_security_event", fail_terminal)
     with request_client(world) as client:
         response = client.post("/api/auth/recovery/request", json={"email": world.email})
     assert response.status_code == 503 and calls == [True]

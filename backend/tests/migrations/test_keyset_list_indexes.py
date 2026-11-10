@@ -26,6 +26,7 @@ from tests.rbac.support import add_department, add_module
 pytestmark = pytest.mark.integration
 
 PREVIOUS = "176d4af952fa"
+REVISION = "2bbcb1deeee9"
 NEW = {
     "ix_record_trigger_runs_org_created": "record_trigger_runs",
     "ix_relationship_edges_org_created": "relationship_edges",
@@ -101,7 +102,6 @@ def test_the_revision_only_builds_and_drops_indexes_concurrently(
     migration: tuple[dict[str, str], Engine],
 ) -> None:
     environment, engine = migration
-    [head] = alembic_heads()
     upgraded, security = _indexes(engine), _security(engine)
     assert {name: valid for name, (_definition, valid) in upgraded.items() if name in NEW} == (
         dict.fromkeys(NEW, True)
@@ -119,7 +119,8 @@ def test_the_revision_only_builds_and_drops_indexes_concurrently(
         "USING btree (created_at, id)", True,
     )
     with _statements() as up:
-        run_alembic(environment, "upgrade", head)
+        # This revision's own statements; later revisions change other indexes.
+        run_alembic(environment, "upgrade", REVISION)
 
     assert _indexes(engine) == upgraded
     assert _security(engine) == security
@@ -142,6 +143,8 @@ def test_the_revision_only_builds_and_drops_indexes_concurrently(
         "CREATE INDEX CONCURRENTLY ix_relationship_edges_org_created",
         f"DROP INDEX CONCURRENTLY {OLD}",
     ]
+    [head] = alembic_heads()
+    run_alembic(environment, "upgrade", head)
     run_alembic(environment, "check")
 
 

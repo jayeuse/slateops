@@ -53,6 +53,8 @@ class IdentitySession(Base):
     provider_signout_next_attempt_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    # The provider session can issue no further token: signed out, gone, or refused by Auth as
+    # `session_expired` (its `auth.sessions` row can remain in that last case).
     provider_signout_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     refresh_token_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     csrf_token_digest: Mapped[str] = mapped_column(String(64), nullable=False)

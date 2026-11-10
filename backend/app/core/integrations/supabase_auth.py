@@ -40,6 +40,11 @@ class SupabaseAuthUnavailable(Exception):
 class InvalidProviderCredentials(Exception):
     """The provider explicitly denied a credential exchange."""
 
+    def __init__(self, *args: object, error_code: str | None = None) -> None:
+        super().__init__(*args)
+        # Auth's exact error code (for example `session_expired`), never its message text.
+        self.error_code = error_code
+
 
 class ProviderUserNotFound(InvalidProviderCredentials):
     """The admin endpoint authoritatively reported an absent provider user."""
@@ -139,7 +144,8 @@ class SupabaseAuthClient:
     def _exchange(self, payload: dict[str, str], grant_type: str) -> ProviderTokens:
         response = self._request("POST", "token", json=payload, params={"grant_type": grant_type})
         if response.status_code in {400, 401, 403, 422}:
-            raise InvalidProviderCredentials("Invalid credentials")
+            code = _error_code(response)
+            raise InvalidProviderCredentials("Invalid credentials", error_code=code)
         return _provider_tokens(_json_response(response))
 
     def password_grant(self, email: str, password: str) -> ProviderTokens:
@@ -414,6 +420,18 @@ def _transport_kind(error: httpx.RequestError) -> str:
     if isinstance(error, httpx.TimeoutException):
         return "timeout"
     return "connect" if isinstance(error, httpx.ConnectError) else "transport"
+
+
+def _error_code(response: httpx.Response) -> str | None:
+    """Auth's `error_code` body field, else its `x-sb-error-code` header; never message text."""
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    code = body.get("error_code") if isinstance(body, dict) else None
+    if code is None:
+        code = response.headers.get("x-sb-error-code")
+    return code if isinstance(code, str) and 0 < len(code) <= 64 else None
 
 
 def _json_response(response: httpx.Response) -> dict[str, Any]:

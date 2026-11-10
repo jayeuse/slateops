@@ -6,7 +6,7 @@ from sqlalchemy.exc import OperationalError
 from uuid6 import uuid7
 
 from app.core.observability import LOGGER_NAME
-from app.systems.manage.audit import listeners, security_events, service
+from app.systems.manage.audit import listeners, security_events
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.platform.events.models import InvalidationEvent
 
@@ -51,8 +51,11 @@ def test_persistence_failure_is_logged_without_payload(monkeypatch, caplog) -> N
         operation_id=uuid7(),
         metadata={"value": "private business data"},
     )
-    with caplog.at_level(logging.WARNING), pytest.raises(service.SecurityEventPersistenceError):
-        service.append_committed_security_event(payload)
+    with (
+        caplog.at_level(logging.WARNING),
+        pytest.raises(security_events.SecurityEventPersistenceError),
+    ):
+        security_events.append_committed_security_event(payload)
     assert "security_event_ingestion_failed" in caplog.text
     assert SQL_CANARY not in caplog.text
     assert PASSWORD_CANARY not in caplog.text

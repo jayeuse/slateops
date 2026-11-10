@@ -242,7 +242,8 @@ The operation removes selected Slate Operations application records, associated
 Supabase Auth accounts, and private Storage objects while preserving the
 configured administrator and that account's installation operator row. It
 removes every organization and creates no new organization. Run
-`operations/create_organization.py` after the reset. It reports partial cleanup failures for operator
+`operations/create_organization.py` after the reset; with `--email`, `--username` is optional and
+defaults to the email's local part. It reports partial cleanup failures for operator
 recovery. It is not a database-volume reset, backup, rollback, or customer
 recovery mechanism. See [RESTORE.md](infra/supabase/RESTORE.md) for the
 support-operated restore procedure and its current acceptance gaps.

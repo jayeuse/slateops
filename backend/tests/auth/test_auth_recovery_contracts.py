@@ -34,7 +34,7 @@ def committed_security_events(monkeypatch) -> list[tuple[str, str]]:
 
     events: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        auth_router.provider_actions.audit_service,
+        auth_router.provider_actions.security_events,
         "append_committed_security_event",
         lambda payload: events.append((payload.event_type, payload.outcome.value)),
     )

@@ -6,7 +6,7 @@ from uuid6 import uuid7
 
 import app.systems.manage.audit.models as audit_models
 import app.systems.manage.audit.schemas as audit_schemas
-import app.systems.manage.audit.service as audit_service
+import app.systems.manage.audit.security_events as security_events
 from app.systems.access.users.models import Membership, PlatformOperator, User, UserRole
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.workspace.models import WorkspaceProfile
@@ -32,13 +32,13 @@ def _security_event_payload() -> type[Any]:
 
 
 def _append_security_event() -> Any:
-    writer = getattr(audit_service, "append_security_event", None)
+    writer = getattr(security_events, "append_security_event", None)
     assert callable(writer), "append_security_event is not implemented"
     return writer
 
 
 def _list_security_events() -> Any:
-    lister = getattr(audit_service, "list_security_events", None)
+    lister = getattr(security_events, "list_security_events", None)
     assert callable(lister), "list_security_events is not implemented"
     return lister
 
