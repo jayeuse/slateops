@@ -1,6 +1,7 @@
 """Small structural mutation helpers used by the publication transaction."""
 
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -10,11 +11,14 @@ from sqlalchemy.orm import Session
 
 from app.systems.access.policy.models import Group, GroupAccess
 from app.systems.boards.department_boards import sync_department_board
+from app.systems.boards.models import Board, BoardScope, BoardStatus
 from app.systems.openview.charts.models import Chart
 from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.derived.actions import BoardState, DepartmentOutcome, board_action
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.rules import _field_key
+from app.systems.sandbox.publications.schemas import PublicationChange
 
 
 def sync_module_chart_departments(
@@ -184,12 +188,87 @@ def close_removed_structure(
                             field.position = original[1]
 
 
-def sync_department_boards(db: Session, actor_id: UUID) -> None:
-    """Give every department its Board after a publish, and follow closes and reopens."""
+def sync_department_boards(
+    db: Session, actor_id: UUID, bindings: Any, departments: Mapping[str, Department]
+) -> list[PublicationChange]:
+    """Give every department its Board after a publish, and follow closes and reopens.
 
+    Returns the Board changes it made, read from each Board before and after (SD25).
+    """
+
+    keys = {binding.department_id: key for key, binding in bindings["department"].items()}
+    keys.update({row.id: key for key, row in departments.items()})
+    before = _board_states(db)
+    changes: list[PublicationChange] = []
     for department in db.scalars(select(Department).order_by(Department.id)):
-        sync_department_board(db, department, actor_id=actor_id)
+        board = sync_department_board(db, department, actor_id=actor_id)
+        assert board is not None
+        action = board_action(
+            before.get(department.id), board.name, board.status == BoardStatus.ARCHIVED
+        )
+        if action is not None:
+            key = keys.get(department.id, str(department.id))
+            changes.append(
+                PublicationChange.model_validate(
+                    {
+                        "kind": "board",
+                        "action": action,
+                        "sandboxId": f"{key}#board",
+                        "label": board.name,
+                    }
+                )
+            )
     db.flush()
+    return changes
+
+
+def department_outcomes(
+    db: Session, document: Any, bindings: Any, created: set[str]
+) -> list[DepartmentOutcome]:
+    """Each department as the publish leaves it, for the Board loop's preview (SD7).
+
+    Mirrors ``apply_departments``, ``close_removed_structure`` and the Board loop: a draft
+    department takes its draft name and state, a bound department missing from the draft
+    closes with its name, and an unbound department stays as it is, keyed by its live id.
+    """
+
+    boards = _board_states(db)
+    draft = {item.id: item for item in document.design.departments}
+    keys = {binding.department_id: key for key, binding in bindings["department"].items()}
+    outcomes = [
+        DepartmentOutcome(item.id, item.name, item.closed, True, None)
+        for item in document.design.departments
+        if item.id in created
+    ]
+    for identity, name, deleted in db.execute(
+        select(Department.id, Department.department_name, Department.is_deleted).order_by(
+            Department.id
+        )
+    ).tuples():
+        key = keys.get(identity)
+        desired = draft.get(key) if key is not None and key not in created else None
+        if key is not None and desired is not None:
+            outcome = DepartmentOutcome(key, desired.name, desired.closed, False, None)
+        elif key is not None and key not in draft:
+            outcome = DepartmentOutcome(key, name, True, False, None)
+        else:
+            outcome = DepartmentOutcome(str(identity), name, deleted, False, None)
+        outcomes.append(replace(outcome, board=boards.get(identity)))
+    return outcomes
+
+
+def _board_states(db: Session) -> dict[UUID, BoardState]:
+    return {
+        department_id: BoardState(name, status)
+        for department_id, name, status in db.execute(
+            select(Board.department_id, Board.name, Board.status).where(
+                Board.scope == BoardScope.DEPARTMENT.value,
+                Board.department_id.is_not(None),
+                Board.is_deleted.is_(False),
+            )
+        ).tuples()
+        if department_id is not None
+    }
 
 
 def _close(row: Department | Module | Field, actor_id: UUID) -> None:

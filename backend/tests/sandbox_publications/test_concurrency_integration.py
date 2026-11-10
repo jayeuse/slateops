@@ -25,6 +25,7 @@ from app.core.database.session import AuditSession
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.checks import _lock_authority
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
+from app.systems.access.users.membership import transaction_organization
 from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
@@ -577,6 +578,10 @@ def _race(
 
 
 def _set_audit_context(db: AuditSession, actor_id: UUID) -> None:
+    # As the identity dependency does: the session itself names its organization, so a
+    # publish that creates OpenComms items can stage their events (setup spec R17).
+    if (org_id := transaction_organization(db)) is not None:
+        scope_session(db, org_id)
     db.info[AUDIT_CONTEXT_KEY] = AuditContext(
         performed_by=actor_id,
         request_id=uuid7(),

@@ -12,13 +12,18 @@ from sqlalchemy import Engine, and_, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.systems.access.policy.models import Group, GroupAccess, GroupMember
 from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.boards.models import Board
+from app.systems.comms.conversations.models import CommsCategory, CommsConversation, CommsMember
+from app.systems.comms.messages.models import CommsConversationCounter
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.derived.models import SandboxDerivedObject
 from app.systems.sandbox.designs.models import SandboxDocument as SandboxDocumentRow
 from app.systems.sandbox.designs.models import SandboxVersion
 from app.systems.sandbox.designs.schemas import SandboxDocument, TriggerDocument
@@ -82,6 +87,47 @@ def document_baseline(db: Session) -> DocumentBaseline:
         performed_by=row.performed_by,
         updated_at=row.updated_at,
     )
+
+
+def _delete_derived_items(connection: Any, actor_id: UUID) -> None:
+    """Remove the groups, dashboards, Comms items, and links derived for the actor's departments."""
+
+    departments = list(
+        connection.scalars(select(Department.id).where(Department.performed_by == actor_id))
+    )
+    if not departments:
+        return
+    group_ids = [
+        identity
+        for identity in connection.scalars(
+            select(SandboxDerivedObject.group_id).where(
+                SandboxDerivedObject.department_id.in_(departments)
+            )
+        )
+        if identity is not None
+    ]
+    conversations = select(CommsConversation.id).where(
+        CommsConversation.department_id.in_(departments)
+    )
+    dashboards = select(Dashboard.id).where(Dashboard.department_id.in_(departments))
+    connection.execute(
+        delete(SandboxDerivedObject).where(SandboxDerivedObject.department_id.in_(departments))
+    )
+    connection.execute(delete(GroupAccess).where(GroupAccess.group_id.in_(group_ids)))
+    connection.execute(delete(GroupMember).where(GroupMember.group_id.in_(group_ids)))
+    connection.execute(delete(Group).where(Group.id.in_(group_ids)))
+    connection.execute(
+        delete(CommsConversationCounter).where(
+            CommsConversationCounter.conversation_id.in_(conversations)
+        )
+    )
+    connection.execute(delete(CommsMember).where(CommsMember.conversation_id.in_(conversations)))
+    connection.execute(
+        delete(CommsConversation).where(CommsConversation.department_id.in_(departments))
+    )
+    connection.execute(delete(CommsCategory).where(CommsCategory.department_id.in_(departments)))
+    connection.execute(delete(DashboardWidget).where(DashboardWidget.dashboard_id.in_(dashboards)))
+    connection.execute(delete(Dashboard).where(Dashboard.department_id.in_(departments)))
 
 
 def cleanup_committed_trigger(
@@ -150,6 +196,8 @@ def cleanup_committed_trigger(
         else:
             connection.execute(delete(Field).where(Field.performed_by == actor_id))
             connection.execute(delete(Module).where(Module.performed_by == actor_id))
+        # A publish gives each new open department its derived set (setup spec R2).
+        _delete_derived_items(connection, actor_id)
         # A publish gives each new department its Board.
         connection.execute(
             delete(Board).where(

@@ -17,6 +17,7 @@ from app.common.dependencies import (
 )
 from app.core.database import get_db
 from app.systems.access.policy.checks import require_live_session
+from app.systems.comms.realtime.grants import lock_projection
 from app.systems.sandbox.designs.service import SandboxDesignError, read_document
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleInvalidCredentials,
@@ -125,6 +126,8 @@ def post_publication(
         db.rollback()
         raise _error("invalid_password", "Password verification failed", 403)
     # Password verification commits rate-limit state and releases the first locks.
+    # SD19 step 1: the projection guard comes first, as every group writer takes it.
+    lock_projection(db)
     reauthorize()
     claims = decode_preview_token(payload.preview_token)
     if claims is None:
@@ -198,7 +201,13 @@ def _run[Result](db: Session, operation: Callable[[], Result]) -> Result:
         raise _error(error.code, error.message, error.status_code) from error
     except PublicationError as error:
         db.rollback()
-        raise _error(error.code, error.message, error.status_code) from error
+        refusal = _error(error.code, error.message, error.status_code)
+        if error.blockers:
+            assert isinstance(refusal.detail, dict)
+            refusal.detail["blockers"] = [
+                blocker.model_dump(by_alias=True, mode="json") for blocker in error.blockers
+            ]
+        raise refusal from error
     except IntegrityError as error:
         db.rollback()
         raise _error(

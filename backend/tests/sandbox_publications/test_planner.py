@@ -5,6 +5,13 @@ from unittest.mock import Mock
 import pytest
 from uuid6 import uuid7
 
+from app.systems.sandbox.derived.actions import (
+    BoardState,
+    DepartmentOutcome,
+    board_action,
+    derived_changes,
+    publication_counts,
+)
 from app.systems.sandbox.designs.schemas import DesignField, TriggerDocument
 from app.systems.sandbox.fields.models import FieldType
 from app.systems.sandbox.fields.validation import field_config
@@ -298,3 +305,69 @@ def test_closed_structure_names_do_not_block_later_active_names() -> None:
     document.design.modules[1].name = "Service requests"
 
     assert not structure_name_blockers(document)
+
+
+def _outcome(name: str, *, closed: bool = False, created: bool = False, board=None):
+    return DepartmentOutcome("dep-a", name, closed, created, board)
+
+
+def test_sd_c1_c8_derived_changes_create_the_set_only_for_a_new_open_department() -> None:
+
+    created = [
+        (c.kind, c.sandbox_id, c.action, c.label)
+        for c in derived_changes([_outcome("Sales", created=True)])
+    ]
+    assert created == [
+        ("board", "dep-a#board", "create", "Sales"),
+        ("group", "dep-a#managers", "create", "Sales managers · manage"),
+        ("group", "dep-a#members", "create", "Sales members · write"),
+        ("group", "dep-a#viewers", "create", "Sales viewers · read"),
+        ("dashboard", "dep-a#dashboard", "create", "Sales dashboard"),
+        ("category", "dep-a#category", "create", "Sales"),
+        ("channel", "dep-a#channel", "create", "Sales"),
+    ]
+    closed = derived_changes([_outcome("Sales", created=True, closed=True)])
+    assert [(c.kind, c.action) for c in closed] == [("board", "create")]
+    existing = derived_changes([_outcome("Sales", board=BoardState("Sales", "active"))])
+    assert existing == []
+
+
+@pytest.mark.parametrize(
+    ("board", "closed", "expected"),
+    [
+        pytest.param(None, False, "create", id="no-board"),
+        pytest.param(("Sales", "active"), True, "close", id="department-closes"),
+        pytest.param(("Old", "archived"), False, "reopen", id="reopen-wins-over-rename"),
+        pytest.param(("Old", "active"), False, "update", id="rename"),
+        pytest.param(("Sales", "active"), False, None, id="unchanged"),
+    ],
+)
+def test_sd_c23_board_action_mirrors_the_board_sync(board, closed, expected) -> None:
+
+    state = BoardState(*board) if board is not None else None
+    assert board_action(state, "Sales", closed) == expected
+
+
+def test_sd_c1_counts_name_categories_and_every_derived_kind() -> None:
+
+    counts = publication_counts(derived_changes([_outcome("Sales", created=True)]))
+    assert counts.model_dump() == {
+        "departments": 0,
+        "modules": 0,
+        "fields": 0,
+        "relationships": 0,
+        "triggers": 0,
+        "groups": 3,
+        "dashboards": 1,
+        "boards": 1,
+        "categories": 1,
+        "channels": 1,
+    }
+
+
+def test_sd_c22_a_150_character_department_name_gives_labels_the_review_accepts() -> None:
+
+    name = "D" * 150
+    labels = {c.sandbox_id: c.label for c in derived_changes([_outcome(name, created=True)])}
+    assert labels["dep-a#managers"] == f"{name} managers · manage"
+    assert len(labels["dep-a#managers"]) == 168

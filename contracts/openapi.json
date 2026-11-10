@@ -15737,13 +15737,18 @@
               "module",
               "field",
               "relationship",
-              "trigger"
+              "trigger",
+              "group",
+              "dashboard",
+              "board",
+              "category",
+              "channel"
             ],
             "title": "Kind",
             "type": "string"
           },
           "label": {
-            "maxLength": 150,
+            "maxLength": 200,
             "minLength": 1,
             "title": "Label",
             "type": "string"
@@ -15767,6 +15772,26 @@
       "PublicationCounts": {
         "additionalProperties": false,
         "properties": {
+          "boards": {
+            "default": 0,
+            "title": "Boards",
+            "type": "integer"
+          },
+          "categories": {
+            "default": 0,
+            "title": "Categories",
+            "type": "integer"
+          },
+          "channels": {
+            "default": 0,
+            "title": "Channels",
+            "type": "integer"
+          },
+          "dashboards": {
+            "default": 0,
+            "title": "Dashboards",
+            "type": "integer"
+          },
           "departments": {
             "default": 0,
             "title": "Departments",
@@ -15775,6 +15800,11 @@
           "fields": {
             "default": 0,
             "title": "Fields",
+            "type": "integer"
+          },
+          "groups": {
+            "default": 0,
+            "title": "Groups",
             "type": "integer"
           },
           "modules": {

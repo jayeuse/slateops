@@ -9,6 +9,7 @@ from app.systems.access.users.membership import bound_organization
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.openview.charts.models import Chart
 from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.derived.models import SandboxDerivedObject
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.models import SandboxBinding
@@ -29,6 +30,7 @@ def lock_operational_rows(db: Session) -> None:
     for model in (
         WorkspaceProfile,
         SandboxBinding,
+        SandboxDerivedObject,  # SD19 step 3: directly after the bindings
         Department,
         Module,
         Chart,

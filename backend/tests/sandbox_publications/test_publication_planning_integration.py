@@ -332,6 +332,24 @@ def test_preview_preserves_order_and_duplicate_live_name_blockers(
             "Active department names must be unique",
             duplicate.id,
         ),
+        (
+            "derived_name_unavailable",
+            "External duplicate department and External duplicate department need the same "
+            'group name "External duplicate department managers"',
+            duplicate.id,
+        ),
+        (
+            "derived_name_unavailable",
+            "External duplicate department and External duplicate department need the same "
+            'group name "External duplicate department members"',
+            duplicate.id,
+        ),
+        (
+            "derived_name_unavailable",
+            "External duplicate department and External duplicate department need the same "
+            'group name "External duplicate department viewers"',
+            duplicate.id,
+        ),
         ("document_invalid", "Duplicate department ID", duplicate.id),
     ]
 

@@ -1,14 +1,21 @@
 """A Sandbox publish gives every department its Board and keeps it in step."""
 
+from datetime import UTC, datetime
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.systems.boards.models import Board, BoardScope
 from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.designs.service import read_document, replace_document
+from app.systems.sandbox.publications.planner import publication_plan
+from tests.rbac.support import add_department
 from tests.sandbox_publications.support import (
     binding,
+    bound_department,
     publish_revision,
+    publish_saved,
     publish_structure,
     publishable_document,
 )
@@ -60,3 +67,52 @@ def test_a_published_department_gets_its_board(integration_owner_db: Session) ->
     assert board.name == "Sales"
     assert board.status == "archived"
     assert len([item for item in _department_boards(db) if item == department_id]) == 1
+
+
+def test_sd_c23_the_review_lists_each_board_change_and_the_publish_does_exactly_those(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    publisher, document = publish_structure(db, publishable_document())
+    operations = bound_department(db, "sample-operations")
+    commercial = bound_department(db, "sample-commercial")
+    boards = _department_boards(db)
+    boards[operations.id].name = "Old operations"
+    boards[commercial.id].is_deleted = True
+    boards[commercial.id].deleted_at = datetime.now(UTC)
+    unbound = add_department(db, "Legacy")
+    db.flush()
+
+    changed = document.model_copy(deep=True)
+    changed.design.modules[0].name = "Requests renamed"
+    current = read_document(db)
+    saved = replace_document(
+        db, actor_id=publisher.id, expected_revision=current.revision, document=changed
+    )
+    review = publication_plan(db, saved.document)
+
+    assert [
+        (change.sandbox_id, change.action, change.label)
+        for change in review.changes
+        if change.kind == "board"
+    ] == sorted(
+        [
+            (f"{unbound.id}#board", "create", "Legacy"),
+            ("sample-commercial#board", "create", "Commercial"),
+            ("sample-operations#board", "update", "Operations"),
+        ]
+    )
+    assert review.counts.boards == 3
+    publish_saved(
+        db,
+        publisher.id,
+        saved,
+        review,
+        token_digest="b" * 64,
+        idempotency_key=f"boards-{publisher.id}",
+    )
+    boards = _department_boards(db)
+    assert {
+        department_id: boards[department_id].name
+        for department_id in (operations.id, commercial.id, unbound.id)
+    } == {operations.id: "Operations", commercial.id: "Commercial", unbound.id: "Legacy"}

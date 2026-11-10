@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.systems.access.users.membership import bound_organization
 from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.sandbox.derived.actions import publication_counts
+from app.systems.sandbox.derived.planning import followed_digest_rows, plan_derived
 from app.systems.sandbox.designs.models import SandboxDocument as SandboxDocumentRow
 from app.systems.sandbox.designs.schemas import DesignField, SandboxDocument
 from app.systems.sandbox.designs.validation import validate_document
@@ -301,9 +303,14 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
         timezone = ""
     else:
         timezone = profile.timezone
+    derived = plan_derived(db, document, by_kind, changes)  # setup spec SD7, R12, SD25
+    changes.extend(derived.changes)
+    blockers.extend(derived.blockers)
+    followed = followed_digest_rows(db, derived.followed)
     return replace(
         _finish(changes, blockers),
-        live_state_digest=live_state_digest(db, bindings, timezone, snapshot=snapshot),
+        live_state_digest=live_state_digest(db, bindings, timezone, snapshot=snapshot,
+                                             derived=followed),
         workspace_timezone=timezone,
     )
 
@@ -323,9 +330,7 @@ def _finish(
     ordered_blockers = tuple(
         sorted(blockers, key=lambda item: (item.code, item.target_id or "", item.message))
     )
-    counts = PublicationCounts(
-        **{kind + "s": sum(change.kind == kind for change in ordered_changes) for kind in _kinds()}
-    )
+    counts = publication_counts(ordered_changes)
     impact_payload = {
         "changes": [item.model_dump(by_alias=True) for item in ordered_changes],
         "blockers": [item.model_dump(by_alias=True) for item in ordered_blockers],
