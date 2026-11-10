@@ -1,171 +1,161 @@
 "use client";
 
-import { useId } from "react";
-import { Input } from "@/components/ui/input";
-import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
-import type { SandboxDocumentField } from "../domain/document";
-import type { TestEventDraft } from "../domain/test-setup";
-import type { SandboxTestEvent } from "../state/api";
-import { SetupRow, setupErrorId, setupErrorProps } from "./test-setup-rows";
-import { weekdayOptions } from "./trigger-flow";
+import { useId, type ReactNode } from "react";
+import { CalendarClock, Flag, PenLine, Play, Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
+import { cn } from "@/lib/utils";
+import type { ReadingBlock, ReadingTrigger } from "../domain/test-reading";
 
-/**
- * When and its settings, as label-left rows of the Setup pane. The changed
- * field and the previous value take their ids from the workspace, which
- * focuses them when Run test finds them missing.
- */
-export function TestEventRows({
-  draft,
-  fields,
-  changedFieldId,
-  previousValueId,
-  errors,
-  onChange,
+// One event block of the Test reading (docs/specs/sandbox-ux-redesign.md
+// TEST-1, TEST-9, E1, E7, E10): the event, each trigger that listens with
+// its conditions in words and the fields it sets, a quiet "Try it" for the
+// event, and "Try this trigger" on each trigger that is on. The result of a
+// run shows under its block.
+
+const eventIcons = {
+  "record-created": Plus,
+  "field-changed": PenLine,
+  "threshold-crossed": Flag,
+  schedule: CalendarClock,
+} as const;
+
+function TriggerRow({
+  item,
+  disabledReason,
+  busy,
+  running,
+  onTry,
 }: {
-  draft: TestEventDraft;
-  fields: readonly SandboxDocumentField[];
-  changedFieldId: string;
-  previousValueId: string;
-  /** What Run test found missing, by control id. */
-  errors: ReadonlyMap<string, string>;
-  onChange: (next: TestEventDraft) => void;
+  item: ReadingTrigger;
+  disabledReason: string | null;
+  busy: boolean;
+  running: boolean;
+  onTry: () => void;
 }) {
-  const eventId = useId();
-  const frequencyId = useId();
-  const timeId = useId();
-  const weekdayId = useId();
-  const eventFields =
-    draft.kind === "threshold-crossed"
-      ? fields.filter(
-          (field) =>
-            field.config.kind === "number" || field.config.kind === "integer",
-        )
-      : fields;
-  const changedFieldError = errors.get(changedFieldId);
-  const previousValueError = errors.get(previousValueId);
   return (
-    <>
-      <SetupRow id={eventId} label="When">
-        <NativeSelect
-          id={eventId}
-          value={draft.kind}
-          onChange={(change) =>
-            onChange({
-              ...draft,
-              kind: change.target.value as SandboxTestEvent["kind"],
-              fieldId: "",
-              previousValue: "",
-            })
-          }
-        >
-          <NativeSelectOption value="record-created">
-            An item is added
-          </NativeSelectOption>
-          <NativeSelectOption value="field-changed">
-            A field changes
-          </NativeSelectOption>
-          <NativeSelectOption value="threshold-crossed">
-            A number crosses a threshold
-          </NativeSelectOption>
-          <NativeSelectOption value="schedule">
-            A schedule runs
-          </NativeSelectOption>
-        </NativeSelect>
-      </SetupRow>
-      {draft.kind === "field-changed" || draft.kind === "threshold-crossed" ? (
-        <SetupRow
-          id={changedFieldId}
-          label="Changed field"
-          error={changedFieldError}
-        >
-          <NativeSelect
-            id={changedFieldId}
-            {...setupErrorProps(
-              setupErrorId(changedFieldId),
-              changedFieldError,
-            )}
-            value={draft.fieldId || eventFields[0]?.id || ""}
-            onChange={(change) =>
-              onChange({ ...draft, fieldId: change.target.value })
-            }
+    <li className="grid min-w-0 gap-x-3 gap-y-1 py-1.5 text-sm sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
+      <p
+        className={cn(
+          "min-w-0 [overflow-wrap:anywhere]",
+          !item.enabled && "text-muted-foreground",
+        )}
+      >
+        <span className="font-medium">{item.name}</span>
+        <span className="text-muted-foreground">
+          {" · "}
+          {item.enabled ? item.conditions : "Off"}
+        </span>
+        {item.attention ? (
+          <span className="text-warn-text block text-xs">{item.attention}</span>
+        ) : null}
+      </p>
+      <p className="text-muted-foreground text-xs sm:text-right">
+        {item.sets.length ? (
+          <>
+            sets{" "}
+            <span className="text-foreground font-medium">
+              {item.sets.join(", ")}
+            </span>
+          </>
+        ) : null}
+      </p>
+      {item.enabled ? (
+        <DisabledReason reason={disabledReason}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-primary min-h-11 justify-self-start sm:min-h-8"
+            disabled={busy && !running}
+            pending={running}
+            pendingLabel="Running…"
+            onClick={onTry}
           >
-            {eventFields.map((field) => (
-              <NativeSelectOption key={field.id} value={field.id}>
-                {field.name}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </SetupRow>
-      ) : null}
-      {draft.kind === "threshold-crossed" ? (
-        <SetupRow
-          id={previousValueId}
-          label="Previous value"
-          error={previousValueError}
+            Try this trigger
+          </Button>
+        </DisabledReason>
+      ) : (
+        <span aria-hidden className="hidden sm:block" />
+      )}
+    </li>
+  );
+}
+
+export function TestEventBlock({
+  block,
+  disabledReason,
+  busy,
+  runningKey,
+  onTry,
+  onTryTrigger,
+  children,
+}: {
+  block: ReadingBlock;
+  /** Why no run can start now; null when one can. */
+  disabledReason: string | null;
+  /** Another run or a clear is in flight. */
+  busy: boolean;
+  /** "event" or a trigger id while that run is in flight. */
+  runningKey: string | null;
+  onTry: () => void;
+  onTryTrigger: (triggerId: string) => void;
+  /** The result card of the last run of this block. */
+  children?: ReactNode;
+}) {
+  const Icon = eventIcons[block.event.kind];
+  const headingId = useId();
+  return (
+    <section
+      aria-labelledby={headingId}
+      className="border-border grid min-w-0 gap-2 border-b py-4 last:border-b-0"
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="border-border text-muted-foreground grid size-7 shrink-0 place-items-center rounded-md border">
+          <Icon aria-hidden className="size-3.5" />
+        </span>
+        <h4
+          id={headingId}
+          className="min-w-0 flex-1 font-semibold [overflow-wrap:anywhere]"
         >
-          <Input
-            id={previousValueId}
-            type="number"
-            {...setupErrorProps(
-              setupErrorId(previousValueId),
-              previousValueError,
-            )}
-            value={draft.previousValue}
-            onChange={(change) =>
-              onChange({ ...draft, previousValue: change.target.value })
-            }
-          />
-        </SetupRow>
-      ) : null}
-      {draft.kind === "schedule" ? (
-        <>
-          <SetupRow id={frequencyId} label="Frequency">
-            <NativeSelect
-              id={frequencyId}
-              value={draft.frequency}
-              onChange={(change) =>
-                onChange({
-                  ...draft,
-                  frequency: change.target.value as "daily" | "weekly",
-                })
-              }
+          {block.title}
+        </h4>
+        {block.triggers.length ? (
+          <DisabledReason reason={disabledReason}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="min-h-11 sm:min-h-8"
+              aria-label={`Try it: ${block.title}`}
+              disabled={busy && runningKey !== "event"}
+              pending={runningKey === "event"}
+              pendingLabel="Running…"
+              onClick={onTry}
             >
-              <NativeSelectOption value="daily">Daily</NativeSelectOption>
-              <NativeSelectOption value="weekly">Weekly</NativeSelectOption>
-            </NativeSelect>
-          </SetupRow>
-          <SetupRow id={timeId} label="Time">
-            <Input
-              id={timeId}
-              type="time"
-              value={draft.time}
-              onChange={(change) =>
-                onChange({ ...draft, time: change.target.value })
-              }
-            />
-          </SetupRow>
-          {draft.frequency === "weekly" ? (
-            <SetupRow id={weekdayId} label="Day">
-              <NativeSelect
-                id={weekdayId}
-                value={draft.weekday}
-                onChange={(change) =>
-                  onChange({ ...draft, weekday: change.target.value })
-                }
-              >
-                {weekdayOptions.map((day) => (
-                  <NativeSelectOption key={day.value} value={day.value}>
-                    {day.label}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </SetupRow>
-          ) : null}
-        </>
-      ) : null}
-    </>
+              <Play aria-hidden />
+              Try it
+            </Button>
+          </DisabledReason>
+        ) : null}
+      </div>
+      <div className="min-w-0 sm:pl-10">
+        {block.triggers.length ? (
+          <ul className="grid">
+            {block.triggers.map((item) => (
+              <TriggerRow
+                key={item.id}
+                item={item}
+                disabledReason={disabledReason}
+                busy={busy}
+                running={runningKey === item.id}
+                onTry={() => onTryTrigger(item.id)}
+              />
+            ))}
+          </ul>
+        ) : (
+          <p className="text-muted-foreground text-sm">No trigger listens.</p>
+        )}
+      </div>
+      {children ? <div className="min-w-0 sm:pl-10">{children}</div> : null}
+    </section>
   );
 }

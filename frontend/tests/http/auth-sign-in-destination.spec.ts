@@ -95,7 +95,7 @@ async function installDestination(
       sandboxAccess
         ? {
             contentType: "application/json",
-            body: JSON.stringify({ items: [] }),
+            body: JSON.stringify({ items: [], total: 0 }),
           }
         : {
             status: 403,
@@ -440,7 +440,7 @@ for (const entry of ["/", "/login"] as const) {
     await page.route("**/api/sandbox/tests?**", async (route) => {
       destination.enter();
       await destination.released;
-      await route.fulfill({ json: { items: [] } });
+      await route.fulfill({ json: { items: [], total: 0 } });
     });
     try {
       await page.goto("/setup");

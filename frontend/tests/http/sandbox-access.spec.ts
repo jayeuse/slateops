@@ -82,3 +82,52 @@ test("an administrator whose Sandbox read fails on the server keeps Retry and se
     }),
   ).toHaveCount(0);
 });
+
+// The redesigned Test keeps the Sandbox for administrators only
+// (docs/specs/sandbox-ux-redesign.md, preserved S4).
+for (const account of [
+  { name: "a member with no group access", access: [] },
+  {
+    name: "a department manager",
+    access: [
+      {
+        department_id: "00000000-0000-4000-8000-0000000000d1",
+        module_id: null,
+        level: "manage" as const,
+      },
+    ],
+  },
+]) {
+  test(
+    `${account.name} who opens Test sees the notice, no Sandbox navigation, and sends no refused request`,
+    { tag: "@UX-C31" },
+    async ({ page }) => {
+      await signedInAs(page, {
+        id: "00000000-0000-4000-8000-000000000203",
+        role: "member",
+        access: account.access,
+      });
+      const sandboxRequests: string[] = [];
+      await page.route("**/api/sandbox/**", (route) => {
+        sandboxRequests.push(route.request().url());
+        return route.fulfill({ status: 403, json: { detail: "Forbidden" } });
+      });
+      await page.goto("/sandbox?section=test");
+
+      await expect(
+        page.getByText("Sandbox is not available to your account.", {
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(
+        page
+          .getByRole("navigation", { name: "Main navigation" })
+          .locator('a[href^="/sandbox"]'),
+      ).toHaveCount(0);
+      await expect(page.getByRole("region", { name: "Modules" })).toHaveCount(
+        0,
+      );
+      expect(sandboxRequests).toEqual([]);
+    },
+  );
+}

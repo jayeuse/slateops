@@ -222,7 +222,21 @@ export type SandboxTestRun = {
 };
 
 export type SandboxPublicationChange = {
-  kind: "department" | "module" | "field" | "relationship" | "trigger";
+  /**
+   * `group` to `channel` are a department's setup items (BE-SD2). Their
+   * `sandboxId` is `<department sandboxId>#<role>`, `#board` for the Board.
+   */
+  kind:
+    | "department"
+    | "group"
+    | "dashboard"
+    | "board"
+    | "category"
+    | "channel"
+    | "module"
+    | "field"
+    | "relationship"
+    | "trigger";
   action: "create" | "update" | "close" | "reopen";
   sandboxId: string;
   label: string;
@@ -242,6 +256,11 @@ export type SandboxPublicationPreview = {
   changes: SandboxPublicationChange[];
   counts: {
     departments: number;
+    groups: number;
+    dashboards: number;
+    boards: number;
+    categories: number;
+    channels: number;
     modules: number;
     fields: number;
     relationships: number;
@@ -341,10 +360,22 @@ const testRunSchema: z.ZodType<SandboxTestRun> = z.strictObject({
 
 const publicationChangeSchema: z.ZodType<SandboxPublicationChange> =
   z.strictObject({
-    kind: z.enum(["department", "module", "field", "relationship", "trigger"]),
+    kind: z.enum([
+      "department",
+      "group",
+      "dashboard",
+      "board",
+      "category",
+      "channel",
+      "module",
+      "field",
+      "relationship",
+      "trigger",
+    ]),
     action: z.enum(["create", "update", "close", "reopen"]),
     sandboxId: z.string().min(1),
-    label: z.string().min(1).max(150),
+    // "<150-character department name> managers · manage" (BE-SD2).
+    label: z.string().min(1).max(200),
   });
 const publicationBlockerSchema: z.ZodType<SandboxPublicationBlocker> =
   z.strictObject({
@@ -367,6 +398,11 @@ const publicationPreviewSchema: z.ZodType<SandboxPublicationPreview> =
     changes: z.array(publicationChangeSchema),
     counts: z.strictObject({
       departments: z.number().int().nonnegative(),
+      groups: z.number().int().nonnegative(),
+      dashboards: z.number().int().nonnegative(),
+      boards: z.number().int().nonnegative(),
+      categories: z.number().int().nonnegative(),
+      channels: z.number().int().nonnegative(),
       modules: z.number().int().nonnegative(),
       fields: z.number().int().nonnegative(),
       relationships: z.number().int().nonnegative(),
@@ -518,6 +554,30 @@ export function publishSandbox(
   });
 }
 
+/**
+ * The blockers of a publish refused as `publication_blocked` (409), such as a
+ * group name taken after the review (SD-C7); null for any other refusal or a
+ * body that does not match the contract.
+ */
+export function publicationRefusalBlockers(
+  error: unknown,
+): SandboxPublicationBlocker[] | null {
+  if (
+    !(error instanceof ApiError) ||
+    error.status !== 409 ||
+    error.code !== "publication_blocked" ||
+    typeof error.details !== "object" ||
+    error.details === null ||
+    !("blockers" in error.details)
+  )
+    return null;
+  const parsed = z
+    .array(publicationBlockerSchema)
+    .min(1)
+    .safeParse(error.details.blockers);
+  return parsed.success ? parsed.data : null;
+}
+
 export function createSandboxTest(
   request: SandboxTestRequest & RequestOptions,
 ): Promise<SandboxTestRun> {
@@ -536,18 +596,28 @@ export function createSandboxTest(
   });
 }
 
-export function listSandboxTests(
+/**
+ * Stored Test runs, newest first, and `total`: the runs that are not
+ * cleared, the same count the 50-run limit uses ("Results N of 50").
+ */
+export async function listSandboxTests(
   options: RequestOptions & { limit?: number; offset?: number } = {},
-): Promise<{ items: SandboxTestRun[] }> {
+): Promise<{ items: SandboxTestRun[]; total: number }> {
   const query = new URLSearchParams({
     limit: String(options.limit ?? 20),
     offset: String(options.offset ?? 0),
   });
-  return apiFetch(
+  const page = await apiFetch(
     `/sandbox/tests?${query}`,
-    z.object({ items: z.array(testRunSchema) }).passthrough(),
+    z
+      .object({
+        items: z.array(testRunSchema),
+        total: z.number().int().nonnegative(),
+      })
+      .passthrough(),
     { cache: "no-store", signal: options.signal },
   );
+  return { items: page.items, total: page.total };
 }
 
 export function listSandboxTriggerRuns(

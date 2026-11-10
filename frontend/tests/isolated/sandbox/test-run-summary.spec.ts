@@ -5,12 +5,19 @@ import {
   describeTrigger,
   summarizeTestRun,
   testTraceSteps,
+  whatHappened,
 } from "../../../src/components/systems/sandbox/domain/test-run-summary";
 import type {
   SandboxTrigger,
   SandboxDocumentDesign,
 } from "../../../src/components/systems/sandbox/domain/document";
 import type { SandboxTestRun } from "../../../src/components/systems/sandbox/state/api";
+import {
+  condition as sectionCondition,
+  literal,
+  ordersDesign,
+  trigger as sectionTrigger,
+} from "./test-section-design";
 
 const design = {
   departments: [],
@@ -299,4 +306,174 @@ test("the canvas steps repeat the result's caveats and keep both marks", () => {
     "This test needs attention: 1 issue. Go back to the result to fix it.",
   ]);
   expect(steps[2]?.marks).toEqual({ total: "trigger changed" });
+});
+
+// "What happened" in the redesigned result
+// (docs/specs/sandbox-ux-redesign.md TEST-5, E2, E10).
+
+function ordersRun(
+  overrides: Partial<SandboxTestRun> & {
+    traces?: SandboxTestRun["result"]["triggerTraces"];
+    resultValues?: SandboxTestRun["result"]["values"];
+  } = {},
+): SandboxTestRun {
+  const input = { amount: 150, status: "open", paid: false };
+  return {
+    id: "00000000-0000-4000-8000-000000000070",
+    createdAt: "2026-11-10T10:00:00Z",
+    documentRevision: 1,
+    input: { moduleId: "orders", values: input },
+    event: { kind: "record-created" },
+    triggerIds: overrides.triggerIds ?? null,
+    result: {
+      values: overrides.resultValues ?? { ...input, status: "review" },
+      routes: [],
+      triggerTraces: overrides.traces ?? [],
+      issues: [],
+    },
+  };
+}
+
+const ordersTriggers = [
+  sectionTrigger(
+    "flag",
+    "Flag large orders",
+    { kind: "record-created", moduleId: "orders" },
+    {
+      conditions: [sectionCondition("c1", "amount", ">=", literal(100))],
+      sets: [["status", "review"]],
+    },
+  ),
+  sectionTrigger(
+    "assign",
+    "Assign paid orders",
+    { kind: "record-created", moduleId: "orders" },
+    { conditions: [sectionCondition("c2", "paid", "=", literal(true))] },
+  ),
+  sectionTrigger(
+    "hold",
+    "Hold orders",
+    { kind: "record-created", moduleId: "orders" },
+    { enabled: false },
+  ),
+  sectionTrigger("invoice", "Invoice added", {
+    kind: "record-created",
+    moduleId: "invoices",
+  }),
+];
+
+test(
+  "what happened names each trigger that ran with its changes, and why each other did not",
+  { tag: "@UX-C26" },
+  () => {
+    const happened = whatHappened({
+      run: ordersRun({
+        traces: [
+          { triggerId: "flag", label: "Flag large orders", outcome: "Applied" },
+          {
+            triggerId: "assign",
+            label: "Assign paid orders",
+            outcome: "Conditions not met",
+          },
+          {
+            triggerId: "hold",
+            label: "Hold orders",
+            outcome: "Skipped — disabled",
+          },
+          // Another module's trigger never reads as part of this result.
+          {
+            triggerId: "invoice",
+            label: "Invoice added",
+            outcome: "Not triggered",
+          },
+        ],
+      }),
+      design: ordersDesign(),
+      triggers: ordersTriggers,
+    });
+    expect(happened.lines).toEqual([
+      {
+        kind: "ran",
+        triggerId: "flag",
+        name: "Flag large orders",
+        changes: [
+          {
+            fieldId: "status",
+            name: "Status",
+            before: "Open",
+            after: "Review",
+          },
+        ],
+      },
+      {
+        kind: "not-run",
+        triggerId: "assign",
+        name: "Assign paid orders",
+        status: "Conditions not met",
+        reason: "Paid is unchecked; it needs Checked.",
+      },
+      {
+        kind: "not-run",
+        triggerId: "hold",
+        name: "Hold orders",
+        status: "Off",
+        reason: "It is off.",
+      },
+    ]);
+    expect(happened.otherChanges).toEqual([]);
+    expect(happened.leftOut).toBeNull();
+  },
+);
+
+test(
+  "a narrowed run says which triggers did not run in this test",
+  { tag: "@UX-C33" },
+  () => {
+    const run = ordersRun({ triggerIds: ["flag"] });
+    // Run again with Assign unchecked: only the unchecked listener is named.
+    expect(
+      whatHappened({
+        run,
+        design: ordersDesign(),
+        triggers: ordersTriggers,
+        listeningIds: ["flag", "assign"],
+      }).leftOut,
+    ).toBe("Assign paid orders did not run in this test.");
+    // Try this trigger: the other triggers of the module, in one line.
+    expect(
+      whatHappened({
+        run,
+        design: ordersDesign(),
+        triggers: ordersTriggers,
+        onlyTrigger: true,
+      }).leftOut,
+    ).toBe("Other triggers on Orders did not run in this test.");
+  },
+);
+
+test("a trigger that runs again later in a chain reads as one line", () => {
+  const happened = whatHappened({
+    run: ordersRun({
+      traces: [
+        { triggerId: "flag", label: "Flag large orders", outcome: "Applied" },
+        {
+          triggerId: "flag",
+          label: "Flag large orders",
+          outcome: "No changes",
+        },
+      ],
+    }),
+    design: ordersDesign(),
+    triggers: ordersTriggers,
+  });
+  expect(happened.lines).toEqual([
+    {
+      kind: "ran",
+      triggerId: "flag",
+      name: "Flag large orders",
+      changes: [
+        { fieldId: "status", name: "Status", before: "Open", after: "Review" },
+      ],
+    },
+  ]);
 });

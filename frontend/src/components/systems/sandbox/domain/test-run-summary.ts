@@ -1,10 +1,15 @@
 import type { SandboxTestEvent, SandboxTestRun } from "../state/api";
 import type {
+  SandboxComparisonOperator,
+  SandboxDocumentField,
+  SandboxDocumentModule,
   SandboxTrigger,
   SandboxTriggerEvent,
   SandboxDocumentDesign,
   SandboxFieldValue,
 } from "./document";
+import { compareTestValues } from "./example-values";
+import { valueWords } from "./test-reading";
 
 /**
  * Why a stored Test result may no longer describe the draft: the draft has
@@ -226,6 +231,242 @@ export function eventDescription(
   return event.frequency === "daily"
     ? `Daily schedule at ${event.time}`
     : `Weekly schedule: ${days[(event.weekday ?? 0) - 1] ?? "day not specified"}, ${event.time}`;
+}
+
+/* "What happened" in a Test result (docs/specs/sandbox-ux-redesign.md
+   TEST-5, E2, E10): each trigger of the tested module that ran, with its
+   field changes from old to new; each that did not, with the reason in
+   words; each that needs attention; and the triggers left out of the run. */
+
+const neededWords: Record<SandboxComparisonOperator, string> = {
+  "=": "",
+  "!=": "a value other than ",
+  ">": "more than ",
+  ">=": "at least ",
+  "<": "less than ",
+  "<=": "at most ",
+};
+
+/** A value in a field's words; a choice by label, a box as checked. */
+export function fieldValueText(
+  field: SandboxDocumentField | undefined,
+  value: SandboxFieldValue | undefined,
+  administrator?: { id: string; name: string } | null,
+): string {
+  if (value === undefined || value === null || value === "") return "No value";
+  if (field?.config.kind === "checkbox") return value ? "Checked" : "Unchecked";
+  if (field?.config.kind === "user" && value === administrator?.id)
+    return administrator.name;
+  return valueWords(field, value);
+}
+
+/**
+ * Why a trigger's conditions were not met by the values a run used: the
+ * first condition that fails, in words ("Paid is unchecked; it needs
+ * Checked."). Null when the values meet every condition, so the run's own
+ * outcome stands without a guessed reason.
+ */
+export function unmetConditionReason(
+  recordTrigger: SandboxTrigger,
+  sandboxModule: SandboxDocumentModule | undefined,
+  values: Readonly<Record<string, SandboxFieldValue>>,
+): string | null {
+  const { conditions, operator } = recordTrigger.conditionGroup;
+  const reasons: string[] = [];
+  for (const condition of conditions) {
+    const field = sandboxModule?.fields.find(
+      (item) => item.id === condition.field.fieldId,
+    );
+    const actual = values[condition.field.fieldId];
+    const expected =
+      condition.value.kind === "literal"
+        ? condition.value.value
+        : values[condition.value.fieldId];
+    if (
+      compareTestValues(
+        actual,
+        condition.operator,
+        expected,
+        field?.config.kind,
+      )
+    ) {
+      if (operator === "any") return null;
+      continue;
+    }
+    const source = condition.value;
+    const needed =
+      source.kind === "field-reference"
+        ? `the value of ${sandboxModule?.fields.find((item) => item.id === source.fieldId)?.name ?? "another field"}`
+        : fieldValueText(field, expected);
+    reasons.push(
+      `${field?.name ?? "A field"} is ${fieldValueText(field, actual).toLocaleLowerCase()}; it needs ${neededWords[condition.operator]}${needed}.`,
+    );
+    if (operator === "all") return reasons[0];
+  }
+  return reasons.length ? reasons.join(" ") : null;
+}
+
+export type HappenedChange = {
+  fieldId: string;
+  name: string;
+  before: string;
+  after: string;
+};
+
+export type HappenedLine =
+  | {
+      kind: "ran";
+      triggerId: string;
+      name: string;
+      changes: HappenedChange[];
+    }
+  | {
+      kind: "not-run";
+      triggerId: string;
+      name: string;
+      status: "Not triggered" | "Conditions not met" | "Off";
+      reason: string;
+    }
+  | { kind: "attention"; triggerId: string; name: string; reasons: string[] };
+
+export type WhatHappened = {
+  lines: HappenedLine[];
+  /** Changed fields that no listed trigger sets. */
+  otherChanges: HappenedChange[];
+  /** "Other triggers on Orders did not run in this test.", or null. */
+  leftOut: string | null;
+  linked: Array<{ label: string; detail?: string }>;
+};
+
+/**
+ * The run's outcome per trigger of the tested module. Traces of triggers on
+ * other modules ("Not triggered" by construction) are left out. `notes` are
+ * the browser's reasons for values it kept (TEST-9, threshold limits);
+ * `onlyTrigger` names the trigger of a "Try this trigger" run.
+ */
+export function whatHappened({
+  run,
+  design,
+  triggers,
+  notes = [],
+  onlyTrigger = false,
+  listeningIds = null,
+  administrator = null,
+}: {
+  run: SandboxTestRun;
+  design: SandboxDocumentDesign;
+  triggers: readonly SandboxTrigger[];
+  notes?: readonly string[];
+  onlyTrigger?: boolean;
+  /** The triggers of the event's block; the Triggers row chose among them. */
+  listeningIds?: readonly string[] | null;
+  administrator?: { id: string; name: string } | null;
+}): WhatHappened {
+  const moduleId = run.input.moduleId;
+  const sandboxModule = design.modules.find((item) => item.id === moduleId);
+  const fieldOf = (id: string) =>
+    sandboxModule?.fields.find((item) => item.id === id);
+  const changed = comparisonRows(run)
+    .filter((row) => row.changed)
+    .map((row) => ({
+      fieldId: row.id,
+      name: fieldOf(row.id)?.name ?? "Unavailable field",
+      before: fieldValueText(fieldOf(row.id), row.before, administrator),
+      after: fieldValueText(fieldOf(row.id), row.after, administrator),
+    }));
+  const claimed = new Set<string>();
+  const own = new Map(
+    triggers
+      .filter((item) => item.trigger.moduleId === moduleId)
+      .map((item) => [item.id, item]),
+  );
+  const issuesFor = (triggerId: string) =>
+    run.result.issues
+      .filter((issue) => issue.targetId === triggerId)
+      .map((issue) => issue.message);
+  const seen = new Set<string>();
+  const lines: HappenedLine[] = [];
+  for (const trace of run.result.triggerTraces) {
+    const recordTrigger = own.get(trace.triggerId);
+    // A chained trigger can run more than once ("Applied", then "No
+    // changes"); one line says it ran.
+    const ran = trace.outcome === "Applied" || trace.outcome === "No changes";
+    const once = `${trace.triggerId}:${ran ? "ran" : trace.outcome}`;
+    if (!recordTrigger || seen.has(once)) continue;
+    seen.add(once);
+    const name = recordTrigger.name;
+    if (ran) {
+      const sets = new Set(
+        recordTrigger.actions.flatMap((action) =>
+          action.kind === "set-field" ? [action.target.fieldId] : [],
+        ),
+      );
+      const changes = changed.filter(
+        (change) => sets.has(change.fieldId) && !claimed.has(change.fieldId),
+      );
+      for (const change of changes) claimed.add(change.fieldId);
+      lines.push({ kind: "ran", triggerId: trace.triggerId, name, changes });
+      continue;
+    }
+    if (trace.outcome === "Needs attention") {
+      lines.push({
+        kind: "attention",
+        triggerId: trace.triggerId,
+        name,
+        reasons: [...new Set(issuesFor(trace.triggerId))],
+      });
+      continue;
+    }
+    const reason =
+      trace.outcome === "Skipped — disabled"
+        ? "It is off."
+        : trace.outcome === "Conditions not met"
+          ? [
+              ...notes,
+              unmetConditionReason(
+                recordTrigger,
+                sandboxModule,
+                run.input.values,
+              ) ?? "Its conditions were not met.",
+            ].join(" ")
+          : notes.length
+            ? notes.join(" ")
+            : "This event does not run it.";
+    lines.push({
+      kind: "not-run",
+      triggerId: trace.triggerId,
+      name,
+      status:
+        trace.outcome === "Skipped — disabled"
+          ? "Off"
+          : trace.outcome === "Conditions not met"
+            ? "Conditions not met"
+            : "Not triggered",
+      reason,
+    });
+  }
+  // Triggers of the module that a narrowed run left out.
+  let leftOut: string | null = null;
+  if (run.triggerIds !== null) {
+    const chosen = new Set(run.triggerIds);
+    const others = [...own.values()].filter(
+      (item) =>
+        !chosen.has(item.id) &&
+        (onlyTrigger ||
+          listeningIds === null ||
+          listeningIds.includes(item.id)),
+    );
+    if (others.length)
+      leftOut = onlyTrigger
+        ? `Other triggers on ${sandboxModule?.name ?? "this module"} did not run in this test.`
+        : `${others.map((item) => item.name).join(", ")} did not run in this test.`;
+  }
+  return {
+    lines,
+    otherChanges: changed.filter((change) => !claimed.has(change.fieldId)),
+    leftOut,
+    linked: run.result.routes,
+  };
 }
 
 /** "trigger", "changed", or both ("trigger changed"). */

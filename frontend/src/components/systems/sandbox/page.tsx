@@ -103,7 +103,10 @@ import {
   SandboxHistoryButtons,
   SandboxPageHeader,
 } from "./components/sandbox-page-header";
-import { SandboxLifecycleDialog } from "./components/lifecycle-dialog";
+import {
+  SandboxLifecycleDialog,
+  lifecycleDoneNotice,
+} from "./components/lifecycle-dialog";
 import {
   sandboxBindingsOptions,
   sandboxKeys,
@@ -390,6 +393,8 @@ function SandboxWorkspace() {
   }, [purgeEnabled, lifecycleRequest]);
   const [versionsRefreshKey, setVersionsRefreshKey] = useState(0);
   const [testRuns, setTestRuns] = useState<SandboxTestRun[]>([]);
+  // Stored Test runs that are not cleared: "Results N of 50" (UXD-1).
+  const [testTotal, setTestTotal] = useState(0);
   const [triggerRuns, setTriggerRuns] = useState<SandboxTriggerRun[]>([]);
   const [triggerActivity, setTriggerActivity] = useState<{
     loading: boolean;
@@ -660,6 +665,7 @@ function SandboxWorkspace() {
       setSession(openSandboxDocumentSession(document));
       setVersionsRefreshKey((value) => value + 1);
       setTestRuns(testPage.items);
+      setTestTotal(testPage.total);
     } catch (error) {
       setLoadError(commandFailure(error).error, error);
       setLoadDenied(error instanceof ApiError && error.status === 403);
@@ -1015,7 +1021,7 @@ function SandboxWorkspace() {
       return;
     commandPending.current = true;
     try {
-      await confirmSandboxLifecycle(lifecycleRequest, input);
+      const result = await confirmSandboxLifecycle(lifecycleRequest, input);
       if (lifecycleRequest.operation === "purge")
         skipNextLayoutInitialization.current = true;
       try {
@@ -1030,7 +1036,7 @@ function SandboxWorkspace() {
         );
         setSession(openSandboxDocumentSession(document));
         setFeedbackError("");
-        reportDone("Live change confirmed");
+        reportDone(lifecycleDoneNotice(result));
         lifecycleLock.current = false;
       } catch (error) {
         setLifecycleRecovery(true);
@@ -1688,6 +1694,7 @@ function SandboxWorkspace() {
               design={session.document.design}
               triggers={session.document.triggers}
               runs={testRuns}
+              total={testTotal}
               onRun={async (input) => {
                 const run = await createSandboxTest({
                   expectedRevision: session.revision,
@@ -1697,12 +1704,36 @@ function SandboxWorkspace() {
                   run,
                   ...current.filter((item) => item.id !== run.id),
                 ]);
+                setTestTotal((current) => current + 1);
                 return run;
               }}
               onClear={async () => {
                 await clearSandboxTests();
                 setTestRuns([]);
+                setTestTotal(0);
               }}
+              administrator={
+                viewer.data
+                  ? {
+                      id: viewer.data.id,
+                      name: viewer.data.displayName ?? viewer.data.username,
+                    }
+                  : null
+              }
+              bindings={bindingsReady ? bindingsQuery.data!.items : null}
+              waitReason={
+                saving || triggerDraft.pending
+                  ? "Saving…"
+                  : triggerDraft.dirty
+                    ? "Save trigger changes first."
+                    : null
+              }
+              review={{
+                reason: reviewReason,
+                disabled: reviewDisabled,
+                open: () => setReviewOpen(true),
+              }}
+              onOpenBuild={() => navigate("Build")}
               onPendingChange={setTestPending}
               draftRevision={session.revision}
               initialRunId={search.get("run")}

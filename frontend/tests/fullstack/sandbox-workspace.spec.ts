@@ -1680,30 +1680,15 @@ test.describe("Sandbox", () => {
     ).toBeVisible();
 
     await page.getByRole("link", { name: "Test", exact: true }).click();
-    const testSetup = page.getByRole("region", {
-      name: "Test setup",
+    const testModules = page.getByRole("region", {
+      name: "Modules",
       exact: true,
     });
     await expect(
-      testSetup.getByRole("heading", { name: "Test setup" }),
+      testModules.getByRole("heading", { name: "Modules" }),
     ).toBeVisible();
-    await testSetup
-      .getByLabel("Module", { exact: true })
-      .selectOption({ label: "Suppliers" });
-    await testSetup.getByRole("button", { name: /^All \(/ }).click();
-    await testSetup.getByLabel("Supplier ID", { exact: true }).fill("SUP-001");
-    await testSetup
-      .getByLabel("Status", { exact: true })
-      .selectOption({ label: "Active" });
-    await testSetup
-      .getByLabel("Legal name", { exact: true })
-      .fill("Acceptance Supplier");
-    await testSetup
-      .getByLabel("When", { exact: true })
-      .selectOption("field-changed");
-    await testSetup
-      .getByLabel("Changed field", { exact: true })
-      .selectOption({ label: "Status" });
+    await testModules.getByRole("button", { name: /^Suppliers/ }).click();
+    const reading = page.getByRole("region", { name: "Reading", exact: true });
     const recordsUrl = "/api/records?limit=100&offset=0";
     const beforeRecords = await page.request.get(recordsUrl);
     expect(beforeRecords.status()).toBe(200);
@@ -1717,13 +1702,15 @@ test.describe("Sandbox", () => {
           new URL(response.url()).pathname === "/api/sandbox/tests" &&
           response.request().method() === "POST",
       ),
-      testSetup.getByRole("button", { name: "Run test" }).click(),
+      reading
+        .getByRole("button", { name: "Try it: When Status changes" })
+        .click(),
     ]);
     expect(testResponse.status()).toBe(201);
-    // The Result pane heading shows before any run; the run's badge does not.
+    // The run's result shows under its event; reading alone sent no run.
     await expect(
-      page
-        .getByRole("region", { name: "Test outcome" })
+      reading
+        .getByRole("region", { name: "Example item", exact: true })
         .getByText("Test only · live data unchanged"),
     ).toBeVisible();
     const afterRecords = await page.request.get(recordsUrl);

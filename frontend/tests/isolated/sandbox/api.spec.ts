@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { ApiContractError } from "../../../src/lib/api";
+import { ApiContractError, ApiError } from "../../../src/lib/api";
 import type { SandboxDocumentV4 } from "../../../src/components/systems/sandbox/domain/document";
 import {
   SANDBOX_REQUEST_BODY_LIMIT_BYTES,
@@ -21,6 +21,7 @@ import {
   publishSandbox,
   updateSandboxVersion,
 } from "../../../src/components/systems/sandbox/state/api";
+import { blockedReview } from "../../../src/components/systems/sandbox/components/review-publish-dialog";
 import { installFetch } from "../helpers/fake-fetch";
 import { documentTextField } from "../../helpers/sandbox-fixtures";
 
@@ -594,6 +595,11 @@ test("uses the review and publish contract with a durable idempotency key", asyn
     ],
     counts: {
       departments: 0,
+      groups: 0,
+      dashboards: 0,
+      boards: 0,
+      categories: 0,
+      channels: 0,
       modules: 1,
       fields: 0,
       relationships: 0,
@@ -668,6 +674,11 @@ test("normalizes a publication blocker without a target from the backend", async
     changes: [],
     counts: {
       departments: 0,
+      groups: 0,
+      dashboards: 0,
+      boards: 0,
+      categories: 0,
+      channels: 0,
       modules: 0,
       fields: 0,
       relationships: 0,
@@ -698,6 +709,193 @@ test("normalizes a publication blocker without a target from the backend", async
     mock.restore();
   }
 });
+
+// SD-C1, SD-C6, SD-C21, SD-C22 (contributor): the review parses the setup
+// kinds and their counts, a 168-character group label of a 150-character
+// department, and the name blocker that targets the department.
+test("parses department setup changes, their counts, and the name blocker", async () => {
+  const name = `Sales ${"x".repeat(144)}`;
+  const label = `${name} managers · manage`;
+  const preview = {
+    previewToken: "temporary-review-token",
+    impactDigest: "b".repeat(64),
+    documentRevision: 7,
+    documentHash: "a".repeat(64),
+    expiresAt: "2026-09-21T00:05:00Z",
+    changes: [
+      { kind: "department", action: "create", sandboxId: "sales", label: name },
+      { kind: "group", action: "create", sandboxId: "sales#managers", label },
+      {
+        kind: "dashboard",
+        action: "create",
+        sandboxId: "sales#dashboard",
+        label: `${name} dashboard`,
+      },
+      {
+        kind: "board",
+        action: "create",
+        sandboxId: "sales#board",
+        label: name,
+      },
+      {
+        kind: "category",
+        action: "create",
+        sandboxId: "sales#category",
+        label: name,
+      },
+      {
+        kind: "channel",
+        action: "close",
+        sandboxId: "sales#channel",
+        label: name,
+      },
+    ],
+    counts: {
+      departments: 1,
+      groups: 1,
+      dashboards: 1,
+      boards: 1,
+      categories: 1,
+      channels: 1,
+      modules: 0,
+      fields: 0,
+      relationships: 0,
+      triggers: 0,
+    },
+    warnings: [],
+    blockers: [
+      {
+        code: "derived_name_unavailable",
+        message:
+          'Sales needs the group name "Sales managers", which "sales MANAGERS" already uses',
+        targetId: "sales",
+      },
+    ],
+  };
+  expect(name).toHaveLength(150);
+  expect(label).toHaveLength(168);
+  const mock = installFetch(() => Response.json(preview));
+  try {
+    await expect(
+      createSandboxPublicationPreview({ expectedRevision: 7 }),
+    ).resolves.toEqual(preview);
+  } finally {
+    mock.restore();
+  }
+  // Labels stay capped at 200 characters.
+  const tooLong = installFetch(() =>
+    Response.json({
+      ...preview,
+      changes: [{ ...preview.changes[1], label: "x".repeat(201) }],
+    }),
+  );
+  try {
+    await expect(
+      createSandboxPublicationPreview({ expectedRevision: 7 }),
+    ).rejects.toBeInstanceOf(ApiContractError);
+  } finally {
+    tooLong.restore();
+  }
+});
+
+// SD-C7 (contributor): a group created between the review and the publish
+// refuses the publish with the review's blockers; the review then shows them
+// as blocked (alert, Publish disabled, "Show in Build" from the target).
+test(
+  "a publish refused as blocked turns the review into a blocked review",
+  { tag: "@SD-C7" },
+  async () => {
+    const preview = {
+      previewToken: "temporary-review-token",
+      impactDigest: "b".repeat(64),
+      documentRevision: 7,
+      documentHash: "a".repeat(64),
+      expiresAt: "2026-09-21T00:05:00Z",
+      changes: [],
+      counts: {
+        departments: 1,
+        groups: 3,
+        dashboards: 1,
+        boards: 1,
+        categories: 1,
+        channels: 1,
+        modules: 0,
+        fields: 0,
+        relationships: 0,
+        triggers: 0,
+      },
+      warnings: [],
+      blockers: [],
+    };
+    const taken =
+      'Sales needs the group name "Sales managers", which "Sales managers" already uses';
+    const refuse = (blockers: unknown) =>
+      installFetch(() =>
+        Response.json(
+          {
+            detail: {
+              code: "publication_blocked",
+              message: "Fix the listed publication blockers",
+              blockers,
+            },
+          },
+          { status: 409 },
+        ),
+      );
+    const publish = () =>
+      publishSandbox({
+        expectedRevision: 7,
+        previewToken: preview.previewToken,
+        impactDigest: preview.impactDigest,
+        password: "password",
+        idempotencyKey: "publish-1",
+      }).then(
+        () => {
+          throw new Error("The publish was not refused");
+        },
+        (reason: unknown) => reason,
+      );
+
+    const refused = refuse([
+      { code: "derived_name_unavailable", message: taken, targetId: "sales" },
+      { code: "empty_document", message: "Add a module.", targetId: null },
+    ]);
+    try {
+      expect(blockedReview(preview, await publish())).toEqual({
+        ...preview,
+        blockers: [
+          {
+            code: "derived_name_unavailable",
+            message: taken,
+            targetId: "sales",
+          },
+          { code: "empty_document", message: "Add a module." },
+        ],
+      });
+    } finally {
+      refused.restore();
+    }
+    // Other refusals, and a blocked refusal without valid blockers, keep
+    // today's publish error.
+    const malformed = refuse([{ code: "derived_name_unavailable" }]);
+    try {
+      expect(blockedReview(preview, await publish())).toBeNull();
+    } finally {
+      malformed.restore();
+    }
+    expect(
+      blockedReview(
+        preview,
+        new ApiError(
+          409,
+          "Live structure changed after review",
+          {},
+          "live_state_changed",
+        ),
+      ),
+    ).toBeNull();
+  },
+);
 
 test("sends temporary Test inputs to the test endpoint without changing the Sandbox document", async () => {
   const run = {
@@ -761,7 +959,7 @@ test("accepts a daily Test response where the backend serializes weekday as null
       issues: [],
     },
   };
-  const mock = installFetch(() => Response.json({ items: [run] }));
+  const mock = installFetch(() => Response.json({ items: [run], total: 1 }));
   try {
     await expect(listSandboxTests()).resolves.toEqual({
       items: [
@@ -770,11 +968,43 @@ test("accepts a daily Test response where the backend serializes weekday as null
           event: { kind: "schedule", frequency: "daily", time: "09:00" },
         },
       ],
+      total: 1,
     });
   } finally {
     mock.restore();
   }
 });
+
+test(
+  "the Test run list returns the stored-run total and refuses a list without it",
+  { tag: "@UX-C27" },
+  async () => {
+    let calls = 0;
+    const mock = installFetch(() =>
+      calls++ === 0
+        ? Response.json({
+            items: [],
+            limit: 50,
+            offset: 0,
+            count: 0,
+            total: 49,
+            hasMore: false,
+          })
+        : Response.json({ items: [] }),
+    );
+    try {
+      await expect(listSandboxTests({ limit: 50 })).resolves.toEqual({
+        items: [],
+        total: 49,
+      });
+      await expect(listSandboxTests({ limit: 50 })).rejects.toBeInstanceOf(
+        ApiContractError,
+      );
+    } finally {
+      mock.restore();
+    }
+  },
+);
 
 test("loads bounded recent published trigger activity", async () => {
   const run = {

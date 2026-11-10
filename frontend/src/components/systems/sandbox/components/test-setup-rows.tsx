@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, type ReactNode } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
@@ -12,10 +13,10 @@ import type {
   SandboxFieldValue,
 } from "../domain/document";
 
-// The rows of the Test setup (docs/specs/sandbox-relayout.md S11): a muted
-// label on the left and the control on the right once the Setup pane is
-// 22rem wide; narrower, the label sits above. A row's error shows only after
-// Run test found it, under the control it is about.
+// The value rows of "Change values" in a Test result
+// (docs/specs/sandbox-ux-redesign.md TEST-4, E3): a muted label on the left
+// and the control on the right once the card is 22rem wide; narrower, the
+// label sits above. A changed row carries an "Edited" mark.
 
 /** The id of a row's error line, for its control's description. */
 export function setupErrorId(controlId: string) {
@@ -34,6 +35,7 @@ export function SetupRow({
   label,
   error,
   errorId = setupErrorId(id),
+  mark = null,
   children,
 }: {
   id: string;
@@ -41,6 +43,8 @@ export function SetupRow({
   error?: string;
   /** Defaults to the control id plus "-error"; field ids may hold spaces. */
   errorId?: string;
+  /** A mark under the control, such as "Edited". */
+  mark?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -53,6 +57,7 @@ export function SetupRow({
       </FieldLabel>
       <div className="grid min-w-0 gap-1">
         {children}
+        {mark ? <div>{mark}</div> : null}
         {error ? (
           <p id={errorId} className="text-destructive text-xs">
             {error}
@@ -68,20 +73,32 @@ export function TestValueRow({
   field,
   value,
   error,
+  edited = false,
+  idPrefix = "sandbox-test",
   onChange,
 }: {
   field: SandboxDocumentField;
   value: SandboxFieldValue;
   error: string | undefined;
+  /** The value differs from the example the run started from. */
+  edited?: boolean;
+  /** Keeps ids apart when two results edit values at once. */
+  idPrefix?: string;
   onChange: (value: SandboxFieldValue) => void;
 }) {
-  const id = `sandbox-test-${field.id}`;
+  const id = `${idPrefix}-${field.id}`;
   // Generated ids: a field id can hold a space, which splits an id list.
   const errorId = useId();
   const helpId = useId();
   const errorProps = setupErrorProps(errorId, error);
   const config = field.config;
-  const row = { id, label: field.name, error, errorId };
+  const row = {
+    id,
+    label: field.name,
+    error,
+    errorId,
+    mark: edited ? <Badge variant="outline">Edited</Badge> : null,
+  };
   if (config.kind === "user") {
     // The test uses the typed ID as is; nobody's access is looked up.
     return (
