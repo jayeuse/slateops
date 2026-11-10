@@ -25,13 +25,21 @@ from app.core.database.session import AuditSession
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.checks import _lock_authority
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
+from app.systems.access.policy.schemas import GroupUpdate
+from app.systems.access.policy.service import group_etag, update_group
 from app.systems.access.users.membership import transaction_organization
 from app.systems.access.users.models import Membership, User, UserStatus
+from app.systems.comms.conversations.models import CommsConversation
+from app.systems.comms.realtime.grants import lock_projection
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
+from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.derived.models import SandboxDerivedObject
 from app.systems.sandbox.designs.service import read_document, replace_document
+from app.systems.sandbox.lifecycle.exceptions import LifecycleUnavailable
+from app.systems.sandbox.lifecycle.service import close_lifecycle
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.executor import (
     PublicationError,
@@ -45,10 +53,10 @@ from app.systems.sandbox.publications.tokens import issue_preview_token
 from tests.conftest import create_member, create_organization
 from tests.organization_scope_support import bind_test_organization, in_context
 from tests.postgres_runtime import assert_runner_database_url
-from tests.race_support import WAIT, backend_pid, wait_until_blocked_by
+from tests.race_support import WAIT, backend_pid, wait_until_blocked_by, wait_until_waiting
 from tests.rbac.support import organization
 from tests.sandbox_designs.fixtures import sample_document
-from tests.sandbox_publications.support import bound_module, publish_saved
+from tests.sandbox_publications.support import bound_department, bound_module, publish_saved
 from tests.sandbox_record_triggers.support import (
     DocumentBaseline,
     cleanup_committed_trigger,
@@ -251,6 +259,153 @@ def test_publication_waits_for_a_member_access_check_without_deadlock(
             assert published.result(timeout=WAIT) is not None
     finally:
         _remove_module_grant(engine, member_id, group_id)
+
+
+def test_sd_c28_a_rename_waits_for_a_member_access_check_and_a_group_edit_without_deadlock(
+    committed_publisher: Callable[..., Publisher],
+) -> None:
+    publisher = committed_publisher(pool_size=5)
+    engine, actor_id = publisher.engine, publisher.actor_id
+    _publish_once(engine, _prepare(engine, actor_id, "derived-before-rename"))
+    member_id, department_id, group_id, etag = _commit_derived_member(engine, actor_id)
+    _rename_operations(engine, actor_id, "Operations Desk")
+    prepared = _prepare(engine, actor_id, "rename-beside-access-check")
+    try:
+        with Session(engine) as member, ThreadPoolExecutor(max_workers=2) as pool:
+            # The member's access check holds its derived group FOR SHARE (SD19 D3).
+            _lock_authority(member, member_id)
+            member_pid = int(member.scalar(text("SELECT pg_backend_pid()")))
+            published = pool.submit(in_context(_publish_holding_projection), engine, prepared)
+            wait_until_blocked_by(engine, member_pid)
+            edit_pids: list[int] = []
+            edited = pool.submit(
+                in_context(_edit_group), engine, actor_id, group_id, etag, edit_pids
+            )
+            assert wait_until_waiting(engine, edit_pids), "the group edit never waited"
+            # The publish holds no structure row yet, so the member reaches its department.
+            locked = member.scalar(
+                select(Department.id).where(Department.id == department_id).with_for_update(
+                    read=True
+                )
+            )
+            member.commit()
+            assert locked == department_id
+            assert published.result(timeout=WAIT) is not None
+            assert edited.result(timeout=WAIT) == 412
+        with Session(engine) as check:
+            assert check.scalar(select(Group.name).where(Group.id == group_id)) == (
+                "Operations Desk members"
+            )
+    finally:
+        with engine.begin() as connection:
+            connection.execute(delete(GroupMember).where(GroupMember.user_id == member_id))
+            connection.execute(delete(Membership).where(Membership.user_id == member_id))
+            connection.execute(delete(User).where(User.id == member_id))
+
+
+def test_sd19_step_5_a_department_close_refuses_while_its_channel_link_is_held(
+    committed_publisher: Callable[..., Publisher],
+) -> None:
+    publisher = committed_publisher(pool_size=4)
+    engine, actor_id = publisher.engine, publisher.actor_id
+    _publish_once(engine, _prepare(engine, actor_id, "derived-before-close"))
+    with AuditSession(bind=engine) as setup:
+        _set_audit_context(setup, actor_id)
+        department_id = bound_department(setup, "sample-operations").id
+    channel_link = select(SandboxDerivedObject).where(
+        SandboxDerivedObject.department_id == department_id,
+        SandboxDerivedObject.role == "channel",
+    )
+    with Session(engine) as holder:
+        held = holder.scalar(channel_link.with_for_update())
+        assert held is not None
+        with AuditSession(bind=engine) as db:
+            _set_audit_context(db, actor_id)
+            # Without the lock scope entry the close would wait at its link UPDATE instead;
+            # the short timeout turns that wait into a different, plain unavailable error.
+            db.connection().execute(text("SET LOCAL lock_timeout = '3s'"))
+            with pytest.raises(LifecycleUnavailable, match="while locking its scope"):
+                close_lifecycle(db, "department", department_id, actor_id)
+        holder.rollback()
+    with Session(engine) as check:
+        link = check.scalar(channel_link)
+        assert link is not None and link.closed_at is None
+        channel = check.get(CommsConversation, link.conversation_id)
+        assert channel is not None and channel.archived_at is None
+        department = check.get(Department, department_id)
+        assert department is not None and department.is_deleted is False
+
+
+def _commit_derived_member(engine: Engine, actor_id: UUID) -> tuple[UUID, UUID, UUID, str]:
+    """A member of the derived "members" group of the published operations department."""
+
+    with AuditSession(bind=engine) as db:
+        _set_audit_context(db, actor_id)
+        department = bound_department(db, "sample-operations")
+        group = db.get(
+            Group,
+            db.scalar(
+                select(SandboxDerivedObject.group_id).where(
+                    SandboxDerivedObject.department_id == department.id,
+                    SandboxDerivedObject.role == "members",
+                )
+            ),
+        )
+        assert group is not None
+        member, _membership = create_member(db, db.get(WorkspaceProfile, department.org_id),
+            email=f"derived-member-{uuid7()}@example.test",
+            username=f"derived-member-{uuid7().hex[-12:]}",
+            status=UserStatus.ACTIVE.value,
+            role="member",
+        )
+        db.add(member)
+        db.flush()
+        db.add(GroupMember(org_id=group.org_id, group_id=group.id, user_id=member.id))
+        db.commit()
+        return member.id, department.id, group.id, group_etag(group)
+
+
+def _rename_operations(engine: Engine, actor_id: UUID, name: str) -> None:
+    with AuditSession(bind=engine) as db:
+        _set_audit_context(db, actor_id)
+        current = read_document(db)
+        document = current.document.model_copy(deep=True)
+        operations = next(
+            item for item in document.design.departments if item.id == "sample-operations"
+        )
+        operations.name = name
+        replace_document(
+            db, actor_id=actor_id, expected_revision=current.revision, document=document
+        )
+
+
+def _publish_holding_projection(engine: Engine, prepared: Prepared) -> UUID:
+    """As the publication route: the projection guard first, then the publish (SD19 step 1)."""
+
+    with AuditSession(bind=engine) as db:
+        _set_audit_context(db, prepared.actor_id)
+        lock_projection(db)
+        return publish_saved(
+            db,
+            prepared.actor_id,
+            prepared,
+            prepared,
+            token_digest=prepared.token_digest,
+            idempotency_key=f"publish-{uuid7()}",
+        ).id
+
+
+def _edit_group(
+    engine: Engine, actor_id: UUID, group_id: UUID, etag: str, pids: list[int]
+) -> int:
+    with AuditSession(bind=engine) as db:
+        _set_audit_context(db, actor_id)
+        pids.append(backend_pid(db))
+        try:
+            update_group(db, group_id, GroupUpdate(name="Operations leads"), etag, actor_id)
+        except HTTPException as error:
+            return error.status_code
+        return 200
 
 
 @pytest.mark.parametrize("same_organization", [True, False], ids=["same-org", "other-org"])

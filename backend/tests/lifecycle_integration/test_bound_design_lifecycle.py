@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+import app.systems.sandbox.derived.planning as derived_planning
 import app.systems.sandbox.lifecycle.execution as lifecycle_execution
 from app.systems.sandbox.designs.models import SandboxVersion
 from app.systems.sandbox.designs.schemas import FieldMapping, ScenarioDocument
@@ -227,10 +228,20 @@ def test_direct_primitive_close_only_prunes_its_mapping_references(
 
 @pytest.mark.parametrize("kind", ["department", "module", "field", "field-closed-owner"])
 def test_bound_structural_purge_removes_current_design_and_owned_bindings_before_publish(
-    integration_owner_db: Session, kind: str
+    integration_owner_db: Session, kind: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db = integration_owner_db
+    if kind == "department":
+        # A department with OpenComms content cannot be purged (setup spec SD20, OQ2 a), so
+        # this arm publishes its departments as they were before derived items existed.
+        real = derived_planning.derived_changes
+        monkeypatch.setattr(
+            derived_planning,
+            "derived_changes",
+            lambda outcomes: [change for change in real(outcomes) if change.kind == "board"],
+        )
     publisher, _ = publish_structure(db)
+    monkeypatch.undo()
     field_target = kind.startswith("field")
     target_type = "field" if field_target else kind
     root = (

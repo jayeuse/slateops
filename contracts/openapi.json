@@ -7331,6 +7331,51 @@
         "title": "DepartmentSortField",
         "type": "string"
       },
+      "DerivedChange": {
+        "additionalProperties": false,
+        "description": "A derived item that a department close or reopen changes, or a channel it keeps open.\n\n``close`` archives the derived channel, ``reopen`` unarchives it (setup spec R8, R9), and\n``keep`` names another channel of the department that stays postable for administrators\nand grant holders (SD17, BE-SD7).",
+        "properties": {
+          "action": {
+            "enum": [
+              "close",
+              "reopen",
+              "keep"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "managers",
+              "members",
+              "viewers",
+              "dashboard",
+              "category",
+              "channel"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "title": "Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "target_id",
+          "name",
+          "action"
+        ],
+        "title": "DerivedChange",
+        "type": "object"
+      },
       "DesignDocument": {
         "additionalProperties": false,
         "properties": {
@@ -11803,7 +11848,8 @@
           "purge_report_run_dependency",
           "purge_external_schema_dependency",
           "purge_file_dependency",
-          "purge_trigger_dependency"
+          "purge_trigger_dependency",
+          "comms_department_content"
         ],
         "title": "LifecycleBlockerCode",
         "type": "string"
@@ -11941,6 +11987,13 @@
               "$ref": "#/components/schemas/LifecycleBlocker"
             },
             "title": "Blockers",
+            "type": "array"
+          },
+          "derived_changes": {
+            "items": {
+              "$ref": "#/components/schemas/DerivedChange"
+            },
+            "title": "Derived Changes",
             "type": "array"
           },
           "external_impacts": {

@@ -9,7 +9,9 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from app.systems.access.policy.models import AccessLevel
 from app.systems.boards.models import BoardStatus
@@ -132,6 +134,74 @@ def planned_derived(changes: Iterable[PublicationChange]) -> Counter[tuple[str, 
         for change in changes
         if change.kind in DERIVED_KINDS
     )
+
+
+@dataclass(frozen=True, slots=True)
+class LinkedItem:
+    """A link row and the live state of its target, as the follow rules read them."""
+
+    role: str
+    target_id: UUID | None  # None: released (R5)
+    name: str
+    removed: bool  # group deleted, dashboard archived, category or channel deleted (R7)
+    moved: bool  # category or channel now in another department (R16)
+    archived_at: datetime | None = None  # the channel's archive time
+    archived_by_close: bool = False
+    close_archived_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FollowStep:
+    """One name or state change that the sync applies to a linked item."""
+
+    role: str
+    target_id: UUID
+    action: Literal["update", "close", "reopen"]
+    name: str  # the item's name after the step
+
+
+def follow_steps(
+    items: Iterable[LinkedItem],
+    *,
+    renamed_to: str | None,
+    transition: Literal["close", "reopen"] | None,
+) -> list[FollowStep]:
+    """The follow-up of one linked department (R6 to R9, R16, SD16 to SD18).
+
+    ``renamed_to`` is the department's new name when this change renames it; only then are
+    derived names written, so a person's rename lasts until the next department rename.
+    A close archives the open derived channel; a reopen unarchives it only when the close
+    archived it and its ``archived_at`` still equals the stored value. A released, removed or
+    moved item is left alone, and so is a channel that a person archived.
+    """
+    steps: list[FollowStep] = []
+    for item in items:
+        if item.target_id is None or item.removed or item.moved:
+            continue
+        by_close = (
+            item.archived_by_close
+            and item.archived_at is not None
+            and item.archived_at == item.close_archived_at
+        )
+        if item.role == "channel" and item.archived_at is not None and not by_close:
+            continue
+        name = item.name
+        if renamed_to is not None and derived_name(item.role, renamed_to) != name:
+            name = derived_name(item.role, renamed_to)
+            steps.append(FollowStep(item.role, item.target_id, "update", name))
+        if item.role != "channel":
+            continue
+        if transition == "close" and item.archived_at is None:
+            steps.append(FollowStep(item.role, item.target_id, "close", name))
+        elif transition == "reopen" and by_close:
+            steps.append(FollowStep(item.role, item.target_id, "reopen", name))
+    return steps
+
+
+def follow_change(key: str, step: FollowStep) -> PublicationChange:
+    """The publication change of a follow step (SD23); labels are cut to 200 like the Board's."""
+    label = derived_label(step.role, step.name) if step.role in GROUP_LEVELS else step.name
+    return _change(role_kind(step.role), step.action, f"{key}#{step.role}", label[:200])
 
 
 def _change(kind: str, action: str, sandbox_id: str, label: str) -> PublicationChange:

@@ -30,12 +30,16 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.derived.actions import (
     GROUP_LEVELS,
     DepartmentOutcome,
+    FollowStep,
     derived_changes,
     derived_label,
     derived_name,
+    follow_change,
+    follow_steps,
     role_kind,
 )
 from app.systems.sandbox.derived.models import DERIVED_ROLES, SandboxDerivedObject
+from app.systems.sandbox.derived.sync import department_links, linked_item
 from app.systems.sandbox.publications.schemas import PublicationBlocker, PublicationChange
 from app.systems.sandbox.publications.structure_mutations import department_outcomes
 
@@ -70,33 +74,83 @@ def plan_derived(
         elif (binding := bindings["department"].get(change.sandbox_id)) is not None:
             followed.add(binding.department_id)
     outcomes = department_outcomes(db, document, bindings, created)
+    follow = _follow(db, bindings, outcomes, followed)
     return DerivedPlan(
-        changes=derived_changes(outcomes),
-        blockers=_name_blockers(db, outcomes),
+        changes=derived_changes(outcomes) + [follow_change(key, step) for key, _, step in follow],
+        blockers=_name_blockers(db, outcomes, follow),
         followed=sorted(followed),
     )
 
 
-def _name_blockers(db: Session, outcomes: list[DepartmentOutcome]) -> list[PublicationBlocker]:
-    """R12: a derived group name equal, ignoring case, to an active group or another one."""
+def _follow(
+    db: Session, bindings: Any, outcomes: list[DepartmentOutcome], followed: set[UUID]
+) -> list[tuple[str, DepartmentOutcome, FollowStep]]:
+    """The follow steps of each linked department this publish renames, closes or reopens."""
 
+    if not followed:
+        return []
+    live = {
+        identity: (name, deleted)
+        for identity, name, deleted in db.execute(
+            select(Department.id, Department.department_name, Department.is_deleted).where(
+                Department.id.in_(followed)
+            )
+        ).tuples()
+    }
+    keys = {binding.department_id: key for key, binding in bindings["department"].items()}
+    by_key = {outcome.key: outcome for outcome in outcomes}
+    links = department_links(db, followed)
+    result: list[tuple[str, DepartmentOutcome, FollowStep]] = []
+    for identity in sorted(followed):
+        outcome = by_key.get(keys.get(identity, ""))
+        if outcome is None or identity not in links:
+            continue
+        name, deleted = live[identity]
+        steps = follow_steps(
+            [linked_item(db, link) for link in links[identity]],
+            renamed_to=outcome.name if outcome.name != name else None,
+            transition="close"
+            if outcome.closed and not deleted
+            else "reopen"
+            if deleted and not outcome.closed
+            else None,
+        )
+        result += [(outcome.key, outcome, step) for step in steps]
+    return result
+
+
+def _name_blockers(
+    db: Session,
+    outcomes: list[DepartmentOutcome],
+    follow: list[tuple[str, DepartmentOutcome, FollowStep]],
+) -> list[PublicationBlocker]:
+    """R12, SD21: a derived group name, created or renamed, equal ignoring case to an active
+    group or to another derived name. A group renamed in this publish frees its name."""
+
+    renamed = [
+        (outcome, step)
+        for _, outcome, step in follow
+        if step.action == "update" and step.role in GROUP_LEVELS
+    ]
     wanted = [
         (outcome, derived_name(role, outcome.name))
         for outcome in outcomes
         if outcome.created and not outcome.closed
         for role in GROUP_LEVELS
-    ]
+    ] + [(outcome, step.name) for outcome, step in renamed]
     if not wanted:
         return []
+    freed = {step.target_id for _, step in renamed}
     active = {
         name.lower(): name
-        for name in db.scalars(
-            select(Group.name).where(
+        for identity, name in db.execute(
+            select(Group.id, Group.name).where(
                 Group.org_id == bound_organization_column(),
                 Group.is_deleted.is_(False),
                 func.lower(Group.name).in_({name.lower() for _, name in wanted}),
             )
-        )
+        ).tuples()
+        if identity not in freed
     }
     blockers: list[PublicationBlocker] = []
     same: dict[str, list[tuple[DepartmentOutcome, str]]] = {}

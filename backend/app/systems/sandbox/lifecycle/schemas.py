@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -39,6 +40,7 @@ class LifecycleBlockerCode(StrEnum):
     PURGE_EXTERNAL_SCHEMA_DEPENDENCY = "purge_external_schema_dependency"
     PURGE_FILE_DEPENDENCY = "purge_file_dependency"
     PURGE_TRIGGER_DEPENDENCY = "purge_trigger_dependency"
+    COMMS_DEPARTMENT_CONTENT = "comms_department_content"
 
 
 class LifecycleRowState(BaseModel):
@@ -114,6 +116,22 @@ class LifecycleBlocker(BaseModel):
     department_name: str | None = None
 
 
+class DerivedChange(BaseModel):
+    """A derived item that a department close or reopen changes, or a channel it keeps open.
+
+    ``close`` archives the derived channel, ``reopen`` unarchives it (setup spec R8, R9), and
+    ``keep`` names another channel of the department that stays postable for administrators
+    and grant holders (SD17, BE-SD7).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["managers", "members", "viewers", "dashboard", "category", "channel"]
+    target_id: UUID
+    name: str = Field(min_length=1)
+    action: Literal["close", "reopen", "keep"]
+
+
 class LifecycleImpactResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -125,6 +143,7 @@ class LifecycleImpactResponse(BaseModel):
     external_impacts: list[LifecycleExternalImpact] = Field(default_factory=list)
     key_strips: list[LifecycleKeyStrip] = Field(default_factory=list)
     blockers: list[LifecycleBlocker] = Field(default_factory=list)
+    derived_changes: list[DerivedChange] = Field(default_factory=list)
     impact_digest: str
 
 
@@ -168,6 +187,7 @@ class LifecycleMutationResponse(BaseModel):
 
 
 __all__ = [
+    "DerivedChange",
     "LifecycleBlocker",
     "LifecycleBlockerCode",
     "LifecycleEdgeState",

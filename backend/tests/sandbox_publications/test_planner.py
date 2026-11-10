@@ -1,5 +1,8 @@
+from dataclasses import replace
+from datetime import UTC, datetime
 from hashlib import sha256
 from types import SimpleNamespace
+from typing import Any, Literal
 from unittest.mock import Mock
 
 import pytest
@@ -8,8 +11,10 @@ from uuid6 import uuid7
 from app.systems.sandbox.derived.actions import (
     BoardState,
     DepartmentOutcome,
+    LinkedItem,
     board_action,
     derived_changes,
+    follow_steps,
     publication_counts,
 )
 from app.systems.sandbox.designs.schemas import DesignField, TriggerDocument
@@ -371,3 +376,94 @@ def test_sd_c22_a_150_character_department_name_gives_labels_the_review_accepts(
     labels = {c.sandbox_id: c.label for c in derived_changes([_outcome(name, created=True)])}
     assert labels["dep-a#managers"] == f"{name} managers · manage"
     assert len(labels["dep-a#managers"]) == 168
+
+
+_CLOSE_STAMP = datetime(2026, 11, 10, 9, 30, tzinfo=UTC)
+_LATER_STAMP = datetime(2026, 11, 10, 11, 0, tzinfo=UTC)
+_ROLE_NAMES = {
+    "managers": "Sales managers",
+    "members": "Sales members",
+    "viewers": "Sales viewers",
+    "dashboard": "Sales dashboard",
+    "category": "Sales",
+    "channel": "Sales",
+}
+_IDS = {role: uuid7() for role in _ROLE_NAMES}
+
+
+def _linked(**changes: dict[str, Any]) -> list[LinkedItem]:
+    """One department's six links with live, open targets; ``changes`` edits one role."""
+    items = []
+    for role, name in _ROLE_NAMES.items():
+        item = LinkedItem(role, _IDS[role], name, removed=False, moved=False)
+        items.append(replace(item, **changes.get(role, {})))
+    return items
+
+
+_RENAMED = [
+    ("managers", "update", "Revenue managers"),
+    ("members", "update", "Revenue members"),
+    ("viewers", "update", "Revenue viewers"),
+    ("dashboard", "update", "Revenue dashboard"),
+    ("category", "update", "Revenue"),
+    ("channel", "update", "Revenue"),
+]
+_BY_CLOSE = {
+    "archived_at": _CLOSE_STAMP,
+    "archived_by_close": True,
+    "close_archived_at": _CLOSE_STAMP,
+}
+
+
+@pytest.mark.parametrize(
+    ("items", "renamed_to", "transition", "expected"),
+    [
+        # SD-C9, SD18: a rename gives every item its derived name, a person's name included.
+        (_linked(channel={"name": "sales-chat"}), "Revenue", None, _RENAMED),
+        # SD-C10: no rename and no state change leaves every name as it is.
+        (_linked(channel={"name": "sales-chat"}), None, None, []),
+        # R7, R5: a deleted group, an archived dashboard, and a released link are left alone.
+        (
+            _linked(
+                viewers={"removed": True},
+                dashboard={"removed": True},
+                category={"target_id": None, "name": ""},
+            ),
+            "Revenue",
+            None,
+            [_RENAMED[0], _RENAMED[1], _RENAMED[5]],
+        ),
+        # R16, SD-C29: a category a person moved to another department is not followed.
+        (_linked(category={"moved": True}), "Revenue", None, [*_RENAMED[:4], _RENAMED[5]]),
+        # R7: a channel a person archived keeps its name.
+        (_linked(channel={"archived_at": _LATER_STAMP}), "Revenue", None, _RENAMED[:5]),
+        # R8: a close archives the open derived channel and nothing else.
+        (_linked(), None, "close", [("channel", "close", "Sales")]),
+        # SD-C13: a channel a person archived before the close stays theirs.
+        (_linked(channel={"archived_at": _LATER_STAMP}), None, "close", []),
+        # A publish that renames and closes: the channel is archived under its new name.
+        (_linked(), "Revenue", "close", [*_RENAMED, ("channel", "close", "Revenue")]),
+        # A rename while closed follows the channel that the close archived.
+        (_linked(channel=_BY_CLOSE), "Revenue", None, _RENAMED),
+        # R9, SD-C12: the reopen unarchives what the close archived, at the same instant.
+        (_linked(channel=_BY_CLOSE), None, "reopen", [("channel", "reopen", "Sales")]),
+        # R9: archived again after the close, or restored by a person: the person's state stays.
+        (
+            _linked(channel={**_BY_CLOSE, "archived_at": _LATER_STAMP}),
+            None,
+            "reopen",
+            [],
+        ),
+        (_linked(channel={**_BY_CLOSE, "archived_at": None}), None, "reopen", []),
+    ],
+)
+def test_follow_steps_change_only_linked_items_that_people_left_in_place(
+    items: list[LinkedItem],
+    renamed_to: str | None,
+    transition: Literal["close", "reopen"] | None,
+    expected: list[tuple[str, str, str]],
+) -> None:
+    steps = follow_steps(items, renamed_to=renamed_to, transition=transition)
+
+    assert [(step.role, step.action, step.name) for step in steps] == expected
+    assert all(step.target_id == _IDS[step.role] for step in steps)

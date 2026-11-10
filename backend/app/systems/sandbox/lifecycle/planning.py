@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.lifecycle.batch_dependencies import load_purge_dependencies
+from app.systems.sandbox.lifecycle.derived_changes import LifecycleDerived, department_derived
 from app.systems.sandbox.lifecycle.design_sync import design_review_state, lifecycle_field_order
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleInvalidTarget,
@@ -116,10 +117,15 @@ def plan_lifecycle(
                 )
             )
     dependency_ids: dict[str, tuple[UUID, ...]] = {}
+    derived = (  # setup spec BE-SD4, BE-SD7, SD19 step 5
+        department_derived(db, scope.departments[0], resolved_operation)
+        if resolved_target is LifecycleTargetType.DEPARTMENT
+        else LifecycleDerived()
+    )
     if resolved_operation is LifecycleOperation.PURGE:
         dependencies = load_purge_dependencies(db, scope, resolved_target)
-        rows += dependencies.rows
-        purge_blockers.extend(dependencies.blockers)
+        rows += dependencies.rows + derived.rows
+        purge_blockers.extend(dependencies.blockers + derived.blockers)
         dependency_ids = dependencies.ids
     # Close plans contain active rows; reopen plans contain closed rows.
     modules_by_id = {module.id: module for module in scope.modules}
@@ -358,9 +364,11 @@ def plan_lifecycle(
         key_strips,
         blockers,
         internal_state=internal_state,
+        derived_changes=derived.changes,
     )
     scope_ids = scope.ids
     scope_ids.update(dependency_ids)
+    scope_ids.update(derived.scope_ids)
     scope_ids["sandbox_bindings"] = tuple(
         sorted(set(binding_ids) | set(scope_ids.get("sandbox_bindings", ())))
     )
@@ -393,6 +401,7 @@ def plan_lifecycle(
         blockers=blockers,
         impact_digest=digest,
         field_positions=field_positions,
+        derived_changes=derived.changes,
     )
 
 
