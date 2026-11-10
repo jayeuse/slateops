@@ -314,7 +314,8 @@ def test_preview_preserves_order_and_duplicate_live_name_blockers(
     ].model_copy(deep=True)
     document.design.departments.extend([duplicate, duplicate.model_copy(deep=True)])
 
-    blockers = publication_plan(integration_owner_db, document).blockers
+    plan_blockers = publication_plan(integration_owner_db, document).blockers
+    blockers = [item for item in plan_blockers if item.code != "derived_name_unavailable"]
 
     assert [(item.code, item.message, item.target_id) for item in blockers] == [
         (
@@ -332,6 +333,14 @@ def test_preview_preserves_order_and_duplicate_live_name_blockers(
             "Active department names must be unique",
             duplicate.id,
         ),
+        ("document_invalid", "Duplicate department ID", duplicate.id),
+    ]
+    # R12: the two new departments also need the same derived group names.
+    assert [
+        (item.code, item.message, item.target_id)
+        for item in plan_blockers
+        if item.code == "derived_name_unavailable"
+    ] == [
         (
             "derived_name_unavailable",
             "External duplicate department and External duplicate department need the same "
@@ -350,7 +359,6 @@ def test_preview_preserves_order_and_duplicate_live_name_blockers(
             'group name "External duplicate department viewers"',
             duplicate.id,
         ),
-        ("document_invalid", "Duplicate department ID", duplicate.id),
     ]
 
 
