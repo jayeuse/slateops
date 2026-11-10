@@ -85,6 +85,7 @@ export function TriggerList({
   triggers,
   selectedId,
   unsaved,
+  incomplete,
   phone,
   canCreate,
   onOpen,
@@ -98,6 +99,8 @@ export function TriggerList({
   selectedId: string;
   /** Ids of triggers that Save will write (new or changed). */
   unsaved: ReadonlySet<string>;
+  /** After Save refused: ids of changed triggers with an empty part (B1). */
+  incomplete?: ReadonlySet<string> | undefined;
   phone: boolean;
   canCreate: boolean;
   onOpen: (id: string) => void;
@@ -223,13 +226,25 @@ export function TriggerList({
                     Unsaved
                   </Badge>
                 ) : null}
+                {incomplete?.has(recordTrigger.id) ? (
+                  <Badge variant="warning" className="shrink-0">
+                    Incomplete
+                  </Badge>
+                ) : null}
               </span>
-              <span className="text-muted-foreground inline-flex items-center gap-1.5 text-sm">
+              {/* From 1280 to 1439px the event shows as its icon only; the
+                  word stays its name and tooltip. */}
+              <span
+                title={triggerEventLabel(recordTrigger)}
+                className="text-muted-foreground inline-flex items-center gap-1.5 text-sm"
+              >
                 <TriggerEventIcon
                   kind={recordTrigger.trigger.kind}
                   className="size-3.5 shrink-0"
                 />
-                {triggerEventLabel(recordTrigger)}
+                <span className="xl:max-[1439px]:sr-only">
+                  {triggerEventLabel(recordTrigger)}
+                </span>
               </span>
             </Button>
           );

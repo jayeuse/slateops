@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   Collapsible,
   CollapsibleTrigger,
@@ -22,7 +22,11 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
-import type { SandboxTrigger, SandboxDocumentDesign } from "../domain/document";
+import type { SandboxDocumentDesign } from "../domain/document";
+import {
+  draftModuleId,
+  type SandboxTriggerDraft,
+} from "../domain/trigger-draft";
 import type { SandboxTriggerRun } from "../state/api";
 import type { TriggerDraft } from "./use-trigger-draft";
 import {
@@ -37,11 +41,19 @@ import {
   type TriggerStatusFilter,
 } from "./trigger-list";
 import { TriggerRail } from "./trigger-rail";
+import { TriggerSentence } from "./trigger-sentence";
+import {
+  TriggerStructureRegion,
+  TriggerStructureSheet,
+  triggerFieldsInUse,
+} from "./trigger-structure-region";
 
-// Triggers (docs/specs/sandbox-relayout.md S5): two panes, the list and the
-// detail of one trigger. The detail is Name, Status, and the When/If/Then
-// rail, then Recent activity, closed and last; the Save bar (October D1)
-// sits under it while changes exist.
+// Triggers (docs/specs/sandbox-relayout.md S5, docs/specs/sandbox-ux-redesign.md
+// TRIG-1 and TRIG-6): the list, the detail of one trigger, and from 1280px
+// the structure region beside them, each scrolling alone. The detail head
+// holds the name and the whole-trigger sentence; then Name, Status, and the
+// When/If/Then rail, then Recent activity, closed and last; the Save bar
+// (October D1) sits under it while changes exist.
 
 export type TriggerStudioProps = {
   design: SandboxDocumentDesign;
@@ -56,7 +68,7 @@ export type TriggerStudioProps = {
 };
 
 /** The flow steps of a trigger, keyed as `triggerStepErrors` keys them. */
-function stepKeys(recordTrigger: SandboxTrigger): string[] {
+function stepKeys(recordTrigger: SandboxTriggerDraft): string[] {
   return [
     "trigger",
     ...recordTrigger.conditionGroup.conditions.map(
@@ -123,6 +135,24 @@ export function TriggerStudio({
     return () => observer.disconnect();
   }, []);
   const detailBodyRef = useRef<HTMLDivElement>(null);
+  const sentenceId = useId();
+  // The step that has focus, so the structure region tints its fields.
+  const [focusedStep, setFocusedStep] = useState<string | null>(null);
+  /** Focuses the first empty control of a step, or of the trigger. */
+  function focusEmptyPart(step?: string) {
+    requestAnimationFrame(() => {
+      const body = detailBodyRef.current;
+      const scope = step
+        ? body?.querySelector<HTMLElement>(`[data-step-key="${step}"]`)
+        : body;
+      (
+        scope?.querySelector<HTMLElement>("[data-empty-part]") ??
+        scope?.querySelector<HTMLElement>(
+          "button:not(:disabled), select:not(:disabled), input:not(:disabled)",
+        )
+      )?.focus();
+    });
+  }
   // A link that asks for a filter opens on the first trigger it shows.
   const [selectedId, setSelectedId] = useState(
     initialSelectedId && draft.some((item) => item.id === initialSelectedId)
@@ -164,6 +194,10 @@ export function TriggerStudio({
     detailBodyRef.current?.scrollTo({ top: 0 });
   }, [selectedId]);
   const selected = draft.find((item) => item.id === selectedId);
+  // The region tints the fields of the focused step, else of the trigger.
+  const highlightedFields = selected
+    ? triggerFieldsInUse(selected, focusedStep)
+    : new Set<string>();
   const updateDraft = triggerDraft.update;
   // New steps keep a required-value note quiet until they are changed or
   // left, or Save is tried (S25), keyed "<trigger id>/<step key>".
@@ -201,7 +235,16 @@ export function TriggerStudio({
   }
   async function save() {
     setQuietSteps(new Set());
-    await triggerDraft.save();
+    const result = await triggerDraft.save();
+    // B1 rule c: nothing was sent; open the first incomplete trigger at its
+    // first empty part.
+    if (!result.ok && result.incomplete) {
+      const { triggerId, step } = result.incomplete;
+      setSelectedId(triggerId);
+      setListStatus((status) => (hides(status, triggerId) ? "all" : status));
+      setPhoneView("detail");
+      focusEmptyPart(step);
+    }
   }
   // A failed save brings its reason into view and to the screen reader.
   useEffect(() => {
@@ -257,7 +300,7 @@ export function TriggerStudio({
       )?.focus(),
     );
   }
-  function deleteTrigger(recordTrigger: SandboxTrigger) {
+  function deleteTrigger(recordTrigger: SandboxTriggerDraft) {
     const index = draft.findIndex((item) => item.id === recordTrigger.id);
     const remaining = draft.filter((item) => item.id !== recordTrigger.id);
     updateDraft(remaining);
@@ -281,7 +324,7 @@ export function TriggerStudio({
       focusCurrentRow();
     });
   }
-  function update(next: SandboxTrigger) {
+  function update(next: SandboxTriggerDraft) {
     const index = draft.findIndex((item) => item.id === next.id);
     if (index < 0) return;
     const before = new Set(stepKeys(draft[index]!));
@@ -385,16 +428,17 @@ export function TriggerStudio({
         </p>
       ) : null}
       <fieldset disabled={locked} className="contents">
-        <div className="min-w-0 shrink-0 @min-[900px]/studio:h-[calc(100dvh-15rem)] xl:@min-[900px]/studio:h-auto xl:@min-[900px]/studio:min-h-0 xl:@min-[900px]/studio:flex-1 xl:@min-[900px]/studio:shrink">
+        {/* From 1280px the structure region is the third pane (TRIG-1). */}
+        <div className="min-w-0 shrink-0 min-[1440px]:gap-4 xl:flex xl:gap-3 @min-[900px]/studio:h-[calc(100dvh-15rem)] xl:@min-[900px]/studio:h-auto xl:@min-[900px]/studio:min-h-0 xl:@min-[900px]/studio:flex-1 xl:@min-[900px]/studio:shrink">
           <ResizablePanelGroup
             orientation="horizontal"
             disabled={!wide}
-            className="block! h-auto! overflow-visible! @min-[900px]/studio:flex! @min-[900px]/studio:h-full! @min-[900px]/studio:overflow-hidden!"
+            className="block! h-auto! min-w-0 overflow-visible! xl:flex-1 @min-[900px]/studio:flex! @min-[900px]/studio:h-full! @min-[900px]/studio:overflow-hidden!"
           >
             <ResizablePanel
               id="trigger-list"
-              defaultSize="24rem"
-              minSize={wide ? "20rem" : 0}
+              defaultSize="17.5rem"
+              minSize={wide ? "15.5rem" : 0}
               groupResizeBehavior="preserve-pixel-size"
               className={cn(
                 "min-w-0 overflow-visible! @min-[900px]/studio:h-full @min-[900px]/studio:overflow-hidden!",
@@ -414,12 +458,15 @@ export function TriggerStudio({
                   setSelectedId(id);
                   openDetail();
                 }}
+                incomplete={triggerDraft.incomplete?.ids}
                 onCreate={() => {
+                  // Module empty and focused (T2): nothing is chosen for you.
                   const next = defaultTrigger(design);
                   quiet(stepKeys(next).map((step) => `${next.id}/${step}`));
                   setSelectedId(next.id);
                   updateDraft([...draft, next]);
                   openDetail();
+                  focusEmptyPart("trigger");
                 }}
               />
             </ResizablePanel>
@@ -433,7 +480,7 @@ export function TriggerStudio({
             )}
             <ResizablePanel
               id="trigger-detail"
-              minSize={wide ? "28rem" : 0}
+              minSize={wide ? "24rem" : 0}
               className={cn(
                 "min-w-0 overflow-visible! @min-[900px]/studio:h-full @min-[900px]/studio:overflow-hidden!",
                 !phone && "mt-4 @min-[900px]/studio:mt-0",
@@ -442,6 +489,8 @@ export function TriggerStudio({
             >
               <section
                 aria-label="Trigger details"
+                // The sentence describes the editor; it is not a live region.
+                aria-describedby={selected ? sentenceId : undefined}
                 className="bg-card border-border @container/detail flex min-w-0 flex-col rounded-xl border @min-[900px]/studio:h-full @min-[900px]/studio:overflow-clip"
               >
                 <div
@@ -481,13 +530,23 @@ export function TriggerStudio({
                       >
                         {triggerDisplayName(selected)}
                       </h2>
+                      {/* Below 1280px the region is one action away. */}
+                      <TriggerStructureSheet
+                        design={design}
+                        moduleId={draftModuleId(selected)}
+                        highlighted={highlightedFields}
+                        bottom={phone}
+                        className="ml-auto xl:hidden"
+                      />
                       <DropdownMenu>
                         <DropdownMenuTrigger
                           render={
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="ml-auto size-11 shrink-0"
+                              // Slim from 1280px, as the other detail
+                              // controls; 44px below.
+                              className="ml-auto size-11 shrink-0 xl:size-8"
                               aria-label="Trigger options"
                               disabled={pending}
                             />
@@ -506,6 +565,12 @@ export function TriggerStudio({
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
+                      <TriggerSentence
+                        id={sentenceId}
+                        draft={selected}
+                        design={design}
+                        className={cn("basis-full", phone && "order-last")}
+                      />
                     </>
                   ) : null}
                 </div>
@@ -529,6 +594,13 @@ export function TriggerStudio({
                       className="contents"
                       onChange={(event) => touchStep(event.target)}
                       onBlur={(event) => touchStep(event.target)}
+                      onFocus={(event) =>
+                        setFocusedStep(
+                          (event.target as HTMLElement).closest<HTMLElement>(
+                            "[data-step-key]",
+                          )?.dataset.stepKey ?? null,
+                        )
+                      }
                     >
                       <TriggerRail
                         // Another trigger is a new detail: its switch and
@@ -555,6 +627,13 @@ export function TriggerStudio({
                     {changes > 0 ? (
                       <p className="text-sm font-semibold">
                         {changes} unsaved {changes === 1 ? "change" : "changes"}
+                      </p>
+                    ) : null}
+                    {triggerDraft.incomplete ? (
+                      // B1 rule c: Save sent nothing; it names the first
+                      // missing part until every changed trigger is whole.
+                      <p role="status" className="text-warn-text text-sm">
+                        {triggerDraft.incomplete.message}
                       </p>
                     ) : null}
                     {triggerDraft.baseChanged ? (
@@ -589,6 +668,12 @@ export function TriggerStudio({
               </section>
             </ResizablePanel>
           </ResizablePanelGroup>
+          <TriggerStructureRegion
+            design={design}
+            moduleId={selected ? draftModuleId(selected) : ""}
+            highlighted={highlightedFields}
+            className="hidden h-full w-62 shrink-0 min-[1440px]:w-64 xl:flex"
+          />
         </div>
       </fieldset>
     </section>

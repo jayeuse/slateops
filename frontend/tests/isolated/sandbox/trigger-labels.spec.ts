@@ -1,11 +1,11 @@
 import { expect, test } from "@playwright/test";
 
 import {
-  actionsText,
-  conditionsText,
-  triggerOperatorOptions,
+  operatorWords,
   weekdayOptions,
 } from "../../../src/components/systems/sandbox/components/trigger-flow";
+import { operatorsForField } from "../../../src/components/systems/sandbox/domain/trigger-draft";
+import { triggerSentence } from "../../../src/components/systems/sandbox/components/trigger-sentence";
 import type {
   SandboxDocumentDesign,
   SandboxTrigger,
@@ -15,10 +15,11 @@ import {
   documentTextField,
 } from "../../helpers/sandbox-fixtures";
 
-// Trigger copy uses plain words: the If and Then step summaries of the rail
-// name a select choice by its label (the stored value stays the choice ID), and the schedule and
-// operator pickers use the same words as the summary ("Every Monday",
-// "is at least") while their stored values stay 1 to 7 and the ASCII symbols.
+// Trigger copy uses plain words: the whole-trigger sentence names a select
+// choice by its label (the stored value stays the choice ID), and the
+// schedule and operator pickers use the same words as the sentence ("Every
+// Monday", "is at least") while their stored values stay 1 to 7 and the
+// ASCII symbols.
 
 const design: SandboxDocumentDesign = {
   departments: [{ id: "operations", name: "Operations", closed: false }],
@@ -76,24 +77,24 @@ function statusTrigger(conditionValue: string): SandboxTrigger {
   };
 }
 
-function stepSummaries(recordTrigger: SandboxTrigger): string {
-  return [
-    conditionsText(design, recordTrigger),
-    actionsText(design, recordTrigger),
-  ].join("\n");
+function sentence(recordTrigger: SandboxTrigger): string {
+  return triggerSentence(recordTrigger, design)
+    .map((part) => part.text)
+    .join("");
 }
 
-test("trigger summaries name a select choice by its label", () => {
-  const markup = stepSummaries(statusTrigger("0460bb8e-open"));
+test("the trigger sentence names a select choice by its label", () => {
+  const markup = sentence(statusTrigger("0460bb8e-open"));
 
-  expect(markup).toContain("Status is Open");
-  expect(markup).toContain("Set Status to On hold");
+  expect(markup).toBe(
+    "When Title changes in Requests, if Status is Open, set Status to On hold.",
+  );
   expect(markup).not.toContain("0460bb8e-open");
   expect(markup).not.toContain("7c1d2f30-hold");
 });
 
-test("trigger summaries keep a select value that matches no choice", () => {
-  expect(stepSummaries(statusTrigger("retired-choice"))).toContain(
+test("the trigger sentence keeps a select value that matches no choice", () => {
+  expect(sentence(statusTrigger("retired-choice"))).toContain(
     "Status is retired-choice",
   );
 });
@@ -110,8 +111,14 @@ test("weekly schedule choices show weekday names and store 1 to 7", () => {
   ]);
 });
 
-test("operator choices use the summary words, with is first", () => {
-  expect(triggerOperatorOptions).toEqual([
+test("operator choices use the sentence words, with is first", () => {
+  // With no field chosen yet, the picker offers every operator, in order.
+  expect(
+    operatorsForField(undefined).map((operator) => ({
+      value: operator,
+      label: operatorWords[operator],
+    })),
+  ).toEqual([
     { value: "=", label: "is" },
     { value: "!=", label: "is not" },
     { value: ">", label: "is more than" },

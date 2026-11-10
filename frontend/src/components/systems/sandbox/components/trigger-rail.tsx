@@ -2,8 +2,21 @@
 
 import { useId, type ReactNode } from "react";
 import { ListFilter, Plus, SquarePen, X } from "lucide-react";
+import { DepartmentMark } from "@/components/sandbox/department-mark";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  Combobox,
+  ComboboxCollection,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxGroup,
+  ComboboxGroupLabel,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxTrigger,
+} from "@/components/ui/combobox";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
@@ -14,13 +27,16 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type {
+  SandboxComparisonOperator,
   SandboxDocumentDesign,
   SandboxDocumentField,
-  SandboxTrigger,
+  SandboxDocumentModule,
+  SandboxFieldReference,
   SandboxTriggerAction,
   SandboxTriggerCondition,
   SandboxValueSource,
 } from "../domain/document";
+import { fieldTypeLabel } from "../domain/model";
 import {
   addTriggerAction,
   addTriggerCondition,
@@ -28,52 +44,79 @@ import {
   defaultLiteral,
   displayLiteral,
   fieldReferenceOptionValue,
-  fieldsFor,
-  firstOpenField,
-  firstOpenModule,
-  firstOpenNumberField,
   parseLiteral,
   replaceAt,
   scheduleFrequencyChange,
-  triggerOrigin,
 } from "../domain/trigger-rules";
 import {
+  changeTriggerEvent,
+  changeTriggerModule,
+  draftModuleId,
+  fieldChoices,
+  moduleChoiceGroups,
+  operatorsForField,
+  resolveReference,
+  thresholdFieldFits,
+  triggerDraftGaps,
+  type SandboxTriggerDraft,
+  type TriggerChoice,
+  type TriggerChoiceGroup,
+  type TriggerDraftGap,
+} from "../domain/trigger-draft";
+import {
   TriggerEventIcon,
-  actionsText,
-  conditionsText,
-  triggerOperatorOptions,
+  operatorWords,
   triggerStatusWord,
-  triggerText,
   weekdayOptions,
 } from "./trigger-flow";
 
-// The detail of one trigger (docs/specs/sandbox-relayout.md S5, S6): Name
-// and Status as label-left rows, then When, If, and Then on one rail. The
-// rail is the editor: each step shows its one-line summary and, under it,
-// its own settings. It only renders the draft that `useTriggerDraft` owns.
+// The detail of one trigger (docs/specs/sandbox-relayout.md S5, S6, and
+// docs/specs/sandbox-ux-redesign.md TRIG-2 to TRIG-7): Name and Status as
+// label-left rows, then When, If, and Then on one rail. The step heads keep
+// only their names; the whole-trigger sentence above the rail says what the
+// trigger does. The rail renders the draft that `useTriggerDraft` owns: a
+// step may be empty, and then it shows why in warn ink.
 
-type Change = (recordTrigger: SandboxTrigger) => void;
+type Change = (recordTrigger: SandboxTriggerDraft) => void;
 
 /**
  * A label-left row: a muted label column and the control on the right from
- * a 480px detail; narrower, the label sits above. The visible label can be
- * shorter than the control's name ("Module" names "Event module").
+ * a 384px detail (the editor at 1280px, beside the list and the structure
+ * region); narrower, the label sits above. The visible label can be shorter
+ * than the control's name ("Module" names "Event module").
+ *
+ * A picker row (`picker`) is not a Base UI field: inside one, the Combobox
+ * trigger takes the field label as its name (`aria-labelledby`), so
+ * "Event module" would read "Module". Its label points at it with `htmlFor`.
  */
+const settingRowClass =
+  "min-w-0 gap-1.5 @min-[24rem]/detail:grid @min-[24rem]/detail:min-h-10 @min-[24rem]/detail:grid-cols-[7rem_minmax(0,1fr)] @min-[24rem]/detail:items-center @min-[24rem]/detail:gap-x-4";
+const settingLabelClass = "text-muted-foreground font-normal xl:text-sm";
+
 function SettingRow({
   id,
   label,
+  picker = false,
   children,
 }: {
   id: string;
   label: string;
+  picker?: boolean;
   children: ReactNode;
 }) {
-  return (
-    <Field className="min-w-0 gap-1.5 @min-[30rem]/detail:grid @min-[30rem]/detail:min-h-10 @min-[30rem]/detail:grid-cols-[7rem_minmax(0,1fr)] @min-[30rem]/detail:items-center @min-[30rem]/detail:gap-x-4">
-      <FieldLabel
+  return picker ? (
+    <div className={cn("flex flex-col", settingRowClass)}>
+      <label
         htmlFor={id}
-        className="text-muted-foreground font-normal xl:text-sm"
+        className={cn("text-sm font-medium", settingLabelClass)}
       >
+        {label}
+      </label>
+      {children}
+    </div>
+  ) : (
+    <Field className={settingRowClass}>
+      <FieldLabel htmlFor={id} className={settingLabelClass}>
         {label}
       </FieldLabel>
       {children}
@@ -83,19 +126,16 @@ function SettingRow({
 
 function RailStep({
   name,
-  summary,
   icon,
   last = false,
   children,
 }: {
   name: string;
-  summary: string;
   icon: ReactNode;
   last?: boolean;
   children: ReactNode;
 }) {
   const headingId = useId();
-  const summaryId = useId();
   return (
     <li className="grid grid-cols-[2rem_minmax(0,1fr)] gap-x-3.5">
       <span aria-hidden="true" className="relative flex justify-center">
@@ -108,34 +148,272 @@ function RailStep({
       </span>
       <section
         aria-labelledby={headingId}
-        aria-describedby={summaryId}
         className={cn("grid min-w-0 gap-2", !last && "pb-6")}
       >
-        <div className="flex min-h-7 min-w-0 items-baseline gap-2.5">
-          <h3 id={headingId} className="shrink-0 text-sm font-semibold">
-            {name}
-          </h3>
-          <p
-            id={summaryId}
-            title={summary}
-            className="text-muted-foreground min-w-0 truncate text-sm @max-[30rem]/detail:whitespace-normal"
-          >
-            {summary}
-          </p>
-        </div>
+        <h3
+          id={headingId}
+          className="flex min-h-7 items-center text-sm font-semibold"
+        >
+          {name}
+        </h3>
         {children}
       </section>
     </li>
   );
 }
 
-/** What Save will refuse in a step, under the settings it belongs to. */
-function StepNote({ id, note }: { id: string; note: string | undefined }) {
-  return note ? (
+/**
+ * The notes of a step, under the settings they belong to, in warn ink: why
+ * a part is empty, what Save will refuse, and an operator that does not fit.
+ */
+function StepNote({
+  id,
+  notes,
+}: {
+  id: string;
+  notes: ReadonlyArray<string | null | undefined>;
+}) {
+  const shown = notes.filter((note): note is string => Boolean(note));
+  return shown.length ? (
     <p id={id} className="text-warn-text text-xs">
-      {note}
+      {shown.join(" ")}
     </p>
   ) : null;
+}
+
+/** The warn edge of a control whose part is empty or does not fit. */
+const warnEdge = "border-b-[var(--warn)]!";
+const warnSelectEdge = "[&_select]:border-b-[var(--warn)]!";
+
+/**
+ * A module or field picker (TRIG-2): a search, then the choices, grouped by
+ * department for modules, each with its field count or its type on the
+ * right. The closed picker shows the department or the type too. An empty
+ * picker carries `data-empty-part`, so Save can bring focus to it.
+ */
+function TriggerPicker({
+  id,
+  label,
+  value,
+  groups,
+  placeholder,
+  searchPlaceholder,
+  missing,
+  describedBy,
+  onChange,
+}: {
+  id?: string;
+  label: string;
+  value: string;
+  groups: readonly TriggerChoiceGroup[];
+  placeholder: string;
+  searchPlaceholder: string;
+  missing: boolean;
+  describedBy?: string;
+  onChange: (value: string) => void;
+}) {
+  const searchLabelId = useId();
+  const grouped = groups.some((group) => group.label);
+  const choices = new Map<
+    string,
+    { choice: TriggerChoice; group: TriggerChoiceGroup }
+  >(
+    groups.flatMap((group) =>
+      group.choices.map((choice) => [choice.value, { choice, group }] as const),
+    ),
+  );
+  const selected = choices.get(value);
+  const item = (choiceValue: string) => {
+    const entry = choices.get(choiceValue);
+    if (!entry) return null;
+    return (
+      <ComboboxItem
+        key={choiceValue}
+        value={choiceValue}
+        // One name for the row: "Status, Choice list" or "Orders, 6 fields".
+        aria-label={`${entry.choice.label}, ${entry.choice.meta}`}
+      >
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="min-w-0 flex-1 break-words">
+            {entry.choice.label}
+          </span>
+          <span
+            className={cn(
+              "text-muted-foreground shrink-0 text-xs",
+              !grouped && "font-mono",
+            )}
+          >
+            {entry.choice.meta}
+          </span>
+        </span>
+      </ComboboxItem>
+    );
+  };
+  return (
+    <Combobox
+      items={
+        grouped
+          ? groups.map((group) => ({
+              value: group.label,
+              items: group.choices.map((choice) => choice.value),
+            }))
+          : [...choices.keys()]
+      }
+      value={selected ? value : null}
+      itemToStringLabel={(choiceValue) =>
+        typeof choiceValue === "string"
+          ? (choices.get(choiceValue)?.choice.label ?? "")
+          : ""
+      }
+      onValueChange={(next) => {
+        if (typeof next === "string") onChange(next);
+      }}
+    >
+      <ComboboxTrigger
+        id={id}
+        aria-label={label}
+        aria-describedby={describedBy}
+        data-empty-part={missing || undefined}
+        className={cn("h-8 min-w-0 px-2.5", missing && warnEdge)}
+      >
+        {selected ? (
+          <span className="flex min-w-0 flex-1 items-baseline gap-2">
+            {grouped ? (
+              <DepartmentMark
+                departmentIndex={selected.group.departmentIndex}
+                className="self-center"
+              />
+            ) : null}
+            <span className="min-w-0 truncate">{selected.choice.label}</span>
+            {grouped ? (
+              <span className="text-muted-foreground shrink-0 truncate">
+                · {selected.group.label}
+              </span>
+            ) : (
+              <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
+                {selected.choice.meta}
+              </span>
+            )}
+          </span>
+        ) : (
+          <span className="text-muted-foreground truncate">{placeholder}</span>
+        )}
+      </ComboboxTrigger>
+      <ComboboxContent positionerClassName="z-[60]">
+        <span id={searchLabelId} className="sr-only">
+          {`Search ${label.toLowerCase()}`}
+        </span>
+        <ComboboxInput
+          aria-labelledby={searchLabelId}
+          placeholder={searchPlaceholder}
+        />
+        <ComboboxList>
+          {grouped
+            ? (group: { value: string; items: string[] }) => {
+                const department = groups.find(
+                  (entry) => entry.label === group.value,
+                );
+                return (
+                  <ComboboxGroup key={group.value} items={group.items}>
+                    <ComboboxGroupLabel className="flex items-center gap-2">
+                      <DepartmentMark
+                        departmentIndex={department?.departmentIndex ?? 0}
+                      />
+                      {group.value}
+                    </ComboboxGroupLabel>
+                    <ComboboxCollection>
+                      {(choiceValue: string) => item(choiceValue)}
+                    </ComboboxCollection>
+                  </ComboboxGroup>
+                );
+              }
+            : (choiceValue: string) => item(choiceValue)}
+        </ComboboxList>
+        <ComboboxEmpty className="text-muted-foreground p-3 text-sm empty:p-0">
+          No matches. Try another search.
+        </ComboboxEmpty>
+      </ComboboxContent>
+    </Combobox>
+  );
+}
+
+/** A field picker for the trigger's module, with each field's type. */
+function FieldPicker({
+  fields,
+  ...props
+}: Omit<
+  Parameters<typeof TriggerPicker>[0],
+  "groups" | "placeholder" | "searchPlaceholder"
+> & { fields: readonly SandboxDocumentField[] }) {
+  return (
+    <TriggerPicker
+      {...props}
+      groups={[
+        { label: "", departmentIndex: 0, choices: fieldChoices(fields) },
+      ]}
+      placeholder="Choose a field"
+      searchPlaceholder="Find a field"
+    />
+  );
+}
+
+/**
+ * The operator choice (TRIG-3, TRIG-4): only the operators that fit the
+ * field. A saved operator that does not fit stays selected, listed last as
+ * "saved · does not fit", until the person picks another.
+ */
+function OperatorSelect({
+  id,
+  label,
+  value,
+  field,
+  className,
+  describedBy,
+  onChange,
+}: {
+  id?: string;
+  label: string;
+  value: SandboxComparisonOperator;
+  field: SandboxDocumentField | undefined;
+  className?: string;
+  describedBy?: string;
+  onChange: (operator: SandboxComparisonOperator) => void;
+}) {
+  const offered = operatorsForField(field);
+  const fits = offered.includes(value);
+  return (
+    <NativeSelect
+      id={id}
+      aria-label={label}
+      aria-describedby={describedBy}
+      className={cn("w-full", !fits && warnSelectEdge, className)}
+      value={value}
+      onChange={(event) =>
+        onChange(event.target.value as SandboxComparisonOperator)
+      }
+    >
+      {offered.map((operator) => (
+        <NativeSelectOption key={operator} value={operator}>
+          {operatorWords[operator]}
+        </NativeSelectOption>
+      ))}
+      {fits ? null : (
+        <NativeSelectOption value={value} className="text-muted-foreground">
+          {`${operatorWords[value]} · saved · does not fit`}
+        </NativeSelectOption>
+      )}
+    </NativeSelect>
+  );
+}
+
+/** "Does not fit Text; choose is or is not." for a saved misfit operator. */
+function operatorNote(
+  operator: SandboxComparisonOperator,
+  field: SandboxDocumentField | undefined,
+): string | null {
+  const offered = operatorsForField(field);
+  if (!field || offered.includes(operator)) return null;
+  return `Does not fit ${fieldTypeLabel(field.type)}; choose ${offered.map((item) => operatorWords[item]).join(" or ")}.`;
 }
 
 function ValueEditor({
@@ -147,7 +425,7 @@ function ValueEditor({
   layout,
 }: {
   design: SandboxDocumentDesign;
-  trigger: SandboxTrigger;
+  trigger: SandboxTriggerDraft;
   target?: SandboxDocumentField | undefined;
   value: SandboxValueSource;
   onChange: (value: SandboxValueSource) => void;
@@ -177,132 +455,146 @@ function ValueEditor({
       {value.kind === "literal" ? "Use a field" : "Use fixed value"}
     </Button>
   ) : null;
-  const control =
-    value.kind === "field-reference" ? (
-      <NativeSelect
-        id={id}
-        {...named}
-        className="min-w-0 flex-1"
-        value={fieldReferenceOptionValue(value)}
-        onChange={(event) => {
-          const option = references.find(
-            (item) => item.value === event.target.value,
-          );
-          if (option)
-            onChange({ kind: "field-reference", ...option.reference });
-        }}
-      >
-        {references.map((option) => (
-          <NativeSelectOption key={option.value} value={option.value}>
-            {option.label}
-          </NativeSelectOption>
-        ))}
-      </NativeSelect>
-    ) : target?.config.kind === "select" ? (
-      <NativeSelect
-        id={id}
-        {...named}
-        className="min-w-0 flex-1"
-        value={typeof value.value === "string" ? value.value : ""}
-        onChange={(event) =>
-          onChange({ kind: "literal", value: event.target.value || null })
-        }
-      >
-        <NativeSelectOption value="">Empty</NativeSelectOption>
-        {target.config.options.map((option) => (
-          <NativeSelectOption key={option.id} value={option.id}>
-            {option.label}
-          </NativeSelectOption>
-        ))}
-      </NativeSelect>
-    ) : target?.config.kind === "checkbox" ? (
-      <NativeSelect
-        id={id}
-        {...named}
-        className="min-w-0 flex-1"
-        value={String(value.value)}
-        onChange={(event) =>
-          onChange({ kind: "literal", value: event.target.value === "true" })
-        }
-      >
-        <NativeSelectOption value="true">Checked</NativeSelectOption>
-        <NativeSelectOption value="false">Unchecked</NativeSelectOption>
-      </NativeSelect>
-    ) : target?.config.kind === "long-text" ? (
-      <Textarea
-        id={id}
-        {...named}
-        className="min-w-0 flex-1"
-        value={displayLiteral(value.value)}
-        required={target.required}
-        maxLength={target.config.maxLength}
-        onChange={(event) =>
-          onChange({
-            kind: "literal",
-            value: parseLiteral(event.target.value, target),
-          })
-        }
-      />
-    ) : (
-      <Input
-        id={id}
-        {...named}
-        className="min-w-0 flex-1"
-        type={
-          target?.config.kind === "number" || target?.config.kind === "integer"
-            ? "number"
-            : target?.config.kind === "email"
-              ? "email"
-              : target?.config.kind === "url"
-                ? "url"
-                : target?.config.kind === "date"
-                  ? "date"
-                  : target?.config.kind === "datetime"
-                    ? "datetime-local"
-                    : "text"
-        }
-        value={displayLiteral(value.value)}
-        required={target?.required}
-        min={
-          target?.config.kind === "number" || target?.config.kind === "integer"
-            ? target.config.min
-            : target?.config.kind === "date" ||
-                target?.config.kind === "datetime"
-              ? target.config.earliest
-              : undefined
-        }
-        max={
-          target?.config.kind === "number" || target?.config.kind === "integer"
-            ? target.config.max
-            : target?.config.kind === "date" ||
-                target?.config.kind === "datetime"
-              ? target.config.latest
-              : undefined
-        }
-        step={
-          target?.config.kind === "number" || target?.config.kind === "integer"
-            ? target.config.step
+  const control = !target ? (
+    // No field yet: nothing to type a value for.
+    <Input
+      id={id}
+      {...named}
+      className="min-w-0 flex-1"
+      disabled
+      placeholder="Choose a field first"
+      value=""
+      readOnly
+    />
+  ) : value.kind === "field-reference" ? (
+    <NativeSelect
+      id={id}
+      {...named}
+      className="min-w-0 flex-1"
+      value={fieldReferenceOptionValue(value)}
+      onChange={(event) => {
+        const option = references.find(
+          (item) => item.value === event.target.value,
+        );
+        if (option) onChange({ kind: "field-reference", ...option.reference });
+      }}
+    >
+      {references.some(
+        (option) => option.value === fieldReferenceOptionValue(value),
+      ) ? null : (
+        <NativeSelectOption value={fieldReferenceOptionValue(value)}>
+          Choose a field
+        </NativeSelectOption>
+      )}
+      {references.map((option) => (
+        <NativeSelectOption key={option.value} value={option.value}>
+          {option.label}
+        </NativeSelectOption>
+      ))}
+    </NativeSelect>
+  ) : target.config.kind === "select" ? (
+    <NativeSelect
+      id={id}
+      {...named}
+      className="min-w-0 flex-1"
+      value={typeof value.value === "string" ? value.value : ""}
+      onChange={(event) =>
+        onChange({ kind: "literal", value: event.target.value || null })
+      }
+    >
+      <NativeSelectOption value="">Empty</NativeSelectOption>
+      {target.config.options.map((option) => (
+        <NativeSelectOption key={option.id} value={option.id}>
+          {option.label}
+        </NativeSelectOption>
+      ))}
+    </NativeSelect>
+  ) : target.config.kind === "checkbox" ? (
+    <NativeSelect
+      id={id}
+      {...named}
+      className="min-w-0 flex-1"
+      value={String(value.value)}
+      onChange={(event) =>
+        onChange({ kind: "literal", value: event.target.value === "true" })
+      }
+    >
+      <NativeSelectOption value="true">Checked</NativeSelectOption>
+      <NativeSelectOption value="false">Unchecked</NativeSelectOption>
+    </NativeSelect>
+  ) : target.config.kind === "long-text" ? (
+    <Textarea
+      id={id}
+      {...named}
+      className="min-w-0 flex-1"
+      value={displayLiteral(value.value)}
+      required={target.required}
+      maxLength={target.config.maxLength}
+      onChange={(event) =>
+        onChange({
+          kind: "literal",
+          value: parseLiteral(event.target.value, target),
+        })
+      }
+    />
+  ) : (
+    <Input
+      id={id}
+      {...named}
+      className="min-w-0 flex-1"
+      type={
+        target.config.kind === "number" || target.config.kind === "integer"
+          ? "number"
+          : target.config.kind === "email"
+            ? "email"
+            : target.config.kind === "url"
+              ? "url"
+              : target.config.kind === "date"
+                ? "date"
+                : target.config.kind === "datetime"
+                  ? "datetime-local"
+                  : "text"
+      }
+      value={displayLiteral(value.value)}
+      required={target.required}
+      min={
+        target.config.kind === "number" || target.config.kind === "integer"
+          ? target.config.min
+          : target.config.kind === "date" || target.config.kind === "datetime"
+            ? target.config.earliest
             : undefined
-        }
-        maxLength={
-          target?.config.kind === "text" ||
-          target?.config.kind === "email" ||
-          target?.config.kind === "url"
-            ? target.config.maxLength
+      }
+      max={
+        target.config.kind === "number" || target.config.kind === "integer"
+          ? target.config.max
+          : target.config.kind === "date" || target.config.kind === "datetime"
+            ? target.config.latest
             : undefined
-        }
-        onChange={(event) =>
-          onChange({
-            kind: "literal",
-            value: parseLiteral(event.target.value, target),
-          })
-        }
-      />
-    );
+      }
+      step={
+        target.config.kind === "number" || target.config.kind === "integer"
+          ? target.config.step
+          : undefined
+      }
+      maxLength={
+        target.config.kind === "text" ||
+        target.config.kind === "email" ||
+        target.config.kind === "url"
+          ? target.config.maxLength
+          : undefined
+      }
+      onChange={(event) =>
+        onChange({
+          kind: "literal",
+          value: parseLiteral(event.target.value, target),
+        })
+      }
+    />
+  );
   const cell = (
     <div className="flex min-w-0 items-center gap-1">
       {control}
-      {sourceToggle}
+      {target ? sourceToggle : null}
     </div>
   );
   return layout === "row" ? (
@@ -311,32 +603,6 @@ function ValueEditor({
     </SettingRow>
   ) : (
     cell
-  );
-}
-
-function ModuleOptions({ design }: { design: SandboxDocumentDesign }) {
-  return (
-    <>
-      {design.modules
-        .filter((item) => !item.closed)
-        .map((item) => (
-          <NativeSelectOption key={item.id} value={item.id}>
-            {item.name}
-          </NativeSelectOption>
-        ))}
-    </>
-  );
-}
-
-function FieldOptions({ fields }: { fields: readonly SandboxDocumentField[] }) {
-  return (
-    <>
-      {fields.map((field) => (
-        <NativeSelectOption key={field.id} value={field.id}>
-          {field.name}
-        </NativeSelectOption>
-      ))}
-    </>
   );
 }
 
@@ -365,10 +631,12 @@ function RemoveButton({
 function AddButton({
   children,
   disabled,
+  missing = false,
   onClick,
 }: {
   children: ReactNode;
   disabled: boolean;
+  missing?: boolean;
   onClick: () => void;
 }) {
   return (
@@ -376,12 +644,23 @@ function AddButton({
       variant="ghost"
       className="text-foreground -ml-2 min-h-11 justify-self-start"
       disabled={disabled}
+      data-empty-part={missing || undefined}
       onClick={onClick}
     >
       <Plus aria-hidden="true" />
       {children}
     </Button>
   );
+}
+
+/** What the rail knows about a field reference of the trigger's module. */
+function referenced(
+  reference: SandboxFieldReference,
+  sandboxModule: SandboxDocumentModule | undefined,
+  design: SandboxDocumentDesign,
+): SandboxDocumentField | undefined {
+  const resolved = resolveReference(reference, sandboxModule, design);
+  return resolved.state === "ok" ? resolved.field : undefined;
 }
 
 export function TriggerRail({
@@ -393,7 +672,7 @@ export function TriggerRail({
   onChange,
 }: {
   design: SandboxDocumentDesign;
-  trigger: SandboxTrigger;
+  trigger: SandboxTriggerDraft;
   /**
    * Fixed values Save will refuse, by step (see `triggerStepErrors`), less
    * the new steps nobody has touched yet. Each step group carries its key
@@ -409,13 +688,17 @@ export function TriggerRail({
   const statusId = useId();
   const statusWordId = useId();
   const statusNoteId = useId();
+  const gaps = triggerDraftGaps(recordTrigger, design);
+  const moduleId = draftModuleId(recordTrigger);
+  const sandboxModule = design.modules.find((item) => item.id === moduleId);
+  const fields = sandboxModule?.fields.filter((field) => !field.closed) ?? [];
   return (
     <fieldset
       className="grid min-w-0 gap-5 border-0 p-0"
       disabled={pending}
       aria-busy={pending}
     >
-      <div className="grid gap-3 @min-[30rem]/detail:gap-2">
+      <div className="grid gap-3 @min-[24rem]/detail:gap-2">
         <SettingRow id={nameId} label="Name">
           <Input
             id={nameId}
@@ -469,37 +752,36 @@ export function TriggerRail({
       <ol aria-label="Flow" className="grid min-w-0">
         <RailStep
           name="When"
-          summary={triggerText(design, recordTrigger)}
           icon={<TriggerEventIcon kind={recordTrigger.trigger.kind} />}
         >
           <WhenSettings
             design={design}
             trigger={recordTrigger}
+            sandboxModule={sandboxModule}
+            fields={fields}
+            gap={gaps.find((gap) => gap.step === "trigger")}
             note={stepErrors.get("trigger")}
             onChange={onChange}
           />
         </RailStep>
-        <RailStep
-          name="If"
-          summary={conditionsText(design, recordTrigger)}
-          icon={<ListFilter />}
-        >
+        <RailStep name="If" icon={<ListFilter />}>
           <Conditions
             design={design}
             trigger={recordTrigger}
+            sandboxModule={sandboxModule}
+            fields={fields}
+            gaps={gaps}
             stepErrors={stepErrors}
             onChange={onChange}
           />
         </RailStep>
-        <RailStep
-          name="Then"
-          summary={actionsText(design, recordTrigger)}
-          icon={<SquarePen />}
-          last
-        >
+        <RailStep name="Then" icon={<SquarePen />} last>
           <Actions
             design={design}
             trigger={recordTrigger}
+            sandboxModule={sandboxModule}
+            fields={fields}
+            gaps={gaps}
             stepErrors={stepErrors}
             onChange={onChange}
           />
@@ -512,11 +794,18 @@ export function TriggerRail({
 function WhenSettings({
   design,
   trigger: recordTrigger,
+  sandboxModule,
+  fields,
+  gap,
   note,
   onChange,
 }: {
   design: SandboxDocumentDesign;
-  trigger: SandboxTrigger;
+  trigger: SandboxTriggerDraft;
+  sandboxModule: SandboxDocumentModule | undefined;
+  fields: readonly SandboxDocumentField[];
+  /** The step's first empty part, if any. */
+  gap: TriggerDraftGap | undefined;
   note: string | undefined;
   onChange: Change;
 }) {
@@ -529,82 +818,56 @@ function WhenSettings({
   const operatorId = useId();
   const noteId = useId();
   const trigger = recordTrigger.trigger;
-  const changeEvent = (kind: SandboxTrigger["trigger"]["kind"]) => {
-    const firstModule = firstOpenModule(design);
-    const field =
-      kind === "threshold-crossed"
-        ? firstOpenNumberField(design, firstModule)
-        : firstOpenField(design, firstModule);
-    const next =
-      kind === "record-created"
-        ? { kind, moduleId: firstModule }
-        : kind === "field-changed"
-          ? { kind, moduleId: firstModule, fieldId: field?.id ?? "" }
-          : kind === "threshold-crossed"
-            ? {
-                kind,
-                moduleId: firstModule,
-                fieldId: field?.id ?? "",
-                operator: ">=" as const,
-                value: defaultLiteral(field),
-              }
-            : {
-                kind: "schedule" as const,
-                moduleId: firstModule,
-                frequency: "daily" as const,
-                time: "09:00",
-              };
-    onChange({ ...recordTrigger, trigger: next });
-  };
-  const changeModule = (nextModule: string) => {
-    if (trigger.kind === "schedule") return;
-    const field =
-      trigger.kind === "threshold-crossed"
-        ? firstOpenNumberField(design, nextModule)
-        : firstOpenField(design, nextModule);
-    const next =
-      trigger.kind === "record-created"
-        ? { kind: "record-created" as const, moduleId: nextModule }
-        : trigger.kind === "field-changed"
-          ? {
-              kind: "field-changed" as const,
-              moduleId: nextModule,
-              fieldId: field?.id ?? "",
-            }
-          : {
-              kind: "threshold-crossed" as const,
-              moduleId: nextModule,
-              fieldId: field?.id ?? "",
-              operator: trigger.operator,
-              value: trigger.value,
-            };
-    onChange({ ...recordTrigger, trigger: next });
-  };
-  const eventFields =
+  const watched =
     trigger.kind === "field-changed" || trigger.kind === "threshold-crossed"
-      ? fieldsFor(design, trigger.moduleId).filter(
-          (item) =>
-            !item.closed &&
-            (trigger.kind !== "threshold-crossed" ||
-              item.config.kind === "number" ||
-              item.config.kind === "integer"),
-        )
-      : [];
+      ? referenced(trigger, sandboxModule, design)
+      : undefined;
+  const eventFields =
+    trigger.kind === "threshold-crossed"
+      ? fields.filter(thresholdFieldFits)
+      : fields;
+  const fitsEvent =
+    watched !== undefined &&
+    (trigger.kind !== "threshold-crossed" || thresholdFieldFits(watched));
+  const notes = [gap?.reason, note];
+  const describedBy = notes.some(Boolean) ? noteId : undefined;
   return (
     <div
       role="group"
       aria-label="When settings"
       data-step-key="trigger"
-      aria-describedby={note ? noteId : undefined}
-      className="grid min-w-0 gap-3 @min-[30rem]/detail:gap-2"
+      aria-describedby={describedBy}
+      className="grid min-w-0 gap-3 @min-[24rem]/detail:gap-2"
     >
+      {/* Module first, then the event (T2): nothing is chosen for you. */}
+      <SettingRow id={moduleId} label="Module" picker>
+        <TriggerPicker
+          id={moduleId}
+          label="Event module"
+          value={sandboxModule ? sandboxModule.id : ""}
+          groups={moduleChoiceGroups(design)}
+          placeholder="Choose a module"
+          searchPlaceholder="Find a module"
+          missing={gap?.part === "module"}
+          describedBy={gap?.part === "module" ? noteId : undefined}
+          onChange={(next) =>
+            onChange(changeTriggerModule(recordTrigger, next))
+          }
+        />
+      </SettingRow>
       <SettingRow id={eventId} label="Event">
         <NativeSelect
           id={eventId}
           className="w-full"
           value={trigger.kind}
           onChange={(event) =>
-            changeEvent(event.target.value as SandboxTrigger["trigger"]["kind"])
+            onChange(
+              changeTriggerEvent(
+                recordTrigger,
+                event.target.value as SandboxTriggerDraft["trigger"]["kind"],
+                design,
+              ),
+            )
           }
         >
           <NativeSelectOption value="record-created">
@@ -621,22 +884,6 @@ function WhenSettings({
       </SettingRow>
       {trigger.kind === "schedule" ? (
         <>
-          <SettingRow id={moduleId} label="Module">
-            <NativeSelect
-              id={moduleId}
-              className="w-full"
-              value={trigger.moduleId ?? ""}
-              onChange={(event) =>
-                onChange({
-                  ...recordTrigger,
-                  trigger: { ...trigger, moduleId: event.target.value },
-                })
-              }
-            >
-              <NativeSelectOption value="">Choose module</NativeSelectOption>
-              <ModuleOptions design={design} />
-            </NativeSelect>
-          </SettingRow>
           <SettingRow id={frequencyId} label="Frequency">
             <NativeSelect
               id={frequencyId}
@@ -695,79 +942,56 @@ function WhenSettings({
             />
           </SettingRow>
         </>
-      ) : (
-        <SettingRow id={moduleId} label="Module">
-          <NativeSelect
-            id={moduleId}
-            aria-label="Event module"
-            className="w-full"
-            value={triggerOrigin(recordTrigger, design)}
-            onChange={(event) => changeModule(event.target.value)}
-          >
-            <ModuleOptions design={design} />
-          </NativeSelect>
-        </SettingRow>
-      )}
-      {trigger.kind === "field-changed" ||
-      trigger.kind === "threshold-crossed" ? (
-        <SettingRow id={fieldId} label="Field">
-          <NativeSelect
+      ) : null}
+      {sandboxModule &&
+      (trigger.kind === "field-changed" ||
+        trigger.kind === "threshold-crossed") ? (
+        <SettingRow id={fieldId} label="Field" picker>
+          <FieldPicker
             id={fieldId}
-            aria-label="Event field"
-            className="w-full"
-            value={trigger.fieldId}
-            onChange={(event) => {
-              const nextField = eventFields.find(
-                (item) => item.id === event.target.value,
-              );
+            label="Event field"
+            fields={eventFields}
+            value={fitsEvent ? trigger.fieldId : ""}
+            missing={gap?.part === "field"}
+            describedBy={gap?.part === "field" ? noteId : undefined}
+            onChange={(next) => {
+              const nextField = eventFields.find((item) => item.id === next);
               onChange({
                 ...recordTrigger,
                 trigger:
                   trigger.kind === "field-changed"
-                    ? { ...trigger, fieldId: event.target.value }
+                    ? { ...trigger, fieldId: next }
                     : {
                         ...trigger,
-                        fieldId: event.target.value,
+                        fieldId: next,
                         value: defaultLiteral(nextField),
                       },
               });
             }}
-          >
-            <FieldOptions fields={eventFields} />
-          </NativeSelect>
+          />
         </SettingRow>
       ) : null}
-      {trigger.kind === "threshold-crossed" ? (
+      {sandboxModule && trigger.kind === "threshold-crossed" ? (
         <>
           <SettingRow id={operatorId} label="Operator">
-            <NativeSelect
+            <OperatorSelect
               id={operatorId}
-              aria-label="Threshold operator"
-              className="w-full"
+              label="Threshold operator"
               value={trigger.operator}
-              onChange={(event) =>
+              field={fitsEvent ? watched : undefined}
+              onChange={(operator) =>
                 onChange({
                   ...recordTrigger,
-                  trigger: {
-                    ...trigger,
-                    operator: event.target
-                      .value as SandboxTriggerCondition["operator"],
-                  },
+                  trigger: { ...trigger, operator },
                 })
               }
-            >
-              {triggerOperatorOptions.map((operator) => (
-                <NativeSelectOption key={operator.value} value={operator.value}>
-                  {operator.label}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
+            />
           </SettingRow>
           <ValueEditor
             layout="row"
             design={design}
             trigger={recordTrigger}
-            target={eventFields.find((item) => item.id === trigger.fieldId)}
+            target={fitsEvent ? watched : undefined}
             value={trigger.value}
             onChange={(value) =>
               onChange({ ...recordTrigger, trigger: { ...trigger, value } })
@@ -775,38 +999,43 @@ function WhenSettings({
           />
         </>
       ) : null}
-      <StepNote id={noteId} note={note} />
+      <StepNote id={noteId} notes={notes} />
     </div>
   );
 }
 
-// An inline row from a 544px detail: field, operator or word, value, and ×.
-// Narrower, the field and × share the first line and the rest stack.
+// An inline row (TRIG layout): one line from a 704px detail (1600px wide
+// screens); narrower, two lines, the field then operator and value; on a
+// phone, the field, the operator, and the value each take a line.
 const inlineRow =
-  "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-2 @min-[34rem]/detail:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1.4fr)_auto]";
+  "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-2 @min-[24rem]/detail:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] @min-[44rem]/detail:grid-cols-[minmax(0,1fr)_8rem_minmax(0,1.4fr)_auto]";
 const firstCell =
-  "col-start-1 row-start-1 @min-[34rem]/detail:col-start-1 @min-[34rem]/detail:row-start-1";
+  "col-start-1 row-start-1 @min-[24rem]/detail:col-span-2 @min-[44rem]/detail:col-span-1";
 const secondCell =
-  "col-start-1 row-start-2 @min-[34rem]/detail:col-start-2 @min-[34rem]/detail:row-start-1";
+  "col-start-1 row-start-2 @min-[44rem]/detail:col-start-2 @min-[44rem]/detail:row-start-1";
 const valueCell =
-  "col-start-1 row-start-3 @min-[34rem]/detail:col-start-3 @min-[34rem]/detail:row-start-1";
+  "col-start-1 row-start-3 @min-[24rem]/detail:col-start-2 @min-[24rem]/detail:row-start-2 @min-[44rem]/detail:col-start-3 @min-[44rem]/detail:row-start-1";
 const removeCell =
-  "col-start-2 row-start-1 @min-[34rem]/detail:col-start-4 @min-[34rem]/detail:row-start-1";
+  "col-start-2 row-start-1 @min-[24rem]/detail:col-start-3 @min-[44rem]/detail:col-start-4";
 
 function Conditions({
   design,
   trigger: recordTrigger,
+  sandboxModule,
+  fields,
+  gaps,
   stepErrors,
   onChange,
 }: {
   design: SandboxDocumentDesign;
-  trigger: SandboxTrigger;
+  trigger: SandboxTriggerDraft;
+  sandboxModule: SandboxDocumentModule | undefined;
+  fields: readonly SandboxDocumentField[];
+  gaps: readonly TriggerDraftGap[];
   stepErrors: ReadonlyMap<string, string>;
   onChange: Change;
 }) {
   const baseId = useId();
-  const moduleId = triggerOrigin(recordTrigger, design);
-  const fields = fieldsFor(design, moduleId).filter((field) => !field.closed);
   const conditions = recordTrigger.conditionGroup.conditions;
   const update = (index: number, condition: SandboxTriggerCondition) =>
     onChange({
@@ -818,6 +1047,10 @@ function Conditions({
     });
   return (
     <div className="grid min-w-0 gap-2">
+      {/* With no condition the trigger runs every time. */}
+      {conditions.length ? null : (
+        <p className="text-muted-foreground text-sm">Always</p>
+      )}
       {/* All or Any matters only from two conditions. */}
       {conditions.length >= 2 ? (
         <NativeSelect
@@ -843,64 +1076,54 @@ function Conditions({
         </NativeSelect>
       ) : null}
       {conditions.map((condition, index) => {
-        const sameModule = condition.field.moduleId === moduleId;
-        const target = sameModule
-          ? fieldsFor(design, moduleId).find(
-              (field) => field.id === condition.field.fieldId,
-            )
-          : firstOpenField(design, moduleId);
-        const note = stepErrors.get(`condition:${condition.id}`);
+        const step = `condition:${condition.id}`;
+        const gap = gaps.find((item) => item.step === step);
+        const target = referenced(condition.field, sandboxModule, design);
         const noteId = `${baseId}-condition-${index}`;
+        const notes = [
+          gap?.reason,
+          stepErrors.get(step),
+          operatorNote(condition.operator, target),
+        ];
+        const describedBy = notes.some(Boolean) ? noteId : undefined;
         return (
           <div
             key={condition.id}
             role="group"
             aria-label={`Condition ${index + 1}`}
-            data-step-key={`condition:${condition.id}`}
-            aria-describedby={note ? noteId : undefined}
+            data-step-key={step}
+            aria-describedby={describedBy}
             className="grid min-w-0 gap-1"
           >
             <div className={inlineRow}>
-              <NativeSelect
-                aria-label={`Condition ${index + 1} field`}
-                className={cn("w-full", firstCell)}
-                value={
-                  sameModule ? condition.field.fieldId : (target?.id ?? "")
-                }
-                onChange={(event) => {
-                  const field = fields.find(
-                    (item) => item.id === event.target.value,
-                  );
-                  update(index, {
-                    ...condition,
-                    field: { moduleId, fieldId: event.target.value },
-                    value: defaultLiteral(field),
-                  });
-                }}
-              >
-                <FieldOptions fields={fields} />
-              </NativeSelect>
-              <NativeSelect
-                aria-label={`Condition ${index + 1} operator`}
-                className={cn("w-full", secondCell)}
+              <div className={cn("min-w-0", firstCell)}>
+                <FieldPicker
+                  label={`Condition ${index + 1} field`}
+                  fields={fields}
+                  value={target ? target.id : ""}
+                  missing={gap?.part === "field"}
+                  describedBy={gap?.part === "field" ? noteId : undefined}
+                  onChange={(next) => {
+                    const field = fields.find((item) => item.id === next);
+                    if (!sandboxModule || !field) return;
+                    update(index, {
+                      ...condition,
+                      field: { moduleId: sandboxModule.id, fieldId: next },
+                      value: defaultLiteral(field),
+                    });
+                  }}
+                />
+              </div>
+              <OperatorSelect
+                label={`Condition ${index + 1} operator`}
+                className={secondCell}
                 value={condition.operator}
-                onChange={(event) =>
-                  update(index, {
-                    ...condition,
-                    operator: event.target
-                      .value as SandboxTriggerCondition["operator"],
-                  })
+                field={target}
+                describedBy={describedBy}
+                onChange={(operator) =>
+                  update(index, { ...condition, operator })
                 }
-              >
-                {triggerOperatorOptions.map((operator) => (
-                  <NativeSelectOption
-                    key={operator.value}
-                    value={operator.value}
-                  >
-                    {operator.label}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
+              />
               <div className={cn("min-w-0", valueCell)}>
                 <ValueEditor
                   layout="inline"
@@ -928,16 +1151,18 @@ function Conditions({
                 />
               </div>
             </div>
-            <StepNote id={noteId} note={note} />
+            <StepNote id={noteId} notes={notes} />
           </div>
         );
       })}
-      <AddButton
-        disabled={conditions.length >= 20}
-        onClick={() => onChange(addTriggerCondition(recordTrigger, design))}
-      >
-        Add condition
-      </AddButton>
+      {sandboxModule ? (
+        <AddButton
+          disabled={conditions.length >= 20}
+          onClick={() => onChange(addTriggerCondition(recordTrigger, design))}
+        >
+          Add condition
+        </AddButton>
+      ) : null}
     </div>
   );
 }
@@ -945,26 +1170,36 @@ function Conditions({
 function Actions({
   design,
   trigger: recordTrigger,
+  sandboxModule,
+  fields,
+  gaps,
   stepErrors,
   onChange,
 }: {
   design: SandboxDocumentDesign;
-  trigger: SandboxTrigger;
+  trigger: SandboxTriggerDraft;
+  sandboxModule: SandboxDocumentModule | undefined;
+  fields: readonly SandboxDocumentField[];
+  gaps: readonly TriggerDraftGap[];
   stepErrors: ReadonlyMap<string, string>;
   onChange: Change;
 }) {
   const baseId = useId();
-  const moduleId = triggerOrigin(recordTrigger, design);
-  const fields = fieldsFor(design, moduleId).filter((field) => !field.closed);
+  const emptyId = `${baseId}-empty`;
   const update = (index: number, action: SandboxTriggerAction) =>
     onChange({
       ...recordTrigger,
       actions: replaceAt(recordTrigger.actions, index, action),
     });
+  const noActions = gaps.find((gap) => gap.step === "actions");
   return (
-    <div className="grid min-w-0 gap-2">
+    <div
+      className="grid min-w-0 gap-2"
+      data-step-key="actions"
+      aria-describedby={sandboxModule && noActions ? emptyId : undefined}
+    >
       {recordTrigger.actions.map((action, index) => {
-        const note = stepErrors.get(`action:${action.id}`);
+        const step = `action:${action.id}`;
         const noteId = `${baseId}-action-${index}`;
         const remove = (
           <div className={removeCell}>
@@ -1001,47 +1236,45 @@ function Actions({
               </Alert>
             </div>
           );
-        const sameModule = action.target.moduleId === moduleId;
-        const target = sameModule
-          ? fieldsFor(design, moduleId).find(
-              (field) => field.id === action.target.fieldId,
-            )
-          : firstOpenField(design, moduleId);
+        const gap = gaps.find((item) => item.step === step);
+        const target = referenced(action.target, sandboxModule, design);
+        const notes = [gap?.reason, stepErrors.get(step)];
         return (
           <div
             key={action.id}
             role="group"
             aria-label={`Action ${index + 1}`}
-            data-step-key={`action:${action.id}`}
-            aria-describedby={note ? noteId : undefined}
+            data-step-key={step}
+            aria-describedby={notes.some(Boolean) ? noteId : undefined}
             className="grid min-w-0 gap-1"
           >
             <div className={inlineRow}>
-              <NativeSelect
-                aria-label="Set field target"
-                className={cn("w-full", firstCell)}
-                value={sameModule ? action.target.fieldId : (target?.id ?? "")}
-                onChange={(event) => {
-                  const field = fields.find(
-                    (item) => item.id === event.target.value,
-                  );
-                  update(index, {
-                    ...action,
-                    target: { moduleId, fieldId: event.target.value },
-                    value: defaultLiteral(field),
-                  });
-                }}
-              >
-                <FieldOptions fields={fields} />
-              </NativeSelect>
+              <div className={cn("min-w-0", firstCell)}>
+                <FieldPicker
+                  label="Set field target"
+                  fields={fields}
+                  value={target ? target.id : ""}
+                  missing={gap?.part === "field"}
+                  describedBy={gap?.part === "field" ? noteId : undefined}
+                  onChange={(next) => {
+                    const field = fields.find((item) => item.id === next);
+                    if (!sandboxModule || !field) return;
+                    update(index, {
+                      ...action,
+                      target: { moduleId: sandboxModule.id, fieldId: next },
+                      value: defaultLiteral(field),
+                    });
+                  }}
+                />
+              </div>
               <span
                 aria-hidden="true"
-                className="text-muted-foreground hidden text-center text-sm @min-[34rem]/detail:col-start-2 @min-[34rem]/detail:row-start-1 @min-[34rem]/detail:block"
+                className="text-muted-foreground hidden text-center text-sm @min-[44rem]/detail:col-start-2 @min-[44rem]/detail:row-start-1 @min-[44rem]/detail:block"
               >
                 set to
               </span>
               {/* Narrower, the hidden "set to" frees the second line. */}
-              <div className="col-start-1 row-start-2 min-w-0 @min-[34rem]/detail:col-start-3 @min-[34rem]/detail:row-start-1">
+              <div className="col-start-1 row-start-2 min-w-0 @min-[24rem]/detail:col-span-2 @min-[44rem]/detail:col-span-1 @min-[44rem]/detail:col-start-3 @min-[44rem]/detail:row-start-1">
                 <ValueEditor
                   layout="inline"
                   design={design}
@@ -1053,16 +1286,26 @@ function Actions({
               </div>
               {remove}
             </div>
-            <StepNote id={noteId} note={note} />
+            <StepNote id={noteId} notes={notes} />
           </div>
         );
       })}
-      <AddButton
-        disabled={recordTrigger.actions.length >= 20}
-        onClick={() => onChange(addTriggerAction(recordTrigger, design))}
-      >
-        Add action
-      </AddButton>
+      {sandboxModule ? (
+        <>
+          {/* Then offers only what publishes (TRIG-7): Set a field on the
+              trigger's own module. */}
+          <AddButton
+            disabled={recordTrigger.actions.length >= 20}
+            missing={Boolean(noActions)}
+            onClick={() => onChange(addTriggerAction(recordTrigger, design))}
+          >
+            Add action
+          </AddButton>
+          <StepNote id={emptyId} notes={[noActions?.reason]} />
+        </>
+      ) : (
+        <p className="text-muted-foreground text-sm">Choose a module first.</p>
+      )}
     </div>
   );
 }

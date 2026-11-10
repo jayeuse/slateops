@@ -1,6 +1,6 @@
 // The trigger rules the Triggers section edits by: what counts as unsaved,
 // which settings cannot publish, which fixed values do not fit their field,
-// and the defaults for a new trigger, condition, or action. The list pane,
+// and the empty starts of a new trigger, condition, or action. The list pane,
 // the When/If/Then rail, and the trigger draft all read them from here.
 
 import type {
@@ -56,24 +56,6 @@ export function firstOpenModule(design: SandboxDocumentDesign): string {
     design.modules.find((item) => !item.closed)?.id ??
     design.modules[0]?.id ??
     ""
-  );
-}
-
-export function firstOpenField(
-  design: SandboxDocumentDesign,
-  moduleId: string,
-): SandboxDocumentField | undefined {
-  return fieldsFor(design, moduleId).find((field) => !field.closed);
-}
-
-export function firstOpenNumberField(
-  design: SandboxDocumentDesign,
-  moduleId: string,
-): SandboxDocumentField | undefined {
-  return fieldsFor(design, moduleId).find(
-    (field) =>
-      !field.closed &&
-      (field.config.kind === "number" || field.config.kind === "integer"),
   );
 }
 
@@ -432,43 +414,52 @@ export function triggerLiteralError(
   return triggerStepErrors(recordTrigger, design).values().next().value ?? null;
 }
 
-export function defaultTrigger(design: SandboxDocumentDesign): SandboxTrigger {
-  const moduleId = firstOpenModule(design);
+/**
+ * A new trigger (TRIG-5, UXD-7): no module, field, or action is chosen for
+ * the person. From a module's context (TRIG-8) that module is preset.
+ */
+export function defaultTrigger(
+  design: SandboxDocumentDesign,
+  moduleId = "",
+): SandboxTrigger {
+  const preset = design.modules.some(
+    (item) => item.id === moduleId && !item.closed,
+  )
+    ? moduleId
+    : "";
   return {
     id: newId("trigger"),
     name: "New trigger",
     enabled: true,
     priority: 0,
-    trigger: { kind: "record-created", moduleId },
+    trigger: { kind: "record-created", moduleId: preset },
     conditionGroup: { operator: "all", conditions: [] },
-    actions: [
-      {
-        id: newId("action"),
-        kind: "set-field",
-        target: {
-          moduleId,
-          fieldId: firstOpenField(design, moduleId)?.id ?? "",
-        },
-        value: defaultLiteral(firstOpenField(design, moduleId)),
-      },
-    ],
+    actions: [],
   };
 }
 
+/** The trigger's module as its steps use it; "" while none is chosen. */
+function stepModule(
+  recordTrigger: SandboxTrigger,
+  design: SandboxDocumentDesign,
+): string {
+  const moduleId = recordTrigger.trigger.moduleId ?? "";
+  return design.modules.some((item) => item.id === moduleId) ? moduleId : "";
+}
+
+/** A new condition starts with no field and no value (UXD-7). */
 export function addTriggerCondition(
   recordTrigger: SandboxTrigger,
   design: SandboxDocumentDesign,
 ): SandboxTrigger {
-  if (recordTrigger.conditionGroup.conditions.length >= 20)
+  const moduleId = stepModule(recordTrigger, design);
+  if (!moduleId || recordTrigger.conditionGroup.conditions.length >= 20)
     return recordTrigger;
-  const moduleId = triggerOrigin(recordTrigger, design);
-  const field = firstOpenField(design, moduleId);
-  if (!field) return recordTrigger;
   const condition: SandboxTriggerCondition = {
     id: newId("condition"),
-    field: { moduleId, fieldId: field.id },
+    field: { moduleId, fieldId: "" },
     operator: "=",
-    value: defaultLiteral(field),
+    value: { kind: "literal", value: null },
   };
   return {
     ...recordTrigger,
@@ -479,13 +470,16 @@ export function addTriggerCondition(
   };
 }
 
+/**
+ * A new action is the one kind that publishes (TRIG-7): Set a field on the
+ * trigger's own module, with no field and no value yet (UXD-7).
+ */
 export function addTriggerAction(
   recordTrigger: SandboxTrigger,
   design: SandboxDocumentDesign,
 ): SandboxTrigger {
-  if (recordTrigger.actions.length >= 20) return recordTrigger;
-  const moduleId = triggerOrigin(recordTrigger, design);
-  const field = firstOpenField(design, moduleId);
+  const moduleId = stepModule(recordTrigger, design);
+  if (!moduleId || recordTrigger.actions.length >= 20) return recordTrigger;
   return {
     ...recordTrigger,
     actions: [
@@ -493,8 +487,8 @@ export function addTriggerAction(
       {
         id: newId("action"),
         kind: "set-field",
-        target: { moduleId, fieldId: field?.id ?? "" },
-        value: defaultLiteral(field),
+        target: { moduleId, fieldId: "" },
+        value: { kind: "literal", value: null },
       },
     ],
   };
