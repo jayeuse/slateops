@@ -86,6 +86,7 @@ from app.systems.openview.views.models import SavedView  # noqa: F401
 from app.systems.platform.files.models import File  # noqa: F401
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork  # noqa: F401
 from app.systems.sandbox.departments.models import Department  # noqa: F401
+from app.systems.sandbox.derived.models import SandboxDerivedObject  # noqa: F401
 from app.systems.sandbox.designs.models import SandboxDocument, SandboxVersion  # noqa: F401
 from app.systems.sandbox.fields.models import Field  # noqa: F401
 from app.systems.sandbox.lifecycle.models import (  # noqa: F401

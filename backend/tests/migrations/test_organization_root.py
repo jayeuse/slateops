@@ -27,7 +27,8 @@ ORGANIZATION_TABLES = (
         "lifecycle_rate_limit_failures memberships modules record_trigger_actions "
         "record_trigger_conditions record_trigger_events "
         "record_trigger_runs record_triggers records relationship_edges report_run_eligible_users "
-        "report_run_rows report_runs report_schedules reports sandbox_bindings sandbox_documents "
+        "report_run_rows report_runs report_schedules reports sandbox_bindings "
+        "sandbox_derived_objects sandbox_documents "
         "sandbox_publications sandbox_test_runs sandbox_versions saved_views scheduled_work "
         "security_events server_errors".split()
     )

@@ -55,6 +55,7 @@ from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import StorageBackend
 from app.systems.platform.files.purge import purge_confirmed
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork
+from app.systems.sandbox.derived.release import release_derived_target
 from app.systems.sandbox.lifecycle.purge_support import PURGE_DISABLED_MESSAGE
 
 BATCH_SIZE = 1000
@@ -374,6 +375,8 @@ def delete_graph(db: Session, actor: User, identity: UUID, expected: str, name: 
         CommsExpiredSend,
     ):
         _delete_batches(db, owned, (owned.org_id == org) & (owned.conversation_id == identity))
+    # A derived channel's link stays, with no target (setup spec SD8, R7).
+    release_derived_target(db, conversation_id=identity)
     db.delete(current.conversation)
     for recipient in recipients:
         user_event(db, recipient, "structure", {})

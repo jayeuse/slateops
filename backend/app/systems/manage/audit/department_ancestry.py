@@ -38,6 +38,7 @@ from app.systems.openview.reports.models import Report
 from app.systems.openview.views.models import SavedView
 from app.systems.platform.files.models import File
 from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.derived.models import SandboxDerivedObject
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
@@ -418,7 +419,7 @@ class DepartmentAncestry:
         if isinstance(instance, RelationshipEdge):
             record = _parent(instance, "source_record", instance.source_record_id)
             return self._record(record if isinstance(record, Record) else instance.source_record_id)
-        if isinstance(instance, (Dashboard, GroupAccess)):
+        if isinstance(instance, (Dashboard, GroupAccess, SandboxDerivedObject)):
             return instance.department_id
         if isinstance(instance, Board):
             return self._board(instance)
