@@ -589,3 +589,34 @@ test.describe("touch on a phone canvas", () => {
     await expect(page.getByRole("menu")).toHaveCount(0);
   });
 });
+
+// B5d (Product Designer review): Add says why it cannot add, where the
+// problem is: under Choices for a choice problem, under the name otherwise.
+test("Add in the entry shows a choice problem under Choices and an empty name under the name", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page, salesAndFinance(), {
+    path: "/sandbox?module=orders",
+  });
+  await elementBar(page, "Orders")
+    .getByRole("button", { name: "Add field to Orders" })
+    .click();
+  const entry = createEntry(page, "Add field to Orders");
+  const name = entry.getByRole("textbox", { name: "Field name" });
+  const choices = () => entry.getByRole("textbox", { name: "Choices" });
+  await name.fill("Status");
+  await entry.getByRole("radio", { name: "Choice list" }).click();
+  await entry.getByRole("button", { name: "Add field" }).click();
+  await expect(choices()).toBeFocused();
+  await expect(choices()).toHaveAttribute("aria-invalid", "true");
+  await expect(choices()).toHaveAccessibleDescription(
+    "Add at least one choice.",
+  );
+  await expect(name).not.toHaveAttribute("aria-invalid", "true");
+
+  await name.fill("");
+  await entry.getByRole("button", { name: "Add field" }).click();
+  await expect(name).toBeFocused();
+  await expect(name).toHaveAccessibleDescription("Enter a name.");
+});

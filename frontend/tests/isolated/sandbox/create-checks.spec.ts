@@ -4,6 +4,7 @@ import {
   addElement,
   createEntryKey,
   createLimitReason,
+  createRefusalPlace,
   emptyCreateDraft,
   typePickFocus,
   type CreateDraft,
@@ -331,6 +332,20 @@ test("at a document limit the add is disabled with the limit as its reason", () 
       "field",
       "This design has 5,000 fields, the limit.",
     ],
+    [
+      "600 departments and modules on the canvas",
+      {
+        ...withCounts(1, 1, 1),
+        layout: Object.fromEntries(
+          Array.from({ length: 600 }, (_, index) => [
+            `box${index}`,
+            { x: 0, y: 0, width: 10, height: 10 },
+          ]),
+        ),
+      },
+      "module",
+      "This design has 600 departments and modules, the limit.",
+    ],
   ];
   for (const [label, design, kind, reason] of rows)
     expect(createLimitReason(design, kind), label).toBe(reason);
@@ -443,4 +458,30 @@ test("a name already in use in its scope is refused, comparing without case", ()
       addElement(design, kind, "new", parentId, draft(value)).ok,
       name,
     ).toBe(true);
+});
+
+// B5d (Product Designer review): a choice problem shows under Choices; any
+// other refusal shows under the name.
+test("a refused Choice list shows a choice problem under Choices and the rest under the name", () => {
+  const choiceList = (choices: string) =>
+    draft("Status", { type: "Select", choices });
+  const rows: Array<[string, CreateDraft, string, "name" | "choices"]> = [
+    ["no choices", choiceList(" , "), "Add at least one choice.", "choices"],
+    [
+      "a repeated choice",
+      choiceList("Open, Open"),
+      "Select options must be unique.",
+      "choices",
+    ],
+    ["an empty name", draft("", { type: "Select" }), "Enter a name.", "name"],
+    [
+      "a duplicate name",
+      choiceList("Open"),
+      "Orders already has a field named Status.",
+      "name",
+    ],
+    ["a Text field", draft("Status"), "Enter a name.", "name"],
+  ];
+  for (const [label, entry, reason, place] of rows)
+    expect(createRefusalPlace(entry, reason), label).toBe(place);
 });

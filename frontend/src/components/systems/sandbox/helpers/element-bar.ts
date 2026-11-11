@@ -217,3 +217,19 @@ export function itemMenuEntries(
     entry("delete", `Delete ${kind}`, true),
   ];
 }
+
+export type ElementBarAction = "module" | "field" | "connect";
+
+/**
+ * The controls of an element's bar: a department adds modules; a module
+ * adds fields and connects, except a closed one, which Connect leaves out of
+ * its targets and so connects to nothing (as its item menu has no
+ * "Connect…").
+ */
+export function elementBarActions(
+  kind: "department" | "module",
+  closed: boolean,
+): ElementBarAction[] {
+  if (kind === "department") return ["module"];
+  return closed ? ["field"] : ["field", "connect"];
+}

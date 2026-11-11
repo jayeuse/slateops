@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import {
   addElement,
   createEntryKey,
+  createRefusalPlace,
   createLimitReason,
   emptyCreateDraft,
   typePickFocus,
@@ -199,7 +200,16 @@ function CreateEntryBody({
   entryId: string;
 }) {
   const [draft, setDraft] = useState<CreateDraft>(emptyCreateDraft);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<{
+    reason: string;
+    on: "name" | "choices";
+  } | null>(null);
+  // A refusal shows where its problem is (B5d), and focus goes there.
+  const refuse = (submitted: CreateDraft, reason: string) => {
+    const on = createRefusalPlace(submitted, reason);
+    setRefusal({ reason, on });
+    focus(on);
+  };
   const focus = (target: "name" | "choices") =>
     document.getElementById(`${entryId}-${target}`)?.focus();
   const adding = useRef(false);
@@ -218,10 +228,6 @@ function CreateEntryBody({
 
   async function add() {
     if (blockedReason || adding.current) return;
-    if (!draft.name.trim()) {
-      focus("name");
-      return;
-    }
     const id = uid();
     const parentId = parent?.id ?? null;
     const submitted = draft;
@@ -229,7 +235,7 @@ function CreateEntryBody({
     // under a hold (N2).
     const check = addElement(design, kind, id, parentId, submitted);
     if (!check.ok) {
-      setRefusal(check.reason);
+      refuse(submitted, check.reason);
       return;
     }
     adding.current = true;
@@ -245,7 +251,7 @@ function CreateEntryBody({
       adding.current = false;
     }
     if (!result.ok) {
-      setRefusal(result.error);
+      refuse(submitted, result.error);
       return;
     }
     // The parent stays the parent; nothing is reselected until the end.
@@ -261,7 +267,8 @@ function CreateEntryBody({
       parentName={parent?.name ?? null}
       departmentIndex={departmentIndex >= 0 ? departmentIndex : null}
       draft={draft}
-      refusal={refusal}
+      refusal={refusal?.reason ?? null}
+      refusalOn={refusal?.on ?? "name"}
       blockedReason={blockedReason}
       sheet={sheet}
       entryId={entryId}
@@ -290,8 +297,10 @@ export type CreateEntryFormProps = {
   /** The parent's department position, for its mark; null for a department. */
   departmentIndex: number | null;
   draft: CreateDraft;
-  /** Why the last add was refused; shown under the name. */
+  /** Why the last add was refused. */
   refusal: string | null;
+  /** Where the refusal shows: under the name (default) or under Choices. */
+  refusalOn?: "name" | "choices";
   /** Why no add can happen now: a hold or a document limit. */
   blockedReason: string | null;
   /** The bottom sheet below 768px. */
@@ -313,6 +322,7 @@ export function CreateEntryForm({
   departmentIndex,
   draft,
   refusal,
+  refusalOn = "name",
   blockedReason,
   sheet,
   entryId,
@@ -324,6 +334,13 @@ export function CreateEntryForm({
 }: CreateEntryFormProps) {
   const id = useId();
   const refusalId = `${id}-refusal`;
+  // A choice problem shows under Choices while Choices shows (B5d).
+  const choicesRefusal =
+    refusal !== null &&
+    refusalOn === "choices" &&
+    kind === "field" &&
+    draft.type === "Select";
+  const nameRefusal = refusal !== null && !choicesRefusal;
   const blockedId = `${id}-blocked`;
   const choicesId = `${entryId}-choices`;
   const requiredId = `${id}-required`;
@@ -379,16 +396,16 @@ export function CreateEntryForm({
             autoComplete="off"
             maxLength={80}
             value={draft.name}
-            aria-invalid={refusal ? true : undefined}
+            aria-invalid={nameRefusal ? true : undefined}
             aria-describedby={
-              [refusal ? refusalId : null, blockedReason ? blockedId : null]
+              [nameRefusal ? refusalId : null, blockedReason ? blockedId : null]
                 .filter(Boolean)
                 .join(" ") || undefined
             }
             className={control}
             onChange={(event) => onDraftChange({ name: event.target.value })}
           />
-          {refusal ? (
+          {nameRefusal ? (
             <p
               id={refusalId}
               role="alert"
@@ -419,11 +436,22 @@ export function CreateEntryForm({
                   autoComplete="off"
                   placeholder="Comma-separated"
                   value={draft.choices}
+                  aria-invalid={choicesRefusal ? true : undefined}
+                  aria-describedby={choicesRefusal ? refusalId : undefined}
                   className={control}
                   onChange={(event) =>
                     onDraftChange({ choices: event.target.value })
                   }
                 />
+                {choicesRefusal ? (
+                  <p
+                    id={refusalId}
+                    role="alert"
+                    className="text-destructive text-[13px]"
+                  >
+                    {refusal}
+                  </p>
+                ) : null}
               </div>
             ) : null}
             <div className="flex min-h-11 items-center gap-2 xl:min-h-8">

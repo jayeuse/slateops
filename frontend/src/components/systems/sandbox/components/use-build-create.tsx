@@ -331,6 +331,7 @@ export function useBuildCreate({
         <ElementBarControls
           kind={departmentItem ? "department" : "module"}
           name={item.name}
+          closed={moduleItem?.closed ?? false}
           departmentIndex={Math.max(0, departmentIndex)}
           pinned={pinned}
           open={opened}

@@ -113,3 +113,20 @@ test("a target chosen by a port drag opens chosen, with the name prefilled", () 
   expect(linked).not.toMatch(/aria-selected="true"/);
   expect(linked).toContain('value=""');
 });
+
+// FAST-4 (Product Designer review): with every row dim, Connect names why.
+test("with no module left to connect to, Connect says so", () => {
+  const none: ConnectTargetGroup[] = [
+    {
+      departmentId: "sales",
+      departmentName: "Sales",
+      departmentIndex: 0,
+      modules: [
+        { id: "orders", name: "Orders", state: "self" },
+        { id: "shipments", name: "Shipments", state: "linked" },
+      ],
+    },
+  ];
+  expect(body(none)).toContain("Orders has no module left to connect to.");
+  expect(body(none)).not.toContain("Choose a module to connect to.");
+});

@@ -176,7 +176,7 @@ test("connect refuses a missing target, an empty name, and a name over 80 charac
     connectSubmission(typeName(chosen, "  "), "Orders", targets, names),
   ).toEqual({
     ok: false,
-    reason: "Relationship name is required.",
+    reason: "Enter a name.",
   });
   expect(
     connectSubmission(
@@ -187,7 +187,7 @@ test("connect refuses a missing target, an empty name, and a name over 80 charac
     ),
   ).toEqual({
     ok: false,
-    reason: "Relationship name must be 80 characters or fewer.",
+    reason: "Use 80 characters or fewer.",
   });
   // The name is sent trimmed, as Build saves names.
   expect(

@@ -30,6 +30,7 @@ import {
   EMPTY_CONNECT_DRAFT,
   nameProblem,
   nextChoosable,
+  noTargetReason,
   typeAheadMatch,
   typeName,
   type ConnectDraft,
@@ -200,7 +201,8 @@ export function ConnectPopoverBody({
     refusal ??
     (name.trim() ? nameProblem(name, existingNames, source.name) : null);
   const connectReason =
-    holdReason ?? (draft.targetId ? null : "Choose a module to connect to.");
+    holdReason ??
+    (draft.targetId ? null : noTargetReason(targets, source.name));
   const sourceIndex =
     targets.find((group) => group.departmentId === source.departmentId)
       ?.departmentIndex ?? 0;

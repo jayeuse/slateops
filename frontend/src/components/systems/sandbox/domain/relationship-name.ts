@@ -192,8 +192,21 @@ export function nameProblem(
   sourceName: string,
 ): string | null {
   if (name.trim().length > SANDBOX_LIMITS.nameCharacters)
-    return `Relationship name must be ${SANDBOX_LIMITS.nameCharacters} characters or fewer.`;
+    return `Use ${SANDBOX_LIMITS.nameCharacters} characters or fewer.`;
   return clashReason(name, existingNames, sourceName);
+}
+
+/**
+ * Why Connect waits while no target is chosen: choose one, or, when every
+ * row is dim, there is nothing left to connect to.
+ */
+export function noTargetReason(
+  targets: readonly ConnectTargetGroup[],
+  sourceName: string,
+): string {
+  return choosableIds(targets).length
+    ? "Choose a module to connect to."
+    : `${sourceName} has no module left to connect to.`;
 }
 
 export function connectSubmission(
@@ -204,9 +217,9 @@ export function connectSubmission(
 ): ConnectSubmission {
   const target = findTarget(targets, draft.targetId);
   if (!target || target.state !== "choosable")
-    return { ok: false, reason: "Choose a module to connect to." };
+    return { ok: false, reason: noTargetReason(targets, sourceName) };
   const name = draftName(draft, sourceName, targets, existingNames).trim();
-  if (!name) return { ok: false, reason: "Relationship name is required." };
+  if (!name) return { ok: false, reason: "Enter a name." };
   const problem = nameProblem(name, existingNames, sourceName);
   if (problem) return { ok: false, reason: problem };
   return { ok: true, request: { targetId: target.id, name } };

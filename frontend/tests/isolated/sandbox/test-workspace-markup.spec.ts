@@ -118,6 +118,10 @@ test("a field whose settings allow no value is named once, by its error under th
     html.split("Its settings allow no value. Enter one to run.").length - 1,
   ).toBe(1);
   expect(html).not.toContain("needs a value before this runs");
+  // Before the first run, What happened says so in one muted line.
+  expect(html).toMatch(
+    /aria-label="What happened"[\s\S]*What happened<\/h6><p class="text-muted-foreground">Nothing has run yet\.<\/p>/,
+  );
 });
 
 // F16 (PR1 Product Designer finding)

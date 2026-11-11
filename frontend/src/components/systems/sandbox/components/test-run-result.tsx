@@ -265,6 +265,9 @@ export function TestResultCard(props: TestResultCardProps) {
           </h6>
           {/* Before the first request (E4) the field that waits says why
               under itself, in Values used; nothing has happened yet. */}
+          {run ? null : (
+            <p className="text-muted-foreground">Nothing has run yet.</p>
+          )}
           {run ? (
             <ul className="grid gap-3">
               {happened?.lines.map((line) => (

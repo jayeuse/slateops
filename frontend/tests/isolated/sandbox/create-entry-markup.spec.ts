@@ -88,13 +88,31 @@ test("the department and module entries name only what they add", () => {
 test("a refused add shows its reason under the name and keeps the name", () => {
   const html = entry({
     draft: { ...emptyCreateDraft, name: "Status", type: "Select" },
-    refusal: "Add at least one choice.",
+    refusal: "Orders already has a field named Status.",
   });
   expect(html).toMatch(
     /aria-label="Field name"[^>]*aria-invalid="true"|aria-invalid="true"[^>]*aria-label="Field name"/,
   );
   expect(html).toContain('value="Status"');
-  expect(html).toMatch(/role="alert"[^>]*>Add at least one choice\.</);
+  expect(html).toMatch(
+    /role="alert"[^>]*>Orders already has a field named Status\.</,
+  );
+});
+
+// B5d (Product Designer review): a choice problem shows under Choices,
+// which is invalid; the name is not.
+test("a refused Choice list shows its choice problem under Choices", () => {
+  const html = entry({
+    draft: { ...emptyCreateDraft, name: "Status", type: "Select" },
+    refusal: "Add at least one choice.",
+    refusalOn: "choices",
+  });
+  expect(html).toMatch(
+    /id="entry-choices"[^>]*aria-invalid="true"[^>]*\/>(?:(?!<input)[\s\S])*role="alert"[^>]*>Add at least one choice\.</,
+  );
+  expect(html).not.toMatch(
+    /aria-label="Field name"[^>]*aria-invalid="true"|aria-invalid="true"[^>]*aria-label="Field name"/,
+  );
 });
 
 // N1 rule 6 and the N2 limits: the add says why it cannot act.

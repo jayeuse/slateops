@@ -6,6 +6,7 @@ import {
   elementBarOwner,
   elementBarOwners,
   idlePointerRest,
+  elementBarActions,
   itemMenuEntries,
   reducePointerRest,
   savingMarkIds,
@@ -213,4 +214,12 @@ test("the item menu holds the tree items, and a module adds Connect and New trig
     "Duplicate field",
     "Delete field",
   ]);
+});
+
+// FIND-1 (Product Designer review): a closed module's bar adds fields but
+// does not connect; Connect leaves closed modules out of its targets.
+test("a department bar adds modules, and a closed module's bar has no Connect", () => {
+  expect(elementBarActions("department", false)).toEqual(["module"]);
+  expect(elementBarActions("module", false)).toEqual(["field", "connect"]);
+  expect(elementBarActions("module", true)).toEqual(["field"]);
 });

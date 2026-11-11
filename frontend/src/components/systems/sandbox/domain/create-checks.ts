@@ -65,12 +65,12 @@ export function createLimitReason(
             SANDBOX_LIMITS.departments,
             "departments",
           ],
-          [layoutEntries, LAYOUT_ENTRIES, "canvas boxes"],
+          [layoutEntries, LAYOUT_ENTRIES, "departments and modules"],
         ]
       : kind === "module"
         ? [
             [design.modules.length, SANDBOX_LIMITS.modules, "modules"],
-            [layoutEntries, LAYOUT_ENTRIES, "canvas boxes"],
+            [layoutEntries, LAYOUT_ENTRIES, "departments and modules"],
           ]
         : [
             [
@@ -290,11 +290,8 @@ function addField(
       ok: false,
       reason: "This module was deleted. Refresh the designer and try again.",
     };
-  if (
-    draft.type === "Select" &&
-    !draft.choices.split(",").some((choice) => choice.trim())
-  )
-    return { ok: false, reason: "Add at least one choice." };
+  const choices = choicesReason(draft);
+  if (choices) return { ok: false, reason: choices };
   // Today's create rules (`buildField`), with every setting the entry does
   // not show left at its default.
   const field = buildField(
@@ -378,4 +375,52 @@ export function createEntryKey(
  */
 export function typePickFocus(type: FieldTypeName): "name" | "choices" {
   return type === "Select" ? "choices" : "name";
+}
+
+/**
+ * Why a Choice list's choices cannot be saved, or null: none given, or a
+ * choice rule of the save (`buildField`), such as a repeated choice.
+ */
+function choicesReason(draft: CreateDraft): string | null {
+  if (draft.type !== "Select") return null;
+  if (!draft.choices.split(",").some((choice) => choice.trim()))
+    return "Add at least one choice.";
+  const probe = buildField(
+    {
+      id: "choices",
+      name: "",
+      type: "Text",
+      required: false,
+      value: "",
+      options: "",
+      closed: false,
+    },
+    {
+      name: "Choices",
+      description: "",
+      type: "Select",
+      required: false,
+      defaultValue: "",
+      options: draft.choices,
+      maxLength: "",
+      min: "",
+      max: "",
+      step: "",
+      earliest: "",
+      latest: "",
+      checked: false,
+    },
+  );
+  return typeof probe === "string" ? probe : null;
+}
+
+/**
+ * Where a refused add shows its reason (spec B5d): a choice problem under
+ * Choices, every other reason under the name.
+ */
+export function createRefusalPlace(
+  draft: CreateDraft,
+  reason: string,
+): "name" | "choices" {
+  return reason === choicesReason(draft) ? "choices" : "name";
 }

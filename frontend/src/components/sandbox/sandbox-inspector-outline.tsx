@@ -263,7 +263,7 @@ export function SandboxInspectorOutline({
     () => new Set(),
   );
   const outlineRef = useRef<HTMLDivElement>(null);
-  // An item that moves focus elsewhere (Connect…, New trigger) keeps the
+  // An item that moves focus elsewhere (Connect…) keeps the
   // closing menu from returning focus to its row.
   const menuLeavesFocus = useRef(false);
   const treeRef = useRef<HTMLUListElement>(null);
@@ -492,12 +492,9 @@ export function SandboxInspectorOutline({
             : undefined
         }
         onNewTrigger={
-          kind === "module" && onNewTrigger
-            ? () => {
-                menuLeavesFocus.current = true;
-                onNewTrigger(id);
-              }
-            : undefined
+          // Focus returns to this row while the move to Triggers waits for
+          // the save queue; Triggers then focuses its Event.
+          kind === "module" && onNewTrigger ? () => onNewTrigger(id) : undefined
         }
       />
     );

@@ -231,6 +231,12 @@ interface CanvasEditor extends CanvasEditRequest {
 // The inline editor is a fixed 28px control centred on the text it edits.
 const CANVAS_EDITOR_HEIGHT = 28;
 const CANVAS_EDITOR_MIN_WIDTH = 160;
+/**
+ * Below 768px the selected element's bar is pinned to the bottom of the
+ * canvas (44px controls in a 4px frame, 8px in): the Key and the minimap sit
+ * 8px above it, so the bar never covers them (UXD-3, WCAG 2.4.11).
+ */
+const PINNED_BAR_CLEARANCE = "max-md:bottom-[68px]";
 /** A touch held this long opens the item menu, as the menu trigger does. */
 const LONG_PRESS_MS = 500;
 /** A touch that moves farther than this is a pan or a drag, not a press. */
@@ -1547,7 +1553,7 @@ function SandboxFlowCanvas({
         onPointerDown={() => {
           minimapHeldRef.current.drag = true;
         }}
-        className="sandbox-minimap border-border bg-card pointer-events-auto absolute right-3 bottom-3 z-10 hidden overflow-hidden rounded-md border shadow-sm data-in-view:invisible sm:block"
+        className={`sandbox-minimap border-border bg-card pointer-events-auto absolute right-3 bottom-3 z-10 hidden overflow-hidden rounded-md border shadow-sm data-in-view:invisible sm:block ${pinnedOwner ? PINNED_BAR_CLEARANCE : ""}`}
       >
         <MiniMap<SandboxFlowNode>
           pannable
@@ -1563,7 +1569,9 @@ function SandboxFlowCanvas({
       </div>
       {state.modules.length > 0 ? (
         // Closed by default so the key never covers tables; it opens upward.
-        <details className="group absolute bottom-3 left-3 z-10">
+        <details
+          className={`group absolute bottom-3 left-3 z-10 ${pinnedOwner ? PINNED_BAR_CLEARANCE : ""}`}
+        >
           {/* A slim control from 1280px, with the 44px floor below (S16);
               the Key itself keeps the canvas look. */}
           <summary className="border-border bg-card text-muted-foreground hover:text-foreground flex min-h-11 cursor-pointer list-none items-center rounded-md border px-2.5 text-xs shadow-sm xl:min-h-8 [&::-webkit-details-marker]:hidden">

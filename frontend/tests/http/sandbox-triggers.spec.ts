@@ -1064,6 +1064,8 @@ test("New trigger waits for a held Build save, then opens on the module it added
     .getByRole("menuitem", { name: "New trigger", exact: true })
     .click();
   await expect(page.getByRole("menu")).toHaveCount(0);
+  // Focus stays on the row that opened the menu while the move waits.
+  await expect(added).toBeFocused();
   // Still in Build while the save is held. The end state proves the wait:
   // Triggers reads the saved design, which has Invoices only after the save.
   await expect(page).not.toHaveURL(/section=triggers/);

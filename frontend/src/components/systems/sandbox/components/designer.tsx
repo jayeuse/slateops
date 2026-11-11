@@ -1595,11 +1595,10 @@ export function Designer({
             : undefined
         }
         onNewTrigger={
+          // Focus returns to the canvas while the move to Triggers waits for
+          // the save queue; Triggers then focuses its Event.
           kind === "module" && onNewTrigger
-            ? () => {
-                menu.leave();
-                onNewTrigger(target.id);
-              }
+            ? () => onNewTrigger(target.id)
             : undefined
         }
       />

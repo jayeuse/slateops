@@ -7,6 +7,7 @@ import { DepartmentMark } from "@/components/sandbox/department-mark";
 import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/disabled-reason";
 import { cn } from "@/lib/utils";
+import { elementBarActions } from "../helpers/element-bar";
 
 /** What a bar control opens, while it is open. */
 export type ElementBarOpen = "module" | "field" | "connect" | null;
@@ -14,6 +15,8 @@ export type ElementBarOpen = "module" | "field" | "connect" | null;
 export type ElementBarControlsProps = {
   kind: "department" | "module";
   name: string;
+  /** A closed module adds fields but connects to nothing. */
+  closed?: boolean;
   departmentIndex: number;
   /** The phone bar pinned to the bottom of the canvas: name first, 44px. */
   pinned: boolean;
@@ -35,6 +38,7 @@ export type ElementBarControlsProps = {
 export function ElementBarControls({
   kind,
   name,
+  closed = false,
   departmentIndex,
   pinned,
   open,
@@ -96,15 +100,17 @@ export function ElementBarControls({
             <Plus aria-hidden="true" />,
             onAddField,
           )}
-          <DisabledReason stable reason={connectReason}>
-            {control(
-              "connect",
-              `Connect ${name} to another module`,
-              "Connect",
-              <Link2 aria-hidden="true" />,
-              onConnect,
-            )}
-          </DisabledReason>
+          {elementBarActions(kind, closed).includes("connect") ? (
+            <DisabledReason stable reason={connectReason}>
+              {control(
+                "connect",
+                `Connect ${name} to another module`,
+                "Connect",
+                <Link2 aria-hidden="true" />,
+                onConnect,
+              )}
+            </DisabledReason>
+          ) : null}
         </>
       )}
     </>

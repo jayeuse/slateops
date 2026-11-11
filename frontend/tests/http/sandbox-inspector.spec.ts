@@ -1044,3 +1044,24 @@ test("Build shows one Add department plus the selected element's create controls
     "Connect",
   ]);
 });
+
+// B10, UXD-3 (Product Designer review): the pinned bar never covers the
+// canvas Key; the Key sits above it and still opens.
+test("on a phone the Key stays above the pinned bar and opens", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openAuthenticatedSandbox(page, salesWithOrders(), {
+    path: "/sandbox?module=orders",
+  });
+  await page.getByRole("tab", { name: "Canvas" }).click();
+  const bar = elementBar(page, "Orders");
+  await expect(bar).toBeVisible();
+  const key = page.getByText("Key", { exact: true });
+  const keyBox = await key.boundingBox();
+  const barBox = await bar.boundingBox();
+  if (!keyBox || !barBox) throw new Error("The Key or the bar has no box");
+  expect(keyBox.y + keyBox.height).toBeLessThanOrEqual(barBox.y);
+  await key.click();
+  await expect(page.getByRole("list", { name: "Canvas key" })).toBeVisible();
+});
