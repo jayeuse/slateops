@@ -72,6 +72,12 @@ export async function installBoardApi(
         locale: "en-US",
         timezone: "UTC",
         purge_enabled: true,
+        department_setup_defaults: {
+          groups: true,
+          dashboard: true,
+          category: true,
+          channel: true,
+        },
       }),
     }),
   );

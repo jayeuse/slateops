@@ -32,6 +32,12 @@ const initialWorkspace = {
   week_start: "monday",
   business_hours: "09:00–18:00",
   theme: "slate" as Theme,
+  department_setup_defaults: {
+    groups: true,
+    dashboard: true,
+    category: true,
+    channel: true,
+  },
   revision: 4,
 };
 type Workspace = typeof initialWorkspace;

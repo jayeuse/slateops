@@ -390,6 +390,12 @@ test.beforeEach(async ({ page }) => {
         week_start: "monday",
         business_hours: "09:00–18:00",
         theme: "slate",
+        department_setup_defaults: {
+          groups: true,
+          dashboard: true,
+          category: true,
+          channel: true,
+        },
         revision: 4,
       },
     }),
@@ -1718,6 +1724,12 @@ test("Audit shows server actor names, meaningful targets and workspace-local dat
             week_start: "monday",
             business_hours: "09:00–18:00",
             theme: "slate",
+            department_setup_defaults: {
+              groups: true,
+              dashboard: true,
+              category: true,
+              channel: true,
+            },
             revision: 4,
           },
         })
@@ -1868,6 +1880,12 @@ for (const [personal, title] of [
           week_start: "monday",
           business_hours: "09:00–18:00",
           theme: "slate",
+          department_setup_defaults: {
+            groups: true,
+            dashboard: true,
+            category: true,
+            channel: true,
+          },
           revision: 4,
         },
       }),

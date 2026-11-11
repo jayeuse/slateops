@@ -674,8 +674,15 @@ test("adding Sales from a template saves it once as Sales 2, selects it, and Und
   expect(sandbox.documentWrites()).toBe(1);
   const saved = sandbox.document();
   const added = saved.design.departments[2]!;
-  // A new id and the chosen name; no setup value (the default setup).
-  expect(Object.keys(added).sort()).toEqual(["closed", "id", "name"]);
+  // A new id and the chosen name; the setup is the saved Manage default,
+  // here every item on (FIT-4, SD-C20).
+  expect(Object.keys(added).sort()).toEqual(["closed", "id", "name", "setup"]);
+  expect(added.setup).toEqual({
+    groups: true,
+    dashboard: true,
+    category: true,
+    channel: true,
+  });
   expect(added.name).toBe("Sales 2");
   expect(added.id).not.toBe("sales");
   expect(

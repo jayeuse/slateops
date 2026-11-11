@@ -85,7 +85,7 @@ export type SandboxOptions = {
   /** The latest published version: every document reply names it, and
    * `GET /sandbox/versions/{id}` answers its own document (FAST-5). */
   latestPublished?: { sequence: number; document: SandboxDocumentV4 };
-  /** The saved Manage default for new departments (BE-SD6); none by default. */
+  /** The saved Manage default for new departments (BE-SD6); all on by default. */
   setupDefaults?: {
     groups: boolean;
     dashboard: boolean;
@@ -105,9 +105,12 @@ export async function openAuthenticatedSandbox(
     department_setup_defaults?: SandboxOptions["setupDefaults"];
   } = {
     purge_enabled: true,
-    ...(options.setupDefaults
-      ? { department_setup_defaults: options.setupDefaults }
-      : {}),
+    department_setup_defaults: options.setupDefaults ?? {
+      groups: true,
+      dashboard: true,
+      category: true,
+      channel: true,
+    },
   };
   let workspaceFailure = false;
   await page.route("**/api/workspace", (route) =>

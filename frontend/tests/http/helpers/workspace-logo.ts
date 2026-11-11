@@ -27,6 +27,12 @@ export const logoWorkspace = {
   revision: 4,
   today: "2026-10-06",
   purge_enabled: false,
+  department_setup_defaults: {
+    groups: true,
+    dashboard: true,
+    category: true,
+    channel: true,
+  },
 };
 
 export function logoFile(

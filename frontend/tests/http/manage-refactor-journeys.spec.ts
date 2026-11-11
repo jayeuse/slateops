@@ -19,6 +19,12 @@ type WorkspaceProfile = {
   week_start: "monday" | "sunday";
   business_hours: string;
   theme: "slate" | "whiteboard" | "triplicate" | "stockroom";
+  department_setup_defaults: {
+    groups: boolean;
+    dashboard: boolean;
+    category: boolean;
+    channel: boolean;
+  };
   invitation_expiry_days: number;
   guest_duration_days: number;
   revision: number;
@@ -43,6 +49,12 @@ const initialWorkspace: WorkspaceProfile = {
   week_start: "monday",
   business_hours: "09:00–18:00",
   theme: "slate",
+  department_setup_defaults: {
+    groups: true,
+    dashboard: true,
+    category: true,
+    channel: true,
+  },
   invitation_expiry_days: 7,
   guest_duration_days: 30,
   revision: 4,
