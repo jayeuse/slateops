@@ -121,8 +121,7 @@ visual treatment.
   and small-screen behavior remain consistent. Table headers use the existing
   40px row treatment and `text-sm`; feature-owned columns, sorting, selection,
   and filtering stay outside the primitive. Directories with real pagination
-  use `PaginationControls` with one-based labels. Pass a complete collection to
-  `DataTable` with controlled zero-based pagination, or pass an already prepared
+  use `PaginationControls` with one-based labels. Render an already prepared
   page without local pagination so it is not sliced twice. Filter and sort before
   paging; aggregate and export from complete results. Feature screens keep their
   mobile row presentation.

@@ -1,7 +1,7 @@
 /**
  * Sandbox pure rules (no canvas, no backend).
  *
- * Embed/connect rules for the frontend-only prototype.
+ * Connect rules for the frontend-only prototype.
  */
 
 import type { SandboxState } from "./model";
@@ -9,19 +9,6 @@ import type { SandboxState } from "./model";
 export interface SandboxRuleResult {
   ok: boolean;
   reason?: string;
-}
-
-export type SandboxEmbedKind = "department" | "module" | "field";
-
-/** Only department > module and module > field nesting is allowed. */
-export function canEmbed(
-  parentKind: SandboxEmbedKind,
-  childKind: SandboxEmbedKind,
-): boolean {
-  return (
-    (parentKind === "department" && childKind === "module") ||
-    (parentKind === "module" && childKind === "field")
-  );
 }
 
 /**

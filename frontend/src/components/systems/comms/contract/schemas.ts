@@ -1383,23 +1383,3 @@ export const purgeResultSchema = z.strictObject({
   purged_message_count: watermark,
   purged_file_count: watermark,
 });
-
-export const conversationPageSchema = pageSchema(conversationSchema);
-export const categoryPageSchema = pageSchema(categorySchema);
-export const memberPageSchema = pageSchema(memberSchema);
-export const messagePageSchema = pageSchema(messageSchema);
-export const threadPageSchema = pageSchema(threadSchema);
-export const revisionPageSchema = pageSchema(messageRevisionSchema);
-export const filePageSchema = pageSchema(fileSchema);
-export const reportPageSchema = pageSchema(reportSchema);
-export const removedMessagePageSchema = pageSchema(tombstoneSchema);
-export const schedulePageSchema = pageSchema(scheduleSchema);
-export const exportPageSchema = pageSchema(exportJobSchema);
-export const searchPageSchema = pageSchema(searchHitSchema);
-export const templatePageSchema = pageSchema(templateSchema);
-export const directBlockPageSchema = pageSchema(directBlockSchema);
-export const notificationPageSchema = pageSchema(notificationSchema);
-export const recordReferencePageSchema = pageSchema(recordReferenceSchema);
-export const configurationHistoryPageSchema = pageSchema(
-  configurationHistorySchema,
-);
