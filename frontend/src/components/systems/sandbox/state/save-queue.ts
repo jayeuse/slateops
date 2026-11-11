@@ -281,3 +281,16 @@ export function designAddHoldReason(holds: {
     ? "Wait for the current Sandbox action to finish."
     : null;
 }
+
+/**
+ * Whether a change made from Review & Publish closes the review: only a
+ * conflict or a failed save does, and the page alert says what happened
+ * (N1 rule 3, B5c). A hold refusal keeps the review open, which shows its
+ * reason (NB-5).
+ */
+export function refusalClosesReview(
+  result: { ok: boolean },
+  conflicted: boolean,
+): boolean {
+  return !result.ok && conflicted;
+}

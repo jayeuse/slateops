@@ -87,6 +87,7 @@ import {
 } from "./state/document-session";
 import {
   addedElementIds,
+  refusalClosesReview,
   classifyDesignChange,
   confirmQueuedSave,
   designAddHoldReason,
@@ -2149,12 +2150,17 @@ function SandboxWorkspace() {
                 expectedRevision: session.revision,
               })
             }
-            onSetupChange={(departmentId, item, on) =>
+            onSetupChange={async (departmentId, item, on) => {
               // The same change as Build's Setup popover (DQ4).
-              change((current) =>
+              const result = await change((current) =>
                 withSetupItem(current, departmentId, item, on),
-              )
-            }
+              );
+              // A conflict or a failed save closes the review; the page
+              // alert above Build says what happened (N1 rule 3, B5c).
+              if (refusalClosesReview(result, conflictRef.current !== null))
+                setReviewOpen(false);
+              return result;
+            }}
             onPublish={({ preview, password, note, idempotencyKey }) =>
               publishSandbox({
                 expectedRevision: session.revision,

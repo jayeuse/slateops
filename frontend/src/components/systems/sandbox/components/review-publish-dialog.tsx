@@ -58,8 +58,9 @@ type Props = {
   onPublished: (publication: SandboxPublication) => void;
   /**
    * FIT-3 (plan 11.3, DQ4): one Setup toggle of a new department, applied to
-   * the draft through the Build save queue. A refusal closes the review; the
-   * page shows its conflict or failure alert.
+   * the draft through the Build save queue. On a conflict or a failed save
+   * the page closes the review and shows its alert; the review shows any
+   * other refusal itself.
    */
   onSetupChange?: (
     departmentId: string,
@@ -128,11 +129,12 @@ export function ReviewPublishDialog({
   // keeps the list on screen until the next review replaces it.
   const [previewRevision, setPreviewRevision] = useState<number | null>(null);
   const stale = preview !== null && previewRevision !== expectedRevision;
-  // A Setup toggle on its way to the draft, shown at once (FIT-3).
-  const [pendingSetup, setPendingSetup] = useState<{
-    departmentId: string;
-    setup: DepartmentSetup;
-  } | null>(null);
+  // Setup toggles on their way to the draft; the last one shows at once
+  // (FIT-3). Each leaves the list when its own change settles.
+  const [pendingSetups, setPendingSetups] = useState<
+    ReadonlyArray<{ departmentId: string; setup: DepartmentSetup }>
+  >([]);
+  const pendingSetup = pendingSetups.at(-1) ?? null;
   const [password, setPassword] = useState("");
   const [note, setNote] = useState("");
   // One request at a time: loading the review, or publishing it.
@@ -143,6 +145,10 @@ export function ReviewPublishDialog({
   // next to the password and Publish that caused them.
   const [errorFailure, setError] = useErrorText();
   const error = errorFailure?.message ?? "";
+  // A refused Setup toggle (NB-5) shows in the same place. It stays until
+  // the next toggle or the next open, so the save it waited for and the
+  // review after it do not clear it at once.
+  const [setupError, setSetupError] = useState("");
   const [publishErrorFailure, setPublishError] = useErrorText();
   const publishError = publishErrorFailure?.message ?? "";
   const [passwordRejected, setPasswordRejected] = useState(false);
@@ -165,7 +171,10 @@ export function ReviewPublishDialog({
     if (!open) return;
     // Only an open starts empty; a new revision during an open review keeps
     // the list until the next review replaces it in place (plan 11.3).
-    if (opened) setPreview(null);
+    if (opened) {
+      setPreview(null);
+      setSetupError("");
+    }
     setError("");
     setPublishError("");
     setPasswordRejected(false);
@@ -264,16 +273,22 @@ export function ReviewPublishDialog({
     on: boolean,
   ) {
     if (!onSetupChange || setupHeld) return;
-    setPendingSetup({
+    const toggle = {
       departmentId,
       setup: { ...departmentSetup({ setup }), [item]: on },
-    });
+    };
+    setSetupError("");
+    setPendingSetups((current) => [...current, toggle]);
     try {
       const result = await onSetupChange(departmentId, item, on);
-      // A refused save closes the review; the page shows its alert (B5c).
-      if (!result.ok) onOpenChange(false);
+      // A conflict or a failed save closes the review in the page, which
+      // shows its alert (N1 rule 3, B5c). Any other refusal is a hold: the
+      // review stays and says why where it shows its errors (NB-5).
+      if (!result.ok) setSetupError(result.error);
     } finally {
-      setPendingSetup(null);
+      setPendingSetups((current) =>
+        current.filter((entry) => entry !== toggle),
+      );
     }
   }
   const shownDesign: PublishReviewDesign = pendingSetup
@@ -322,13 +337,13 @@ export function ReviewPublishDialog({
           closeDisabled={busy === "publish"}
           onClose={() => onOpenChange(false)}
         />
-        {error ? (
+        {error || setupError ? (
           <Alert
             role="alert"
             variant="destructive"
-            reference={errorFailure?.reference}
+            reference={error ? errorFailure?.reference : undefined}
           >
-            {error}
+            {error || setupError}
           </Alert>
         ) : null}
         {blocked ? (

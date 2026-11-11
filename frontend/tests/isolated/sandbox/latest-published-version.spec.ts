@@ -169,3 +169,34 @@ test("each published version is read once and kept until a newer one is publishe
     mock.restore();
   }
 });
+
+// NB-3 (Software Architect review, PR4): a version that nothing shows any
+// more leaves the cache on the client's normal schedule, so older published
+// versions do not stay in memory for the whole session.
+test("a published version read is let go once nothing shows it", async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { gcTime: 1 } },
+  });
+  const mock = installFetch((input) => {
+    const id = String(input).split("/").at(-1) ?? "";
+    return Response.json(versionDetail(id));
+  });
+  try {
+    const options = latestPublishedVersionOptions(first);
+    const removed = new Promise<boolean>((resolve) => {
+      // A hang guard well above the 1 ms collection, not a wait for it.
+      const guard = setTimeout(() => resolve(false), 2_000);
+      client.getQueryCache().subscribe((event) => {
+        if (event.type === "removed") {
+          clearTimeout(guard);
+          resolve(true);
+        }
+      });
+    });
+    await client.fetchQuery(options);
+    expect(await removed).toBe(true);
+    expect(client.getQueryData(options.queryKey)).toBeUndefined();
+  } finally {
+    mock.restore();
+  }
+});

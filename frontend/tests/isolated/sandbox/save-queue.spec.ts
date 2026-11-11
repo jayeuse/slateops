@@ -7,6 +7,7 @@ import {
   idleSaveQueue,
   reduceSaveQueue,
   refusedDesignUpdate,
+  refusalClosesReview,
   saveQueueActive,
   saveQueueConflictDocument,
   saveQueueNeedsSend,
@@ -452,4 +453,21 @@ test("a refused update keeps its own reason under a hold", () => {
     "A Sandbox change is already being saved.",
   );
   expect(() => refusedDesignUpdate(new Error("bug"), null)).toThrow("bug");
+});
+
+// N1 rule 3, B5c and NB-5 (Software Architect review, PR4): only a conflict
+// or a failed save closes Review & Publish, whose page alert then says what
+// happened; a hold refusal keeps the review open to show its reason.
+test("only a refused save closes the review; a hold refusal keeps it open", () => {
+  const refused = {
+    ok: false,
+    error: "A Sandbox change is already being saved.",
+  };
+  const rows: Array<[string, { ok: boolean }, boolean, boolean]> = [
+    ["accepted", { ok: true }, false, false],
+    ["conflict or failed save", refused, true, true],
+    ["hold refusal", refused, false, false],
+  ];
+  for (const [label, result, conflicted, expected] of rows)
+    expect(refusalClosesReview(result, conflicted), label).toBe(expected);
 });

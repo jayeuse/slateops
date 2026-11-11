@@ -37,11 +37,11 @@ export function latestPublishedVersionOptions(versionId: string) {
   return queryOptions({
     queryKey: sandboxKeys.publishedVersion(versionId),
     queryFn: ({ signal }) => getSandboxVersion(versionId, { signal }),
-    // A published version never changes: read it once and keep it until a
-    // newer version is published (a new id is a new key). Build remounts on
-    // every selection, so the 30 s default would read it again.
+    // A published version never changes: read it once per id (a newer
+    // version is a new key). Build remounts on every selection, so the 30 s
+    // default would read it again. Collection stays the client's default, so
+    // an older version that nothing shows leaves memory.
     staleTime: Infinity,
-    gcTime: Infinity,
   });
 }
 
