@@ -45,6 +45,7 @@ from app.systems.comms.messages.mutations import lock_counter
 from app.systems.comms.moderation.models import CommsReport
 from app.systems.comms.previews.jobs import discard_preview_work
 from app.systems.comms.realtime.events import user_event
+from app.systems.comms.realtime.grants import lock_projection
 from app.systems.comms.realtime.models import CommsRealtimeGrant, CommsTyping
 from app.systems.comms.settings.models import (
     CommsCapabilityGrant,
@@ -251,6 +252,10 @@ def delete_files(
 
 
 def delete_graph(db: Session, actor: User, identity: UUID, expected: str, name: str) -> Impact:
+    # SD19 step 1: the projection guard before any row lock. A publish holds it while it
+    # locks a derived channel's link and then the channel; this purge locks the channel and
+    # then releases its link, so without the guard the two can deadlock.
+    lock_projection(db)
     current = _validate(db, actor, identity, expected, name)
     org = bound_organization_column()
     if (

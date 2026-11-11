@@ -13,13 +13,14 @@ from uuid import UUID
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import Engine, create_engine, delete, func, select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 import app.systems.sandbox.publications.router as publication_router
 from app.common.dependencies.auth import CurrentIdentity
 from app.core.base_model import utc_now
+from app.core.config import get_settings
 from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
 from app.systems.access.identity.models import IdentitySession
@@ -30,6 +31,7 @@ from app.systems.access.policy.service import group_etag, update_group
 from app.systems.access.users.membership import transaction_organization
 from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.comms.conversations.models import CommsConversation
+from app.systems.comms.moderation import purge
 from app.systems.comms.realtime.grants import lock_projection
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
@@ -53,7 +55,14 @@ from app.systems.sandbox.publications.tokens import issue_preview_token
 from tests.conftest import create_member, create_organization
 from tests.organization_scope_support import bind_test_organization, in_context
 from tests.postgres_runtime import assert_runner_database_url
-from tests.race_support import WAIT, backend_pid, wait_until_blocked_by, wait_until_waiting
+from tests.race_support import (
+    WAIT,
+    backend_pid,
+    join,
+    start,
+    wait_until_blocked_by,
+    wait_until_waiting,
+)
 from tests.rbac.support import organization
 from tests.sandbox_designs.fixtures import sample_document
 from tests.sandbox_publications.support import bound_department, bound_module, publish_saved
@@ -334,6 +343,116 @@ def test_sd19_step_5_a_department_close_refuses_while_its_channel_link_is_held(
         assert channel is not None and channel.archived_at is None
         department = check.get(Department, department_id)
         assert department is not None and department.is_deleted is False
+
+
+def test_sd_c28_a_rename_and_a_moderation_purge_of_its_derived_channel_do_not_deadlock(
+    committed_publisher: Callable[..., Publisher], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SD-C28, B-1: the purge waits for the conversation, then the publish waits behind it.
+
+    The publish locks every link row (SD19 step 3) and then the channel (step 4); the purge
+    locks the channel and then updates its link (SD8). Both take the projection guard first,
+    so one waits for the other instead of a deadlock.
+    """
+    monkeypatch.setattr(get_settings(), "lifecycle_purge_enabled", True)
+    publisher = committed_publisher(pool_size=5)
+    engine, actor_id = publisher.engine, publisher.actor_id
+    _publish_once(engine, _prepare(engine, actor_id, "derived-before-purge"))
+    link_id, conversation_id, expected, name = _archive_operations_channel(engine, actor_id)
+    _rename_operations(engine, actor_id, "Operations Desk")
+    prepared = _prepare(engine, actor_id, "rename-beside-purge")
+    purge_pids: list[int] = []
+    publish_pids: list[int] = []
+    with Session(engine) as holder:
+        holder.scalar(
+            select(CommsConversation.id)
+            .where(CommsConversation.id == conversation_id)
+            .with_for_update()
+        )
+        purged = start(lambda: _purge_channel(engine, actor_id, conversation_id, expected, name,
+                                              purge_pids))
+        assert wait_until_waiting(engine, purge_pids), "the purge never waited"
+        published = start(lambda: _publish_beside(engine, prepared, publish_pids))
+        assert wait_until_waiting(engine, publish_pids), "the publish never waited"
+        holder.rollback()
+    assert join(*purged) == ("ok", "")
+    # The purge removed a channel the review listed: a live change after review (SD-C25).
+    assert join(*published) == ("refused", "live_state_changed")
+    with Session(engine) as check:
+        link = check.get(SandboxDerivedObject, link_id)
+        assert link is not None and link.conversation_id is None
+        assert check.get(CommsConversation, conversation_id) is None
+
+
+def _archive_operations_channel(
+    engine: Engine, actor_id: UUID,
+) -> tuple[UUID, UUID, str, str]:
+    """Archive the operations department's derived channel and return its purge review."""
+
+    with AuditSession(bind=engine) as db:
+        _set_audit_context(db, actor_id)
+        department = bound_department(db, "sample-operations")
+        link = db.scalar(select(SandboxDerivedObject).where(
+            SandboxDerivedObject.department_id == department.id,
+            SandboxDerivedObject.role == "channel",
+        ))
+        assert link is not None and link.conversation_id is not None
+        link_id = link.id
+        channel = db.get(CommsConversation, link.conversation_id)
+        assert channel is not None
+        channel.archived_at = utc_now()
+        db.commit()
+        actor = db.get(User, actor_id)
+        assert actor is not None
+        review = purge.impact(db, actor, channel.id)
+        return link_id, channel.id, review.digest, review.name
+
+
+def _purge_channel(
+    engine: Engine, actor_id: UUID, conversation_id: UUID, expected: str, name: str,
+    pids: list[int],
+) -> tuple[str, str]:
+    """As the purge route after its challenge commits: ``delete_graph``, then the commit."""
+
+    with AuditSession(bind=engine) as db:
+        _set_audit_context(db, actor_id)
+        pids.append(backend_pid(db))
+        actor = db.get(User, actor_id)
+        assert actor is not None
+        try:
+            purge.delete_graph(db, actor, conversation_id, expected, name)
+            db.commit()
+        except HTTPException as error:
+            db.rollback()
+            return "refused", str(error.detail["code"])
+        except DBAPIError as error:
+            db.rollback()
+            return "database", str(getattr(error.orig, "sqlstate", ""))
+        return "ok", ""
+
+
+def _publish_beside(engine: Engine, prepared: Prepared, pids: list[int]) -> tuple[str, str]:
+    """As the publication route: the projection guard first, then the publish (SD19 step 1)."""
+
+    with AuditSession(bind=engine) as db:
+        _set_audit_context(db, prepared.actor_id)
+        pids.append(backend_pid(db))
+        lock_projection(db)
+        try:
+            result = publish_saved(
+                db,
+                prepared.actor_id,
+                prepared,
+                prepared,
+                token_digest=prepared.token_digest,
+                idempotency_key=f"publish-{uuid7()}",
+            )
+        except PublicationError as error:
+            return "refused", error.code
+        except DBAPIError as error:
+            db.rollback()
+            return "database", str(getattr(error.orig, "sqlstate", ""))
+        return "ok", str(result.id)
 
 
 def _commit_derived_member(engine: Engine, actor_id: UUID) -> tuple[UUID, UUID, UUID, str]:
