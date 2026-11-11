@@ -1,9 +1,12 @@
-import { expect, test, type Page } from "./helpers/test";
+import { answeredHeaders, expect, test, type Page } from "./helpers/test";
 import {
+  addInEntry,
   clickBesideBox,
+  createEntry,
   expectBelowAppBar,
   openAuthenticatedSandbox,
 } from "./helpers/sandbox-api";
+import type { SandboxDocumentV4 } from "../../src/components/systems/sandbox/domain/document";
 import type { Design } from "../../src/components/systems/sandbox/domain/model";
 import { configuredSandboxDesign } from "../helpers/sandbox-fixtures";
 
@@ -923,4 +926,152 @@ test("opening another trigger keeps unsaved edits, marked and counted, without a
   await edited.click();
   await expect(name).toHaveValue("Urgent request alert, edited");
   expect(sandbox.documentWrites()).toBe(0);
+});
+
+// TRIG-8: "New trigger" in a module's item menu in Build opens Triggers with
+// a new trigger on that module: the module chosen, the event next.
+
+/** Triggers opened from Build with a new, unsaved trigger on `module`. */
+async function expectNewTriggerOn(page: Page, module: string, fields: number) {
+  const detail = page.getByRole("region", { name: "Trigger details" });
+  await expect(detail).toBeVisible();
+  await expect(page).toHaveURL(/section=triggers/);
+  // The one-time request leaves the address once Triggers has used it.
+  await expect(page).not.toHaveURL(/new-trigger/);
+  await expect(
+    page.getByRole("combobox", { name: "Event module", exact: true }),
+  ).toHaveText(new RegExp(module));
+  await expect(
+    page.getByRole("combobox", { name: "Event", exact: true }),
+  ).toBeFocused();
+  await expect(detail).toHaveAccessibleDescription(
+    `When an item is added to ${module}, no action yet.`,
+  );
+  // The structure region shows that module, not the whole design.
+  await expect(
+    page
+      .getByRole("complementary", { name: "Structure" })
+      .getByRole("heading", { name: `Fields ${fields}`, exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("navigation", { name: "Trigger list" })
+      .getByRole("button", { name: "On, New trigger, Item added, Unsaved" }),
+  ).toBeVisible();
+}
+
+// T8-C1
+test("New trigger in a module's canvas menu opens Triggers with that module chosen", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const sandbox = await openAuthenticatedSandbox(page);
+  await page.locator('[data-sandbox-node="sample-customers"]').click({
+    button: "right",
+    position: { x: 40, y: 12 },
+  });
+  await page
+    .getByRole("menu", { name: "Actions for module Customers" })
+    .getByRole("menuitem", { name: "New trigger", exact: true })
+    .click();
+  await expectNewTriggerOn(page, "Customers", 4);
+  // The saved trigger stays; nothing is saved until Save triggers.
+  await expect(
+    page
+      .getByRole("navigation", { name: "Trigger list" })
+      .getByRole("button", { name: /Urgent request alert/ }),
+  ).toBeVisible();
+  expect(sandbox.documentWrites()).toBe(0);
+});
+
+// T8-C1
+test("New trigger in a module's Structure menu opens Triggers from the keyboard", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const sandbox = await openAuthenticatedSandbox(page);
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Structure" })
+    .click();
+  const row = page
+    .getByRole("complementary", { name: "Organization structure" })
+    .getByRole("treeitem", { name: "Customers", exact: true });
+  await row.focus();
+  await page.keyboard.press("Shift+F10");
+  const menu = page.getByRole("menu", { name: "Actions for module Customers" });
+  await expect(menu).toBeVisible();
+  // New trigger sits just above Delete module, the last item.
+  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowUp");
+  await expect(
+    menu.getByRole("menuitem", { name: "New trigger", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expectNewTriggerOn(page, "Customers", 4);
+  expect(sandbox.documentWrites()).toBe(0);
+});
+
+// T8-C1, N1 rule 5
+test("New trigger waits for a held Build save, then opens on the module it added", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page);
+  let confirm: () => void = () => {};
+  await page.route("**/api/sandbox/document", async (route) => {
+    if (route.request().method() !== "PUT") return route.fallback();
+    const body = route.request().postDataJSON() as {
+      document: SandboxDocumentV4;
+    };
+    await new Promise<void>((resolve) => {
+      confirm = resolve;
+    });
+    await route.fulfill({
+      headers: answeredHeaders,
+      json: {
+        document: body.document,
+        revision: 2,
+        contentHash: "b".repeat(64),
+        byteCount: JSON.stringify(body.document).length,
+        issues: [],
+        latestPublishedVersion: null,
+        publishedHash: null,
+        hasUnpublishedChanges: true,
+      },
+    });
+  });
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Structure" })
+    .click();
+  const structure = page.getByRole("complementary", {
+    name: "Organization structure",
+  });
+  await structure
+    .getByRole("treeitem", { name: "Add module to Commercial", exact: true })
+    .click();
+  await addInEntry(createEntry(page, "Add module to Commercial"), ["Invoices"]);
+  // The add is held: its save has not returned.
+  const added = structure.getByRole("treeitem", {
+    name: "Invoices",
+    exact: true,
+  });
+  await expect(added).toBeVisible();
+  await added.click({ button: "right" });
+  await page
+    .getByRole("menu", { name: "Actions for module Invoices" })
+    .getByRole("menuitem", { name: "New trigger", exact: true })
+    .click();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  // Still in Build while the save is held. The end state proves the wait:
+  // Triggers reads the saved design, which has Invoices only after the save.
+  await expect(page).not.toHaveURL(/section=triggers/);
+  await expect(
+    page.getByRole("region", { name: "Trigger details" }),
+  ).toHaveCount(0);
+  await expect(structure).toBeVisible();
+
+  confirm();
+  await expectNewTriggerOn(page, "Invoices", 0);
 });

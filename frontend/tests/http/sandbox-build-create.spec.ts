@@ -263,6 +263,7 @@ test("the reference structure can be built from the keyboard alone", async ({
   await expect(menu).toBeVisible();
   await keys.press("End");
   await keys.press("ArrowUp");
+  await keys.press("ArrowUp");
   await expect(menu.getByRole("menuitem", { name: "Connect…" })).toBeFocused();
   await keys.press("Enter");
   const connect = page.getByRole("dialog", { name: "Connect Orders to" });
@@ -483,6 +484,7 @@ test("right-click on a module opens its item menu, and Connect… opens Connect"
     "Close module",
     "Duplicate module",
     "Connect…",
+    "New trigger",
     "Delete module",
   ]);
   await menu.getByRole("menuitem", { name: "Connect…" }).click();

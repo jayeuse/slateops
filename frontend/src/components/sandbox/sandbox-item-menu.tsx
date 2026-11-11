@@ -75,7 +75,8 @@ export function SandboxItemMenuItems({
     purge: pending || lifecycleDisabled,
     duplicate: pending,
     connect: connectDisabled,
-    newTrigger: false,
+    // The move to Triggers waits for the same work as the other items.
+    newTrigger: pending,
     delete: pending,
   };
   const item = (entry: (typeof entries)[number]) => (

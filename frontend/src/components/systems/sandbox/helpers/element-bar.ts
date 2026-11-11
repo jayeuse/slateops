@@ -207,7 +207,9 @@ export function itemMenuEntries(
     ...(kind === "module" && options.connect
       ? [entry("connect", "Connect…")]
       : []),
-    ...(kind === "module" && options.newTrigger
+    // Triggers offers only open modules (`moduleChoiceGroups`), so a closed
+    // module has no New trigger (TRIG-8).
+    ...(kind === "module" && options.newTrigger && !options.closed
       ? [entry("newTrigger", "New trigger")]
       : []),
     entry("delete", `Delete ${kind}`, true),

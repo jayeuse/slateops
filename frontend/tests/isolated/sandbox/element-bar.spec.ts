@@ -189,13 +189,14 @@ test("the item menu holds the tree items, and a module adds Connect and New trig
     "New trigger",
     "Delete module",
   ]);
+  // T8-C1: a closed module takes no new trigger; Triggers offers only open
+  // modules, so the item is hidden.
   expect(
     labels(
       itemMenuEntries("module", {
         ...base,
         closed: true,
         canPurge: true,
-        newTrigger: false,
       }),
     ),
   ).toEqual([
