@@ -26,7 +26,7 @@ Supabase Database is PostgreSQL. This replaces its distribution and operating to
 | --- | --- | --- |
 | Database | `backend/app/core/database/session.py`, `backend/migrations/env.py` | Keep SQLAlchemy and transaction behavior; change provisioning, target verification, and migration isolation. |
 | Local infrastructure | `compose.yaml`, `scripts/dev.py`, `scripts/environment.py`, `backend/app/core/config/instance.py` | Current admission verifies a particular `postgres:` container, volume, cluster name, database, and role. Supabase needs equivalent owned-instance admission, not bypassed checks. |
-| Database privileges | `backend/operations/provision_database_role.py`, baseline revision `1ae6c84fce12` | Current provisioning changes database ownership and PUBLIC privileges; the baseline revokes privileges across `public`. Do not apply this indiscriminately to Supabase-owned objects/services. |
+| Database privileges | `backend/operations/provision_database_role.py`, active root revision `e46611902f25` (`backend/migrations/versions/e46611902f25_slate_operations_fresh_root.py`) | Current provisioning changes database ownership and PUBLIC privileges; the active root revokes EXECUTE from PUBLIC on the `public` functions it creates (provisioning does this for the Realtime join function) and, through default privileges, on new ones. Do not apply this indiscriminately to Supabase-owned objects/services. |
 | Authentication | `backend/app/systems/access/identity/`, `backend/app/common/dependencies/auth.py`, `frontend/src/lib/auth-api.ts` | Local hashes, JWTs, refresh replay handling, invitations/recovery, account setup, session administration, and cookies require replacement or adaptation. |
 | Authorization | `backend/app/systems/access/policy/authorization.py`, user/role models and permissions | Preserve application IDs, roles, groups, Workspace rules, Board grants/audiences, and Report recipient checks. |
 | Files | `backend/app/systems/platform/files/providers.py`, `storage.py`, `service.py`, `purge.py` | A usable storage protocol already exists; preserve immutable keys, integrity checks, and reconciliation. |
@@ -114,8 +114,10 @@ not establish complete S32 browser/provider-pack, load, release-gate or target-O
 
 Provisioning (`provision_database_role.py`, as `supabase_admin`) manages the recognized policies,
 because Realtime owns `realtime.messages`; it requires a healthy Realtime service and refuses
-unexpected policy drift. Alembic revision `071607de0f40` replaces the initial deny-all application
-function, and forward revision `8410bb7874ff` adds the Comms topic/grant checks. Applied revisions
+unexpected policy drift. The active Alembic root
+[`e46611902f25`](../../backend/migrations/versions/e46611902f25_slate_operations_fresh_root.py)
+replaces the initial deny-all application function with one that holds the Comms topic/grant
+checks. Applied revisions
 remain immutable. Sources: [grant projection](../../backend/app/systems/comms/realtime/grants.py),
 [publication wrapper](../../backend/app/systems/comms/realtime/publication.py),
 [Caddy ingress](../caddy/Caddyfile.template), [development launcher](../../frontend/tooling/run-next.mjs)
