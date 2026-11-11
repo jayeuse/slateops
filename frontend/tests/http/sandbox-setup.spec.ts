@@ -388,8 +388,15 @@ test("a second review that fails shows the review error with Try again, which br
   await expect(
     dialog.getByRole("button", { name: "Publish changes" }),
   ).toHaveCount(0);
-  await page.keyboard.press("Escape");
-  await dialog.getByRole("button", { name: "Try again" }).click();
+  // The failed review drops the list, and Setup and its popover with it, so
+  // focus moves to Try again instead of the page (CI run 43029850886: focus
+  // was on the page, and an Escape meant for the popover closed the review).
+  await expect(
+    page.getByRole("dialog", { name: "Setup for Sales" }),
+  ).toBeHidden();
+  const retry = dialog.getByRole("button", { name: "Try again" });
+  await expect(retry).toBeFocused();
+  await page.keyboard.press("Enter");
   await expect(
     dialog
       .getByRole("list", { name: "Setup for Sales", exact: true })

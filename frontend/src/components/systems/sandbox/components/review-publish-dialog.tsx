@@ -183,8 +183,19 @@ export function ReviewPublishDialog({
   useEffect(() => onPendingChange?.(pending), [onPendingChange, pending]);
   useEffect(() => () => onPendingChange?.(false), [onPendingChange]);
 
+  // A failed second review removes the list and the Setup control that had
+  // focus; focus then moves to Try again, not to the page (CI run
+  // 43029850886).
+  const retryRef = useRef<HTMLButtonElement>(null);
+  const focusRetry = useRef(false);
+  useEffect(() => {
+    if (!focusRetry.current || busy !== null || preview !== null) return;
+    focusRetry.current = false;
+    retryRef.current?.focus();
+  }, [busy, preview]);
   async function review() {
     const current = round.current;
+    const kept = preview !== null;
     const revision = expectedRevision;
     setBusy("review");
     setError("");
@@ -201,6 +212,7 @@ export function ReviewPublishDialog({
         setPreview(null);
         setPreviewRevision(null);
         setError(errorMessage(reason), reason);
+        focusRetry.current = kept;
       }
     } finally {
       setBusy(null);
@@ -537,6 +549,7 @@ export function ReviewPublishDialog({
                   reason={disabled ? "Finish the current change first." : null}
                 >
                   <Button
+                    ref={retryRef}
                     className="min-h-11"
                     disabled={disabled}
                     onClick={() => void review()}
