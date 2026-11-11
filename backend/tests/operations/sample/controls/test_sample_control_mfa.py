@@ -543,3 +543,48 @@ def test_mfa_verification_rejects_incomplete_misattributed_or_secret_evidence(se
         OWNER_ID,
     )
     assert issues and counts["mfa_control_actions"] == 0
+
+
+@pytest.mark.parametrize(
+    ("derived", "accepted"),
+    (("every_department", True), ("one_department", False), ("member", False)),
+)
+def test_mfa_verification_accepts_only_the_complete_empty_derived_group_set(
+    setup_mfa, derived, accepted
+):
+    """Setup spec R2, SD3: a publish derives three empty groups for each new department.
+
+    They are not pack groups. A share of them, or a derived group with a member, still fails.
+    """
+    from operations.sample.controls.mfa import execute_mfa_control
+    from operations.sample.controls.mfa_verification import verify_mfa_controls
+
+    dataset, action, context, server = setup_mfa()
+    departments = list(dataset.department_ids)
+    for department in departments[:1] if derived == "one_department" else departments:
+        for role in ("managers", "members", "viewers"):
+            server.groups[f"derived:{department}:{role}"] = {
+                "id": str(uuid4()),
+                "revision": 1,
+                "name": f"{department} {role}",
+                "member_ids": [],
+                "access": [],
+            }
+    if derived == "member":
+        bystander = next(key for key in server.users if key not in {"admin", *server.selected})
+        server.groups[f"derived:{departments[0]}:members"]["member_ids"] = [
+            server.users[bystander]["id"]
+        ]
+    result = execute_mfa_control(action, dataset, context)
+    manifest = {
+        "control_results": [result],
+        "actor_ids": context.user_ids,
+        "mappings": {"user": context.user_ids, "group": context.group_ids},
+        "admin_id": OWNER_ID,
+        "finished_at": FINISHED_AT,
+    }
+    counts, issues = verify_mfa_controls(context.clients["admin"], dataset, manifest, OWNER_ID)
+    contract_issue = "MFA control request evidence differs from its exact owned-actor contract"
+    assert (contract_issue in issues) is not accepted
+    if accepted:
+        assert issues == [] and counts["mfa_control_actions"] == 1
