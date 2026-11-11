@@ -30,10 +30,11 @@ function rail(recordTrigger: SandboxTrigger): string {
 }
 
 test(
-  "a list row with a badge keeps its name and shows the event as its icon only",
+  "a list row shows one badge under its name and its event as an icon, named in full",
   { tag: "@UX-C18" },
   () => {
     const saved = document.triggers[0]!;
+    const edited = { ...saved, id: "edited", name: "Edited alert" };
     const fresh = {
       ...defaultTrigger(design),
       id: "fresh",
@@ -43,9 +44,9 @@ test(
       listRef: null,
       status: "all",
       onStatusChange: () => undefined,
-      triggers: [saved, fresh],
+      triggers: [saved, edited, fresh],
       selectedId: "fresh",
-      unsaved: new Set(["fresh"]),
+      unsaved: new Set(["edited", "fresh"]),
       incomplete: new Set(["fresh"]),
       phone: false,
       canCreate: true,
@@ -53,14 +54,20 @@ test(
       onCreate: () => undefined,
     });
     const rows = markup.split("data-trigger-row").slice(1);
-    const [savedRow, freshRow] = rows;
-    // The badged row keeps the event word for assistive technology only.
-    expect(freshRow).toContain('<span class="sr-only">Item added</span>');
-    expect(savedRow).not.toContain('<span class="sr-only">');
-    // Its name keeps an 8rem floor and its full text.
-    expect(freshRow).toMatch(
-      /class="[^"]*\bmin-w-32\b[^"]*"[^>]*>New trigger</,
+    const [savedRow, editedRow, freshRow] = rows as [string, string, string];
+    // One badge per row: Incomplete wins over Unsaved; none when saved.
+    expect(freshRow).toContain(">Incomplete<");
+    expect(freshRow).not.toContain(">Unsaved<");
+    expect(editedRow).toContain(">Unsaved<");
+    expect(savedRow).not.toMatch(/>(Unsaved|Incomplete)</);
+    // The event word is for assistive technology only, on every row.
+    for (const row of rows)
+      expect(row).toContain('<span class="sr-only">Item added</span>');
+    // The accessible name reads status, name, event, then the badge.
+    expect(freshRow).toContain(
+      'aria-label="On, New trigger, Item added, Incomplete"',
     );
+    expect(savedRow).toContain(`aria-label="On, ${saved.name}, Item added"`);
   },
 );
 

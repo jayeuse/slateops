@@ -485,23 +485,111 @@ test(
   },
 );
 
+// The list row rule (Product Designer, PR1 gate R5): status 2.75rem, the
+// name the only part that clips (8rem floor), one badge on a second line
+// under the name, and the event as its 16px icon at every width.
 test(
-  "a row's name stays at least 8rem wide beside the Unsaved and Incomplete badges",
+  "trigger list rows fit their pane with one badge under the name and the event as an icon",
   { tag: "@UX-C18" },
   async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
-    await openTriggers(page);
+    await openTriggers(page, listDesign);
+    const list = page.getByRole("navigation", { name: "Trigger list" });
+    const rows = list.getByRole("button");
+    const newRow = rows.filter({ hasText: "New trigger" });
+    const longName = list.getByText(
+      "Flag status changes for the operations follow-up review",
+      { exact: true },
+    );
+    const fits = async (locator: typeof list) =>
+      locator.evaluate((element) => element.scrollWidth - element.clientWidth);
+    const close = (actual: number, expected: number) =>
+      expect(Math.abs(actual - expected)).toBeLessThanOrEqual(1);
+    async function checkRows(unmarked: number, marked: number) {
+      expect(await fits(list)).toBe(0);
+      for (const row of await rows.all()) {
+        expect(await fits(row)).toBe(0);
+        const box = (await row.boundingBox())!;
+        const badged =
+          (await row.getByText(/^(Unsaved|Incomplete)$/).count()) > 0;
+        close(box.height, badged ? marked : unmarked);
+        // Status cell 2.75rem; the event is a 16px icon inside the row.
+        close((await row.getByText(/^(On|Off)$/).boundingBox())!.width, 44);
+        const icon = (await row.locator("svg").boundingBox())!;
+        close(icon.width, 16);
+        close(icon.height, 16);
+        expect(icon.x + icon.width).toBeLessThanOrEqual(box.x + box.width);
+        // No event word shows; it stays for assistive technology.
+        const word = row.getByText(/^(Item added|Schedule|Field changed)$/);
+        expect((await word.boundingBox())!.width).toBeLessThanOrEqual(1);
+      }
+      // The name never drops below 8rem, and a long name ends in an ellipsis.
+      const name = (await longName.boundingBox())!;
+      expect(name.width).toBeGreaterThanOrEqual(128);
+      expect(await fits(longName)).toBeGreaterThan(0);
+    }
+    async function checkBadge(word: "Unsaved" | "Incomplete") {
+      const other = word === "Unsaved" ? "Incomplete" : "Unsaved";
+      await expect(newRow.getByText(word, { exact: true })).toHaveCount(1);
+      await expect(newRow.getByText(other, { exact: true })).toHaveCount(0);
+      const badge = (await newRow
+        .getByText(word, { exact: true })
+        .boundingBox())!;
+      const name = (await newRow
+        .getByText("New trigger", { exact: true })
+        .boundingBox())!;
+      const row = (await newRow.boundingBox())!;
+      close(badge.x, name.x);
+      expect(badge.y).toBeGreaterThanOrEqual(name.y + name.height);
+      expect(badge.x + badge.width).toBeLessThanOrEqual(row.x + row.width);
+      expect(badge.y + badge.height).toBeLessThanOrEqual(row.y + row.height);
+    }
+
+    // T2: a new trigger is Unsaved only.
     await page
       .getByRole("button", { name: "New trigger", exact: true })
       .click();
+    await checkBadge("Unsaved");
+    // T8: Save refuses it; the row is Incomplete only.
     await page.getByRole("button", { name: "Save triggers" }).click();
-    const row = page
-      .getByRole("navigation", { name: "Trigger list" })
-      .getByRole("button", { name: /New trigger/ });
-    await expect(row.getByText("Incomplete", { exact: true })).toBeVisible();
-    await expect(row.getByText("Unsaved", { exact: true })).toBeVisible();
-    const name = row.getByText("New trigger", { exact: true });
-    expect((await name.boundingBox())!.width).toBeGreaterThanOrEqual(128);
+    await checkBadge("Incomplete");
+    await expect(newRow).toHaveAccessibleName(
+      "On, New trigger, Item added, Incomplete",
+    );
+
+    for (const size of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 1600, height: 900 },
+    ]) {
+      await page.setViewportSize(size);
+      await checkRows(40, 64);
+      await checkBadge("Incomplete");
+    }
+    // No page scroll at 1280×720.
+    await page.setViewportSize({ width: 1280, height: 720 });
+    expect(
+      await page.evaluate(
+        () =>
+          document.scrollingElement!.scrollHeight -
+          document.scrollingElement!.clientHeight,
+      ),
+    ).toBeLessThanOrEqual(0);
+    // The event word still finds rows.
+    await page
+      .getByRole("searchbox", { name: "Search triggers" })
+      .fill("added");
+    await expect(rows).toHaveCount(2);
+    await page.getByRole("searchbox", { name: "Search triggers" }).fill("");
+
+    // On a phone: 52px rows, 76px with a badge.
+    await page.setViewportSize({ width: 390, height: 844 });
+    // Narrowing mid-edit keeps the trigger in view; Back shows the list.
+    await page
+      .getByRole("button", { name: "Back to Triggers", exact: true })
+      .click();
+    await expect(list).toBeVisible();
+    await checkRows(52, 76);
   },
 );
 

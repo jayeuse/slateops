@@ -378,8 +378,8 @@ Default-visible helper words do not change in these states. The new helper lines
 
 | Width | Trigger list | Editor | Structure region | Condition and action rows |
 | --- | --- | --- | --- | --- |
-| 1600 px and up | 280 px | Fills | 256 px | One line each |
-| 1440–1599 px | 280 px | Fills | 256 px | Two lines: the field, then operator and value |
+| 1600 px and up | 280 px; the event column shows its icon only (word in the accessible name and tooltip) | Fills | 256 px | One line each |
+| 1440–1599 px | 280 px; event icon only, as above | Fills | 256 px | Two lines: the field, then operator and value |
 | 1280–1439 px | 248 px; the event column shows its icon only (word in the accessible name and tooltip) | Fills | 248 px | Two lines |
 | 768–1279 px | Page scrolls (as today) | — | Becomes the "Orders fields" button, opening a side sheet | Two lines |
 | 390 px | List, then the detail with Back (as today) | — | "Orders fields" button in the detail header (44 px), opening a bottom sheet; Close returns to the same scroll point | Two lines, 44 px |
@@ -572,7 +572,7 @@ Paths are under `frontend/src/components/systems/sandbox/` unless the row says o
 | Drag of a Structure "Add …" row onto the canvas (`sandbox-inspector-outline.tsx:585-595`, `frontend/src/components/sandbox/sandbox-canvas.tsx:1170-1196`) | Removed | Create with the bar or the tree item, then drag the new card on the canvas (existing node drag). A field type is chosen in the entry instead of always Text. Moving a module to another department stays "Move module to department" in Advanced (`components/designer.tsx:2449`). |
 | Duplicate, only in the Structure item menu (`sandbox-inspector-outline.tsx:476-480`) | Kept | Same menu; also the canvas item menu (right-click, long-press) |
 | Trigger step summaries (`components/trigger-rail.tsx:472-496`) | Removed | The whole-trigger sentence under the trigger name |
-| Trigger list event word at 1280–1439 px | Shortened | Event icon with the word as accessible name and tooltip; the word stays at 1440 px and up and in the sentence |
+| Trigger list event word | Shortened | Event icon at every list width, with the word as accessible name and tooltip and in the sentence; one row badge (Incomplete, else Unsaved) on a second line under the name (gate R5 adjudication, 2026-11-11: a 280 px list cannot hold the word beside an 8rem name) |
 | Test "Module" select (`components/test-workspace.tsx:525-544`) | Removed | The Modules list pane |
 | Test "When", "Changed field", "Previous value", "Frequency", "Time", "Day" (`components/test-event-rows.tsx:51-165`) | Removed | One reading block per event with its own Try it; the event values are generated and editable through "Change values" |
 | Test values form with Relevant, All, Edited tabs | Replaced | "Values used" in the result, editable through "Change values", with an Edited mark per row |
