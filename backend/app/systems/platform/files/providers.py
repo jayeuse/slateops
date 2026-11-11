@@ -21,10 +21,6 @@ class ProviderUnavailable(RuntimeError):
         self.kind = kind
 
 
-class StorageCleanupUncertain(ProviderUnavailable):
-    """A download child may remain alive; stop this runtime before replacement."""
-
-
 class ProviderRejected(ProviderUnavailable):
     """Provider definitively rejected this request before accepting bytes."""
 
@@ -47,11 +43,6 @@ class StorageBackend(Protocol):
     def delete(self, key: str) -> None:
         """Idempotently remove an object."""
         ...
-
-
-# Compatibility for consumers outside this feature while the storage migration
-# is integrated. New storage code must use the explicit StorageBackend name.
-Storage = StorageBackend
 
 
 _storage_cleanup_uncertain = False

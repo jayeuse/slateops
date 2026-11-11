@@ -237,17 +237,3 @@ def delete_content_links(db: Session, kind: str, content_id: UUID) -> None:
     for row in rows:
         db.delete(row)
     db.flush()
-
-
-def delete_revision_links(db: Session, revision_ids: list[UUID]) -> None:
-    if not revision_ids:
-        return
-    rows = db.scalars(
-        select(BoardPostRevisionRecordLink)
-        .where(BoardPostRevisionRecordLink.revision_id.in_(revision_ids))
-        .order_by(BoardPostRevisionRecordLink.id)
-        .with_for_update()
-    )
-    for row in rows:
-        db.delete(row)
-    db.flush()

@@ -4,13 +4,11 @@ from app.core.config.settings import (
     InstanceSettings,
     MigrationSettings,
     ProvisionSettings,
-    SeedSettings,
     Settings,
     get_admin_settings,
     get_instance_settings,
     get_migration_settings,
     get_provision_settings,
-    get_seed_settings,
     get_settings,
 )
 
@@ -20,13 +18,11 @@ __all__ = [
     "ConfigurationError",
     "MigrationSettings",
     "ProvisionSettings",
-    "SeedSettings",
     "Settings",
     "get_admin_settings",
     "get_instance_settings",
     "get_migration_settings",
     "get_provision_settings",
-    "get_seed_settings",
     "get_settings",
     "read_environment",
 ]

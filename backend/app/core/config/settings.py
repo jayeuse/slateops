@@ -350,11 +350,6 @@ class AdminSettings(EnvironmentSettings):
     admin_username: str = Field(validation_alias="ADMIN_USERNAME")
 
 
-class SeedSettings(EnvironmentSettings):
-    backend_url: str = Field(validation_alias="BACKEND_URL")
-    seed_access_token: SecretStr = Field(validation_alias="SEED_ACCESS_TOKEN")
-
-
 class ProvisionSettings(EnvironmentSettings):
     environment: str = Field(validation_alias="ENVIRONMENT")
     database_bootstrap_url: str = Field(validation_alias="DATABASE_BOOTSTRAP_URL")
@@ -389,10 +384,6 @@ def get_instance_settings() -> InstanceSettings:
 
 def get_admin_settings() -> AdminSettings:
     return _load(AdminSettings)
-
-
-def get_seed_settings() -> SeedSettings:
-    return _load(SeedSettings)
 
 
 def get_provision_settings() -> ProvisionSettings:

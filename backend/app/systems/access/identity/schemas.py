@@ -1,5 +1,4 @@
 from typing import Literal
-from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -74,11 +73,3 @@ class RefreshTokenRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     refresh_token: str = Field(min_length=32, max_length=4096)
-
-
-class SessionResponse(BaseModel):
-    id: UUID
-    created_at: str
-    refreshed_at: str
-    expires_at: str
-    current: bool = False

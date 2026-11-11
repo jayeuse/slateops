@@ -5,8 +5,8 @@ import json
 import pytest
 from sqlalchemy import text
 
-from app.systems.sandbox.designs.defaults import EMPTY_SANDBOX_DOCUMENT, empty_document
 from app.systems.sandbox.designs.validation import validate_document
+from tests.sandbox_designs.fixtures import EMPTY_SANDBOX_DOCUMENT, empty_document
 
 
 def test_empty_document_round_trips_through_the_v4_contract() -> None:
