@@ -11,7 +11,7 @@ from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import and_, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -20,7 +20,7 @@ from app.common.dependencies import get_current_user
 from app.common.dependencies.auth import CurrentIdentity, get_current_identity
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
 from app.core.database import get_db
-from app.systems.access.policy.checks import department_filter, forbidden
+from app.systems.access.policy.checks import forbidden
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import effective_levels, forget_access
 from app.systems.access.users.models import User
@@ -37,6 +37,7 @@ from app.systems.openview.dashboards.schemas import (
     DashboardWidgetSpec,
 )
 from app.systems.openview.dashboards.service import claim_home_if_missing, hand_over_home
+from app.systems.openview.dashboards.visibility import dashboard_departments
 from app.systems.openview.dashboards.widget_validation import validate_dashboard_widgets
 from app.systems.sandbox.departments.models import Department
 
@@ -93,21 +94,6 @@ def _stale_revision(current_revision: int) -> HTTPException:
     )
 
 
-def _dashboard_departments(
-    db: Session, user: User, column: ColumnElement[Any] | Any
-) -> ColumnElement[bool]:
-    """Departments whose Dashboards the user reads: open ones, or every one for an administrator.
-
-    A closed department answers like an unreadable one (404).
-    """
-
-    readable = department_filter(db, user, column)
-    if effective_levels(db, user).unrestricted:
-        return readable
-    open_departments = select(Department.id).where(Department.is_deleted.is_(False))
-    return and_(readable, column.in_(open_departments))
-
-
 def _require_manager(db: Session, user: User, department_id: UUID) -> None:
     """404 when the user reads nothing in the department, 403 without ``manage``."""
 
@@ -130,7 +116,7 @@ def _dashboard(
 ) -> Dashboard:
     statement = select(Dashboard).where(
         Dashboard.id == dashboard_id,
-        _dashboard_departments(db, user, Dashboard.department_id),
+        dashboard_departments(db, user, Dashboard.department_id),
     )
     if lock:
         statement = statement.with_for_update(nowait=nowait).execution_options(
@@ -289,7 +275,7 @@ def list_dashboards(
     params: Annotated[DashboardListRequest, Query()],
 ) -> StandardListResponse[DashboardResponse]:
     statement = select(Dashboard).where(
-        _dashboard_departments(db, user, Dashboard.department_id)
+        dashboard_departments(db, user, Dashboard.department_id)
     )
     if params.department_id is not None:
         statement = statement.where(Dashboard.department_id == params.department_id)

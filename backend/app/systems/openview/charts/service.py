@@ -15,7 +15,6 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.common.dependencies.auth import CurrentIdentity, get_current_user
 from app.common.listing import ListQuerySpec, execute_standard_list
 from app.systems.access.policy.checks import (
-    department_filter,
     forbidden,
     module_filter,
     require_fresh_module_access,
@@ -36,6 +35,7 @@ from app.systems.openview.charts.schemas import (
 )
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
 from app.systems.openview.dashboards.schemas import DashboardRecordsQuery
+from app.systems.openview.dashboards.visibility import dashboard_departments
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.query import validate_definition
@@ -317,7 +317,7 @@ def usage(
     chart_id: UUID,
     params: ChartUsageRequest,
 ) -> ChartUsageResponse:
-    dashboard_visible = department_filter(db, actor, Dashboard.department_id)
+    dashboard_visible = dashboard_departments(db, actor, Dashboard.department_id)
     targets = (
         select(
             literal("dashboard").label("kind"),
