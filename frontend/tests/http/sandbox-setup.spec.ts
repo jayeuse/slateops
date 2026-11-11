@@ -419,19 +419,33 @@ test("with the Manage default channel off, new departments start with the channe
   const structure = page.getByRole("complementary", {
     name: "Organization structure",
   });
-  await structure.getByRole("treeitem", { name: "Sales", exact: true }).focus();
+  // A closing dialog or menu gives focus back to what opened it, so each
+  // row is focused, and confirmed, before Shift+F10 opens its menu.
+  const focusRow = async (name: string) => {
+    const row = structure.getByRole("treeitem", { name, exact: true });
+    await row.focus();
+    await expect(row).toBeFocused();
+  };
+  await focusRow("Sales");
   await page.keyboard.press("Shift+F10");
-  await page
-    .getByRole("menu", { name: "Actions for department Sales" })
+  const salesMenu = page.getByRole("menu", {
+    name: "Actions for department Sales",
+  });
+  await salesMenu
     .getByRole("menuitem", { name: "Duplicate department" })
     .click();
   await expect.poll(() => departmentSetup("Sales Copy")).toEqual(channelOff);
   expect(departmentSetup("Sales")).toBeUndefined();
   expect(workspaceReads).toHaveLength(readsBefore);
+  // The page has the copy, and the menu has closed and returned focus.
+  await expect(
+    structure.getByRole("treeitem", { name: "Sales Copy", exact: true }),
+  ).toBeVisible();
+  await expect(salesMenu).toBeHidden();
 
   // Before publish, Legal's channel goes back on from its Setup (the tree
   // route; Legal's frame sits past the visible canvas).
-  await structure.getByRole("treeitem", { name: "Legal", exact: true }).focus();
+  await focusRow("Legal");
   await page.keyboard.press("Shift+F10");
   await page
     .getByRole("menu", { name: "Actions for department Legal" })
