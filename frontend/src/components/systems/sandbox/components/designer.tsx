@@ -143,6 +143,7 @@ import {
 } from "../state/commands";
 import { EmptyCanvasPanel } from "./empty-canvas-panel";
 import { setupOffered } from "../domain/department-setup";
+import { useDepartmentSetupDefault } from "../state/use-department-setup-default";
 import { useLatestPublishedVersion } from "../state/use-latest-published-version";
 import {
   SANDBOX_WORKBENCH_MAX_WIDTH,
@@ -417,6 +418,8 @@ export function Designer({
   const { keyboardShortcuts, disabled: preferencesDisabled } =
     useUserPreferences();
   const publishedTypeOf = useLatestPublishedVersion(publishedVersionId);
+  // A Duplicate starts from the saved Manage default (FIT-4, SD-C20).
+  const setupDefault = useDepartmentSetupDefault();
   const shortcutsEnabled = keyboardShortcuts === true && !preferencesDisabled;
   const [viewPreferences, setViewPreferences] =
     useState<SandboxViewPreferences>(loadSandboxViewPreferences);
@@ -831,7 +834,7 @@ export function Designer({
     if (pending) return;
     const selectedId = { current: "" };
     const result = await change((current) => {
-      const duplicated = duplicateDesignTarget(current, target);
+      const duplicated = duplicateDesignTarget(current, target, setupDefault);
       if (!duplicated) return current;
       selectedId.current = duplicated.selected;
       return duplicated.design;

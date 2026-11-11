@@ -62,10 +62,13 @@ import {
   isStaleWorkspaceRevision,
   isWorkspaceLogoCleanupPartial,
   organizationLocaleTag,
+  workspacePatchApplied,
+  workspacePatchChangeCount,
   workspaceSettingsFormFields,
   workspaceSettingsPatch,
   workspaceHasContacts,
   updateManageWorkspace,
+  type DepartmentSetupDefaults,
   type WorkspaceSettingsFormDraft,
   type WorkspaceSettingsFormFields,
   type WorkspaceProfileField,
@@ -555,12 +558,12 @@ function ManageContent() {
     ? savedSettings
     : { ...savedSettings, ...workspaceDraft };
   const dirty = workspaceDraftDirty && !committedReadbackRequired;
-  // Each changed field, plus a logo choice, is one unsaved change.
+  // Each changed field and each changed "New departments" box, plus a logo
+  // choice, is one unsaved change.
   const unsavedCount = dirty
     ? Math.max(
         1,
-        Object.keys(workspacePatch ?? {}).filter((key) => key !== "revision")
-          .length + (logoDraft ? 1 : 0),
+        workspacePatchChangeCount(workspacePatch) + (logoDraft ? 1 : 0),
       )
     : 0;
   const errors = organizationErrors(
@@ -650,6 +653,38 @@ function ManageContent() {
     setWorkspaceDraft((draft) => {
       const next: WorkspaceSettingsFormDraft = { ...draft, theme };
       if (theme === getCommittedTheme()) delete next.theme;
+      return next;
+    });
+    setNotice("");
+    setError("");
+  }
+
+  /** One "New departments" box (plan 11.2); saved with the other settings. */
+  function changeSetupDefault(
+    item: keyof DepartmentSetupDefaults,
+    on: boolean,
+  ) {
+    const saved = workspaceQuery.data?.department_setup_defaults;
+    if (
+      !workspaceAdmission.current.canEdit ||
+      workspaceWriting.current ||
+      !saved ||
+      workspaceQuery.isError ||
+      profileMismatch
+    )
+      return;
+    setWorkspaceDraft((draft) => {
+      const value = { ...(draft.setupDefaults ?? saved), [item]: on };
+      const next: WorkspaceSettingsFormDraft = {
+        ...draft,
+        setupDefaults: value,
+      };
+      if (
+        (Object.keys(saved) as (keyof DepartmentSetupDefaults)[]).every(
+          (key) => value[key] === saved[key],
+        )
+      )
+        delete next.setupDefaults;
       return next;
     });
     setNotice("");
@@ -1191,12 +1226,9 @@ function ManageContent() {
             requestSessionRecheck();
             return;
           }
-          const values = new Map(Object.entries(current));
           const matches =
             current.revision > attemptedPatch.revision &&
-            Object.entries(attemptedPatch).every(
-              ([key, value]) => key === "revision" || values.get(key) === value,
-            );
+            workspacePatchApplied(current, attemptedPatch);
           if (adoptCurrent(current) && (knownCommitted || matches)) {
             finishDraft();
             // A lost response needs old-File readback; a confirmed 200 already
@@ -1467,6 +1499,11 @@ function ManageContent() {
                     organizationTheme.theme)
               }
               onThemeChange={changeOrganizationTheme}
+              setupDefaults={
+                workspaceDraft.setupDefaults ??
+                workspaceQuery.data?.department_setup_defaults
+              }
+              onSetupDefaultChange={changeSetupDefault}
               readOnly={organizationReader}
               saving={workspaceSavePending}
               editDisabled={

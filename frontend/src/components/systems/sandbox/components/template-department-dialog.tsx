@@ -34,6 +34,7 @@ import {
   SandboxCommandError,
   type SandboxCommandResult,
 } from "../state/commands";
+import { useDepartmentSetupDefault } from "../state/use-department-setup-default";
 
 /**
  * "Add from a template" (docs/specs/sandbox-ux-redesign.md, FAST-7,
@@ -123,6 +124,8 @@ function TemplateDepartmentBody({
   onClose: () => void;
 }) {
   const [key, setKey] = useState(DEPARTMENTS[0]!.key);
+  // The new department starts from the saved Manage default (FIT-4, SD-C20).
+  const setupDefault = useDepartmentSetupDefault();
   // The name follows the choice until the administrator types in it.
   const [typedName, setTypedName] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -148,6 +151,7 @@ function TemplateDepartmentBody({
           department.key,
           name,
           () => ids[next++]!,
+          setupDefault,
         );
         if (!merged.ok) throw new SandboxCommandError(merged.reason);
         return merged.design;

@@ -162,3 +162,73 @@ test("a new department from the entry, a template, or Duplicate starts with no s
   }
   expect(fromDuplicate?.name).toBe("Finance Copy");
 });
+
+// SD-C20 (BE-SD6, FIT-4): with the Manage default "channel: no", a
+// department added by the entry, a template, or Duplicate starts with
+// `setup.channel` false and the others on; Duplicate takes the default, not
+// the source's value. The administrator can still turn it on before publish.
+test("a new department from the entry, a template, or Duplicate starts from the Manage default", () => {
+  const design = salesAndFinance();
+  const channelOff = {
+    groups: true,
+    dashboard: true,
+    category: true,
+    channel: false,
+  };
+
+  const entry = addElement(
+    design,
+    "department",
+    "legal",
+    null,
+    { ...emptyCreateDraft, name: "Legal" },
+    channelOff,
+  );
+  if (!entry.ok) throw new Error(entry.reason);
+  const fromEntry = entry.design.departments.find(
+    (item) => item.id === "legal",
+  );
+
+  const template = templateDepartmentGroups()[0]?.departments[0];
+  if (!template) throw new Error("A template department is required");
+  const merged = mergeTemplateDepartment(
+    design,
+    template.key,
+    "Template copy",
+    () => crypto.randomUUID(),
+    channelOff,
+  );
+  if (!merged.ok) throw new Error(merged.reason);
+  const fromTemplate = merged.design.departments.at(-1);
+
+  // Sales has no setup value (all on); its copy still takes the default.
+  const duplicated = duplicateDesignTarget(
+    design,
+    { kind: "department", id: "sales" },
+    channelOff,
+  );
+  if (!duplicated) throw new Error("Sales could not be duplicated");
+  const fromDuplicate = duplicated.design.departments.find(
+    (item) => item.id === duplicated.selected,
+  );
+
+  for (const [label, department] of [
+    ["entry", fromEntry],
+    ["template merge", fromTemplate],
+    ["Duplicate of a department with every item on", fromDuplicate],
+  ] as const)
+    expect(department?.setup, label).toEqual({
+      groups: true,
+      dashboard: true,
+      category: true,
+      channel: false,
+    });
+
+  // Turning the channel on before publish edits only the new department.
+  const legal = fromEntry!;
+  const turnedOn = withSetupItem(entry.design, legal.id, "channel", true);
+  expect(
+    turnedOn.departments.find((item) => item.id === "legal")?.setup,
+  ).toEqual({ groups: true, dashboard: true, category: true, channel: true });
+  expect(turnedOn.departments[0]).toEqual(design.departments[0]);
+});

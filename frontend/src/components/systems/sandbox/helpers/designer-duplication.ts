@@ -3,6 +3,7 @@ import { newDepartment } from "../domain/create-checks";
 import {
   compactDefaultLayout,
   uid,
+  type DepartmentSetup,
   type Design,
   type Field,
   type SandboxDesignTarget,
@@ -36,6 +37,7 @@ function clonedField(field: Field, id: string, name = field.name): Field {
 export function duplicateDesignTarget(
   design: Design,
   target: SandboxDesignTarget,
+  setup?: DepartmentSetup,
 ): { design: Design; selected: string } | null {
   const usedIds = new Set([
     ...design.departments.map((item) => item.id),
@@ -95,6 +97,7 @@ export function duplicateDesignTarget(
                 source.name,
                 design.departments.map((item) => item.name),
               ),
+              setup,
             ),
             closed: source.closed,
           },

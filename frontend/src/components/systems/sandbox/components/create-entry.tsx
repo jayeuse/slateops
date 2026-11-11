@@ -40,6 +40,7 @@ import {
   SandboxCommandError,
   type SandboxCommandResult,
 } from "../state/commands";
+import { useDepartmentSetupDefault } from "../state/use-department-setup-default";
 
 /**
  * The add-next entry (docs/specs/sandbox-ux-redesign.md, "The entry", FAST-1,
@@ -220,6 +221,8 @@ function CreateEntryBody({
   entryId: string;
 }) {
   const [draft, setDraft] = useState<CreateDraft>(emptyCreateDraft);
+  // A new department starts from the saved Manage default (FIT-4, SD-C20).
+  const setupDefault = useDepartmentSetupDefault();
   const [refusal, setRefusal] = useState<{
     reason: string;
     on: "name" | "choices";
@@ -253,7 +256,14 @@ function CreateEntryBody({
     const submitted = draft;
     // Checked before the draft changes, so the update itself never refuses
     // under a hold (N2).
-    const check = addElement(design, kind, id, parentId, submitted);
+    const check = addElement(
+      design,
+      kind,
+      id,
+      parentId,
+      submitted,
+      setupDefault,
+    );
     if (!check.ok) {
       refuse(submitted, check.reason);
       return;
@@ -263,7 +273,14 @@ function CreateEntryBody({
     try {
       result = await onAdd((current) => {
         // Placed from the latest design, so fast adds take separate slots.
-        const next = addElement(current, kind, id, parentId, submitted);
+        const next = addElement(
+          current,
+          kind,
+          id,
+          parentId,
+          submitted,
+          setupDefault,
+        );
         if (!next.ok) throw new SandboxCommandError(next.reason);
         return next.design;
       });

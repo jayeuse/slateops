@@ -15,7 +15,13 @@ import {
   type CreateAdd,
 } from "./create-checks";
 import { projectSandboxDocument } from "./document-bridge";
-import { fieldTypeLabel, uid, type Design, type Module } from "./model";
+import {
+  fieldTypeLabel,
+  uid,
+  type DepartmentSetup,
+  type Design,
+  type Module,
+} from "./model";
 import { SANDBOX_ORGANIZATION_TEMPLATES } from "./templates";
 import { SANDBOX_LIMITS } from "./validation-types";
 
@@ -225,6 +231,7 @@ export function mergeTemplateDepartment(
   key: string,
   name: string,
   newId: () => string = uid,
+  setup?: DepartmentSetup,
 ): CreateAdd {
   const source = templateSources().get(key);
   if (!source)
@@ -269,7 +276,10 @@ export function mergeTemplateDepartment(
     ok: true,
     design: {
       ...design,
-      departments: [...design.departments, newDepartment(departmentId, name)],
+      departments: [
+        ...design.departments,
+        newDepartment(departmentId, name, setup),
+      ],
       modules: [...design.modules, ...modules],
       relationships: [...design.relationships, ...relationships],
       layout: {

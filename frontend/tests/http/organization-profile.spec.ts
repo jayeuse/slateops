@@ -33,6 +33,12 @@ const initialWorkspace = {
   week_start: "monday",
   business_hours: "09:00–18:00",
   theme: "slate",
+  department_setup_defaults: {
+    groups: true,
+    dashboard: true,
+    category: true,
+    channel: true,
+  },
   invitation_expiry_days: 7,
   guest_duration_days: 30,
   revision: 4,
@@ -136,6 +142,13 @@ async function installProfile(page: Page): Promise<Api> {
     if (changed.contact_email)
       changed.contact_email = changed.contact_email.toLowerCase();
     if (typeof patch.theme === "string") changed.theme = patch.theme;
+    // BE-SD6 merges the sent items into the saved defaults.
+    const defaults = patch.department_setup_defaults;
+    if (typeof defaults === "object" && defaults !== null)
+      changed.department_setup_defaults = {
+        ...changed.department_setup_defaults,
+        ...defaults,
+      };
     api.workspace = { ...changed, revision: changed.revision + 1 };
     await route.fulfill({ json: api.workspace });
   });
@@ -505,4 +518,129 @@ test("Organization profile long text reflows on phone and labelled controls rema
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(390);
+});
+
+/** Manage › Organization "New departments" (plan 11.2). */
+const newDepartments = (page: Page) =>
+  page
+    .getByRole("region", { name: "Organization settings", exact: true })
+    .getByRole("group", { name: "New departments", exact: true });
+const setupBox = (page: Page, name: string) =>
+  newDepartments(page)
+    .getByRole("group", { name: "Created at publish", exact: true })
+    .getByRole("checkbox", { name });
+const chip = (page: Page, text: string) =>
+  page
+    .getByRole("group", { name: "Organization actions", exact: true })
+    .getByText(text, { exact: true });
+
+// SD-C20 (plan 11.2 M1, M2, "Save"): the boxes join the one PATCH with the
+// other changed settings; each changed box is one unsaved change.
+test("New departments boxes save with the other changed settings in one request", async ({
+  page,
+}) => {
+  const api = await installProfile(page);
+  await page.goto("/manage?view=organization");
+  const group = newDepartments(page);
+  // M1: every box on, the Board as text, no SD14 line.
+  await expect(
+    group.getByText(
+      "Each department added in the Sandbox from now on starts with these.",
+    ),
+  ).toBeVisible();
+  for (const name of ["Groups", "Dashboard", "Category", "Channel"])
+    await expect(setupBox(page, name)).toBeChecked();
+  await expect(group.getByText("Board · always created")).toBeVisible();
+  await expect(group.getByText("The channel goes in no category.")).toHaveCount(
+    0,
+  );
+
+  // M2: Category off shows the SD14 line and counts one change.
+  await setupBox(page, "Category").click();
+  await expect(setupBox(page, "Category")).toHaveAccessibleDescription(
+    "The channel goes in no category.",
+  );
+  await expect(chip(page, "1 unsaved change")).toBeVisible();
+  await setupBox(page, "Channel").click();
+  await openProfile(page);
+  await field(page, "Legal name").fill("Harbor Services Group");
+  await expect(chip(page, "3 unsaved changes")).toBeVisible();
+
+  await save(page).click();
+  await expect(saved(page)).toBeVisible();
+  expect(api.writes).toEqual([
+    {
+      revision: 4,
+      legal_name: "Harbor Services Group",
+      department_setup_defaults: { category: false, channel: false },
+    },
+  ]);
+  await page.reload();
+  await expect(setupBox(page, "Category")).not.toBeChecked();
+  await expect(setupBox(page, "Channel")).not.toBeChecked();
+  await expect(setupBox(page, "Dashboard")).toBeChecked();
+
+  // Discard puts a changed box back and sends nothing.
+  await setupBox(page, "Dashboard").click();
+  await expect(chip(page, "1 unsaved change")).toBeVisible();
+  await page.getByRole("button", { name: "Discard changes" }).click();
+  await expect(setupBox(page, "Dashboard")).toBeChecked();
+  expect(api.writes).toHaveLength(1);
+});
+
+// Plan 11.2 M4 and the screen's conflict rule: a stale or failed save keeps
+// the changed boxes, and the next save sends them on the current revision.
+test("a stale or failed save keeps the New departments boxes for the next save", async ({
+  page,
+}) => {
+  const api = await installProfile(page);
+  await page.goto("/manage?view=organization");
+  await setupBox(page, "Channel").click();
+  api.workspace = {
+    ...api.workspace,
+    revision: 5,
+    description: "Changed elsewhere",
+  };
+  await save(page).click();
+  await expect(
+    page.getByText("Organization settings changed. The latest values are"),
+  ).toBeVisible();
+  await expect(setupBox(page, "Channel")).not.toBeChecked();
+  api.saveFailure = 503;
+  await page.getByRole("button", { name: "Save again", exact: true }).click();
+  await expect(saved(page)).toHaveCount(0);
+  await expect(setupBox(page, "Channel")).not.toBeChecked();
+  api.saveFailure = 0;
+  await page.getByRole("button", { name: "Save again", exact: true }).click();
+  await expect(saved(page)).toBeVisible();
+  expect(
+    api.writes.map((patch) => [
+      patch.revision,
+      patch.department_setup_defaults,
+    ]),
+  ).toEqual([
+    [4, { channel: false }],
+    [5, { channel: false }],
+    [5, { channel: false }],
+  ]);
+});
+
+// Plan 11.2 "Reader": only administrators open the Sandbox (MD3), so the
+// read-only view leaves the group out.
+test("a member's read-only Organization view has no New departments group", async ({
+  page,
+}) => {
+  const api = await installProfile(page);
+  api.role = "member";
+  await page.goto("/manage?view=organization");
+  await expect(
+    page.getByText("Only an administrator can change these settings."),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Organization settings", exact: true })
+      .getByText("Legal name"),
+  ).toBeVisible();
+  await expect(newDepartments(page)).toHaveCount(0);
+  await expect(page.getByText("Created at publish")).toHaveCount(0);
 });

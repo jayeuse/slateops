@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "./helpers/test";
 import {
+  addDepartmentsFromToolbar,
+  createEntry,
   elementBar,
   liveBinding,
   openAuthenticatedSandbox,
@@ -353,4 +355,94 @@ test("a second review that fails shows the review error with Try again, which br
       .getByRole("list", { name: "Setup for Sales", exact: true })
       .getByRole("listitem"),
   ).toHaveCount(6);
+});
+
+// SD-C20 (BE-SD6, FIT-4, UX-C34): with the Manage default "channel: no", a
+// department added by the entry, a template, or Duplicate starts with the
+// channel cleared and the rest on; the administrator turns it back on before
+// publish. The default comes from the workspace read the page already made.
+test("with the Manage default channel off, new departments start with the channel cleared and it can be turned back on", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const workspaceReads: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "GET" &&
+      new URL(request.url()).pathname === "/api/workspace"
+    )
+      workspaceReads.push(request.url());
+  });
+  const channelOff = {
+    groups: true,
+    dashboard: true,
+    category: true,
+    channel: false,
+  };
+  const sandbox = await openAuthenticatedSandbox(page, salesAndFinance(), {
+    bindings: published,
+    setupDefaults: channelOff,
+  });
+  await expect.poll(() => workspaceReads.length).toBeGreaterThan(0);
+  const departmentSetup = (name: string) =>
+    sandbox.document().design.departments.find((item) => item.name === name)
+      ?.setup;
+
+  // The entry. Adds read the default from the page's cached workspace read:
+  // no add sends a workspace request of its own.
+  let readsBefore = workspaceReads.length;
+  await addDepartmentsFromToolbar(page, ["Legal"]);
+  await expect.poll(() => departmentSetup("Legal")).toEqual(channelOff);
+  expect(workspaceReads).toHaveLength(readsBefore);
+
+  // A template department, from a fresh Build page.
+  await page.goto("/sandbox");
+  await page
+    .getByRole("toolbar", { name: "Canvas view controls" })
+    .getByRole("button", { name: "Add department", exact: true })
+    .click();
+  await createEntry(page, "Add department")
+    .getByRole("button", { name: "From a template" })
+    .click();
+  const template = page.getByRole("dialog", { name: "Add from a template" });
+  await template
+    .getByRole("listbox", { name: "Template departments" })
+    .getByRole("option", { name: /^Sales, 3 modules$/ })
+    .click();
+  readsBefore = workspaceReads.length;
+  await template.getByRole("button", { name: "Add department" }).click();
+  await expect(template).toBeHidden();
+  await expect.poll(() => departmentSetup("Sales 2")).toEqual(channelOff);
+
+  // Duplicate of Sales, whose own value is "all on".
+  await page.getByRole("tab", { name: "Structure" }).click();
+  const structure = page.getByRole("complementary", {
+    name: "Organization structure",
+  });
+  await structure.getByRole("treeitem", { name: "Sales", exact: true }).focus();
+  await page.keyboard.press("Shift+F10");
+  await page
+    .getByRole("menu", { name: "Actions for department Sales" })
+    .getByRole("menuitem", { name: "Duplicate department" })
+    .click();
+  await expect.poll(() => departmentSetup("Sales Copy")).toEqual(channelOff);
+  expect(departmentSetup("Sales")).toBeUndefined();
+  expect(workspaceReads).toHaveLength(readsBefore);
+
+  // Before publish, Legal's channel goes back on from its Setup (the tree
+  // route; Legal's frame sits past the visible canvas).
+  await structure.getByRole("treeitem", { name: "Legal", exact: true }).focus();
+  await page.keyboard.press("Shift+F10");
+  await page
+    .getByRole("menu", { name: "Actions for department Legal" })
+    .getByRole("menuitem", { name: "Setup…" })
+    .click();
+  const channel = page
+    .getByRole("dialog", { name: "Setup for Legal" })
+    .getByRole("checkbox", { name: "Channel" });
+  await expect(channel).not.toBeChecked();
+  await channel.click();
+  await expect
+    .poll(() => departmentSetup("Legal"))
+    .toEqual({ ...channelOff, channel: true });
 });

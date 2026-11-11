@@ -9,7 +9,12 @@ import {
   type CanvasPosition,
 } from "@/lib/sandbox/canvas-geometry";
 import { buildField } from "../components/designer-field-settings";
-import type { Department, Design, FieldTypeName } from "./model";
+import type {
+  Department,
+  DepartmentSetup,
+  Design,
+  FieldTypeName,
+} from "./model";
 import { clashReason, relationshipNamesInUse } from "./relationship-name";
 import { SANDBOX_LIMITS } from "./validation-types";
 
@@ -90,13 +95,22 @@ export function createLimitReason(
 }
 
 /**
- * A department that Build creates: by the entry, or by a template merge
- * (FIT-4, N13). It starts from the default setup: until setup slice 5 it
- * writes no `setup` (missing means all on, BE-SD5); slice 5 adds the Manage
- * default (BE-SD6) here, so every create path starts from the same value.
+ * A department that Build creates: by the entry, a template merge, or
+ * Duplicate (FIT-4, N13). It starts from the saved Manage default (BE-SD6,
+ * SD-C20), so every create path starts from the same value. With no default
+ * read yet it writes no `setup` (missing means all on, BE-SD5).
  */
-export function newDepartment(id: string, name: string): Department {
-  return { id, name: name.trim(), closed: false };
+export function newDepartment(
+  id: string,
+  name: string,
+  setup?: DepartmentSetup,
+): Department {
+  return {
+    id,
+    name: name.trim(),
+    closed: false,
+    ...(setup ? { setup: { ...setup } } : {}),
+  };
 }
 
 /** Why a department name cannot be used: blank, too long, or taken. */
@@ -242,7 +256,12 @@ function nextModuleBox(design: Design, departmentId: string): CanvasBox {
   return box!;
 }
 
-function addDepartment(design: Design, id: string, name: string): CreateAdd {
+function addDepartment(
+  design: Design,
+  id: string,
+  name: string,
+  setup: DepartmentSetup | undefined,
+): CreateAdd {
   const box = nextDepartmentBox(design);
   if (!insideCanvas(box))
     return {
@@ -253,7 +272,7 @@ function addDepartment(design: Design, id: string, name: string): CreateAdd {
     ok: true,
     design: {
       ...design,
-      departments: [...design.departments, newDepartment(id, name)],
+      departments: [...design.departments, newDepartment(id, name, setup)],
       layout: { ...design.layout, [id]: box },
     },
   };
@@ -358,6 +377,7 @@ function addField(
 /**
  * The entry's add: the next design, or why the save would refuse it.
  * `parentId` is the department of a module and the module of a field.
+ * `setup` is the new-department default (FIT-4); other kinds ignore it.
  */
 export function addElement(
   design: Design,
@@ -365,6 +385,7 @@ export function addElement(
   id: string,
   parentId: string | null,
   draft: CreateDraft,
+  setup?: DepartmentSetup,
 ): CreateAdd {
   const limit = createLimitReason(design, kind);
   if (limit) return { ok: false, reason: limit };
@@ -372,7 +393,8 @@ export function addElement(
     nameReason(draft.name) ??
     duplicateNameReason(design, kind, parentId, draft.name);
   if (name) return { ok: false, reason: name };
-  if (kind === "department") return addDepartment(design, id, draft.name);
+  if (kind === "department")
+    return addDepartment(design, id, draft.name, setup);
   if (kind === "module")
     return addModule(design, id, parentId ?? "", draft.name);
   return addField(design, id, parentId ?? "", draft);
