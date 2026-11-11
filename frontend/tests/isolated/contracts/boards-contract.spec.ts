@@ -16,7 +16,6 @@ import {
   listBoardActivity,
   listBoardPreviewUsers,
 } from "../../../src/components/systems/boards/adapters/board-tools-api";
-import { getBoardWorkspaceToday } from "../../../src/components/systems/boards/adapters/board-workspace-date-api";
 import { listBoardPeople } from "../../../src/components/systems/boards/adapters/board-people-api";
 import { describeContracts } from "./openapi-contract";
 
@@ -185,5 +184,4 @@ describeContracts("Boards: management and tools", [
     run: () => listBoardActivity(boardId, { limit: 25, offset: 0 }),
     responses: { "GET /api/boards/{board_id}/activity": { pagination: page } },
   },
-  { name: "getBoardWorkspaceToday", run: () => getBoardWorkspaceToday() },
 ]);

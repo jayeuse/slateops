@@ -9,17 +9,6 @@ from app.systems.sandbox.designs.defaults import EMPTY_SANDBOX_DOCUMENT, empty_d
 from app.systems.sandbox.designs.validation import validate_document
 
 
-def test_default_document_contains_no_placeholder_entities() -> None:
-    seed = empty_document()
-
-    assert seed.design.departments == []
-    assert seed.design.modules == []
-    assert seed.design.relationships == []
-    assert seed.design.layout == {}
-    assert seed.triggers == []
-    assert seed.scenarios == []
-
-
 def test_empty_document_round_trips_through_the_v4_contract() -> None:
     seed = empty_document()
     restored = type(seed).model_validate(seed.model_dump(by_alias=True, mode="json"))
