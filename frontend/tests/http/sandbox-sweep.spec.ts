@@ -207,23 +207,32 @@ test("every Sandbox dialog pins its header and footer and closes by name", async
     .click();
   await expect(review).toBeHidden();
 
+  // A new relationship starts from Connect (a popover); its settings
+  // dialog opens from the relationship row.
   await page.getByRole("tab", { name: "Properties", exact: true }).click();
   await page
-    .getByRole("button", { name: "Connect modules", exact: true })
+    .getByRole("button", {
+      name: "Actions for relationship Uses equipment, outgoing",
+    })
     .click();
-  const connect = page.getByRole("dialog", { name: "Connect modules" });
+  await page
+    .getByRole("menuitem", {
+      name: "Edit outgoing relationship Uses equipment",
+    })
+    .click();
+  const settings = page.getByRole("dialog", { name: "Relationship settings" });
   await expectPinnedDialog(
-    connect,
-    "Close connect modules",
-    connect.getByRole("button", {
-      name: "Create relationship",
+    settings,
+    "Close relationship settings",
+    settings.getByRole("button", {
+      name: "Save relationship",
       exact: true,
     }),
   );
-  await connect
-    .getByRole("button", { name: "Close connect modules", exact: true })
+  await settings
+    .getByRole("button", { name: "Close relationship settings", exact: true })
     .click();
-  await expect(connect).toBeHidden();
+  await expect(settings).toBeHidden();
 
   await page.goto("/sandbox?section=history");
   await page

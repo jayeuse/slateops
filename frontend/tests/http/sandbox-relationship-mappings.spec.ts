@@ -17,7 +17,11 @@ import {
 } from "../../src/components/systems/sandbox/domain/model";
 import { publicationFieldKey } from "../../src/components/systems/sandbox/components/publish-change-groups";
 import {
+  addDepartmentsFromToolbar,
+  addInEntry,
   capacityVersions,
+  createEntry,
+  elementBar,
   exportBundleFixture,
   historyPagingVersions,
   historyRegions,
@@ -1652,9 +1656,7 @@ test("an empty Sandbox can create Finance as its first department", async ({
 }) => {
   await openAuthenticatedSandbox(page, initialDesign);
 
-  await page.getByRole("button", { name: "Add department" }).click();
-  await page.getByLabel("Department name").fill("Finance");
-  await page.getByRole("button", { name: "Create department" }).click();
+  await addDepartmentsFromToolbar(page, ["Finance"]);
 
   await expect(
     page.getByText("Finance", { exact: true }).first(),
@@ -1924,9 +1926,12 @@ test("an empty, never-published Sandbox offers one start and nothing to publish"
   await canvas
     .getByRole("button", { name: "Add your first department" })
     .click();
-  await expect(page.getByLabel("Department name")).toBeFocused();
-  await page.getByLabel("Department name").fill("Operations");
-  await page.getByRole("button", { name: "Create department" }).click();
+  // The entry opens at the toolbar's Add department, which stays.
+  const entry = createEntry(page, "Add department");
+  await expect(
+    entry.getByRole("textbox", { name: "Department name" }),
+  ).toBeFocused();
+  await addInEntry(entry, ["Operations"]);
 
   await expect(
     page.getByText("Operations", { exact: true }).first(),
@@ -1942,9 +1947,7 @@ test("emptying the design clears a leftover Structure search", async ({
   page,
 }) => {
   await openAuthenticatedSandbox(page, initialDesign);
-  await page.getByRole("button", { name: "Add department" }).click();
-  await page.getByLabel("Department name").fill("Operations");
-  await page.getByRole("button", { name: "Create department" }).click();
+  await addDepartmentsFromToolbar(page, ["Operations"]);
   await page
     .getByRole("tablist", { name: "Workbench view" })
     .getByRole("tab", { name: "Structure" })
@@ -1958,7 +1961,9 @@ test("emptying the design clears a leftover Structure search", async ({
   await expect(search).toBeDisabled();
   await expect(page.getByText("No structure items match.")).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Add department" }),
+    page
+      .getByRole("complementary", { name: "Organization structure" })
+      .getByRole("button", { name: "Add department" }),
   ).toBeVisible();
 });
 
@@ -1992,43 +1997,44 @@ test("an empty Sandbox authors and persists a complete connected organization", 
 }) => {
   const sandbox = await openAuthenticatedSandbox(page, initialDesign);
 
-  await page.getByRole("button", { name: "Add department" }).click();
-  await page.getByLabel("Department name").fill("Operations");
-  await page.getByRole("button", { name: "Create department" }).click();
+  await addDepartmentsFromToolbar(page, ["Operations"]);
 
-  for (const moduleName of ["Inventory", "Suppliers"]) {
-    // A module's panel holds its own fields; new modules start from the
-    // department, here through its Structure row.
-    await page
-      .getByRole("tablist", { name: "Workbench view" })
-      .getByRole("tab", { name: "Structure" })
-      .click();
-    await page
-      .getByRole("treeitem", { name: "Add module to Operations", exact: true })
-      .click();
-    await page.getByLabel("Module name").fill(moduleName);
-    await page.getByRole("button", { name: "Create module" }).click();
-  }
-
-  await page.getByRole("button", { name: "Add field", exact: true }).click();
-  await page.getByLabel("Field name").fill("Supplier name");
-  await page.getByRole("checkbox", { name: "Required field" }).click();
-  await page.getByRole("button", { name: "Create field" }).click();
-
+  // New modules start from the department's Structure row: Enter opens the
+  // entry there, and each Enter adds the next module.
   await page
     .getByRole("tablist", { name: "Workbench view" })
     .getByRole("tab", { name: "Structure" })
     .click();
-  await page.getByRole("button", { name: /^Add relationship$/i }).click();
-  const relationshipDialog = page.getByRole("dialog", {
-    name: "Connect modules",
-  });
-  await relationshipDialog
-    .getByLabel("Relationship name")
-    .fill("Supplier inventory coverage");
-  await relationshipDialog
-    .getByRole("button", { name: "Create relationship" })
+  await page
+    .getByRole("treeitem", { name: "Add module to Operations", exact: true })
     .click();
+  await addInEntry(createEntry(page, "Add module to Operations"), [
+    "Inventory",
+    "Suppliers",
+  ]);
+
+  // Suppliers, the last module added, is selected: its bar adds the field.
+  await elementBar(page, "Suppliers")
+    .getByRole("button", { name: "Add field to Suppliers" })
+    .click();
+  const fieldEntry = createEntry(page, "Add field to Suppliers");
+  await fieldEntry
+    .getByRole("textbox", { name: "Field name" })
+    .fill("Supplier name");
+  await fieldEntry.getByRole("checkbox", { name: "Required" }).click();
+  await fieldEntry.getByRole("button", { name: "Add field" }).click();
+  await fieldEntry.getByRole("button", { name: "Done" }).click();
+  await expect(fieldEntry).toBeHidden();
+
+  // Structure's Add relationship connects from the selected module.
+  await page.getByRole("button", { name: /^Add relationship$/i }).click();
+  const connect = page.getByRole("dialog", { name: "Connect Suppliers to" });
+  await connect.getByRole("option", { name: "Inventory" }).click();
+  await connect
+    .getByRole("textbox", { name: "Name" })
+    .fill("Supplier inventory coverage");
+  await connect.getByRole("button", { name: "Connect" }).click();
+  await expect(connect).toBeHidden();
 
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
   await page.getByRole("button", { name: "New trigger" }).click();
@@ -2066,7 +2072,9 @@ test("an empty Sandbox authors and persists a complete connected organization", 
   expect(document.scenarios).toEqual([]);
 });
 
-test("creating a Select field saves a typed default as its choice ID", async ({
+// FAST-2 (UX-C8): the type and the choices are set in the entry; the
+// default value moved to the field's Properties after creation.
+test("a Choice list added from the module bar saves its choices", async ({
   page,
 }) => {
   const sandbox = await openAuthenticatedSandbox(
@@ -2074,18 +2082,18 @@ test("creating a Select field saves a typed default as its choice ID", async ({
     structuredClone(configuredSandboxDesign),
     { path: "/sandbox?module=sample-requests" },
   );
-  await page.getByRole("button", { name: "Add field", exact: true }).click();
-  await page
+  await elementBar(page, "Service requests")
+    .getByRole("button", { name: "Add field to Service requests" })
+    .click();
+  const entry = createEntry(page, "Add field to Service requests");
+  await entry
     .getByRole("textbox", { name: "Field name", exact: true })
     .fill("Review stage");
-  await page
-    .getByLabel("Field type", { exact: true })
-    .selectOption("Choice list");
-  await page
-    .getByLabel("Choices (comma separated)", { exact: true })
-    .fill("Open, On hold");
-  await page.getByLabel("Default value", { exact: true }).fill("Open");
-  await page.getByRole("button", { name: "Create field" }).click();
+  await entry.getByRole("radio", { name: "Choice list" }).click();
+  const choices = entry.getByRole("textbox", { name: "Choices" });
+  await expect(choices).toBeFocused();
+  await choices.fill("Open, On hold");
+  await choices.press("Enter");
   await expect.poll(sandbox.documentWrites).toBe(1);
 
   const created = sandbox
@@ -2103,7 +2111,6 @@ test("creating a Select field saves a typed default as its choice ID", async ({
     (option) => option.label === "Open",
   )?.id;
   expect(openId).toBeTruthy();
-  expect(created.config.defaultValue).toBe(openId);
   expect(created.config.options[1]?.id).not.toBe(openId);
 });
 
@@ -2285,25 +2292,24 @@ async function holdDocumentSaves(
   };
 }
 
-/** The Summary's "Add department": only while nothing is selected. */
+/** The canvas toolbar's "Add department": its first control, always there. */
 async function addFirstDepartment(page: Page, name: string) {
-  await page.getByRole("button", { name: "Add department" }).click();
-  await page.getByLabel("Department name").fill(name);
-  await page.getByRole("button", { name: "Create department" }).click();
+  await addDepartmentsFromToolbar(page, [name]);
 }
 
-/** The Structure's "Add department": in reach whatever is selected. */
+/**
+ * The Structure's "Add department", then Properties, where these journeys
+ * read the new department's controls (the entry selects what it added).
+ */
 async function addDepartmentFromStructure(page: Page, name: string) {
-  await page
-    .getByRole("tablist", { name: "Workbench view" })
-    .getByRole("tab", { name: "Structure" })
-    .click();
+  const workbench = page.getByRole("tablist", { name: "Workbench view" });
+  await workbench.getByRole("tab", { name: "Structure" }).click();
   await page
     .getByRole("complementary", { name: "Organization structure" })
     .getByRole("button", { name: "Add department" })
     .click();
-  await page.getByLabel("Department name").fill(name);
-  await page.getByRole("button", { name: "Create department" }).click();
+  await addInEntry(createEntry(page, "Add department"), [name]);
+  await workbench.getByRole("tab", { name: "Properties" }).click();
 }
 
 test("designer commands are ignored while a design save is pending", async ({
@@ -2847,31 +2853,15 @@ test("a line to another department is drawn as a handoff", async ({ page }) => {
   }
 });
 
-async function openConnectModules(page: Page) {
+/** Connect from Structure's Add relationship: from the first module, when nothing is selected. */
+async function openConnect(page: Page) {
   await page
     .getByRole("tablist", { name: "Workbench view" })
     .getByRole("tab", { name: "Structure" })
     .click();
   await page.getByRole("button", { name: /^Add relationship$/i }).click();
-  return page.getByRole("dialog", { name: "Connect modules" });
+  return page.getByRole("dialog", { name: "Connect Service requests to" });
 }
-
-// A design rule the Designer checks while applying a change is refused with
-// its authored reason; it once rejected silently and left the dialog open.
-test("a duplicate relationship is refused with its reason and nothing is saved", async ({
-  page,
-}) => {
-  const sandbox = await openAuthenticatedSandbox(page);
-  const dialog = await openConnectModules(page);
-  await dialog.getByLabel("Source module").selectOption("sample-requests");
-  await dialog.getByLabel("Target module").selectOption("sample-equipment");
-  await dialog.getByLabel("Relationship name").fill("Uses equipment again");
-  await dialog.getByRole("button", { name: "Create relationship" }).click();
-  await expect(
-    dialog.getByText("A relationship between these modules already exists."),
-  ).toBeVisible();
-  expect(sandbox.document().design.relationships).toHaveLength(1);
-});
 
 test("a relationship can target a module in another department and publish", async ({
   page,
@@ -2901,23 +2891,19 @@ test("a relationship can target a module in another department and publish", asy
       }),
     });
   });
-  const dialog = await openConnectModules(page);
-  const target = dialog.getByLabel("Target module");
+  const dialog = await openConnect(page);
+  const target = dialog.getByRole("listbox", { name: "Target module" });
 
   // Each department's modules sit under that department's name.
   await expect(
-    target.locator('optgroup[label="Operations"] option'),
-  ).toHaveText(["Service requests", "Equipment"]);
+    target.getByRole("group", { name: "Operations" }).getByRole("option"),
+  ).toHaveText([/^Service requests/, /^Equipment/]);
   await expect(
-    target.locator('optgroup[label="Commercial"] option'),
+    target.getByRole("group", { name: "Commercial" }).getByRole("option"),
   ).toHaveText(["Customers"]);
-  await dialog.getByLabel("Source module").selectOption("sample-requests");
-  await target.selectOption("sample-customers");
-  await expect(dialog.getByRole("note")).toHaveText(
-    "Spans Operations and Commercial; only people who read both see links.",
-  );
-  await dialog.getByLabel("Relationship name").fill("Bills customer");
-  await dialog.getByRole("button", { name: "Create relationship" }).click();
+  await target.getByRole("option", { name: "Customers" }).click();
+  await dialog.getByRole("textbox", { name: "Name" }).fill("Bills customer");
+  await dialog.getByRole("button", { name: "Connect" }).click();
   await expect(dialog).toBeHidden();
 
   await expect
@@ -2943,21 +2929,26 @@ test("a relationship can target a module in another department and publish", asy
   expect(published).toHaveLength(1);
 });
 
-test("leaving Connect modules after choosing another department saves nothing", async ({
+test("leaving Connect after choosing another department saves nothing", async ({
   page,
 }) => {
   const sandbox = await openAuthenticatedSandbox(page);
   const writes = sandbox.documentWrites();
-  const dialog = await openConnectModules(page);
+  const dialog = await openConnect(page);
 
-  await dialog.getByLabel("Target module").selectOption("sample-customers");
-  await dialog.getByLabel("Relationship name").fill("Unsaved customer link");
-  await expect(dialog.getByRole("note")).toContainText(
-    "Spans Operations and Commercial;",
+  await dialog.getByRole("option", { name: "Customers" }).click();
+  await dialog
+    .getByRole("textbox", { name: "Name" })
+    .fill("Unsaved customer link");
+  // The chosen target takes a dashed edge while Connect is open.
+  const customers = page.locator(
+    '[data-sandbox-node="sample-customers"] rect[data-connect-target="true"]',
   );
+  await expect(customers).toHaveCount(1);
   await page.keyboard.press("Escape");
 
   await expect(dialog).toBeHidden();
+  await expect(customers).toHaveCount(0);
   expect(sandbox.documentWrites()).toBe(writes);
   expect(
     sandbox.document().design.relationships.map((item) => item.id),
@@ -2967,6 +2958,38 @@ test("leaving Connect modules after choosing another department saves nothing", 
     .locator("[data-sandbox-edge] [data-sandbox-line]");
   await expect(lines).toHaveCount(1);
   await expect(lines).toHaveAttribute("data-sandbox-edge-kind", "relationship");
+});
+
+// The scope note shows where a relationship's modules are chosen: its
+// settings, opened from the relationship row.
+test("relationship settings say when a link spans two departments", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    {
+      path: "/sandbox?module=sample-requests",
+    },
+  );
+  const writes = sandbox.documentWrites();
+  await (
+    await relationshipMenuItem(
+      page,
+      "Uses equipment",
+      "outgoing",
+      "Edit outgoing relationship Uses equipment",
+    )
+  ).click();
+  const dialog = page.getByRole("dialog", { name: "Relationship settings" });
+  await expect(dialog.getByRole("note")).toHaveCount(0);
+  await dialog.getByLabel("Target module").selectOption("sample-customers");
+  await expect(dialog.getByRole("note")).toHaveText(
+    "Spans Operations and Commercial; only people who read both see links.",
+  );
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  expect(sandbox.documentWrites()).toBe(writes);
 });
 
 test("a rejected password is reported beside Publish, not above the list", async ({
@@ -3213,9 +3236,6 @@ test("legacy relationship mappings can be removed before publishing", async ({
 
   const dialog = page.getByRole("dialog");
   await expect(dialog).toHaveAccessibleName("Relationship settings");
-  await expect(
-    dialog.getByRole("heading", { name: "Create relationship" }),
-  ).toHaveCount(0);
   await expect(dialog.getByText("Older linked fields")).toBeVisible();
   await dialog.getByRole("button", { name: "Remove mapping" }).click();
   await dialog.getByRole("button", { name: "Save relationship" }).click();
@@ -3311,8 +3331,12 @@ test("a failed structural save remains visibly unsaved until the shared draft is
     .getByRole("complementary", { name: "Organization structure" })
     .getByRole("button", { name: "Add department" })
     .click();
-  await page.getByLabel("Department name").fill("Operations");
-  await page.getByRole("button", { name: "Create department" }).click();
+  const entry = createEntry(page, "Add department");
+  const name = entry.getByRole("textbox", { name: "Department name" });
+  await name.fill("Operations");
+  await name.press("Enter");
+  // B5c: a refused save closes the entry; the page shows its alert.
+  await expect(entry).toBeHidden();
 
   const saveFailure = page
     .getByRole("alert")

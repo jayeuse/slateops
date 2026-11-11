@@ -97,6 +97,7 @@ import {
   saveQueueHasQueued,
   saveQueueNeedsSend,
   saveQueueRequest,
+  savingElementIds,
   type SandboxSaveQueue,
   type SandboxSaveQueueEvent,
 } from "./state/save-queue";
@@ -1919,6 +1920,13 @@ function SandboxWorkspace() {
             onLifecycle={requestLifecycle}
             phoneHistory={historyButtons}
             onDraftStateChange={setDesignerDraftDirty}
+            savingIds={savingElementIds(saveQueue)}
+            addHoldReason={designAddHoldReason({
+              command: commandBusy,
+              publication: publicationPending,
+              lifecycle: lifecycleRequest !== null,
+              conflict: conflict !== null,
+            })}
             attention={{
               unpublished: status.publishable,
               review: {

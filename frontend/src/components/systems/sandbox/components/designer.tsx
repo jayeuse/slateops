@@ -24,7 +24,6 @@ import {
   CircleHelp,
   Grid3X3,
   LayoutGrid,
-  Link2,
   LocateFixed,
   Magnet,
   Maximize2,
@@ -49,7 +48,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Alert } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field as FormField,
   FieldGroup,
@@ -79,8 +77,8 @@ import {
 import {
   SandboxCanvas,
   type SandboxCanvasApi,
-  type SandboxDropKind,
 } from "@/components/sandbox/sandbox-canvas";
+import { SandboxItemMenuItems } from "@/components/sandbox/sandbox-item-menu";
 import { SandboxInspector } from "@/components/sandbox/sandbox-inspector";
 import { revealOutlineRow } from "@/components/sandbox/sandbox-inspector-outline";
 import {
@@ -103,7 +101,8 @@ import {
   pruneRelationshipMappingsForFields,
   relationshipMappingCountForFields,
 } from "../helpers/designer-impacts";
-import { buildField, FieldRow, FieldSettings } from "./designer-field-settings";
+import { FieldRow, FieldSettings } from "./designer-field-settings";
+import { DEFAULT_CARDINALITY, useBuildCreate } from "./use-build-create";
 import { RelationshipList, type RelationshipRow } from "./relationship-list";
 import { DesignerSummary } from "./designer-summary";
 import {
@@ -118,33 +117,22 @@ import {
   type BuildAttentionItem,
 } from "../domain/build-summary";
 import { AdvancedSection } from "@/components/ui/advanced-section";
-import { DisabledReason } from "@/components/ui/disabled-reason";
 import { DepartmentMark } from "@/components/sandbox/department-mark";
-import type {
-  SandboxCanvasLayout,
-  SandboxFieldType,
-  SandboxState,
-} from "@/lib/sandbox/model";
+import type { SandboxCanvasLayout, SandboxState } from "@/lib/sandbox/model";
 import {
   canvasFieldId,
   projectDesign,
   projectedField,
-  fieldTypeNames,
   updateProjectedField,
 } from "../helpers/bridge";
 
 import {
-  FIELD_TYPES,
-  fieldTypeLabel,
-  canonicalFieldType,
   compactDefaultLayout,
   RELATIONSHIP_KINDS,
   relationshipKind,
   reorder,
-  uid,
   type Design,
   type DesignUpdate,
-  type FieldTypeName,
   type RelationshipFieldMapping,
 } from "../domain/model";
 import { SANDBOX_LIMITS } from "../domain/validation";
@@ -315,7 +303,9 @@ function CanvasZoomControls({
       <output
         role="status"
         aria-label="Canvas zoom"
-        className="text-muted-foreground min-w-12 shrink-0 text-center text-xs tabular-nums"
+        // On a phone the percentage is read out but not shown, so the
+        // toolbar keeps one row (comp build-module-390).
+        className="text-muted-foreground min-w-12 shrink-0 text-center text-xs tabular-nums max-sm:sr-only"
       >
         {Math.round(zoom * 100)}%
       </output>
@@ -357,6 +347,9 @@ export function Designer({
   onDraftStateChange,
   attention,
   phoneHistory,
+  savingIds,
+  addHoldReason,
+  onNewTrigger,
 }: {
   initialSelected: string;
   /** A link asked for one item, so narrow screens open on its Properties. */
@@ -405,6 +398,15 @@ export function Designer({
   };
   /** Undo and Redo, which sit in the canvas toolbar below 768px (S13). */
   phoneHistory?: ReactNode;
+  /** Element ids whose add is queued or saving (`savingElementIds`). */
+  savingIds: readonly string[];
+  /**
+   * Why an add cannot be accepted now (`designAddHoldReason`, rule 6): the
+   * entry and Connect show it on their controls.
+   */
+  addHoldReason: string | null;
+  /** "New trigger" in a module's item menu (TRIG-8); absent until wired. */
+  onNewTrigger?: (moduleId: string) => void;
 }) {
   const { keyboardShortcuts, disabled: preferencesDisabled } =
     useUserPreferences();
@@ -619,13 +621,9 @@ export function Designer({
     null,
   );
   const [name, setName] = useState("");
-  const [type, setType] = useState("Text");
-  const [required, setRequired] = useState(false);
-  const [value, setValue] = useState("");
-  const [options, setOptions] = useState("");
   const [target, setTarget] = useState(() => design.modules[1]?.id ?? "");
   const [source, setSource] = useState(() => design.modules[0]?.id ?? "");
-  const [cardinality, setCardinality] = useState("One-to-many");
+  const [cardinality, setCardinality] = useState<string>(DEFAULT_CARDINALITY);
   const [fieldMappings, setFieldMappings] = useState<
     RelationshipFieldMapping[]
   >([]);
@@ -1021,79 +1019,6 @@ export function Designer({
     setMoveError(result.ok ? null : { moduleId: id, message: result.error });
     return result;
   }
-  async function addFromCanvas(
-    kind: SandboxDropKind,
-    parentId: string | null,
-    fieldType: SandboxFieldType = "text",
-    position?: { x: number; y: number },
-  ): Promise<void> {
-    if (pending) return;
-    const id = uid();
-    const result = await change((previous) => {
-      if (kind === "department")
-        return {
-          ...previous,
-          departments: [
-            ...previous.departments,
-            { id, name: "New department", closed: false },
-          ],
-        };
-      if (kind === "module" && parentId)
-        return {
-          ...previous,
-          modules: [
-            ...previous.modules,
-            {
-              id,
-              department: parentId,
-              name: "New module",
-              closed: false,
-              fields: [],
-              x: 0,
-              y: 0,
-            },
-          ],
-        };
-      if (kind === "field" && parentId)
-        return {
-          ...previous,
-          modules: previous.modules.map((item) =>
-            item.id === parentId
-              ? {
-                  ...item,
-                  fields: [
-                    ...item.fields,
-                    {
-                      id,
-                      name: `${fieldTypeNames[fieldType]} field`,
-                      type: fieldTypeNames[fieldType],
-                      required: false,
-                      value: "",
-                      options: "",
-                      closed: false,
-                    },
-                  ],
-                }
-              : item,
-          ),
-        };
-      return previous;
-    });
-    if (!result.ok) {
-      notifyError(result.error, result.reference);
-      return;
-    }
-    setSelected(
-      kind === "field" && parentId ? canvasFieldId(parentId, id) : id,
-    );
-    if (position && kind !== "field") graphRef.current?.placeNode(id, position);
-  }
-  function connectModules(sourceId: string, targetId: string) {
-    setSelected(sourceId);
-    open("relationship");
-    setSource(sourceId);
-    setTarget(targetId);
-  }
   function editRelationship(relationshipId: string) {
     const relationship = design.relationships.find(
       (item) => item.id === relationshipId,
@@ -1283,17 +1208,14 @@ export function Designer({
     deleteTarget,
     Boolean(deleteTarget && bindingFor(deleteTarget)),
   );
-  function open(kind: string) {
+  /** Opens the Properties rename form or the relationship settings. */
+  function open(kind: "rename" | "relationship") {
     setEditor(kind);
     setEditingRelationship(null);
     showPane("Inspector");
     setName(
       kind === "rename" ? (selectedModule?.name ?? department?.name ?? "") : "",
     );
-    setType("Text");
-    setRequired(false);
-    setValue("");
-    setOptions("");
     setRelationshipError("");
     setEditorError("");
     setFieldMappings([]);
@@ -1303,55 +1225,6 @@ export function Designer({
     e.preventDefault();
     if (pending || !name.trim()) return;
     const submittedName = name.trim();
-    if (editor === "department") {
-      const id = uid();
-      const result = await change((current) => ({
-        ...current,
-        departments: [
-          ...current.departments,
-          { id, name: submittedName, closed: false },
-        ],
-      }));
-      if (!result.ok) {
-        setEditorError(result.error, result.reference);
-        return;
-      }
-      setSelected(id);
-      setEditor("");
-      setPane("Structure");
-      setWorkbenchTab("Inspector");
-      // The new item shows in place (inline feedback).
-      return;
-    }
-    if (editor === "module" && department) {
-      const id = uid();
-      const departmentId = department.id;
-      const result = await change((current) => ({
-        ...current,
-        modules: [
-          ...current.modules,
-          {
-            id,
-            name: submittedName,
-            department: departmentId,
-            closed: false,
-            fields: [],
-            x: 0,
-            y: 0,
-          },
-        ],
-      }));
-      if (!result.ok) {
-        setEditorError(result.error, result.reference);
-        return;
-      }
-      setSelected(id);
-      setEditor("");
-      setPane("Structure");
-      setWorkbenchTab("Inspector");
-      // The new item shows in place (inline feedback).
-      return;
-    }
     if (editor === "rename") {
       const moduleId = selectedModule?.id;
       const departmentId = department?.id;
@@ -1390,77 +1263,8 @@ export function Designer({
       // The new item shows in place (inline feedback).
       return;
     }
-    if (editor === "field" && selectedModule) {
-      const fieldType = (canonicalFieldType(type) ?? "Text") as FieldTypeName;
-      const selectOptions =
-        fieldType === "Select"
-          ? options
-              .split(",")
-              .map((entry) => entry.trim())
-              .filter(Boolean)
-              .map((label) => ({ id: crypto.randomUUID(), label }))
-          : undefined;
-      const requestedDefault = value.trim();
-      const defaultValue =
-        fieldType === "Select" && requestedDefault
-          ? (selectOptions?.find((option) => option.label === requestedDefault)
-              ?.id ?? requestedDefault)
-          : value;
-      const result = buildField(
-        {
-          id: uid(),
-          name: "",
-          type: "Text",
-          required: false,
-          value: "",
-          options: "",
-          closed: false,
-        },
-        {
-          name,
-          description: "",
-          type: fieldType,
-          required,
-          defaultValue,
-          options,
-          selectOptions,
-          maxLength: "",
-          min: "",
-          max: "",
-          step: "",
-          earliest: "",
-          latest: "",
-          checked: value === "true",
-        },
-      );
-      if (typeof result === "string") {
-        setEditorError(result);
-        return;
-      }
-      const moduleId = selectedModule.id;
-      const saved = await change((current) => {
-        if (!current.modules.some((item) => item.id === moduleId))
-          throw new SandboxCommandError(
-            "This module was deleted. Keep the field draft open and try again.",
-          );
-        return {
-          ...current,
-          modules: current.modules.map((item) =>
-            item.id === moduleId
-              ? { ...item, fields: [...item.fields, result] }
-              : item,
-          ),
-        };
-      });
-      if (!saved.ok) {
-        setEditorError(saved.error, saved.reference);
-        return;
-      }
-      setEditor("");
-      // The new item shows in place (inline feedback).
-      return;
-    }
-    if (editor === "relationship" && source && target) {
+    // Relationship settings: a new relationship starts from Connect.
+    if (editor === "relationship" && editingRelationship && source && target) {
       if (source === target) {
         setRelationshipError("Source and target modules must be different.");
         return;
@@ -1485,10 +1289,7 @@ export function Designer({
           throw new SandboxCommandError(
             "A relationship between these modules already exists.",
           );
-        if (
-          relationshipId &&
-          !previous.relationships.some((item) => item.id === relationshipId)
-        )
+        if (!previous.relationships.some((item) => item.id === relationshipId))
           throw new SandboxCommandError(
             "This relationship was deleted. Keep the editor open and try again.",
           );
@@ -1509,30 +1310,18 @@ export function Designer({
           );
         return {
           ...previous,
-          relationships: relationshipId
-            ? previous.relationships.map((item) =>
-                item.id === relationshipId
-                  ? {
-                      ...item,
-                      name: submittedName,
-                      source,
-                      target,
-                      cardinality,
-                      fieldMappings,
-                    }
-                  : item,
-              )
-            : [
-                ...previous.relationships,
-                {
-                  id: uid(),
+          relationships: previous.relationships.map((item) =>
+            item.id === relationshipId
+              ? {
+                  ...item,
                   name: submittedName,
                   source,
                   target,
                   cardinality,
                   fieldMappings,
-                },
-              ],
+                }
+              : item,
+          ),
         };
       });
       if (!saved.ok) {
@@ -1558,7 +1347,8 @@ export function Designer({
     );
     setRelationshipError("");
   }
-  const editorNameLabel = `${editor === "rename" ? "Item" : editor.charAt(0).toUpperCase() + editor.slice(1)} name`;
+  const editorNameLabel =
+    editor === "rename" ? "Item name" : "Relationship name";
   const departmentOf = (moduleId: string) => {
     const departmentId = design.modules.find(
       (item) => item.id === moduleId,
@@ -1573,11 +1363,9 @@ export function Designer({
     sourceDepartment.id !== targetDepartment.id;
   const editorForm = (
     <form onSubmit={submit} className="flex flex-col gap-4">
-      {editor === "relationship" ? null : (
-        <h3 className="font-semibold">
-          {editor === "rename" ? "Rename item" : `Create ${editor}`}
-        </h3>
-      )}
+      {editor === "rename" ? (
+        <h3 className="font-semibold">Rename item</h3>
+      ) : null}
       <FieldGroup className="gap-4">
         <FormField>
           <FieldLabel htmlFor="sandbox-editor-name">
@@ -1596,73 +1384,6 @@ export function Designer({
             }}
           />
         </FormField>
-        {editor === "field" && (
-          <>
-            <FormField>
-              <FieldLabel htmlFor="sandbox-editor-field-type">
-                Field type
-              </FieldLabel>
-              <NativeSelect
-                id="sandbox-editor-field-type"
-                className="w-full [&_select]:min-h-10"
-                disabled={pending}
-                value={type}
-                onChange={(e) => {
-                  setType(e.target.value);
-                  setEditorError("");
-                }}
-              >
-                {FIELD_TYPES.map((entry) => (
-                  <NativeSelectOption key={entry.kind} value={entry.name}>
-                    {fieldTypeLabel(entry.name)}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </FormField>
-            <FormField>
-              <FieldLabel htmlFor="sandbox-editor-default-value">
-                Default value
-              </FieldLabel>
-              <Input
-                id="sandbox-editor-default-value"
-                disabled={pending}
-                value={value}
-                onChange={(e) => {
-                  setValue(e.target.value);
-                  setEditorError("");
-                }}
-              />
-            </FormField>
-            {type === "Select" && (
-              <FormField>
-                <FieldLabel htmlFor="sandbox-editor-select-options">
-                  Choices (comma separated)
-                </FieldLabel>
-                <Input
-                  id="sandbox-editor-select-options"
-                  required
-                  disabled={pending}
-                  value={options}
-                  onChange={(e) => {
-                    setOptions(e.target.value);
-                    setEditorError("");
-                  }}
-                />
-              </FormField>
-            )}
-            <FormField className="min-h-11 flex-row items-center gap-2 xl:min-h-0">
-              <Checkbox
-                id="sandbox-editor-required"
-                disabled={pending}
-                checked={required}
-                onCheckedChange={setRequired}
-              />
-              <FieldLabel htmlFor="sandbox-editor-required">
-                Required field
-              </FieldLabel>
-            </FormField>
-          </>
-        )}
         {editor === "relationship" && (
           <>
             <FormField>
@@ -1804,7 +1525,7 @@ export function Designer({
           </Alert>
         ) : null}
       </FieldGroup>
-      {/* In the Connect modules dialog the buttons are its pinned footer. */}
+      {/* In the relationship settings dialog the buttons are its pinned footer. */}
       <div
         className={cn(
           "flex flex-wrap justify-end gap-2",
@@ -1823,22 +1544,67 @@ export function Designer({
         >
           Cancel
         </Button>
-        <Button
-          type="submit"
-          pending={pending}
-          pendingLabel={
-            editor === "rename" || editingRelationship ? "Saving…" : "Creating…"
-          }
-        >
-          {editor === "rename"
-            ? "Save name"
-            : editingRelationship
-              ? "Save relationship"
-              : `Create ${editor}`}
+        <Button type="submit" pending={pending} pendingLabel="Saving…">
+          {editor === "rename" ? "Save name" : "Save relationship"}
         </Button>
       </div>
     </form>
   );
+  // The toolbar's Add department anchors the department entry, also when the
+  // empty design's "Add your first department" opens it.
+  const addDepartmentRef = useRef<HTMLButtonElement>(null);
+  const create = useBuildCreate({
+    design,
+    projected,
+    change,
+    addHoldReason,
+    savingIds,
+    canvasShown: wide || pane === "Canvas",
+    graphRef,
+    canvasFrameRef,
+    setSelected,
+    showProperties: () => setWorkbenchTab("Inspector"),
+  });
+  /** The canvas item menu: the Structure tree's items for the same target. */
+  function canvasItemMenu(
+    target: SandboxInspectorTarget,
+    menu: { rename: () => void; leave: () => void },
+  ): ReactNode {
+    if (target.kind === "link") return null;
+    const kind = target.kind;
+    const state = lifecycleState(target);
+    return (
+      <SandboxItemMenuItems
+        kind={kind}
+        closed={state.closed}
+        canPurge={state.canPurge}
+        pending={pending}
+        lifecycleDisabled={state.disabled}
+        connectDisabled={design.modules.length < 2}
+        onRename={menu.rename}
+        onDelete={() => deleteOrReview(target)}
+        onToggleLifecycle={() => void toggleLifecycle(target)}
+        onPurge={() => void purgeLifecycle(target)}
+        onDuplicate={() => void duplicateTarget(target)}
+        onConnect={
+          kind === "module"
+            ? () => {
+                menu.leave();
+                create.connectFromCanvas(target.id);
+              }
+            : undefined
+        }
+        onNewTrigger={
+          kind === "module" && onNewTrigger
+            ? () => {
+                menu.leave();
+                onNewTrigger(target.id);
+              }
+            : undefined
+        }
+      />
+    );
+  }
   // The outline's inputs change only when what it shows changes. A layout-only
   // save keeps the same projection; a save shows as busy only after 300 ms; and
   // while bindings reload, the outline keeps the last loaded ones (its handlers
@@ -1907,25 +1673,20 @@ export function Designer({
     onToggleLifecycle: toggleLifecycle,
     onPurge: purgeLifecycle,
     onEditingChange: setOutlineEditing,
-    onAddDepartment: () => open("department"),
-    onAddModule: (id: string) => {
-      setSelected(id);
-      open("module");
+    onAddDepartment: (anchor: HTMLElement) =>
+      create.openEntry("department", null, anchor, null),
+    onAddModule: (id: string, anchor: HTMLElement) =>
+      create.openEntry("module", id, anchor, null),
+    onAddField: (id: string, anchor: HTMLElement) =>
+      create.openEntry("field", id, anchor, null),
+    // Connect from the selected module, else the first one.
+    onAddRelationship: (anchor: HTMLElement) => {
+      const sourceId = selectedModule?.id ?? design.modules[0]?.id;
+      if (sourceId) create.openConnect(sourceId, anchor, null);
     },
-    onAddField: (id: string, fieldType: SandboxFieldType) => {
-      setSelected(id);
-      open("field");
-      setType(fieldTypeNames[fieldType]);
-    },
-    onAddRelationship: () => {
-      setSelected(selectedModule?.id ?? design.modules[0]?.id ?? "");
-      open("relationship");
-      setTarget(
-        design.modules.find(
-          (item) => item.id !== (selectedModule?.id ?? design.modules[0]?.id),
-        )?.id ?? "",
-      );
-    },
+    onConnect: (id: string, anchor: HTMLElement) =>
+      requestAnimationFrame(() => create.openConnect(id, anchor, null)),
+    onFocusItem: create.setFocusedItem,
   });
   const structurePane = (
     <aside
@@ -1938,6 +1699,9 @@ export function Designer({
         state={outlineState}
         lifecycleState={outlineLifecycleState}
         pending={outlinePending}
+        savingIds={create.savingMarks}
+        newestId={create.newestShown}
+        onNewTrigger={onNewTrigger}
         {...outlineHandlers}
       />
       {selected ? (
@@ -2116,7 +1880,6 @@ export function Designer({
           pending={pending}
           designIsEmpty={designIsEmpty}
           onAction={runAttention}
-          onAddDepartment={() => open("department")}
           onStartFromTemplate={onStartFromTemplate}
         />
       )}
@@ -2130,27 +1893,16 @@ export function Designer({
                 aria-labelledby="sandbox-fields-heading"
                 className="flex flex-col gap-1.5"
               >
-                <div className="flex items-center justify-between gap-2">
-                  <h3
-                    id="sandbox-fields-heading"
-                    data-slot="section-title"
-                    className="text-sm font-semibold"
-                  >
-                    Fields{" "}
-                    <span className="text-muted-foreground font-normal">
-                      {selectedModule.fields.length}
-                    </span>
-                  </h3>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="max-xl:min-h-11"
-                    onClick={() => open("field")}
-                  >
-                    <Plus aria-hidden="true" />
-                    Add field
-                  </Button>
-                </div>
+                <h3
+                  id="sandbox-fields-heading"
+                  data-slot="section-title"
+                  className="text-sm font-semibold"
+                >
+                  Fields{" "}
+                  <span className="text-muted-foreground font-normal">
+                    {selectedModule.fields.length}
+                  </span>
+                </h3>
                 {selectedModule.fields.length === 0 ? (
                   <p className="text-muted-foreground text-sm">
                     No fields yet.
@@ -2348,43 +2100,16 @@ export function Designer({
                 aria-labelledby="sandbox-relationships-heading"
                 className="flex flex-col gap-1.5"
               >
-                <div className="flex items-center justify-between gap-2">
-                  <h3
-                    id="sandbox-relationships-heading"
-                    data-slot="section-title"
-                    className="text-sm font-semibold"
-                  >
-                    Relationships{" "}
-                    <span className="text-muted-foreground font-normal">
-                      {relationshipRows.length}
-                    </span>
-                  </h3>
-                  <DisabledReason
-                    reason={
-                      design.modules.length < 2
-                        ? "Add a second module first."
-                        : null
-                    }
-                  >
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="max-xl:min-h-11"
-                      onClick={() => {
-                        open("relationship");
-                        setSource(selectedModule.id);
-                        setTarget(
-                          design.modules.find((m) => m.id !== selectedModule.id)
-                            ?.id ?? "",
-                        );
-                      }}
-                      disabled={design.modules.length < 2}
-                    >
-                      <Link2 aria-hidden="true" />
-                      Connect modules
-                    </Button>
-                  </DisabledReason>
-                </div>
+                <h3
+                  id="sandbox-relationships-heading"
+                  data-slot="section-title"
+                  className="text-sm font-semibold"
+                >
+                  Relationships{" "}
+                  <span className="text-muted-foreground font-normal">
+                    {relationshipRows.length}
+                  </span>
+                </h3>
                 <RelationshipList
                   rows={relationshipRows}
                   pending={pending}
@@ -2404,32 +2129,20 @@ export function Designer({
               aria-labelledby="sandbox-modules-heading"
               className="flex flex-col gap-1.5"
             >
-              <div className="flex items-center justify-between gap-2">
-                <h3
-                  id="sandbox-modules-heading"
-                  data-slot="section-title"
-                  className="text-sm font-semibold"
-                >
-                  Modules{" "}
-                  <span className="text-muted-foreground font-normal">
-                    {
-                      design.modules.filter(
-                        (item) => item.department === inspectedItem.id,
-                      ).length
-                    }
-                  </span>
-                </h3>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="max-xl:min-h-11"
-                  disabled={pending}
-                  onClick={() => open("module")}
-                >
-                  <Plus aria-hidden="true" />
-                  Add module
-                </Button>
-              </div>
+              <h3
+                id="sandbox-modules-heading"
+                data-slot="section-title"
+                className="text-sm font-semibold"
+              >
+                Modules{" "}
+                <span className="text-muted-foreground font-normal">
+                  {
+                    design.modules.filter(
+                      (item) => item.department === inspectedItem.id,
+                    ).length
+                  }
+                </span>
+              </h3>
             </section>
           )}
           <AdvancedSection
@@ -2564,6 +2277,33 @@ export function Designer({
                     aria-label="Canvas view controls"
                     className="slim-ui flex min-w-0 flex-1 flex-wrap items-center gap-1 py-1 md:flex-nowrap md:overflow-x-auto [&>button]:shrink-0"
                   >
+                    {/* The first control, always visible: it opens the
+                        entry for departments (FIND-1, canvas level). */}
+                    <Button
+                      ref={addDepartmentRef}
+                      size="sm"
+                      variant="ghost"
+                      aria-label="Add department"
+                      className="min-h-11 gap-1.5 max-sm:min-w-11 max-sm:px-0"
+                      aria-haspopup="dialog"
+                      aria-expanded={create.toolbarEntryOpen}
+                      onClick={(event) =>
+                        create.openEntry(
+                          "department",
+                          null,
+                          event.currentTarget,
+                          null,
+                          true,
+                        )
+                      }
+                    >
+                      <Plus aria-hidden="true" />
+                      <span className="max-sm:sr-only">Add department</span>
+                    </Button>
+                    <span
+                      aria-hidden="true"
+                      className="bg-border mx-1 h-5 w-px shrink-0 max-md:hidden"
+                    />
                     <CanvasZoomControls
                       zoomStore={zoomStore}
                       graphRef={graphRef}
@@ -2869,7 +2609,17 @@ export function Designer({
                     <EmptyCanvasPanel
                       pending={pending}
                       onStartFromTemplate={onStartFromTemplate}
-                      onAddDepartment={() => open("department")}
+                      // The entry opens at the toolbar's Add department,
+                      // which stays once the first department exists.
+                      onAddDepartment={() =>
+                        create.openEntry(
+                          "department",
+                          null,
+                          addDepartmentRef.current,
+                          null,
+                          true,
+                        )
+                      }
                     />
                   ) : null}
                   <SandboxCanvas
@@ -2899,8 +2649,10 @@ export function Designer({
                       )
                     }
                     pending={pending}
-                    onDrop={addFromCanvas}
-                    onConnect={connectModules}
+                    onConnect={create.connectFromCanvas}
+                    elementBars={create.elementBars}
+                    itemMenu={canvasItemMenu}
+                    marks={create.canvasMarks}
                     onMove={(id, parentId) => {
                       if (parentId)
                         pendingMove.current = { id, department: parentId };
@@ -3069,18 +2821,8 @@ export function Designer({
           className={`${dialogFrameContentClass} max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11`}
         >
           <DialogFrameHeader
-            title={
-              <DialogTitle>
-                {editingRelationship
-                  ? "Relationship settings"
-                  : "Connect modules"}
-              </DialogTitle>
-            }
-            closeLabel={
-              editingRelationship
-                ? "Close relationship settings"
-                : "Close connect modules"
-            }
+            title={<DialogTitle>Relationship settings</DialogTitle>}
+            closeLabel="Close relationship settings"
             closeDisabled={pending}
             onClose={() => {
               setEditor("");
@@ -3090,6 +2832,7 @@ export function Designer({
           {editorForm}
         </DialogContent>
       </Dialog>
+      {create.popovers}
       <AlertDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => {

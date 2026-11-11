@@ -8,11 +8,12 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type DragEvent,
+  type FocusEvent,
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type MutableRefObject,
   type PointerEvent,
+  type ReactNode,
 } from "react";
 import {
   applyNodeChanges,
@@ -22,6 +23,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useStore,
   useStoreApi,
   type Connection,
   type Edge,
@@ -33,7 +35,6 @@ import {
 import {
   FIELD_TYPE_META,
   type SandboxCanvasLayout,
-  type SandboxFieldType,
   type SandboxState,
   type UpdateSandboxFieldPatch,
 } from "@/lib/sandbox/model";
@@ -41,21 +42,32 @@ import { canConnect } from "@/lib/sandbox/rules";
 import { SANDBOX_SHORTCUTS } from "@/lib/shortcuts";
 import {
   departmentAt,
-  dragKindFromTransfer,
+  DEPARTMENT_HEAD_HEIGHT,
   FIELD_TYPES,
   isFieldType,
   MODULE_TABLE,
   resizeFrame,
-  resolveDrop,
   SANDBOX_GRID_MAJOR_SIZE,
   SANDBOX_GRID_SIZE,
   SANDBOX_ZOOM,
-  snapSandboxPosition,
   type CanvasBox,
-  type SandboxDropKind,
   designInView,
 } from "@/lib/sandbox/canvas-geometry";
 import type { SandboxCommandResult } from "@/components/systems/sandbox/state/commands";
+import type { SandboxDesignTarget } from "@/components/systems/sandbox/domain/model";
+import {
+  elementBarOwner,
+  elementBarOwners,
+  idlePointerRest,
+  pointerRestWake,
+  reducePointerRest,
+  type PointerRestEvent,
+} from "@/components/systems/sandbox/helpers/element-bar";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
   absoluteBoxes,
   canvasBoxes,
@@ -75,7 +87,9 @@ import {
   SANDBOX_EDGE_TYPES,
   SANDBOX_NODE_TYPES,
   SandboxCanvasActionsProvider,
+  SandboxCanvasMarks,
   type CanvasEditRequest,
+  type CanvasMarks,
   type SandboxCanvasActions,
 } from "./sandbox-canvas-nodes";
 import { SandboxCanvasTraceStore } from "./sandbox-canvas-trace";
@@ -143,11 +157,29 @@ export interface SandboxCanvasApi {
    * one already in view stays where it is.
    */
   reveal: (nodeId: string) => void;
-  /** Places a newly-created node, or queues its position until it is rendered. */
-  placeNode: (nodeId: string, position: { x: number; y: number }) => void;
 }
 
-export type { SandboxDropKind } from "@/lib/sandbox/canvas-geometry";
+/**
+ * The element bars (docs/specs/sandbox-ux-redesign.md, "Element bar"): small
+ * raised bars drawn at screen scale over the canvas. The canvas places them
+ * and decides when a pointed element's bar shows; the owner gives their
+ * controls.
+ */
+export interface SandboxElementBars {
+  /** A bar that stays whatever the pointer or canvas does (focus is in it, or an entry it opened is open). */
+  held: string | null;
+  /** The element of the focused Structure row. */
+  focused: string | null;
+  /**
+   * The bar's accessible name ("Sales actions"). React Flow already names
+   * each node's own group after the element, so the bar needs its own name.
+   */
+  label: (ownerId: string) => string;
+  /** The controls of one element's bar; `pinned` is the bar at the bottom of a phone canvas. */
+  render: (ownerId: string, pinned: boolean) => ReactNode;
+  /** Focus entered or left a bar. */
+  onFocusChange: (ownerId: string, focused: boolean) => void;
+}
 
 export interface SandboxCanvasProps {
   state: SandboxState;
@@ -166,12 +198,7 @@ export interface SandboxCanvasProps {
     fieldId: string,
     patch: UpdateSandboxFieldPatch,
   ) => SandboxCommand;
-  onDrop: (
-    kind: SandboxDropKind,
-    parentId: string | null,
-    fieldType?: SandboxFieldType,
-    position?: { x: number; y: number },
-  ) => SandboxCommand;
+  /** A line drawn from one module's port to another's. */
   onConnect: (sourceModuleId: string, targetModuleId: string) => void;
   onMove: (nodeId: string, parentId: string | null) => void;
   /** A click on empty canvas cleared a pinned "Show on canvas" trace. */
@@ -180,6 +207,20 @@ export interface SandboxCanvasProps {
   pending?: boolean;
   /** Only the owning Build screen's confirmed account preference enables F2. */
   keyboardShortcutsEnabled?: boolean;
+  /** Element bars; without them the canvas draws none. */
+  elementBars?: SandboxElementBars;
+  /**
+   * The item menu of a department, module, or field, opened by right-click
+   * or long-press (FIND-6). `rename` opens the canvas name editor; `leave`
+   * tells the menu that its item moves focus elsewhere, so the menu does not
+   * return focus to the canvas when it closes.
+   */
+  itemMenu?: (
+    target: SandboxDesignTarget,
+    menu: { rename: () => void; leave: () => void },
+  ) => ReactNode;
+  /** Saving marks, the newest add, and the Connect target. */
+  marks?: CanvasMarks;
 }
 
 type SandboxCanvasCallbacks = Pick<
@@ -190,7 +231,6 @@ type SandboxCanvasCallbacks = Pick<
   | "onRenameDepartment"
   | "onRenameModule"
   | "onUpdateField"
-  | "onDrop"
   | "onConnect"
   | "onMove"
   | "onTraceCleared"
@@ -264,13 +304,15 @@ function SandboxFlowCanvas({
   onRenameDepartment,
   onRenameModule,
   onUpdateField,
-  onDrop,
   onConnect,
   onMove,
   onTraceCleared,
   graphRef,
   pending = false,
   keyboardShortcutsEnabled = false,
+  elementBars,
+  itemMenu,
+  marks,
 }: SandboxCanvasProps) {
   const flow = useReactFlow<SandboxFlowNode, RelationshipFlowEdge>();
   const flowStore = useStoreApi<SandboxFlowNode, RelationshipFlowEdge>();
@@ -298,9 +340,6 @@ function SandboxFlowCanvas({
     return stops;
   });
 
-  const pendingPositionsRef = useRef<Map<string, { x: number; y: number }>>(
-    new Map(),
-  );
   const gridVisibleRef = useRef(gridVisible);
   const snapEnabledRef = useRef(snapEnabled);
   const pendingRef = useRef(pending);
@@ -317,10 +356,13 @@ function SandboxFlowCanvas({
   const editorRef = useRef<CanvasEditor | null>(null);
   const editorCommitRef = useRef<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
-  const [dropError, setDropError] = useState<string | null>(null);
-  const [paletteDragKind, setPaletteDragKind] =
-    useState<SandboxDropKind | null>(null);
   const [movingNodeId, setMovingNodeId] = useState<string | null>(null);
+  // A pan or zoom by the person, or a frame resize: the element bars hide.
+  const [gesture, setGesture] = useState(false);
+  const [canvasMarks] = useState(() => new SandboxCanvasMarks());
+  useEffect(() => {
+    if (marks) canvasMarks.set(marks);
+  }, [marks, canvasMarks]);
   // Alt/Option drags off the grid; the visual grid stays as it is.
   const [freeMove, setFreeMove] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -331,7 +373,6 @@ function SandboxFlowCanvas({
     onRenameDepartment,
     onRenameModule,
     onUpdateField,
-    onDrop,
     onConnect,
     onMove,
     onTraceCleared,
@@ -349,7 +390,6 @@ function SandboxFlowCanvas({
       onRenameDepartment,
       onRenameModule,
       onUpdateField,
-      onDrop,
       onConnect,
       onMove,
       onTraceCleared,
@@ -424,17 +464,12 @@ function SandboxFlowCanvas({
       state,
       previous: nodesRef.current,
       layout: apply,
-      pending: pendingPositionsRef.current,
       movingNodeId,
       dropTargetId,
     });
     if (apply !== undefined) {
       appliedLayoutPropRef.current = apply;
       appliedLayoutRef.current = apply;
-    }
-    for (const id of [...pendingPositionsRef.current.keys()]) {
-      if (next.some((node) => node.id === id))
-        pendingPositionsRef.current.delete(id);
     }
     commitNodes(next);
     trace.setState(state);
@@ -630,6 +665,7 @@ function SandboxFlowCanvas({
     };
     // The gesture follows the pointer anywhere on the page, even off the grip.
     event.currentTarget.focus();
+    setGesture(true);
     const move = (moveEvent: globalThis.PointerEvent) => {
       const gesture = resizeGestureRef.current;
       if (gesture === null || gesture.pointerId !== moveEvent.pointerId) return;
@@ -648,6 +684,7 @@ function SandboxFlowCanvas({
       window.removeEventListener("pointerup", end, true);
       window.removeEventListener("pointercancel", end, true);
       resizeGestureRef.current = null;
+      setGesture(false);
       if (endEvent.type === "pointercancel") {
         commitNodes(
           resizeFlowNode(nodesRef.current, gesture.id, {
@@ -698,6 +735,7 @@ function SandboxFlowCanvas({
   const [actions] = useState<SandboxCanvasActions>(() => ({
     trace,
     labels,
+    marks: canvasMarks,
     ...nodeActions,
   }));
 
@@ -1016,14 +1054,7 @@ function SandboxFlowCanvas({
         trace.pin(null);
         trace.markFields(null);
       },
-      markFields: (marks) => trace.markFields(marks),
-      placeNode: (nodeId, position) => {
-        if (nodesRef.current.some((node) => node.id === nodeId)) {
-          settleGeometry(placeFlowNode(nodesRef.current, nodeId, position));
-          return;
-        }
-        pendingPositionsRef.current.set(nodeId, position);
-      },
+      markFields: (fieldMarks) => trace.markFields(fieldMarks),
     };
     return () => {
       graphRef.current = null;
@@ -1156,70 +1187,78 @@ function SandboxFlowCanvas({
     }
   }
 
-  async function handleCanvasDrop(
-    event: DragEvent<HTMLDivElement>,
-  ): Promise<void> {
-    event.preventDefault();
-    if (pendingRef.current) return;
-    setPaletteDragKind(null);
-    setDropTargetId(null);
-    setDropError(null);
-    const rawKind = dragKindFromTransfer(event.dataTransfer);
-    if (rawKind === null) return;
-    const point = flow.screenToFlowPosition({
-      x: event.clientX,
-      y: event.clientY,
-    });
-    const resolution = resolveDrop(
-      canvasBoxes(nodesRef.current),
-      rawKind,
-      point,
+  // The pointed element's bar: it shows after a rest and lingers after the
+  // pointer leaves (helpers/element-bar.ts); a timer wakes the next tick.
+  const [rest, setRest] = useState(idlePointerRest);
+  const pointRest = (event: PointerRestEvent) =>
+    setRest((current) => reducePointerRest(current, event));
+  useEffect(() => {
+    const wake = pointerRestWake(rest);
+    if (wake === null) return;
+    const timer = setTimeout(
+      () => pointRest({ type: "tick", at: Date.now() }),
+      Math.max(0, wake - Date.now()),
     );
-    if (resolution.error !== null) {
-      setDropError(resolution.error);
-      return;
-    }
-    const rawFieldType = event.dataTransfer.getData(
-      "application/x-sandbox-field-type",
-    );
-    const fieldType = isFieldType(rawFieldType) ? rawFieldType : undefined;
-    const result = await callbacksRef.current.onDrop(
-      rawKind,
-      resolution.parentId,
-      fieldType,
-      event.altKey || !snapEnabledRef.current
-        ? point
-        : snapSandboxPosition(point),
-    );
-    if (commandFailed(result)) setDropError(result.error);
-  }
+    return () => clearTimeout(timer);
+  }, [rest]);
+  const barsBusy = gesture || movingNodeId !== null || connecting;
+  useEffect(() => {
+    if (barsBusy) pointRest({ type: "cancel" });
+  }, [barsBusy]);
+  const barOwners = elementBars
+    ? elementBarOwners({
+        held: elementBars.held,
+        selected: elementBarOwner(state, state.selectedCellId),
+        focused: elementBars.focused,
+        pointed: rest.shown,
+        busy: barsBusy,
+      })
+    : [];
+  const pinnedOwner = elementBars
+    ? (elementBars.held ?? elementBarOwner(state, state.selectedCellId))
+    : null;
 
-  function handleCanvasDragOver(event: DragEvent<HTMLDivElement>): void {
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-    const rawKind = dragKindFromTransfer(event.dataTransfer);
-    if (rawKind === null) return;
-    setPaletteDragKind(rawKind);
-    const resolution = resolveDrop(
-      canvasBoxes(nodesRef.current),
-      rawKind,
-      flow.screenToFlowPosition({ x: event.clientX, y: event.clientY }),
+  // The item menu opens on the department, module, or field under the
+  // pointer (right-click, or a long press on touch).
+  const [menuTarget, setMenuTarget] = useState<SandboxDesignTarget | null>(
+    null,
+  );
+  const menuCandidateRef = useRef<SandboxDesignTarget | null>(null);
+  // Rename from the menu opens the name editor once the menu has returned
+  // focus to the canvas.
+  const menuLeavesFocus = useRef(false);
+  const menuActions = useStableHandlers({
+    rename: (id: string) => {
+      menuLeavesFocus.current = true;
+      requestAnimationFrame(() => openEditorForSelection(id));
+    },
+    leave: () => {
+      menuLeavesFocus.current = true;
+    },
+  });
+  function targetAt(
+    target: EventTarget | null,
+    clientX: number,
+    clientY: number,
+  ): SandboxDesignTarget | null {
+    if (!(target instanceof Element)) return null;
+    const element = target.closest("[data-sandbox-node]");
+    const nodeId = element?.getAttribute("data-sandbox-node");
+    if (!element || !nodeId) return null;
+    const current = stateRef.current;
+    if (current.departments.some((item) => item.id === nodeId))
+      return { kind: "department", id: nodeId };
+    const node = nodesRef.current.find((item) => item.id === nodeId);
+    if (node?.type !== "module") return null;
+    const row = Math.floor(
+      (nodePoint(element, clientX, clientY, MODULE_TABLE.width).y -
+        MODULE_TABLE.headerHeight) /
+        MODULE_TABLE.rowHeight,
     );
-    setDropTargetId(resolution.error === null ? resolution.targetId : null);
-    setDropError(resolution.error);
-  }
-
-  function handleCanvasDragLeave(event: DragEvent<HTMLDivElement>): void {
-    const nextTarget = event.relatedTarget;
-    if (
-      nextTarget !== null &&
-      event.currentTarget.contains(nextTarget as globalThis.Node)
-    ) {
-      return;
-    }
-    setPaletteDragKind(null);
-    setDropTargetId(null);
-    setDropError(null);
+    const fieldId = row >= 0 ? node.data.rows[row]?.id : undefined;
+    return fieldId
+      ? { kind: "field", id: fieldId }
+      : { kind: "module", id: nodeId };
   }
 
   // React Flow stores its handlers; stable ones keep a drag from updating
@@ -1232,6 +1271,12 @@ function SandboxFlowCanvas({
     onConnect: handleConnect,
     onConnectStart: () => setConnecting(true),
     onConnectEnd: () => setConnecting(false),
+    // Only a pan or zoom by the person hides the bars, not a programmatic
+    // move (Fit, reveal), which has no source event.
+    onMoveStart: (event: MouseEvent | TouchEvent | null) => {
+      if (event !== null) setGesture(true);
+    },
+    onMoveEnd: () => setGesture(false),
     onNodeDragStart: (_: unknown, node: SandboxFlowNode) =>
       setMovingNodeId(node.id),
     onNodeDrag: (_: unknown, node: SandboxFlowNode) => {
@@ -1293,10 +1338,14 @@ function SandboxFlowCanvas({
       if (trace.clear()) callbacksRef.current.onTraceCleared?.();
     },
     onNodeMouseEnter: (_: unknown, node: SandboxFlowNode) => {
-      if (canHover()) trace.hover(node.id);
+      if (!canHover()) return;
+      trace.hover(node.id);
+      pointRest({ type: "enter", id: node.id, at: Date.now() });
     },
-    onNodeMouseLeave: (_: unknown, node: SandboxFlowNode) =>
-      trace.leave(node.id),
+    onNodeMouseLeave: (_: unknown, node: SandboxFlowNode) => {
+      trace.leave(node.id);
+      pointRest({ type: "leave", id: node.id, at: Date.now() });
+    },
     onEdgeMouseEnter: (_: unknown, edge: RelationshipFlowEdge) => {
       if (canHover()) trace.hover(edge.id);
     },
@@ -1311,9 +1360,6 @@ function SandboxFlowCanvas({
       data-testid="sandbox-canvas"
       className="relative h-full w-full overflow-hidden"
       style={{ backgroundColor: CANVAS_BACKGROUND }}
-      onDragOver={handleCanvasDragOver}
-      onDragLeave={handleCanvasDragLeave}
-      onDrop={handleCanvasDrop}
     >
       <div
         ref={gridRef}
@@ -1341,52 +1387,107 @@ function SandboxFlowCanvas({
         }}
       />
       <RelationshipMarkers />
-      <div
-        ref={containerRef}
-        role="region"
-        aria-label="Organization canvas"
-        aria-describedby="sandbox-canvas-keyboard-alternative"
-        tabIndex={0}
-        data-connecting={connecting ? "true" : undefined}
-        className="sandbox-flow focus-visible:ring-ring absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-inset"
-        onKeyDown={handleKeyDown}
+      <ContextMenu
+        open={menuTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setMenuTarget(null);
+            return;
+          }
+          // Empty canvas and lines have no item menu.
+          const target = menuCandidateRef.current;
+          if (!itemMenu || target === null) return;
+          menuLeavesFocus.current = false;
+          callbacksRef.current.onSelect(target.id);
+          setMenuTarget(target);
+        }}
       >
-        <SandboxCanvasActionsProvider value={actions}>
-          <ReactFlow<SandboxFlowNode, RelationshipFlowEdge>
-            ref={flowRootRef}
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={SANDBOX_NODE_TYPES}
-            edgeTypes={SANDBOX_EDGE_TYPES}
-            defaultViewport={{ x: 0, y: 0, zoom: 1 }}
-            minZoom={SANDBOX_ZOOM.min}
-            maxZoom={SANDBOX_ZOOM.max}
-            snapToGrid={snapToGrid}
-            snapGrid={SNAP_GRID}
-            // Selection belongs to the Designer; the canvas draws it.
-            elementsSelectable={false}
-            selectNodesOnDrag={false}
-            nodesFocusable={false}
-            edgesFocusable={false}
-            disableKeyboardA11y
-            deleteKeyCode={null}
-            selectionKeyCode={null}
-            multiSelectionKeyCode={null}
-            panActivationKeyCode={null}
-            zoomOnDoubleClick={false}
-            // Two-finger scroll pans; pinch or Ctrl/Cmd+scroll zooms.
-            zoomOnScroll={false}
-            panOnScroll
-            zoomOnPinch
-            zoomActivationKeyCode={["Meta", "Control"]}
-            connectionMode={ConnectionMode.Loose}
-            connectionLineType={ConnectionLineType.SmoothStep}
-            connectionLineStyle={CONNECTION_LINE_STYLE}
-            {...flowHandlers}
-            proOptions={PRO_OPTIONS}
-          />
-        </SandboxCanvasActionsProvider>
-      </div>
+        <ContextMenuTrigger
+          ref={containerRef}
+          render={
+            <div
+              role="region"
+              aria-label="Organization canvas"
+              aria-describedby="sandbox-canvas-keyboard-alternative"
+              tabIndex={0}
+            />
+          }
+          data-connecting={connecting ? "true" : undefined}
+          className="sandbox-flow focus-visible:ring-ring absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-inset"
+          onKeyDown={handleKeyDown}
+          onContextMenuCapture={(event) => {
+            const target = itemMenu
+              ? targetAt(event.target, event.clientX, event.clientY)
+              : null;
+            menuCandidateRef.current = target;
+            // Empty canvas and lines have no item menu: stop the event before
+            // the menu trigger cancels it, so the browser's own menu opens.
+            if (target === null) event.stopPropagation();
+          }}
+          onTouchStartCapture={(event) => {
+            const touch = event.touches[0];
+            menuCandidateRef.current = touch
+              ? targetAt(event.target, touch.clientX, touch.clientY)
+              : null;
+          }}
+        >
+          <SandboxCanvasActionsProvider value={actions}>
+            <ReactFlow<SandboxFlowNode, RelationshipFlowEdge>
+              ref={flowRootRef}
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={SANDBOX_NODE_TYPES}
+              edgeTypes={SANDBOX_EDGE_TYPES}
+              defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+              minZoom={SANDBOX_ZOOM.min}
+              maxZoom={SANDBOX_ZOOM.max}
+              snapToGrid={snapToGrid}
+              snapGrid={SNAP_GRID}
+              // Selection belongs to the Designer; the canvas draws it.
+              elementsSelectable={false}
+              selectNodesOnDrag={false}
+              nodesFocusable={false}
+              edgesFocusable={false}
+              disableKeyboardA11y
+              deleteKeyCode={null}
+              selectionKeyCode={null}
+              multiSelectionKeyCode={null}
+              panActivationKeyCode={null}
+              zoomOnDoubleClick={false}
+              // Two-finger scroll pans; pinch or Ctrl/Cmd+scroll zooms.
+              zoomOnScroll={false}
+              panOnScroll
+              zoomOnPinch
+              zoomActivationKeyCode={["Meta", "Control"]}
+              connectionMode={ConnectionMode.Loose}
+              connectionLineType={ConnectionLineType.SmoothStep}
+              connectionLineStyle={CONNECTION_LINE_STYLE}
+              {...flowHandlers}
+              proOptions={PRO_OPTIONS}
+            />
+          </SandboxCanvasActionsProvider>
+        </ContextMenuTrigger>
+        {itemMenu && menuTarget ? (
+          <ContextMenuContent
+            data-sandbox-portal
+            className="slim-ui"
+            finalFocus={() => !menuLeavesFocus.current}
+            aria-label={`Actions for ${menuTarget.kind} ${
+              (menuTarget.kind === "department"
+                ? state.departments
+                : menuTarget.kind === "module"
+                  ? state.modules
+                  : state.fields
+              ).find((item) => item.id === menuTarget.id)?.name ?? ""
+            }`}
+          >
+            {itemMenu(menuTarget, {
+              rename: () => menuActions.rename(menuTarget.id),
+              leave: menuActions.leave,
+            })}
+          </ContextMenuContent>
+        ) : null}
+      </ContextMenu>
       {/* Pointer navigation aid; Fit and the Structure tab are the keyboard
           equivalents, so the minimap stays out of the accessibility tree. */}
       <div
@@ -1489,20 +1590,15 @@ function SandboxFlowCanvas({
         Select canvas items with a pointer or their field controls. Use the
         Structure panel for complete keyboard editing.
       </p>
-      {paletteDragKind !== null || dropError !== null ? (
-        <div
-          aria-live="polite"
-          className={`pointer-events-none absolute top-3 left-1/2 z-20 -translate-x-1/2 rounded-full border px-3 py-1 text-xs font-medium shadow-sm ${
-            dropError === null
-              ? "border-primary/30 bg-accent text-accent-foreground"
-              : "border-warning/30 bg-card text-warning"
-          }`}
-        >
-          {dropError ??
-            (dropTargetId === null
-              ? `Drop to add ${paletteDragKind}`
-              : `Drop ${paletteDragKind} here`)}
-        </div>
+      {elementBars ? (
+        <ElementBarLayer
+          owners={barOwners}
+          pinnedOwner={pinnedOwner}
+          nodes={nodes}
+          containerRef={containerRef}
+          bars={elementBars}
+          onPointer={pointRest}
+        />
       ) : null}
       {editor !== null ? (
         <div
@@ -1573,5 +1669,126 @@ function SandboxFlowCanvas({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** Space between an element and its bar, in screen pixels. */
+const BAR_GAP = 6;
+
+/**
+ * The element bars, drawn at screen scale over the canvas: a department's in
+ * its head band after the name, a module's under its card (above the header
+ * when the card bottom is out of view). Below 768px the selected element's
+ * bar is pinned to the bottom of the canvas instead, with its name.
+ */
+function ElementBarLayer({
+  owners,
+  pinnedOwner,
+  nodes,
+  containerRef,
+  bars,
+  onPointer,
+}: {
+  owners: readonly string[];
+  pinnedOwner: string | null;
+  nodes: readonly SandboxFlowNode[];
+  containerRef: MutableRefObject<HTMLDivElement | null>;
+  bars: SandboxElementBars;
+  onPointer: (event: PointerRestEvent) => void;
+}) {
+  // Re-rendered on every pan and zoom step, so the bars follow the canvas.
+  const transform = useStore((store) => store.transform);
+  const barRefs = useRef(new Map<string, HTMLDivElement>());
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (container === null) return;
+    const [x, y, zoom] = transform;
+    const view = container.getBoundingClientRect();
+    const boxes = absoluteBoxes(nodes);
+    for (const [owner, bar] of barRefs.current) {
+      const box = boxes.get(owner);
+      const node = nodes.find((item) => item.id === owner);
+      if (box === undefined || node === undefined) {
+        bar.style.visibility = "hidden";
+        continue;
+      }
+      const height = bar.offsetHeight;
+      const width = bar.offsetWidth;
+      let left = box.x * zoom + x;
+      let top: number;
+      if (node.type === "department") {
+        // In the head band, after the name, clear of the module count.
+        const part = (name: string) =>
+          container
+            .querySelector(
+              `[data-sandbox-node="${CSS.escape(owner)}"] [data-sandbox-part="${name}"]`,
+            )
+            ?.getBoundingClientRect();
+        const name = part("department-name");
+        const count = part("module-count");
+        left = (name ? name.right - view.left : left + 34 * zoom) + 8;
+        top = (box.y + DEPARTMENT_HEAD_HEIGHT / 2) * zoom + y - height / 2;
+        if (count && left + width > count.left - view.left - 8)
+          top = box.y * zoom + y - height - BAR_GAP;
+      } else {
+        // Under the card, where the next field appears; above the header
+        // when the card bottom is out of view.
+        top = (box.y + box.height) * zoom + y + BAR_GAP;
+        if (top + height > view.height - BAR_GAP)
+          top = box.y * zoom + y - height - BAR_GAP;
+      }
+      bar.style.left = `${Math.round(left)}px`;
+      bar.style.top = `${Math.round(top)}px`;
+      bar.style.visibility = "visible";
+    }
+  });
+  const focusHandlers = (owner: string) => ({
+    onFocus: () => bars.onFocusChange(owner, true),
+    onBlur: (event: FocusEvent<HTMLDivElement>) => {
+      if (
+        !event.currentTarget.contains(
+          event.relatedTarget as globalThis.Node | null,
+        )
+      )
+        bars.onFocusChange(owner, false);
+    },
+  });
+  return (
+    <>
+      {owners.map((owner) => (
+        <div
+          key={owner}
+          ref={(element) => {
+            if (element) barRefs.current.set(owner, element);
+            else barRefs.current.delete(owner);
+          }}
+          data-element-bar={owner}
+          role="group"
+          aria-label={bars.label(owner)}
+          style={{ visibility: "hidden" }}
+          // A raised bar at screen scale: slim controls from 1280px, the
+          // 44px floor below (DESIGN.md "Sandbox canvas").
+          className="slim-ui absolute z-20 inline-flex items-center gap-0.5 rounded-md bg-[var(--surface-raised)] p-[3px] shadow-[inset_0_0_0_1px_var(--rule),var(--lift-raised)] max-md:hidden"
+          onPointerEnter={() => onPointer({ type: "barEnter" })}
+          onPointerLeave={() => onPointer({ type: "barLeave", at: Date.now() })}
+          {...focusHandlers(owner)}
+        >
+          {bars.render(owner, false)}
+        </div>
+      ))}
+      {pinnedOwner ? (
+        <div
+          key={`pinned-${pinnedOwner}`}
+          data-element-bar={pinnedOwner}
+          data-pinned=""
+          role="group"
+          aria-label={bars.label(pinnedOwner)}
+          className="absolute inset-x-2 bottom-2 z-20 flex items-center gap-1 rounded-md bg-[var(--surface-raised)] p-1 shadow-[inset_0_0_0_1px_var(--rule),var(--lift-raised)] md:hidden"
+          {...focusHandlers(pinnedOwner)}
+        >
+          {bars.render(pinnedOwner, true)}
+        </div>
+      ) : null}
+    </>
   );
 }

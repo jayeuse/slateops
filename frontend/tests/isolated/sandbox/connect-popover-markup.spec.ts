@@ -34,8 +34,13 @@ function Title({ children }: { className?: string; children: ReactNode }) {
   return createElement("h2", null, children);
 }
 
-function body(targets: ConnectTargetGroup[], holdReason: string | null = null) {
+function body(
+  targets: ConnectTargetGroup[],
+  holdReason: string | null = null,
+  initialTargetId: string | null = null,
+) {
   return staticMarkup(ConnectPopoverBody, {
+    initialTargetId,
     source: { id: "orders", name: "Orders", departmentId: "sales" },
     targets,
     existingNames: { fields: [], relationships: [] },
@@ -95,4 +100,16 @@ test("Connect says why it waits: no target yet, or a Sandbox action holds the dr
   );
   expect(held).toContain("Wait for the current Sandbox action to finish.");
   expect(held).not.toContain("Choose a module to connect to.");
+});
+
+// FAST-4: a line drawn from Orders' port to Customers opens Connect with
+// Customers chosen and the name prefilled.
+test("a target chosen by a port drag opens chosen, with the name prefilled", () => {
+  const html = body(twoDepartments, null, "customers");
+  expect(html).toMatch(/role="option"[^>]*aria-selected="true"[^>]*>Customers/);
+  expect(html).toContain('value="Orders to Customers"');
+  // A target that cannot be chosen opens nothing chosen.
+  const linked = body(twoDepartments, null, "shipments");
+  expect(linked).not.toMatch(/aria-selected="true"/);
+  expect(linked).toContain('value=""');
 });

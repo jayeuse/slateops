@@ -64,6 +64,12 @@ export type ConnectPopoverProps = {
   holdReason: string | null;
   /** The chosen target, for the dashed edge on the canvas; null on close. */
   onTargetPreview: (targetId: string | null) => void;
+  /**
+   * A target already chosen, as by a line drawn between two module ports:
+   * the popover opens with it chosen, the name prefilled and focused. A
+   * target that cannot be chosen is ignored.
+   */
+  initialTargetId?: string | null;
 };
 
 const PHONE_QUERY = "(max-width: 767px)";
@@ -99,6 +105,11 @@ export function ConnectPopover({
 }: ConnectPopoverProps) {
   const phone = usePhone();
   const listRef = useRef<HTMLDivElement>(null);
+  // With a target already chosen, focus starts in the prefilled name.
+  const initialFocus = () =>
+    (rest.initialTargetId
+      ? listRef.current?.closest("form")?.querySelector("input")
+      : null) ?? listRef.current;
   function close(): void {
     onTargetPreview(null);
     onRequestClose();
@@ -118,7 +129,7 @@ export function ConnectPopover({
     return (
       <Sheet open={open} onOpenChange={(next) => (next ? undefined : close())}>
         <SheetContent
-          initialFocus={listRef}
+          initialFocus={initialFocus}
           finalFocus={finalFocus}
           className="inset-x-0 top-auto bottom-0 max-h-[min(80dvh,40rem)] w-full gap-0 rounded-t-xl border-t border-l-0 p-0 pb-[env(safe-area-inset-bottom)] data-ending-style:translate-x-0 data-ending-style:translate-y-full data-starting-style:translate-x-0 data-starting-style:translate-y-full"
         >
@@ -134,7 +145,7 @@ export function ConnectPopover({
         side="bottom"
         sideOffset={6}
         collisionPadding={16}
-        initialFocus={listRef}
+        initialFocus={initialFocus}
         finalFocus={finalFocus}
         className="slim-ui w-96 max-w-[calc(100vw-2rem)] gap-0 p-0"
       >
@@ -158,6 +169,7 @@ export function ConnectPopoverBody({
   onRequestClose,
   onConnect,
   onTargetPreview,
+  initialTargetId = null,
   listRef,
   Title,
   phone,
@@ -168,10 +180,18 @@ export function ConnectPopoverBody({
 }) {
   const id = useId();
   const typeAhead = useRef({ text: "", at: 0 });
-  const [draft, setDraft] = useState<ConnectDraft>(EMPTY_CONNECT_DRAFT);
-  const [activeId, setActiveId] = useState(() =>
-    nextChoosable(targets, null, 1),
+  const [draft, setDraft] = useState<ConnectDraft>(() =>
+    initialTargetId
+      ? chooseTarget(EMPTY_CONNECT_DRAFT, targets, initialTargetId)
+      : EMPTY_CONNECT_DRAFT,
   );
+  const [activeId, setActiveId] = useState(
+    () => draft.targetId ?? nextChoosable(targets, null, 1),
+  );
+  // A target chosen before opening shows its dashed edge at once.
+  useEffect(() => {
+    if (draft.targetId) onTargetPreview(draft.targetId);
+  }, []);
   const [refusal, setRefusal] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 

@@ -7,6 +7,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
@@ -62,9 +63,80 @@ export interface CanvasEditRequest {
   rowIndex?: number;
 }
 
+/** Marks the Build page draws on the canvas while it creates elements. */
+export interface CanvasMarks {
+  /** Canvas ids whose add is still saving (the saving mark). */
+  saving: ReadonlySet<string>;
+  /** The newest added canvas id, tinted until the next add. */
+  newest: string | null;
+  /** The module that Connect would link to: a dashed edge on its card. */
+  connectTarget: string | null;
+}
+
+const NO_MARKS: CanvasMarks = {
+  saving: new Set(),
+  newest: null,
+  connectTarget: null,
+};
+
+/** A small external store, so marks re-render the node views only. */
+export class SandboxCanvasMarks {
+  private value: CanvasMarks = NO_MARKS;
+  private readonly listeners = new Set<() => void>();
+
+  get = (): CanvasMarks => this.value;
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  set(next: CanvasMarks): void {
+    const current = this.value;
+    if (
+      current.newest === next.newest &&
+      current.connectTarget === next.connectTarget &&
+      current.saving.size === next.saving.size &&
+      [...next.saving].every((id) => current.saving.has(id))
+    )
+      return;
+    this.value = next;
+    for (const listener of this.listeners) listener();
+  }
+}
+
+function useCanvasMarks(store: SandboxCanvasMarks): CanvasMarks {
+  return useSyncExternalStore(store.subscribe, store.get, store.get);
+}
+
+/** The saving mark: a small ring in muted ink at the end of a row. */
+function SavingRing({ cx, cy }: { cx: number; cy: number }) {
+  return (
+    <g data-sandbox-part="saving-mark" aria-hidden="true" pointerEvents="none">
+      <circle
+        cx={cx}
+        cy={cy}
+        r={4.5}
+        fill="none"
+        stroke="var(--rule-strong)"
+        strokeWidth={1.5}
+      />
+      <path
+        d={`M${cx - 3.18} ${cy - 3.18}A4.5 4.5 0 0 1 ${cx + 3.18} ${cy - 3.18}`}
+        fill="none"
+        stroke="var(--ink-muted)"
+        strokeWidth={1.5}
+      />
+    </g>
+  );
+}
+
 export interface SandboxCanvasActions {
   trace: SandboxCanvasTraceStore;
   labels: LineLabelStops;
+  marks: SandboxCanvasMarks;
   openEditor: (request: CanvasEditRequest) => void;
   startResize: (departmentId: string, event: PointerEvent<SVGElement>) => void;
   resizeByKey: (departmentId: string, event: KeyboardEvent<SVGElement>) => void;
@@ -105,7 +177,9 @@ function DepartmentNodeView({
   height = 0,
 }: NodeProps<DepartmentFlowNode>) {
   const actions = useCanvasActions();
+  const marks = useCanvasMarks(actions.marks);
   const { name, moduleCount, tone, selected, feedback } = data;
+  const saving = marks.saving.has(id);
   const moving = feedback === "moving";
   const dropTarget = feedback === "drop";
   const active = dropTarget || selected;
@@ -215,14 +289,18 @@ function DepartmentNodeView({
             ? "var(--warning)"
             : active
               ? CANVAS_NODE_ACTIVE
-              : "var(--canvas-dept-name)"
+              : saving
+                ? "var(--ink-muted)"
+                : "var(--canvas-dept-name)"
         }
         pointerEvents="none"
       >
         {truncateLabel(name, 30)}
       </text>
+      {saving ? <SavingRing cx={width - 21} cy={21} /> : null}
       <text
-        x={width - 16}
+        data-sandbox-part="module-count"
+        x={width - (saving ? 34 : 16)}
         y={21}
         textAnchor="end"
         dominantBaseline="central"
@@ -279,7 +357,11 @@ function ModuleNodeView({ id, data }: NodeProps<ModuleFlowNode>) {
   const actions = useCanvasActions();
   const trace = useTraceMark(actions.trace, id);
   const marks = useFieldMarks(actions.trace);
+  const created = useCanvasMarks(actions.marks);
   const { name, rows, tone, selected, selectedFieldId, feedback } = data;
+  const moduleSaving = created.saving.has(id);
+  // The chosen Connect target takes a dashed edge while Connect is open.
+  const connectTarget = created.connectTarget === id;
   const { width, headerHeight, rowHeight, splitX } = MODULE_TABLE;
   const height = moduleTableHeight(rows.length);
   const rowCount = Math.max(rows.length, 1);
@@ -347,9 +429,13 @@ function ModuleNodeView({ id, data }: NodeProps<ModuleFlowNode>) {
               ? "var(--warning)"
               : feedback === "drop" || selected
                 ? CANVAS_NODE_ACTIVE
-                : "var(--canvas-module-frame)"
+                : connectTarget
+                  ? "var(--ink-muted)"
+                  : "var(--canvas-module-frame)"
           }
           strokeWidth={feedback === null && !selected ? 1 : 2}
+          strokeDasharray={connectTarget ? "4 3" : undefined}
+          data-connect-target={connectTarget ? "true" : undefined}
         />
         <rect
           // The header follows the body's corner shape.
@@ -384,11 +470,14 @@ function ModuleNodeView({ id, data }: NodeProps<ModuleFlowNode>) {
           dominantBaseline="central"
           fontSize={13}
           fontWeight={600}
-          fill="var(--canvas-module-ink)"
+          fill={moduleSaving ? "var(--ink-muted)" : "var(--canvas-module-ink)"}
           pointerEvents="none"
         >
           {truncateLabel(name, 24)}
         </text>
+        {moduleSaving ? (
+          <SavingRing cx={width - 16} cy={headerHeight / 2} />
+        ) : null}
         {Array.from({ length: rowCount }, (_, index) => {
           const field = rows[index];
           const rowTop = headerHeight + index * rowHeight;
@@ -398,6 +487,9 @@ function ModuleNodeView({ id, data }: NodeProps<ModuleFlowNode>) {
             field !== undefined && field.id === selectedFieldId;
           const mark =
             field === undefined ? undefined : marks?.[field.id] || undefined;
+          const fieldSaving =
+            field !== undefined && created.saving.has(field.id);
+          const newest = field !== undefined && created.newest === field.id;
           return (
             <g key={field?.id ?? "empty"}>
               <rect
@@ -409,9 +501,11 @@ function ModuleNodeView({ id, data }: NodeProps<ModuleFlowNode>) {
                 fill={
                   fieldSelected
                     ? "var(--accent)"
-                    : index % 2 === 1
-                      ? `var(--dept-${tone}-stripe)`
-                      : `var(--dept-${tone}-module)`
+                    : newest
+                      ? "color-mix(in oklab, var(--flow) 12%, transparent)"
+                      : index % 2 === 1
+                        ? `var(--dept-${tone}-stripe)`
+                        : `var(--dept-${tone}-module)`
                 }
                 stroke={fieldSelected ? CANVAS_NODE_ACTIVE : "none"}
                 strokeWidth={fieldSelected ? 1 : 0}
@@ -421,6 +515,8 @@ function ModuleNodeView({ id, data }: NodeProps<ModuleFlowNode>) {
                 data-selected={fieldSelected ? "true" : "false"}
                 data-feedback={fieldSelected ? "selected" : ""}
                 data-test-mark={mark}
+                data-saving={fieldSaving ? "true" : undefined}
+                aria-busy={fieldSaving ? "true" : undefined}
                 aria-description={
                   mark === undefined ? undefined : fieldMarkDescription(mark)
                 }
@@ -467,7 +563,11 @@ function ModuleNodeView({ id, data }: NodeProps<ModuleFlowNode>) {
                 dominantBaseline="central"
                 fontSize={12}
                 fill={
-                  field === undefined ? TYPE_INK : "var(--canvas-field-ink)"
+                  field === undefined
+                    ? TYPE_INK
+                    : fieldSaving
+                      ? "var(--ink-muted)"
+                      : "var(--canvas-field-ink)"
                 }
                 fontStyle={field === undefined ? "italic" : "normal"}
                 pointerEvents="none"
@@ -489,7 +589,7 @@ function ModuleNodeView({ id, data }: NodeProps<ModuleFlowNode>) {
                   // Field types are data, set in the look's code face; the
                   // same words the Properties panel uses.
                   data-sandbox-part="field-type"
-                  x={width - 10}
+                  x={width - (fieldSaving ? 24 : 10)}
                   y={rowCenter}
                   textAnchor="end"
                   dominantBaseline="central"
@@ -500,6 +600,9 @@ function ModuleNodeView({ id, data }: NodeProps<ModuleFlowNode>) {
                   {FIELD_TYPE_META[field.type].label}
                 </text>
               )}
+              {fieldSaving ? (
+                <SavingRing cx={width - 12} cy={rowCenter} />
+              ) : null}
             </g>
           );
         })}
