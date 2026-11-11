@@ -138,8 +138,8 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 5_000 },
   forbidOnly: isCI,
-  // One retry in CI only (docs/plans/ci-stability.md D1): local runs and the
-  // pre-push gate keep zero, and frontend-verify fails on a retried test that
+  // One retry in CI only (docs/plans/ci-stability.md D1): local runs keep zero,
+  // and frontend-verify fails on a retried test that
   // has no entry in tests/flaky.json, or whose entry has expired.
   retries: isCI ? 1 : 0,
   reporter: process.env.PLAYWRIGHT_JSON_OUTPUT_NAME

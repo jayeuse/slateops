@@ -1,8 +1,8 @@
 """Report the CI wall-clock measurements without making them a required check.
 
 A shared runner cannot hold the 300 ms Comms opening limit (docs/plans/ci-stability.md
-D2), so CI records the numbers in the job summary and warns on a failed limit. The
-pre-push gate keeps the limit blocking on a free machine.
+D2), so CI records the numbers in the job summary and warns on a failed limit.
+`npm test` on a free machine keeps the limit blocking.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ def render(results: Path, outcome: str) -> str:
         lines.append(f"- `{name}`: {text}")
     lines += [
         "",
-        "This job is report-only in CI. `prepush.py` enforces the limit on a free machine.",
+        "This job is report-only in CI. `npm test` on a free machine enforces the limit.",
     ]
     return "\n".join(lines) + "\n"
 

@@ -287,7 +287,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("run: npm test -- --project=measure --no-deps --reporter=line", measure)
         self.assertNotIn("--workers", measure)
         # The limit is report-only in CI: the step may fail, the summary always runs,
-        # and prepush.py keeps the limit blocking on a free machine.
+        # and `npm test` on a free machine keeps the limit blocking.
         run = measure.split("- name: Run the measurements alone against the static export\n", 1)[1]
         run = run.split("\n      - name:", 1)[0]
         self.assertIn("id: measurements", run)

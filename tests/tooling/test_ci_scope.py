@@ -125,7 +125,7 @@ class CiScopeTests(unittest.TestCase):
         self.assertTrue(scope.decisions["server_image"].run)
 
     def test_shared_tooling_remains_fail_closed(self):
-        scope = ci_scope.classify_paths(["scripts/prepush.py"], base_ref="base")
+        scope = ci_scope.classify_paths(["scripts/run_tests.py"], base_ref="base")
         for name in ci_scope.GATE_NAMES:
             if name != "docs":
                 self.assertTrue(scope.decisions[name].run)

@@ -70,7 +70,7 @@ jobs:
       - name: Run mypy
         run: >-
           uv run mypy app operations
-          ../scripts/ci_scope.py ../scripts/prepush.py ../scripts/environment.py
+          ../scripts/ci_scope.py ../scripts/environment.py
           ../scripts/dev.py ../scripts/run_tests.py ../scripts/assertion_guard.py
           ../packaging/backup/backup_installation.py
           ../packaging/backup/restore_installation.py

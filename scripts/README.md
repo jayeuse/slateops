@@ -4,10 +4,10 @@ Slate Operations uses names that describe who owns each command:
 
 | Location | Owner and purpose | Normal entry point |
 | --- | --- | --- |
-| `scripts/` | Repository-wide environment, CI, build, packaging, and test orchestration | Run from the repository root with `python3` or the documented `uv run --directory backend` wrapper. |
+| `scripts/` | Repository-wide environment, CI, and test orchestration | Run from the repository root with `python3` or the documented `uv run --directory backend` wrapper. |
 | `backend/operations/` | Administrator, database, recovery, reset, and health commands that import backend application code | Run from `backend/` with `uv run python operations/<command>.py`. |
 | `frontend/tooling/` | Internal Node launchers for local Next.js development, static builds, and Playwright | Invoke through the named `npm` scripts in `frontend/package.json`. |
-| `tests/tooling/` | Contract tests for root repository commands and CI wiring | Run through the pre-push gate or `uv run --directory backend python -m unittest discover -s ../tests/tooling -t ..`. |
+| `tests/tooling/` | Contract tests for root repository commands and CI wiring | Run in CI (`backend.yml`) or with `uv run --directory backend python -m unittest discover -s ../tests/tooling -t ..`. |
 
 Only repository-wide automation belongs in this `scripts/` directory. Backend
 operator commands belong in `backend/operations/`; frontend launch helpers
