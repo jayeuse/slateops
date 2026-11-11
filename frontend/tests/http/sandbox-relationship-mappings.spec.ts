@@ -3372,7 +3372,9 @@ test("a failed structural save remains visibly unsaved until the shared draft is
     .click();
   const entry = createEntry(page, "Add department");
   const name = entry.getByRole("textbox", { name: "Department name" });
-  await name.fill("Operations");
+  // A name the design does not have, so the entry accepts the add and the
+  // save is what fails (Operations exists and is refused in place).
+  await name.fill("Field service");
   await name.press("Enter");
   // B5c: a refused save closes the entry; the page shows its alert.
   await expect(entry).toBeHidden();
