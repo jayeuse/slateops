@@ -59,7 +59,7 @@ See [authentication and authorization](../architecture/08-authentication-authori
 
 The historical Access revisions belong to the archived migration history, not
 the active graph. Fresh installations start at
-[`089c54b88aa6`](../../backend/migrations/versions/089c54b88aa6_schema_redesign_fresh_root.py)
+`089c54b88aa6`
 and apply forward revisions. See [data architecture](../architecture/06-data-architecture.md)
 and [recovery compatibility](access-recovery-compatibility.md). Neither stamping
 an old installation onto that root nor a destructive downgrade is recovery.

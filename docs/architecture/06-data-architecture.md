@@ -2,7 +2,7 @@
 
 > **Scope:** Slate Operations' application schema in self-hosted Supabase PostgreSQL, provider-schema ownership, private file bytes, and schema delivery.
 
-Supabase Database is PostgreSQL and the sole relational datastore. Supabase initializes and owns provider schemas; Slate Operations uses the `public` schema for application tables. FastAPI owns application data access, and Alembic owns application schema changes only. The active fresh-install root [`8db89b6c6c35`](../../backend/migrations/versions/8db89b6c6c35_organization_schema_fresh_root.py) requires that no existing `public` relations be owned by `slateops_owner` except `alembic_version`. The root seeds no organization, Sandbox document, or Company Board. The prior Supabase baseline and schema-redesign revisions are preserved unchanged under [`history/schema_redesign`](../../backend/migrations/history/schema_redesign/); earlier vanilla PostgreSQL revisions remain under [`history/vanilla_postgresql`](../../backend/migrations/history/vanilla_postgresql/). Neither archive is active. This root does not import an existing installation; never stamp an existing database onto it.
+Supabase Database is PostgreSQL and the sole relational datastore. Supabase initializes and owns provider schemas; Slate Operations uses the `public` schema for application tables. FastAPI owns application data access, and Alembic owns application schema changes only. The active fresh-install root [`e46611902f25`](../../backend/migrations/versions/e46611902f25_slate_operations_fresh_root.py) requires that no existing `public` relations be owned by `slateops_owner` except `alembic_version`. The root seeds no organization, Sandbox document, or Company Board. This root does not import an existing installation; never stamp an existing database onto it.
 
 ## Ownership and roles
 
@@ -14,13 +14,14 @@ Application tables use ordinary PostgreSQL ownership and grants. Slate Operation
 
 One installation holds one or more organizations. The `organizations` table (ORM class `WorkspaceProfile`) stores each organization's identity, regional settings, look, logo, MFA and IP rules, the setup items that a department added in the Sandbox starts with (`department_setup_defaults`; changing them changes no existing department or draft), and `owner_user_id`. The singleton `platform_settings` row stores installation-wide password, session, and sign-in policy. `users` holds one account per person; `memberships` give that account a role (`admin`, `member`, or `guest`), a status, and an expiry in each organization. `platform_operators` lists the installation owners. These account and installation tables have no row-level security, because account reads list one person's memberships before the person chooses an organization.
 
-Organization tables carry `org_id NOT NULL` and composite `(org_id, id)` foreign keys between organization tables. FastAPI filters by organization explicitly. Row-level security is the backstop when a filter is missing. Revision [`f5a100021193`](../../backend/migrations/versions/f5a100021193_organization_row_level_security.py) enables it without `FORCE`, so the owner role keeps migration and maintenance access:
+Organization tables carry `org_id NOT NULL` and composite `(org_id, id)` foreign keys between organization tables. FastAPI filters by organization explicitly. Row-level security is the backstop when a filter is missing. The root [`e46611902f25`](../../backend/migrations/versions/e46611902f25_slate_operations_fresh_root.py) enables it (`ROW_SECURITY`) and creates the policies (`POLICIES`) without `FORCE`, so the owner role keeps migration and maintenance access. Later revisions add the policies of their own tables: [`b1b3908e844b`](../../backend/migrations/versions/b1b3908e844b_audit_seals.py) for `audit_seals`, [`f8852c638a76`](../../backend/migrations/versions/f8852c638a76_system_health_samples_signals_and_.py) for `server_errors`, and [`f9809993d133`](../../backend/migrations/versions/f9809993d133_sandbox_derived_objects.py) for `sandbox_derived_objects`. [`f43c7d0ee160`](../../backend/migrations/versions/f43c7d0ee160_audit_logs_monthly_partitions.py) creates the `audit_logs` policies again on the partitioned table:
 
 | Tables | Policy for `slateops_app` |
 | --- | --- |
-| 42 organization tables | Read and write only rows where `org_id` equals the bound organization |
+| 81 organization tables | Read and write only rows where `org_id` equals the bound organization |
 | `files`, `in_app_notifications` | Rows of the bound organization or rows without an organization (account avatars, installation notices) |
 | `audit_logs`, `security_events` | Read rows of the bound organization or rows without one; insert for any organization |
+| `audit_seals`, `server_errors` | Read rows of the bound organization or rows without one; insert only for the bound organization or without one (`audit_seals` also refuses an hour that starts after the database clock) |
 
 The bound organization is the transaction-local setting `slateops.org_id`. [`organization_scope.py`](../../backend/app/core/database/organization_scope.py) applies it at the start of every transaction: a session `after_begin` listener for requests, and an Engine `begin` listener for worker passes. A transaction without the setting reads no organization rows. Joins through `memberships` must name the organization, through `bound_membership_join()` or an explicit `org_id` condition; [`test_membership_join_guard.py`](../../backend/tests/access/test_membership_join_guard.py) fails on an unscoped join.
 
@@ -32,20 +33,16 @@ The bound organization is the transaction-local setting `slateops.org_id`. [`org
 
 Identity bucket cleanup selects at most 100 expired windows in timestamp order
 under row locks. The `window_started_at` B-tree supports that cutoff and order;
-the fingerprint primary key continues to serve per-budget lookups. Revision
-[`38f146d6f952`](../../backend/migrations/history/vanilla_postgresql/38f146d6f952_index_identity_rate_limit_cleanup_window.py)
-is part of the archived vanilla PostgreSQL history; the fresh-install Supabase lineage includes the current model state directly.
-Inserts and window resets maintain the additional index. Its ordinary
-transactional build blocks writes to the bucket table while it runs, so plan
-migration timing for the installation's table size and availability needs; a
-local build duration is not a production downtime guarantee. See PostgreSQL's
-[index build behavior](https://www.postgresql.org/docs/17/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY).
+the fingerprint primary key continues to serve per-budget lookups. The root
+[`e46611902f25`](../../backend/migrations/versions/e46611902f25_slate_operations_fresh_root.py)
+creates that index, `ix_identity_rate_limit_buckets_window_started_at`, with the
+table. Inserts and window resets maintain the additional index.
 
 [`files`](../../backend/app/systems/platform/files/models.py) stores application metadata, immutable object keys, lifecycle state, and nullable `enc_version` for Record and Board attachments, department library documents, workspace logos, and account avatars. File bytes are stored in private Supabase Storage buckets, accessed through the server-only Storage API adapter. Organization files use `slateops-ready` with keys `org/<org_id>/<hex>` and a 10 MiB limit. Avatars are account files: they use `slateops-avatars` with keys `user/<user_id>/<hex>`, a 2 MiB limit, and PNG or JPEG only. FastAPI makes the 64 and 256 pixel avatar thumbnails with Pillow and checks the digest of the original bytes. `storage.objects` has no policies for `anon` or `authenticated`. FastAPI authorizes upload, download, and deletion. An upload passes file-type validation, and its row becomes `ready` with digest and size in the same request; only a `ready` row permits download. A file row or guessed object key alone never grants byte access. There is no selectable local-filesystem storage adapter.
 
 [`in_app_notifications`](../../backend/app/systems/platform/scheduling/models.py) stores recipient-specific source references and read state, with access rechecked on read. [Backup policies, runs, and exports](../../backend/app/systems/manage/backups/models.py) persist operation state and source/completion metadata. An export passphrase is encrypted while queued and cleared when its claim commits; the finished encrypted archive lives in the confined host export directory, mounted read-only into the API, separately from Storage file bytes.
 
-OpenView persists department Dashboards and widget configurations in [`dashboards` and `dashboard_widgets`](../../backend/app/systems/openview/dashboards/models.py). Each Dashboard has a required `department_id` (foreign key to `departments`, `ON DELETE RESTRICT`), a non-negative `position` and a bounded refresh cadence. [`saved_views`](../../backend/app/systems/openview/views/models.py) and [`reports`](../../backend/app/systems/openview/reports/models.py) belong to a module and have no owner or audience columns. The partial unique index `uq_saved_views_module_default` on `saved_views (module_id) WHERE is_default IS TRUE AND is_deleted IS FALSE` allows one active default view for each module. These rows contain settings rather than materialized Record results; each data view queries authorized Records when rendered. The archived revision [`22c73bf93a9d`](../../backend/migrations/history/schema_redesign/22c73bf93a9d_make_openview_content_belong_to_.py) removed the personal tables `dashboard_defaults`, `saved_view_defaults` and `openview_chart_preferences` during development. The active root creates the final shared structure directly. The historical revisions [`7d08f4310c7b`](../../backend/migrations/history/vanilla_postgresql/7d08f4310c7b_add_chart_preferences_and_dashboard_.py) and [`a1a581d48771`](../../backend/migrations/history/vanilla_postgresql/a1a581d48771_complete_chart_preference_audit_foreign_.py) describe the earlier vanilla PostgreSQL evolution.
+OpenView persists department Dashboards and widget configurations in [`dashboards` and `dashboard_widgets`](../../backend/app/systems/openview/dashboards/models.py). Each Dashboard has a required `department_id` (foreign key to `departments`, `ON DELETE RESTRICT`), a non-negative `position` and a bounded refresh cadence. [`saved_views`](../../backend/app/systems/openview/views/models.py) and [`reports`](../../backend/app/systems/openview/reports/models.py) belong to a module and have no owner or audience columns. The partial unique index `uq_saved_views_module_default` on `saved_views (module_id) WHERE is_default IS TRUE AND is_deleted IS FALSE` allows one active default view for each module. These rows contain settings rather than materialized Record results; each data view queries authorized Records when rendered.
 
 `report_run_eligible_users` records the module readers at the time each run is created. A run read also requires current read access on the module.
 
@@ -62,29 +59,22 @@ Each batch is one commit of individual ORM deletes with at most 50 audited rows.
 
 `audit_logs` is the one partitioned table: one partition for each month, and `audit_logs_default` for rows with no month ([Audit and History](10-audit-and-history.md)). Grants and row-level security policies are on the parent, and PostgreSQL applies them to rows that a statement reads through it. A statement that names a partition gets neither, and the default privileges of `slateops_owner` would give `slateops_app` full rights on a new table. So each partition loses those rights in the transaction that creates it, and has row-level security on with no policy. Check constraints reach every partition. A partition inherits no storage parameters, so `create_audit_partition` sets the autovacuum values on each one. Alembic does not manage the partitions: [`migration_scope.py`](../../backend/app/core/database/migration_scope.py) excludes them from `alembic check`, and the reset allowlist and `read_user_references` read only the parent. A new index on `audit_logs` cannot use `CONCURRENTLY` on the parent; build it with `CREATE INDEX ON ONLY`, then concurrently on each partition, then `ALTER INDEX ... ATTACH PARTITION`.
 
-[`charts`](../../backend/app/systems/openview/charts/models.py) stores shared, revisioned chart definitions with source `module_id`, derived `department_id`, query and presentation configuration. The forward migration [`c64062dacada`](../../backend/migrations/versions/c64062dacada_add_saved_charts_and_widget_query_.py) adds that table and widget `chart_id`/query support after the fresh root. The removal of the old personal chart-preference table does not mean that current Charts are page-local only. Results are queried at read time under current access; saved definitions contain no materialized Record output.
+[`charts`](../../backend/app/systems/openview/charts/models.py) stores shared, revisioned chart definitions: a name, a chart type, the query, the source `module_id`, and the `department_id` of that module. The root [`e46611902f25`](../../backend/migrations/versions/e46611902f25_slate_operations_fresh_root.py) creates the table and the widget column `dashboard_widgets.chart_id` (`fk_dashboard_widgets_chart_id_charts`, `ON DELETE RESTRICT`). A widget holds exactly one of a `chart_id` and its own `config` (`ck_dashboard_widgets_query_source`). Results are queried at read time under current access; saved definitions contain no materialized Record output.
 
 ## Fresh-root construction and lifecycle
 
-The root was produced by Alembic autogeneration from the final registered
-SQLAlchemy models against an empty application schema. Review supplements
-autogeneration with deferred `use_alter` foreign keys, the final Board functions
-and triggers, explicit grants/default privileges, and the Workspace, empty
-version-4 Sandbox, and Company Board seeds. Table column order follows the
-archived chain so schema-only dumps remain comparable. No provider object is
-created or changed.
-
-To reproduce equivalence, provision two separately owned disposable Supabase
-instances: apply the archived chain to one and the root to the other, run
-`alembic check` on both, and compare complete `public` schema-only dumps with
-ownership and ACLs retained. Exclude only dump header/time lines and randomized
-restrict tokens. Compare database/role privileges and blank-install seed values
-separately; omit only generated Company Board IDs and timestamps from seed
-equality. Do not normalize schema differences away.
+The root was produced by Alembic autogeneration from the registered SQLAlchemy
+models against an empty application schema. Review added the objects that
+autogeneration does not create: deferred `use_alter` foreign keys
+(`DEFERRED_FOREIGN_KEYS`), the Board, Comms, Realtime and security-event
+functions and the Board, Comms and file triggers (`FUNCTIONS`, `TRIGGERS`), row-level
+security and its policies (`ROW_SECURITY`, `POLICIES`), and explicit grants and
+default privileges (`PRIVILEGES`). The only seed is the installation's
+`platform_settings` row. No provider object is created or changed.
 
 The root's downgrade removes its application tables and owned routines; it is
-destructive, not a data-preserving rollback. Reinstallation recreates blank
-singletons. Existing installations require a separately approved fresh
+destructive, not a data-preserving rollback. Reinstallation recreates the blank
+`platform_settings` row. Existing installations require a separately approved fresh
 initialization or supported restoration, not a revision stamp. Recreating the
 provider volume also removes Auth and Storage state and requires explicit
 approval under the installation procedure.
@@ -113,13 +103,6 @@ labels, CSV cells and report capture use the same
 [display resolver](../../backend/app/systems/sandbox/records/display.py).
 A person who no longer qualifies displays as `Unavailable user`; stored IDs are
 not rewritten. Captured report output remains a snapshot of its run.
-
-Version-3 Board bundles carry field references by name and type. Select filter
-values are exported as labels and rebound to target option IDs. Person output
-fields and value-free checks remain portable, but export, duplication, and
-import reject filters containing a specific person ID: there is no
-cross-installation person binding. Live person filters remain supported. See
-[Board portability](../../backend/app/systems/boards/portability.py).
 
 `modules.title_field_id` is a nullable, restricted foreign key to `fields`.
 Publication requires an active field of the same module with an allowed text,

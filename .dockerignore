@@ -22,3 +22,6 @@ backend/tests
 frontend/tests
 frontend/coverage
 frontend/out
+# Development-only sample tooling never enters an image.
+backend/operations/sample
+backend/operations/seed_sample_data.py

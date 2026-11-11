@@ -36,7 +36,7 @@ Supabase Auth email templates link to `/auth/setup` or `/auth/recovery` with the
 
 ## Confirmed email change
 
-Profile's [Change email form](../../frontend/src/components/profile/components/email-change.tsx)
+Account settings' [Change email form](../../frontend/src/components/settings/components/email-change.tsx)
 sends the new address and current password to
 [`POST /api/auth/me/email`](../../backend/app/systems/access/auth/email_router.py).
 The [request service](../../backend/app/systems/access/identity/email_changes.py)

@@ -23,7 +23,7 @@ Every schema change starts in `backend/app/systems/<page>/<capability>/models.py
 - Do not replace the root revision `e46611902f25` without an explicit owner decision. Two owner-authorized replacements exist: S04/D13 (20-revision lineage to root `8db89b6c6c35`) and the rebrand (2026-11-02, `docs/plans/rebrand-slate-operations.md`, 28-revision lineage to `e46611902f25`, which uses the `slateops` role, setting and bucket names).
 - A replacement is one model-generated root. Preserve the triggers, grants, default privileges and retention function deliberately; seed no organization, Sandbox document or Company Board.
 - An existing development installation requires a verified backup followed by an owner-authorized rebuild of only `slateops_owner` objects in `public`; preserve provider schemas, credentials and volumes. Never stamp the old database onto the new root.
-- The archives under `migrations/history/schema_redesign/`, `migrations/history/vanilla_postgresql/`, and `migrations/history/organization_root/` remain unchanged and are not active Alembic revisions. The replacement root requires a fresh application schema and does not import old data.
+- `versions/` holds the only migration chain. The earlier chains were deleted on 2026-11-12 and remain in Git history at commit `7cecbdd9`. The root requires a fresh application schema and does not import old data.
 - Treat the Supabase application baseline as immutable once applied. Repair it through a reviewed forward migration or a supported backup restoration, never by editing the baseline or modifying provider-owned objects.
 
 ## Skills

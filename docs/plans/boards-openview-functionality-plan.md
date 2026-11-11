@@ -25,11 +25,11 @@ Board access alone does not grant Record access.
 |---|---|
 | Posts | [Post routes](../../backend/app/systems/boards/post_router.py), [author actions](../../backend/app/systems/boards/post_author_router.py) and [published revisions](../../backend/app/systems/boards/post_revision_router.py) persist draft, scheduled, published and archived state. Published revisions are immutable history. Never-published deletion differs from archiving published content. |
 | Events and reminders | [Event routes](../../backend/app/systems/boards/event_router.py) preserve all-day dates versus timed instants and event timezone. [Reminder service](../../backend/app/systems/boards/reminder_service.py) uses start/15-minute/1-day timing and current audience, without duplicate occurrence delivery. |
-| Widgets | [Widget routes](../../backend/app/systems/boards/widget_router.py) read authorized module data and support the current saved-chart/query contract. Rendering a saved chart does not transfer its source rights. |
+| Widgets | Widget routes (`backend/app/systems/boards/widget_router.py`) read authorized module data and support the current saved-chart/query contract. Rendering a saved chart does not transfer its source rights. |
 | Record links | [Link routes](../../backend/app/systems/boards/record_link_router.py) retain exact post/event and Record references. Hidden/unreadable sources disclose no Record values. Links are not Sandbox relationships. |
 | Attachments | [Attachment routes](../../backend/app/systems/boards/attachment_router.py) associate private ready files; [file bytes](../../backend/app/systems/platform/files/board_router.py) pass through FastAPI. Export/duplicate do not copy private bytes. |
 | Project groups and lifecycle | [Group routes](../../backend/app/systems/boards/group_router.py) and [lifecycle](../../backend/app/systems/boards/lifecycle_router.py) retain explicit access, state, revision and purge checks. Department Boards follow department lifecycle; project Boards remain independent. |
-| Portable configuration | [Portability routes](../../backend/app/systems/boards/portability_router.py) validate complete configuration and references before an atomic import. Browser-local IDs and incomplete visible pages are not portable server configuration. |
+| Portable configuration | Portability routes (`backend/app/systems/boards/portability_router.py`) validate complete configuration and references before an atomic import. Browser-local IDs and incomplete visible pages are not portable server configuration. |
 
 ## OpenView
 
