@@ -92,6 +92,7 @@ import {
   designAddHoldReason,
   idleSaveQueue,
   reduceSaveQueue,
+  refusedDesignUpdate,
   saveQueueActive,
   saveQueueConflictDocument,
   saveQueueHasQueued,
@@ -1080,15 +1081,7 @@ function SandboxWorkspace() {
             ? update(current.history.present)
             : update;
       } catch (error) {
-        if (holdReason)
-          return {
-            ok: false,
-            error: "A Sandbox change is already being saved.",
-          };
-        // A design rule the update checks refuses it with its own reason.
-        if (error instanceof SandboxCommandError)
-          return { ok: false, error: error.message };
-        throw error;
+        return { ok: false, error: refusedDesignUpdate(error, holdReason) };
       }
       const kind = classifyDesignChange(current.history.present, nextDesign);
       if (holdReason)
@@ -1941,10 +1934,10 @@ function SandboxWorkspace() {
             phoneHistory={historyButtons}
             onDraftStateChange={setDesignerDraftDirty}
             savingIds={savingElementIds(saveQueue)}
+            // `commandBusy` already counts a lifecycle request.
             addHoldReason={designAddHoldReason({
               command: commandBusy,
               publication: publicationPending,
-              lifecycle: lifecycleRequest !== null,
               conflict: conflict !== null,
             })}
             attention={{
