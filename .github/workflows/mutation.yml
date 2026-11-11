@@ -1,8 +1,7 @@
 name: Mutation (optional)
 
 on:
-  schedule:
-    - cron: "17 3 * * 1"
+  # 2026-11-12: the Human Owner paused the weekly schedule; start runs by hand.
   workflow_dispatch:
 
 concurrency:
