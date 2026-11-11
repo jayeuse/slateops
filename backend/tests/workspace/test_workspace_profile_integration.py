@@ -14,6 +14,8 @@ from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.audit.snapshots import REDACTED
 from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.designs.models import SandboxDocument
 from tests.conftest import create_member, membership_of, workspace_of
 
 pytest_plugins = ("tests.fake_provider_support",)
@@ -26,6 +28,7 @@ PROFILE_VALUES = {
     "contact_phone": "+63 555 0100",
     "postal_address": "Profile Street\nTest City",
 }
+ALL_SETUP = {"groups": True, "dashboard": True, "category": True, "channel": True}
 
 
 @pytest.fixture
@@ -43,7 +46,10 @@ def profile_client(fake_provider_account):
         membership.role = "admin"
         profile = db.get(WorkspaceProfile, membership.org_id)
         assert profile is not None
-        original_profile = {key: getattr(profile, key) for key in (*PROFILE_VALUES, "revision")}
+        original_profile = {
+            key: getattr(profile, key)
+            for key in (*PROFILE_VALUES, "revision", "department_setup_defaults")
+        }
         for key, value in PROFILE_VALUES.items():
             setattr(profile, key, value)
         db.commit()
@@ -214,3 +220,57 @@ def test_admin_profile_save_clear_and_omission_are_full_and_audited(profile_clie
     assert {key: cleared.json()[key] for key in PROFILE_VALUES} == dict.fromkeys(PROFILE_VALUES)
     assert CONTACT_FIELDS <= cleared.json().keys()
     assert client.get("/api/workspace").json() == cleared.json()
+
+
+def _department_and_draft(db, department_id, draft_id):
+    department, draft = db.get(Department, department_id), db.get(SandboxDocument, draft_id)
+    return (
+        (department.department_name, department.is_deleted, department.updated_at),
+        (draft.revision, draft.document, draft.content_hash, draft.updated_at),
+    )
+
+
+def test_department_setup_defaults_start_true_and_a_change_touches_no_department_or_draft(
+    profile_client,
+):
+    client, actor_id, owner = profile_client
+    with Session(owner) as db:
+        org_id = membership_of(db, actor_id).org_id
+        department = Department(org_id=org_id, department_name=f"Setup defaults {uuid4().hex}")
+        draft = db.scalar(select(SandboxDocument).where(SandboxDocument.org_id == org_id))
+        created_draft = draft is None
+        if draft is None:
+            draft = SandboxDocument(
+                org_id=org_id, document={"departments": []}, content_hash="0" * 64, byte_count=18
+            )
+        db.add_all([department, draft])
+        db.commit()
+        ids = (department.id, draft.id)
+        before = _department_and_draft(db, *ids)
+    try:
+        read = client.get("/api/workspace").json()
+        assert read["department_setup_defaults"] == ALL_SETUP
+        before_audits = _audit_count(owner, actor_id)
+        saved = client.patch(
+            "/api/workspace",
+            json={"revision": read["revision"], "department_setup_defaults": {"channel": False}},
+        )
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["department_setup_defaults"] == {**ALL_SETUP, "channel": False}
+        assert client.get("/api/workspace").json() == saved.json()
+        assert _audit_count(owner, actor_id) == before_audits + 1
+        with Session(owner) as db:
+            audit = db.scalar(
+                select(AuditLog)
+                .where(AuditLog.entity_id == org_id)
+                .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+            )
+            assert audit is not None and audit.performed_by == actor_id
+            assert audit.after["department_setup_defaults"]["channel"] is False
+            assert _department_and_draft(db, *ids) == before
+    finally:
+        with Session(owner) as db:
+            db.delete(db.get(Department, ids[0]))
+            if created_draft:
+                db.delete(db.get(SandboxDocument, ids[1]))
+            db.commit()

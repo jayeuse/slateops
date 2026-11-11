@@ -17,6 +17,13 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.base_model import BaseModel
 
+# Each department added in the Sandbox starts its setup from these (BE-SD6, SD2).
+DEPARTMENT_SETUP_ITEMS = ("groups", "dashboard", "category", "channel")
+
+
+def _all_setup_items() -> dict[str, bool]:
+    return dict.fromkeys(DEPARTMENT_SETUP_ITEMS, True)
+
 
 class WorkspaceProfile(BaseModel):
     """An organization's identity, appearance and membership policy."""
@@ -66,6 +73,10 @@ class WorkspaceProfile(BaseModel):
         ),
         CheckConstraint(
             "jsonb_typeof(ip_allow_list) = 'array'", name="ck_workspace_profiles_ip_allow_list"
+        ),
+        CheckConstraint(
+            "jsonb_typeof(department_setup_defaults) = 'object'",
+            name="ck_workspace_profiles_department_setup_defaults",
         ),
     )
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset(
@@ -124,6 +135,15 @@ class WorkspaceProfile(BaseModel):
     )
     guest_duration_days: Mapped[int] = mapped_column(
         Integer, default=30, server_default=text("30"), nullable=False
+    )
+    # Never changes an existing department or draft; the Sandbox reads it for new ones.
+    department_setup_defaults: Mapped[dict[str, bool]] = mapped_column(
+        JSONB,
+        default=_all_setup_items,
+        server_default=text(
+            """'{"groups": true, "dashboard": true, "category": true, "channel": true}'::jsonb"""
+        ),
+        nullable=False,
     )
     revision: Mapped[int] = mapped_column(
         Integer,
