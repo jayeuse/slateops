@@ -272,6 +272,7 @@ class _LifecycleWire:
                         "offset": 0,
                         "count": True if self.fault == "board_page_types" else 1,
                         "total": 1,
+                        "total_is_capped": False,  # The server's PaginationMetadata shape.
                         "has_more": False,
                     },
                 },

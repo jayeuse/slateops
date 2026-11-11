@@ -328,19 +328,17 @@ class _LifecycleJourney:
                 "offset": 0,
             },
         )
-        rows = page.get("items")
-        metadata = page.get("pagination")
-        if (
+        rows, metadata = page.get("items"), page.get("pagination")
+        counts = {"limit": 100, "offset": 0, "count": 1, "total": 1}
+        if (  # The server's PaginationMetadata shape, total_is_capped included.
             not isinstance(rows, list)
             or len(rows) != 1
             or not isinstance(rows[0], dict)
             or not isinstance(metadata, dict)
-            or any(
-                type(metadata.get(key)) is not int for key in ("limit", "offset", "count", "total")
-            )
-            or metadata.get("has_more") is not False
-            or page.get("pagination")
-            != {"limit": 100, "offset": 0, "count": 1, "total": 1, "has_more": False}
+            or any(type(metadata.get(key)) is not int for key in counts)
+            or metadata != {**counts, "total_is_capped": False, "has_more": False}
+            or metadata["total_is_capped"] is not False
+            or metadata["has_more"] is not False
         ):
             raise SamplePhaseActionError(
                 "Lifecycle Department Board collection differed", step=step
