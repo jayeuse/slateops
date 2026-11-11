@@ -98,17 +98,6 @@ export function isFieldType(value: string): value is SandboxFieldType {
   return (FIELD_TYPES as readonly string[]).includes(value);
 }
 
-/** Snap a canvas point to the canvas unit without changing its origin. */
-export function snapSandboxPosition(
-  position: CanvasPosition,
-  size = SANDBOX_GRID_SIZE,
-): CanvasPosition {
-  return {
-    x: Math.round(position.x / size) * size,
-    y: Math.round(position.y / size) * size,
-  };
-}
-
 // Its own module, so marks outside the canvas need none of this geometry.
 export { departmentTone } from "./department-tone";
 

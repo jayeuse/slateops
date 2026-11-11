@@ -2960,6 +2960,45 @@ test("leaving Connect after choosing another department saves nothing", async ({
   await expect(lines).toHaveAttribute("data-sandbox-edge-kind", "relationship");
 });
 
+// A design rule the Designer checks while applying a change is refused with
+// its authored reason; it once rejected silently and left the dialog open.
+test("Relationship settings refuse a target the source already links to, and save nothing", async ({
+  page,
+}) => {
+  const design = structuredClone(configuredSandboxDesign);
+  design.relationships.push({
+    id: "sample-billing",
+    name: "Bills customer",
+    source: "sample-requests",
+    target: "sample-customers",
+    cardinality: "One-to-many",
+    fieldMappings: [],
+  });
+  const sandbox = await openAuthenticatedSandbox(page, design, {
+    path: "/sandbox?module=sample-requests",
+  });
+  const writes = sandbox.documentWrites();
+  await (
+    await relationshipMenuItem(
+      page,
+      "Uses equipment",
+      "outgoing",
+      "Edit outgoing relationship Uses equipment",
+    )
+  ).click();
+  const dialog = page.getByRole("dialog", { name: "Relationship settings" });
+  await dialog.getByLabel("Target module").selectOption("sample-customers");
+  await dialog.getByRole("button", { name: "Save relationship" }).click();
+  await expect(dialog.getByRole("alert")).toHaveText(
+    "A relationship between these modules already exists.",
+  );
+  await expect(dialog).toBeVisible();
+  expect(sandbox.documentWrites()).toBe(writes);
+  expect(
+    sandbox.document().design.relationships.map((item) => item.targetModuleId),
+  ).toEqual(["sample-equipment", "sample-customers"]);
+});
+
 // The scope note shows where a relationship's modules are chosen: its
 // settings, opened from the relationship row.
 test("relationship settings say when a link spans two departments", async ({

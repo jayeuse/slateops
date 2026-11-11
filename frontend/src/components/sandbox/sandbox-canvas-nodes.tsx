@@ -418,16 +418,14 @@ function ModuleNodeView({ id, data }: NodeProps<ModuleFlowNode>) {
           fill={
             feedback === "moving"
               ? "var(--canvas-moving)"
-              : feedback === "drop"
-                ? "var(--canvas-drop)"
-                : selected
-                  ? "var(--accent)"
-                  : `var(--dept-${tone}-module)`
+              : selected
+                ? "var(--accent)"
+                : `var(--dept-${tone}-module)`
           }
           stroke={
             feedback === "moving"
               ? "var(--warning)"
-              : feedback === "drop" || selected
+              : selected
                 ? CANVAS_NODE_ACTIVE
                 : connectTarget
                   ? "var(--ink-muted)"
@@ -448,7 +446,7 @@ function ModuleNodeView({ id, data }: NodeProps<ModuleFlowNode>) {
           fill={
             feedback === "moving"
               ? "var(--warning)"
-              : selected || feedback === "drop"
+              : selected
                 ? "var(--accent)"
                 : `var(--dept-${tone}-card)`
           }

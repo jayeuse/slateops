@@ -21,6 +21,7 @@ import {
   relationshipNamesInUse,
 } from "../domain/relationship-name";
 import { canvasFieldId, projectedField } from "../helpers/bridge";
+import { refusedSaveClosesCreate } from "../helpers/create-hold";
 import { elementBarOwner, savingMarkIds } from "../helpers/element-bar";
 import {
   SandboxCommandError,
@@ -46,6 +47,7 @@ export function useBuildCreate({
   projected,
   change,
   addHoldReason,
+  saving,
   savingIds,
   canvasShown,
   graphRef,
@@ -61,6 +63,8 @@ export function useBuildCreate({
     commandKey?: string,
   ) => Promise<SandboxCommandResult<Design>>;
   addHoldReason: string | null;
+  /** The save queue holds the draft (`saveQueueActive`). */
+  saving: boolean;
   savingIds: readonly string[];
   /** The canvas is on screen, so a new element can be brought into view. */
   canvasShown: boolean;
@@ -106,19 +110,39 @@ export function useBuildCreate({
   function justClosed(anchor: HTMLElement): boolean {
     return lastClose.current === anchor;
   }
+  // Frame callbacks and the reopen guard end with Build.
+  const frames = useRef(new Set<number>());
+  const reopenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function afterFrame(callback: () => void): void {
+    const id = requestAnimationFrame(() => {
+      frames.current.delete(id);
+      callback();
+    });
+    frames.current.add(id);
+  }
+  useEffect(() => {
+    const pending = frames.current;
+    return () => {
+      for (const id of pending) cancelAnimationFrame(id);
+      pending.clear();
+      if (reopenTimer.current !== null) clearTimeout(reopenTimer.current);
+    };
+  }, []);
   function settleFocus(anchor: HTMLElement, owner: string | null): void {
     lastClose.current = anchor;
-    setTimeout(() => {
+    if (reopenTimer.current !== null) clearTimeout(reopenTimer.current);
+    reopenTimer.current = setTimeout(() => {
+      reopenTimer.current = null;
       if (lastClose.current === anchor) lastClose.current = null;
     }, 400);
     setClosingOwner(owner);
     // Focus goes back to the anchor; if the selection change re-rendered it,
     // it is moved back once the selection settles.
-    requestAnimationFrame(() => {
+    afterFrame(() => {
       const active = document.activeElement;
       if (anchor.isConnected && (active === null || active === document.body))
         anchor.focus();
-      requestAnimationFrame(() =>
+      afterFrame(() =>
         setClosingOwner((current) => (current === owner ? null : current)),
       );
     });
@@ -179,8 +203,8 @@ export function useBuildCreate({
   function connectFromCanvas(sourceId: string, targetId?: string): void {
     setSelected(sourceId);
     showProperties();
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
+    afterFrame(() =>
+      afterFrame(() => {
         const anchor = barControl(sourceId, "connect");
         openConnect(
           sourceId,
@@ -191,16 +215,18 @@ export function useBuildCreate({
       }),
     );
   }
-  // A refused save (409 or a failure) holds the draft: an open entry or
-  // Connect closes, and the page shows its alert (N1 rule 3).
-  const previousHold = useRef(addHoldReason);
+  // A refused save (409 or a failure) closes an open entry or Connect, and
+  // the page shows its alert (N1 rule 3). Any other hold keeps them open
+  // with their controls disabled and the reason (rule 6).
+  const previousHold = useRef({ hold: addHoldReason, saving });
   useEffect(() => {
-    if (addHoldReason && !previousHold.current) {
+    const next = { hold: addHoldReason, saving };
+    if (refusedSaveClosesCreate(previousHold.current, next)) {
       if (entry) closeEntry(null);
       if (connect) closeConnect();
     }
-    previousHold.current = addHoldReason;
-  }, [addHoldReason]);
+    previousHold.current = next;
+  }, [addHoldReason, saving]);
   // The newest element keeps the flow tint until the next add (FAST-6).
   const [newest, setNewest] = useState<string | null>(null);
   async function addFromEntry(
@@ -217,12 +243,18 @@ export function useBuildCreate({
     return result;
   }
   // A new element out of view comes into view at once; no animated pan.
+  // Added while the canvas was hidden (a phone's Structure pane), it comes
+  // into view when the canvas shows.
+  const revealed = useRef<string | null>(null);
   useEffect(() => {
-    if (!newest || !canvasShown) return;
+    if (!newest || !canvasShown || revealed.current === newest) return;
     const nodeId = projectedField(design, newest)?.moduleId ?? newest;
-    const frame = requestAnimationFrame(() => graphRef.current?.reveal(nodeId));
+    const frame = requestAnimationFrame(() => {
+      revealed.current = newest;
+      graphRef.current?.reveal(nodeId);
+    });
     return () => cancelAnimationFrame(frame);
-  }, [newest]);
+  }, [newest, canvasShown]);
   // The saving mark: queued adds the design still has (an Undo can leave an
   // id in the queue). Keyed by the ids, so the outline re-renders only when
   // the marks change.

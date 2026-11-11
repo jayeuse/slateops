@@ -1219,7 +1219,6 @@ export function Designer({
     setRelationshipError("");
     setEditorError("");
     setFieldMappings([]);
-    setSource(selectedModule?.id ?? design.modules[0]?.id ?? "");
   }
   async function submit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
@@ -1558,6 +1557,7 @@ export function Designer({
     projected,
     change,
     addHoldReason,
+    saving,
     savingIds,
     canvasShown: wide || pane === "Canvas",
     graphRef,
