@@ -7,7 +7,7 @@
 - `caddy/` contains production gateway artifacts. Caddy is not part of ordinary local development.
 - Target: one full Compose stack per client (micro–medium SMB, on-premise first) on Linux or Windows Docker Desktop using WSL2/Linux containers. Windows startup, reboot, persistent-volume, and restore acceptance remain pending until run on Windows. macOS workstation development is allowed, but macOS is not a server deployment target. Do not introduce fleet/orchestrated deployment into these artifacts.
 - `/api/health` reports API-process liveness; `/api/ready` reports the required database, Auth, Storage, and SMTP-configuration components (`../docs/architecture/11-infrastructure.md`).
-- Native Linux host boot/reboot, Windows acceptance, and the canonical release gate remain pending; do not describe this infrastructure as production-ready.
+- Native Linux host boot/reboot, Windows acceptance, and the release check remain pending; do not describe this infrastructure as production-ready.
 
 ## Skills
 

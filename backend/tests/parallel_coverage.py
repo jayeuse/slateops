@@ -8,8 +8,8 @@ test-results/coverage evidence. A stop (Ctrl-C, SIGTERM, SIGHUP) reaches each sh
 and waits for it to remove its stack.
 
 From backend/:  uv run python -m tests.parallel_coverage [--shards 3]
-The pre-push gate runs it beside the frontend lane once its stacks have booted. Do not
-start another heavy job beside it (for example a live sample run).
+Do not start another heavy job beside it (for example a frontend suite or a live sample
+run).
 """
 
 import argparse

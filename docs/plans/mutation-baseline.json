@@ -6104,6 +6104,8 @@
     "operations/sample/verification/history.py",
     "operations/sample/vocabulary.py",
     "tests/operations/sample/sample_datasets.py",
-    "tests/sandbox_designs/fixtures.py"
+    "tests/parallel_coverage.py",
+    "tests/sandbox_designs/fixtures.py",
+    "tests/smoke_runner.py"
   ]
 }

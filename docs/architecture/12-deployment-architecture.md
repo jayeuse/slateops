@@ -22,7 +22,7 @@
 | Windows server operation | Pending | The intended host uses Docker Desktop/WSL2 with Linux containers. A Windows host has not completed startup, reboot, persistent-volume, or restore acceptance. Linux-container evidence from another operating system does not prove this path. |
 | macOS server | Not a target | macOS remains available for development. It is not a supported customer server target. |
 | Hosted application or managed Supabase deployment | Future, separate target | No registry, hosted service, customer provisioning, DNS/TLS control plane, managed database, or deployment workflow is implemented. A self-hosted installation can hold several organizations, isolated by membership checks and row-level security. It is not a hosted service; the Supabase Cloud target is Phase 3 work. |
-| Native installer or service manager | Development artifacts only | `native-manager.yml` builds unsigned Slate Operations Manager shells for macOS and Windows as 7-day CI artifacts. They are not a supported installer: no signed release, OS service registration, or bundled database runtime is part of the selected Compose-first approach. |
+| Native installer or service manager | Absent | No native installer or service manager exists. The deployment is Compose-first: no signed release, OS service registration, or bundled database runtime is part of it. |
 | CI deployment | Absent | The GitHub workflows verify code and build the unified server image with `push: false`; they do not publish or deploy it. |
 
 ## Per-client Compose installation

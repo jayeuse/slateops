@@ -18,7 +18,7 @@ database-only session finalization, authorization and file access after
 restore, and full-stack stop/start. This confirms those paths in the rehearsal
 environment; it does not prove native Linux host boot/reboot behavior. Native
 Linux host boot/reboot acceptance, Windows acceptance (no test host is
-available), and the canonical pre-push gate/final review remain
+available), and the release check/final review remain
 pending. See the
 [implementation plan](infra/supabase/PLAN.md) and
 [restore procedure](infra/supabase/RESTORE.md).
@@ -286,19 +286,23 @@ feature exclusions in the [operator plan](backend/operations/sample/plan_summary
 
 ## Verification
 
-Use the repository's focused checks during development. The canonical release
-gate is run from the repository root against the recorded base revision:
+Use the repository's focused checks during development. CI on the pull
+request is the full gate. It selects the applicable backend, frontend, and
+server-image checks from the changed paths. Backend verification retains the
+90% overall and changed-line coverage thresholds.
+
+CI does not run the release check. Run it at a major update from `backend/`,
+one command at a time:
 
 ```bash
-python3 scripts/prepush.py --base <base-ref>
+uv run python -m tests.smoke_runner
+uv run python -m tests.fullstack_runner --acceptance-only
 ```
 
-It selects the applicable backend, frontend, and server-image checks. Backend
-verification retains the 90% overall and changed-line coverage thresholds.
 Integration tests must use the runner-owned disposable Supabase instance and
 its ownership manifest; never point tests at a developer's personal or
 customer installation. See [Testing Architecture](docs/architecture/16-testing-architecture.md)
-for test boundaries and the pre-push gate.
+for test boundaries and the release check.
 
 ## Repository architecture
 

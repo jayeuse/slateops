@@ -1,6 +1,6 @@
 # OpenView part B: the department dashboard
 
-> **Status: approved (2026-10-26),** including the backend changes BE1–BE3. B0 landed in `1f434798`; B1–B4 are built (decisions BD13–BD25). Part B of the OpenView direction in `docs/specs/openview-relayout.md` (umbrella). It follows part A (`docs/specs/openview-department-pages.md`, approved). Comp: `.impeccable/mocks/openview/dashboard.html` (renders `.playwright-mcp/openview-relayout/comp/dash-*.png`; `?edit=1`, `?builder=1`, `?locked=1`). No product code has changed.
+> **Status: B0–B4 built, PR #68 (2026-10-26); the B5 critique, EXIT-B7 and EXIT-B9 have no recorded result.** Approved 2026-10-26, including the backend changes BE1–BE3 (B0 in `1f434798`; decisions BD13–BD25). Part B of the OpenView direction in `docs/specs/openview-relayout.md` (umbrella). It follows part A (`docs/specs/openview-department-pages.md`, approved). Comp: `.impeccable/mocks/openview/dashboard.html` (renders `.playwright-mcp/openview-relayout/comp/dash-*.png`; `?edit=1`, `?builder=1`, `?locked=1`).
 
 ## Outcome
 

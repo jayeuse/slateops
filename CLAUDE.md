@@ -7,12 +7,12 @@ Everything in `AGENTS.md` above applies. This section only covers where Claude C
 ## Codex-to-Claude mapping
 
 - **Skills.** `.claude/skills` is a symlink to `.agents/skills`. They are the same files; the skill paths in `AGENTS.md` stay valid. Edit skills in `.agents/skills` only.
-- **Orchestration.** The Codex fleet exists in Claude as user-level subagents in `~/.claude/agents/`, generated from `~/.codex/agents/*.toml` by `~/.agents/scripts/sync-claude-agents.py`. Same names and instructions; models map luna → `sonnet`, sol → `opus`, astra → `fable`, except `implement`, which runs on `opus` (medium effort). Follow the orchestration rules and `.agents/orchestration/PROTOCOL.md` referenced in `AGENTS.md` with these subagents. `agent-task.py doctor` checks the Codex setup only.
+- **Orchestration.** The company role subagents do delegated work. They are user-level subagents in `~/.claude/agents/`, and the delegation policy that the user-level `CLAUDE.md` names decides which role takes a task. Follow the orchestration rules and `.agents/orchestration/PROTOCOL.md` referenced in `AGENTS.md` with these subagents.
 - **Subagents.**
-  - Fleet (user-level): `explore`, `check_runner`, `browser`, `implement`, `implement_complex`, `review`, `deep_review`, `analyst`, `deep_analyst`, `research`.
-  - `ui-reviewer` (project): fresh-context visual and accessibility review of a finished UI change. Prefer it over `review` for visual quality; use `review` for diff and acceptance criteria. Both may run on the same change.
+  - Utility workers (user-level): `explore` (read-only search) and `check_runner` (runs prescribed checks). The company roles are the other user-level subagents.
+  - `ui-reviewer` (project): fresh-context visual and accessibility review of a finished UI change. It covers visual quality; the code review covers the diff and the acceptance criteria. Both may run on the same change.
   - `impeccable-finish-reviewer`, `impeccable-documenter`, `impeccable-manual-edit-applier` (project): spawned by the impeccable skill itself. They are generated from `.agents/skills/impeccable/agents/*.toml`; regenerate them after an Impeccable update.
-  - Built-in `Explore` and `Plan` are different from the fleet `explore`. For repository tracing, use the fleet `explore`.
+  - Built-in `Explore` and `Plan` are different from the utility worker `explore`. For repository tracing, use the utility worker `explore`.
 - **MCP servers** (`.mcp.json`): `playwright` (browser and screenshots, output in `.playwright-mcp/`), `shadcn` (component registry and source), `context7` (current library docs). There is no PostgreSQL MCP for Claude; use the documented CLI path when database evidence is authorized.
 
 ## Library facts
@@ -77,9 +77,9 @@ The operator account (`openslate.business@outlook.com`) belongs to the owner. Us
 - The guarded reset removes these accounts with their organizations; recreate them afterwards.
 
 Correct: `Admin in the pane, invited member in playwright MCP: delivery 250 ms, reply live; B7 first send after load dropped with no POST and no "Not sent" (high); sent to the implementer as a failing-first test; retest after the fix.`
-Correct: `Release smoke pass on a fresh organization and on Harbor before the gate: admin, member and guest end to end in both; one cross-feature defect (scheduled message ignores a later block) fixed with a failing-first test; then pushed, and CI passed.`
+Correct: `Release smoke pass on a fresh organization and on Harbor before the push: admin, member and guest end to end in both; one cross-feature defect (scheduled message ignores a later block) fixed with a failing-first test; then pushed, and CI passed.`
 Wrong: `HTTP suite is green, so the cutover works.`
-Wrong: `Ran the release smoke pass while prepush.py was running.`
+Wrong: `Ran the release smoke pass while a full backend suite was running.`
 Wrong: `Logged in as a sample person using the password from the sample-run file.`
 Wrong: `Ran the admin hands-on pass as the operator account.`
 Wrong: `Tested only as admin; the feature works.`

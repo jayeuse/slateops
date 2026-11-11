@@ -1,6 +1,6 @@
 # OpenView: department pages and the slim identity (umbrella)
 
-> **Status: direction approved (2026-10-25); parts A, B, and C approved (2026-10-26).** This file holds the owner's direction, the Phase 0 baseline, the critique, the findings, and the slim decisions OD1–OD15 that the parts reuse. Each part has its own spec. Comps are in `.impeccable/mocks/openview/` (renders in `.playwright-mcp/openview-relayout/comp/`). No product code has changed.
+> **Status: parts A, B, and C built, PR #68 (2026-10-26); EXIT-1 and EXIT-9 have no recorded result.** Direction approved 2026-10-25; parts approved 2026-10-26. This file holds the owner's direction, the Phase 0 baseline, the critique, the findings, and the slim decisions OD1–OD15 that the parts reuse. Each part has its own spec. Comps are in `.impeccable/mocks/openview/` (renders in `.playwright-mcp/openview-relayout/comp/`).
 
 ## Direction (owner, 2026-10-25)
 

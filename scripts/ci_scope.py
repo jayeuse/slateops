@@ -1,7 +1,7 @@
 """Fail-closed change classification shared by local and CI checks.
 
 The classifier deliberately works from Git's view of the checkout instead of
-only looking at the index.  A local pre-push run must include the committed
+only looking at the index.  A local run must include the committed
 branch delta, staged and unstaged edits, and non-ignored untracked files.
 """
 

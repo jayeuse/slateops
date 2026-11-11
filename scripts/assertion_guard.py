@@ -42,7 +42,7 @@ _LONG_TIMEOUT_EXEMPT: Final = frozenset(
         "frontend/tests/fullstack/comms-measurements.spec.ts",
         # Claude 2026-10-23, pending owner confirmation: the S32 journey runs 15 steps
         # against real services and Mailpit invitations in the opt-in fullstack lane only
-        # (never in the pre-push gate or CI), so it keeps one whole-journey budget.
+        # (never in CI), so it keeps one whole-journey budget.
         "frontend/tests/fullstack/comms-two-account.spec.ts",
     }
 )

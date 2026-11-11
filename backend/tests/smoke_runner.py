@@ -3,7 +3,7 @@
 Creates a new disposable stack, serves the static frontend export from FastAPI behind
 the Caddy gateway, seeds Harbor Small once through the sample-data seeder, signs in
 once per role and runs ``frontend/tests/fullstack/smoke``. It belongs to the release
-gate (``scripts/prepush.py --release``), not to every push. Secrets and raw output stay
+check (root AGENTS.md), not to every push; CI does not run it. Secrets and raw output stay
 in a private temporary directory; SLATEOPS_TEST_PROGRESS=1 shows one line per finished
 test, and SLATEOPS_E2E_HEADED=1 opens a visible browser. The summary holds only timings
 and outcomes.

@@ -1,6 +1,6 @@
 # System health for the people who use Slate Operations
 
-> **Status: S1 to S4 built (2026-11-03); S5 and S6 in progress (2026-11-05).** The Human Owner answered "Approve S1 and S2" to the go-ahead question on 2026-11-02. Client side only. The developer side of observability (error tracking, uptime checks, metrics, traces, log search) is deferred until this spec ships; see [Deferred](#deferred).
+> **Status: S1 to S6 built (2026-11-05), PR #87, #88 and #89.** The Human Owner answered "Approve S1 and S2" to the go-ahead question on 2026-11-02. Client side only. The developer side of observability (error tracking, uptime checks, metrics, traces, log search) is deferred until this spec ships; see [Deferred](#deferred).
 
 ## Outcome
 

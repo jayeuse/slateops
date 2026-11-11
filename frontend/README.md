@@ -38,9 +38,9 @@ The lockfile pins Playwright and Chromium. Local tests use up to three workers;
 CI runs a separate isolated job at its default one worker and six whole-file,
 duration-balanced HTTP shards with two workers each. The HTTP shards share one
 downloaded export. UTC, `en-US` and zero retries are configured. Use focused cases during
-repair and one relevant batch once stable. Only right before a push, run the root
-`python3 scripts/prepush.py --base <base-ref> --serial`: never overlap backend and
-frontend heavy lanes or start another heavy check beside one. See
+repair and one relevant batch once stable. CI on the pull request runs the full
+suites. Never overlap backend and frontend heavy lanes or start another heavy check
+beside one. See
 [Testing Architecture](../docs/architecture/16-testing-architecture.md) for
 coverage, dedicated provider-reset acceptance and separate real-stack/release
 boundaries. These commands describe the configured workflow, not current-tip

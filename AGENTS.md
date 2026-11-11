@@ -10,26 +10,25 @@ When two rules conflict, the first match in this list wins:
 4. The rest of this file.
 5. Skills and their generic examples.
 
-Correct: "A scoped guide says to run the gate before a push; the root testing rules say CI owns it; followed the root rule."
-Wrong: "The nearest guide takes priority, so ran the 45-minute gate before the push."
+Correct: "A scoped guide says to run the full suites before a push; the root testing rules say CI owns them; followed the root rule."
+Wrong: "The nearest guide takes priority, so ran the 45-minute full suites before the push."
 
 ## Rule zero: never run backend and frontend tests at the same time
 
 Read and apply this before any other instruction, every time a task runs tests.
 
 - **One heavy test side at a time.** Never run backend tests (pytest batches, coverage, shards, fullstack, smoke) while frontend tests (Playwright isolated or HTTP, the frontend build) run, or the reverse. Together they run 2–3 times slower on the 4-performance-core development machine and fail timing-sensitive tests at random.
-- **Keep parallelism inside each side.** Backend coverage runs `tests.parallel_coverage --shards 3`; the frontend suite keeps its Playwright workers. Do not drop to `--coverage-stacks 1` or a single worker without a measured failure.
-- **The full local gate always runs with `--serial`:** `python3 scripts/prepush.py --base <base-ref> --serial`. It runs the lanes one after the other and keeps each lane's parallelism.
+- **Keep parallelism inside each side.** Backend coverage runs `tests.parallel_coverage --shards 3`; the frontend suite keeps its Playwright workers. Do not lower `--shards` or drop to a single worker without a measured failure.
 - **Start nothing else beside a running heavy lane:** no focused tests, batches, or sample runs "to use the time".
-- **Free the machine before the gate or a full suite:**
+- **Free the machine before a full local suite or the release check:**
   1. Stop dev servers and processes you started (`npm run dev`, `uv run python -m app`, preview servers, sample runs, idle agent clients).
   2. Stop the owned development Supabase stack with `python3 scripts/dev.py stop` (never `docker compose down -v`; its volumes hold the data).
   3. Stop other running development containers (other projects' Compose stacks) with `docker stop`; tell the user which ones. Never remove them or their volumes.
-  4. Check headroom (`uptime` load near or below the core count); report a busy machine instead of starting the gate.
-  5. After the gate, restart the owned development stack (`python3 scripts/dev.py db`) and anything the user was using.
+  4. Check headroom (`uptime` load near or below the core count); report a busy machine instead of starting the run.
+  5. After the run, restart the owned development stack (`python3 scripts/dev.py db`) and anything the user was using.
 
-Correct: "Stopped the dev Supabase stack, the Next dev server and `four-week-microservice-dev-*`; load 4; ran the gate with `--serial`; restarted the dev stack."
-Wrong: "Started the gate with the dev stack and two dev servers running; the Playwright lane took 40 minutes at load 110."
+Correct: "Stopped the dev Supabase stack, the Next dev server and `four-week-microservice-dev-*`; load 4; ran the release check one runner at a time; restarted the dev stack."
+Wrong: "Started the release check with the dev stack and two dev servers running; the smoke runner took 40 minutes at load 110."
 Wrong: "While backend coverage ran, repeated three Playwright tests to check flakes."
 
 ## Testing rules
@@ -37,22 +36,22 @@ Wrong: "While backend coverage ran, repeated three Playwright tests to check fla
 These rules are the one source for when tests run. Scoped guides own only their runners and thresholds. See [Testing Architecture](docs/architecture/16-testing-architecture.md) for runner details.
 
 - **Batch by work unit, never by edit or handoff.** Use focused tests for TDD or debugging; run one relevant batch when the work stabilizes. Reuse passing evidence, including worker results, until the relevant code or setup changes.
-- **Push with fast checks; CI runs the heavy suites.** CI on the pull request (`backend.yml`, `frontend.yml`) runs every check of `scripts/prepush.py`. Before a push, run only:
+- **Push with fast checks; CI runs the heavy suites.** CI on the pull request (`backend.yml`, `frontend.yml`) is the full gate. Before a push, run only:
   - the fast checks for the changed side: frontend `npm run check`; backend `uv run ruff check . ../scripts ../tests/tooling ../packaging/backup` and `uv run mypy app operations`; `python3 scripts/assertion_guard.py --base <base-ref>` when tests changed;
   - the focused tests and one batch for the changed files and their direct callers (`scripts/run_tests.py ... --match`, or the frontend specs that the change touches).
-- **Keep full suites off the local machine.** Do not run `scripts/prepush.py`, the full backend coverage gate, the full Playwright suite, fullstack or reset acceptance, or the smoke suite locally, unless the user asks or CI is unavailable.
+- **Keep full suites off the local machine.** Do not run the full backend coverage gate, the full Playwright suite, fullstack or reset acceptance, or the smoke suite locally, unless the user asks or CI is unavailable; the release check below runs only its two runners.
 - **CI decides completion.** After the push, read the CI result. Reproduce a CI failure with the focused test, fix it, and push again. Work is done and a pull request is ready to merge only when CI is green.
-- **When the local gate runs,** it runs each full suite once, under rule zero. Use `--list` to inspect its change classification without running checks. Choose worker and stack counts from measurements and record actual runtimes; elapsed time alone does not reject a complete passing run. Preserve hang and deadline protections, required scenarios, isolation, and cleanup guards.
-- **Fix failures narrowly.** Rerun the failing case and affected batch, then only the failed gate. Never weaken assertions or use blind retries. Use isolated PostgreSQL for database guarantees and preserve runner guards.
-- **Repair commands:** backend `uv run ruff check .`, `uv run mypy app operations`, and `COVERAGE_BASE_REF=<base-ref> uv run python -m tests.fullstack_runner --backend-coverage-only`; frontend `npm run verify`. Do not rerun them after a passing gate unless a failure invalidates that evidence.
+- **Run the release check at a major update.** CI does not run its two suites. From `backend/`, run `uv run python -m tests.smoke_runner`, then `uv run python -m tests.fullstack_runner --acceptance-only`, one at a time, under rule zero. Choose worker and stack counts from measurements and record actual runtimes; elapsed time alone does not reject a complete passing run. Preserve hang and deadline protections, required scenarios, isolation, and cleanup guards.
+- **Fix failures narrowly.** Rerun the failing case and affected batch, then only the failed check. Never weaken assertions or use blind retries. Use isolated PostgreSQL for database guarantees and preserve runner guards.
+- **Repair commands:** backend `uv run ruff check .`, `uv run mypy app operations`, and `COVERAGE_BASE_REF=<base-ref> uv run python -m tests.fullstack_runner --backend-coverage-only`; frontend `npm run verify`. Do not rerun them after a passing CI run unless a failure invalidates that evidence.
 - **Honor explicit test skips:** stop active runs, start no replacements, and report omitted checks.
 - **Documentation-only edits need no tests.**
 - **Clean up disposables after a successful push.** Remove only what this work created: runner-owned stacks (Compose projects `slateops-e2e-*` with their containers, volumes, and networks), test processes and dev servers you started, and scratch files. Check ownership by Compose label and creation time.
 - **Keep what future work uses:** the owned development stack (`slateops-supabase-local-*`) and its volumes, `.env`, installed dependencies, browsers, Docker images, `.agent-runtime/` records, and the summaries under `backend/test-results/` and `frontend/test-results/`.
 
 Correct: "Changed `files/service.py`; ruff, mypy and the `tests/files` integration batch pass; pushed; CI coverage green."
-Wrong: "Finished a review fix; ran the 45-minute prepush to be safe before pushing."
-Correct: "Push succeeded; removed three `slateops-e2e-<run>` stacks created by this gate; kept the dev stack and test summaries."
+Wrong: "Finished a review fix; ran the full backend coverage gate and the full Playwright suite locally to be safe before pushing."
+Correct: "Push succeeded; removed three `slateops-e2e-<run>` stacks created by this release check; kept the dev stack and test summaries."
 Wrong: "Push succeeded; ran `docker system prune -a --volumes`."
 
 ## Task scope and approval
@@ -132,4 +131,3 @@ Wrong: "The assignment named no skill, so read none."
 - Handle small tasks directly; delegate substantial bounded work when it improves quality or time. Planning-only requests produce investigation and a plan, not implementation.
 - MCPs and plugins are inherited capabilities, not authorization. Use Context7 for unresolved library facts. If a skill expects an unavailable database MCP, report it and use the configured CLI path only when sufficient and authorized. Add no MCP without demonstrated need.
 - Change persistent memory, create goals, or schedule continuations only when requested. Do not claim background scheduling, automatic retries, per-worker cost tracing, or isolated worktrees unless actually used and verified.
-- After local agent setup changes, run `uv run python ../scripts/agent-task.py doctor` from `backend/`. It checks workflow assets and configuration, not application acceptance.
