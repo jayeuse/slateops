@@ -19,6 +19,18 @@ from app.core.base_model import BaseModel
 
 # Each department added in the Sandbox starts its setup from these (BE-SD6, SD2).
 DEPARTMENT_SETUP_ITEMS = ("groups", "dashboard", "category", "channel")
+# An object that holds all four items, each a boolean. The object test comes first: on an
+# array, `?&` can be true and `->` gives NULL, which a CHECK would let through.
+DEPARTMENT_SETUP_CHECK = " AND ".join(
+    (
+        "jsonb_typeof(department_setup_defaults) = 'object'",
+        "department_setup_defaults ?& array['groups', 'dashboard', 'category', 'channel']",
+        *(
+            f"jsonb_typeof(department_setup_defaults -> '{item}') = 'boolean'"
+            for item in DEPARTMENT_SETUP_ITEMS
+        ),
+    )
+)
 
 
 def _all_setup_items() -> dict[str, bool]:
@@ -75,8 +87,7 @@ class WorkspaceProfile(BaseModel):
             "jsonb_typeof(ip_allow_list) = 'array'", name="ck_workspace_profiles_ip_allow_list"
         ),
         CheckConstraint(
-            "jsonb_typeof(department_setup_defaults) = 'object'",
-            name="ck_workspace_profiles_department_setup_defaults",
+            DEPARTMENT_SETUP_CHECK, name="ck_workspace_profiles_department_setup_defaults"
         ),
     )
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset(

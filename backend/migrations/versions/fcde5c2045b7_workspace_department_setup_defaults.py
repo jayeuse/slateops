@@ -3,8 +3,9 @@
 BE-SD6 (setup spec `docs/specs/sandbox-department-setup.md`, SD2): each organization keeps the
 setup items that a department added in the Sandbox starts with. The column has a constant
 server default, so PostgreSQL gives every existing organization all four items without a
-rewrite; nothing else changes. The CHECK repeats the `ip_allow_list` pattern (autogenerate does
-not emit CHECK constraints on an existing table); the API validates the four keys.
+rewrite; nothing else changes. The CHECK (added by hand: autogenerate does not emit CHECK
+constraints on an existing table) requires an object with all four items, each a boolean; the
+API also validates them.
 
 `organizations` has table-level grants and no RLS, so no grant or policy is added. The revision
 changes no `audit_logs` row (K36). The downgrade drops the column and its saved choices.
@@ -27,6 +28,16 @@ depends_on: str | Sequence[str] | None = None
 
 CHECK = "ck_workspace_profiles_department_setup_defaults"
 ALL_ITEMS = """'{"groups": true, "dashboard": true, "category": true, "channel": true}'::jsonb"""
+# The object test comes first: on an array, `?&` can be true and `->` gives NULL, which a
+# CHECK would let through.
+SHAPE = (
+    "jsonb_typeof(department_setup_defaults) = 'object'"
+    " AND department_setup_defaults ?& array['groups', 'dashboard', 'category', 'channel']"
+    " AND jsonb_typeof(department_setup_defaults -> 'groups') = 'boolean'"
+    " AND jsonb_typeof(department_setup_defaults -> 'dashboard') = 'boolean'"
+    " AND jsonb_typeof(department_setup_defaults -> 'category') = 'boolean'"
+    " AND jsonb_typeof(department_setup_defaults -> 'channel') = 'boolean'"
+)
 
 
 def upgrade() -> None:
@@ -39,9 +50,7 @@ def upgrade() -> None:
             nullable=False,
         ),
     )
-    op.create_check_constraint(
-        CHECK, "organizations", "jsonb_typeof(department_setup_defaults) = 'object'"
-    )
+    op.create_check_constraint(CHECK, "organizations", SHAPE)
 
 
 def downgrade() -> None:

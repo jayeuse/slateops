@@ -1,5 +1,6 @@
 from unittest.mock import Mock
 
+import pytest
 from sqlalchemy.orm import Session
 
 from app.main import create_app
@@ -98,6 +99,38 @@ def test_document_write_refuses_an_older_format_with_a_clear_422(monkeypatch) ->
     assert [error["msg"] for error in response.json()["detail"]] == [
         "This design uses an older format and cannot be opened."
     ]
+    replace.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        {"channel": "no"},
+        {"channel": 0},
+        {"channel": None},
+        {"channel": True, "board": False},
+    ],
+    ids=["string", "number", "null", "unknown-item"],
+)
+def test_document_write_refuses_a_department_setup_that_is_not_four_booleans(
+    monkeypatch, setup: dict[str, object]
+) -> None:
+    import app.systems.sandbox.designs.router as designs_router
+    from tests.rbac.support import _client, make_user
+
+    database = Mock(spec=Session)
+    application = create_app()
+    replace = Mock()
+    monkeypatch.setattr(designs_router, "replace_document", replace)
+    document = sample_document().model_dump(by_alias=True)
+    document["design"]["departments"][0]["setup"] = setup
+
+    response = _client(application, make_user("writer"), database).put(
+        "/api/sandbox/document", json={"expectedRevision": 1, "document": document}
+    )
+
+    assert response.status_code == 422
+    assert all("setup" in error["loc"] for error in response.json()["detail"])
     replace.assert_not_called()
 
 

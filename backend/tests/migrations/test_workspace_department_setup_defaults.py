@@ -1,5 +1,5 @@
-"""The setup-defaults revision gives every existing organization all four items, and its
-downgrade removes only the column (BE-SD6)."""
+"""The setup-defaults revision gives every existing organization all four items, refuses any
+other shape at the database, and its downgrade removes only the column (BE-SD6)."""
 
 import os
 from collections.abc import Iterator
@@ -18,6 +18,15 @@ pytestmark = pytest.mark.integration
 
 REVISION = "fcde5c2045b7"
 PREVIOUS = "f9809993d133"
+# Each value takes a different branch of the CHECK: not an object, a missing item, a value
+# that is a string, a number, or a JSON null.
+REFUSED_VALUES = (
+    "[]",
+    '{"groups": true, "dashboard": true, "category": true}',
+    '{"groups": "yes", "dashboard": true, "category": true, "channel": true}',
+    '{"groups": true, "dashboard": 1, "category": true, "channel": true}',
+    '{"groups": true, "dashboard": true, "category": true, "channel": null}',
+)
 
 
 @pytest.fixture
@@ -71,14 +80,18 @@ def test_upgrade_sets_all_four_items_on_existing_organizations_and_downgrade_dro
             assert _defaults(connection, org_id) == {
                 "groups": True, "dashboard": True, "category": True, "channel": True,
             }
-            with pytest.raises(IntegrityError, match="ck_workspace_profiles_department_setup"):
-                connection.execute(
-                    text(
-                        "UPDATE public.organizations SET department_setup_defaults = '[]' "
-                        "WHERE id = :id"
-                    ),
-                    {"id": org_id},
-                )
+        for refused in REFUSED_VALUES:
+            refused_id = uuid7()
+            insert = text(
+                "INSERT INTO public.organizations (id, slug, display_name, timezone, locale, "
+                "department_setup_defaults) VALUES (:id, :slug, 'Refused', 'UTC', 'en-US', "
+                "CAST(:value AS jsonb))"
+            )
+            values = {"id": refused_id, "slug": f"setup-refused-{refused_id}", "value": refused}
+            # Never committed: the connection rolls back when it closes.
+            with engine.connect() as connection:
+                with pytest.raises(IntegrityError, match="ck_workspace_profiles_department_setup"):
+                    connection.execute(insert, values)
 
         run_alembic(environment, "downgrade", PREVIOUS)
 
