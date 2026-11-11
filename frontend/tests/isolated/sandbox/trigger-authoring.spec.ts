@@ -469,7 +469,7 @@ test(
         },
       }),
     ).toBe(
-      "When Amount reaches at least 1,000 in Orders, if Paid is Checked or [a field] is not [a value], set Status to Review.",
+      "When Amount reaches at least 1,000 in Orders, if Paid is Checked or [a field], set Status to Review.",
     );
     expect(
       sentenceText({
@@ -504,6 +504,53 @@ test(
     ).toBe(
       "Every Monday at 09:00 in Invoices, set Total to 0 and set Issued to the value of Issued.",
     );
+  },
+);
+
+test(
+  "a step whose field is empty or in another module reads as a missing field, with no stale operator, value or id",
+  { tag: ["@UX-C20", "@UX-C19"] },
+  () => {
+    // Trigger A moved from Orders to Customers: its condition and action
+    // still point at Orders' Amount and Status (a Choice list).
+    expect(sentenceText(changeTriggerModule(largeOrders(), "customers"))).toBe(
+      "When an item is added to Customers, if [a field], set [a field].",
+    );
+    // A new condition and a new action have no field yet.
+    const fresh = addTriggerAction(
+      addTriggerCondition(defaultTrigger(design, "orders"), design),
+      design,
+    );
+    expect(sentenceText(fresh)).toBe(
+      "When an item is added to Orders, if [a field], set [a field].",
+    );
+    // A threshold with no fitting field shows no stale limit either.
+    expect(
+      sentenceText(
+        changeTriggerEvent(
+          {
+            ...largeOrders(),
+            trigger: {
+              kind: "field-changed",
+              moduleId: "orders",
+              fieldId: "number",
+            },
+          },
+          "threshold-crossed",
+          design,
+        ),
+      ),
+    ).toBe(
+      "When [a field] reaches [a value] in Orders, if Amount is at least 100, set Status to Review.",
+    );
+  },
+);
+
+test(
+  "before a field is chosen, a condition offers no operator",
+  { tag: "@UX-C16" },
+  () => {
+    expect(operatorsForField(undefined)).toEqual([]);
   },
 );
 

@@ -53,12 +53,13 @@ function ordered(field: SandboxDocumentField): boolean {
 /**
  * The operators a field offers (TRIG-3): Number, Whole number, Date, and
  * Date and time get all six; every other type gets "is" and "is not". With
- * no field chosen yet, nothing is ruled out.
+ * no field chosen yet, none: an operator means nothing without its field.
  */
 export function operatorsForField(
   field: SandboxDocumentField | undefined,
 ): readonly SandboxComparisonOperator[] {
-  return !field || ordered(field) ? triggerOperators : equalityOperators;
+  if (!field) return [];
+  return ordered(field) ? triggerOperators : equalityOperators;
 }
 
 /** False for a saved operator that its field type does not offer (TRIG-4). */

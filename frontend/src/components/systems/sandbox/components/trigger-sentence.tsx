@@ -90,6 +90,9 @@ function conditionParts(
   design: SandboxDocumentDesign,
 ): SentencePart[] {
   const { part, field } = fieldPart(condition.field, sandboxModule, design);
+  // With no field of the trigger's module, the operator and value belong
+  // to nothing: the part reads as a missing field only (QA-2).
+  if (!field) return [part];
   return [
     part,
     plain(` ${operatorWords[condition.operator]} `),
@@ -105,6 +108,7 @@ function actionParts(
   if (action.kind !== "set-field")
     return [plain(`${action.kind.replaceAll("-", " ")} (can't publish yet)`)];
   const { part, field } = fieldPart(action.target, sandboxModule, design);
+  if (!field) return [plain("set "), part];
   return [
     plain("set "),
     part,
@@ -139,6 +143,15 @@ function eventParts(
         design,
         thresholdFieldFits,
       );
+      if (!field)
+        return [
+          plain("When "),
+          part,
+          plain(" reaches "),
+          missing("a value"),
+          plain(" in "),
+          moduleName,
+        ];
       return [
         plain("When "),
         part,

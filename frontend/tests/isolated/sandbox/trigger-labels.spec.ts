@@ -4,7 +4,7 @@ import {
   operatorWords,
   weekdayOptions,
 } from "../../../src/components/systems/sandbox/components/trigger-flow";
-import { operatorsForField } from "../../../src/components/systems/sandbox/domain/trigger-draft";
+import { triggerOperators } from "../../../src/components/systems/sandbox/domain/trigger-draft";
 import { triggerSentence } from "../../../src/components/systems/sandbox/components/trigger-sentence";
 import type {
   SandboxDocumentDesign,
@@ -112,9 +112,9 @@ test("weekly schedule choices show weekday names and store 1 to 7", () => {
 });
 
 test("operator choices use the sentence words, with is first", () => {
-  // With no field chosen yet, the picker offers every operator, in order.
+  // The order the operator picker lists them in, for a number or date field.
   expect(
-    operatorsForField(undefined).map((operator) => ({
+    triggerOperators.map((operator) => ({
       value: operator,
       label: operatorWords[operator],
     })),

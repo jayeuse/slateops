@@ -381,6 +381,21 @@ function OperatorSelect({
 }) {
   const offered = operatorsForField(field);
   const fits = offered.includes(value);
+  // No field yet (or not one of this module): nothing to choose (QA-2).
+  if (!field)
+    return (
+      <NativeSelect
+        id={id}
+        aria-label={label}
+        aria-describedby={describedBy}
+        className={cn("w-full", className)}
+        value=""
+        disabled
+        onChange={() => undefined}
+      >
+        <NativeSelectOption value="">No field yet</NativeSelectOption>
+      </NativeSelect>
+    );
   return (
     <NativeSelect
       id={id}

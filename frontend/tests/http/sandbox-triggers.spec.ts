@@ -660,7 +660,7 @@ test("the rail edits each step in place and the sentence follows", async ({
     ifStep.getByRole("group", { name: "Condition 2" }),
   ).toBeVisible();
   await ifStep.getByLabel("Condition group operator").selectOption("any");
-  await expect(detail).toHaveAccessibleDescription(/ or a field is a value/);
+  await expect(detail).toHaveAccessibleDescription(/ or a field,/);
   await ifStep.getByRole("button", { name: "Remove condition 2" }).click();
   await expect(ifStep.getByRole("group", { name: "Condition 2" })).toHaveCount(
     0,
