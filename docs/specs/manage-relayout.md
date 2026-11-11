@@ -1,6 +1,6 @@
 # Manage relayout: the Access grammar
 
-> **Status: approved (2026-10-24).** The owner approved the spec; in-scope design decisions made during the work are recorded in the Decisions table. Phase 0 is done (results below). Comps for Audit and Organization are in `.impeccable/mocks/manage/` (renders in `.playwright-mcp/manage-relayout/comp/`). No code has changed.
+> **Status: done (2026-10-24), PR #62; approved 2026-10-24.** The owner approved the spec; in-scope design decisions made during the work are recorded in the Decisions table. Phases 0 to 8 are done; the exit results, with the exceptions for EXIT-3 and EXIT-6, are under the Phase 8 results. Comps for Audit and Organization are in `.impeccable/mocks/manage/` (renders in `.playwright-mcp/manage-relayout/comp/`).
 
 ## Outcome
 

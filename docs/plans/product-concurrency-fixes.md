@@ -1,6 +1,6 @@
 # Product concurrency fixes
 
-Status: Phases 1 and 2 implemented (2026-10-29), not pushed. Phase 3 designs approved. Branch: `sample-pack-realism-p1`, one pull request.
+Status: Phases 1 to 4 done, PR #71 (2026-10-30), with Phase 5 steps 2 and 4; Phase 5 step 3 (the hands-on pass) has no recorded result. The one-pack removal of step 5 is in PR #73.
 
 Done means every phase below is complete in order, and the seven Small packs pass and are populated in the development database in Phase 5. Pack runs use two organizations at a time.
 

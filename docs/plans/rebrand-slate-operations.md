@@ -1,6 +1,6 @@
 # Rebrand: OpenSlate to Slate Operations
 
-Status: slices 1 to 4 committed (2026-11-02). The development sample data is not repopulated yet.
+Status: slices 1 to 4 done (2026-11-02), PR #84; the repository URLs are in PR #85.
 
 ## Decisions
 

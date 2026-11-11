@@ -1,6 +1,6 @@
 # Schema Redesign
 
-> **Status: implementation in progress on `codex/schema-redesign`.** This document records the agreed contract, the reasons for each change, deferred decisions, and delivery order. See the [implementation plan](../plans/schema-redesign-plan.md) for remaining work and [architecture](../architecture/README.md) for current source-backed behavior. Final integration verification and development-instance activation are separate completion steps.
+> **Status: implemented, PR #24 (2026-09-28).** This document records the agreed contract, the reasons for each change, deferred decisions, and delivery order. See the [implementation plan](../plans/schema-redesign-plan.md) for the delivery record and [architecture](../architecture/README.md) for current source-backed behavior. Final integration verification and development-instance activation are separate completion steps.
 
 ## Outcome
 

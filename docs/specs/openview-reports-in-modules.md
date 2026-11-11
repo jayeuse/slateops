@@ -1,6 +1,6 @@
 # OpenView part C: Reports inside module pages
 
-> **Status: approved (2026-10-26).** In-scope design decisions made during the work go into the Decisions table. Part C of the OpenView direction in `docs/specs/openview-relayout.md` (umbrella), after part A (`openview-department-pages.md`, approved) and part B (`openview-dashboard.md`, approved). Comp: `.impeccable/mocks/openview/reports.html` (renders `.playwright-mcp/openview-relayout/comp/reports2-1440.png` and `reports2-empty-1440.png`; `?empty=1`). Revised 2026-10-26 after the owner's review: the layout must explain what a report does. No product code has changed.
+> **Status: built, PR #68 (2026-10-26); EXIT-C6 and EXIT-C8 have no recorded result.** Approved 2026-10-26. In-scope design decisions made during the work go into the Decisions table. Part C of the OpenView direction in `docs/specs/openview-relayout.md` (umbrella), after part A (`openview-department-pages.md`, approved) and part B (`openview-dashboard.md`, approved). Comp: `.impeccable/mocks/openview/reports.html` (renders `.playwright-mcp/openview-relayout/comp/reports2-1440.png` and `reports2-empty-1440.png`; `?empty=1`). Revised 2026-10-26 after the owner's review: the layout must explain what a report does.
 
 ## What a report is
 

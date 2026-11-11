@@ -1,6 +1,6 @@
 # OpenView part A: department pages
 
-> **Status: approved (2026-10-26).** Part A of the OpenView direction in `docs/specs/openview-relayout.md` (the umbrella: owner decisions, baseline, critique, findings, and the slim decisions OD1–OD15). Comp: `.impeccable/mocks/openview/views.html` (render `.playwright-mcp/openview-relayout/comp/deptpages-views-1440.png`; the owner chose this sidebar on 2026-10-26). No product code has changed.
+> **Status: built, PR #68 (2026-10-26); EXIT-A7 and EXIT-A9 have no recorded result.** Approved 2026-10-26. Part A of the OpenView direction in `docs/specs/openview-relayout.md` (the umbrella: owner decisions, baseline, critique, findings, and the slim decisions OD1–OD15). Comp: `.impeccable/mocks/openview/views.html` (render `.playwright-mcp/openview-relayout/comp/deptpages-views-1440.png`; the owner chose this sidebar on 2026-10-26).
 
 ## Outcome
 

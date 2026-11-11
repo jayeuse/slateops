@@ -1,6 +1,6 @@
 # Access UI and UX pass
 
-> **Status: direction approved (2026-10-23).** The owner approved the layout redesign (a dashboard Overview, compact rows, clear buttons) and asked that every Access page stay still on desktop, like the Sandbox. A2, A4, and A7 use the recommendations unless the owner changes them. Phase 0 is done (results below).
+> **Status: done (2026-10-23), PR #60; direction approved 2026-10-23.** The owner approved the layout redesign (a dashboard Overview, compact rows, clear buttons) and asked that every Access page stay still on desktop, like the Sandbox. A2, A4, and A7 use the recommendations unless the owner changes them. Phases 0 to 7 are done; the exit results are under Phase 7.
 
 ## Outcome
 
