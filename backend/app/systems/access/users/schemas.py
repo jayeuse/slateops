@@ -57,6 +57,9 @@ class UserSummaryResponse(BaseModel):
     inactive_people: int = Field(ge=0)
     as_of: datetime
     inactive_days: int = Field(ge=1, le=3650)
+    # Open departments that no active, non-guest, non-administrator account manages
+    # (BE-SD8, R13), in department ID order.
+    departments_without_manager: list[UUID]
 
 
 class AccessEntryResponse(BaseModel):

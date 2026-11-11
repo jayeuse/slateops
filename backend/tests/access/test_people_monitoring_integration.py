@@ -296,6 +296,7 @@ def test_mfa_summary_is_global_and_its_card_predicates_are_the_same_rows(directo
         "inactive_people",
         "as_of",
         "inactive_days",
+        "departments_without_manager",
     }
     for kind, field, expected in (
         ("without", "admins_without_mfa", {"false"}),
@@ -434,6 +435,7 @@ def test_recorded_history_days_reject_noninteger_and_out_of_range_queries(direct
 
 
 def test_recorded_history_endpoints_retain_exact_admin_admission(directory_world):
+    # SD-C33: a member asking for the summary (and its no-manager list) gets 403.
     world = directory_world.world
     with Session(world.owner) as db:
         membership_of(db, world.actor_id).role = "member"
