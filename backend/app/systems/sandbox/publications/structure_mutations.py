@@ -201,8 +201,9 @@ def sync_department_boards(
     before = _board_states(db)
     changes: list[PublicationChange] = []
     for department in db.scalars(select(Department).order_by(Department.id)):
-        board = sync_department_board(db, department, actor_id=actor_id)
-        assert board is not None
+        board = sync_department_board(db, department, actor_id=actor_id, create=True)
+        if board is None:
+            raise RuntimeError("The Board sync returned no Board for a department")
         action = board_action(
             before.get(department.id), board.name, board.status == BoardStatus.ARCHIVED
         )

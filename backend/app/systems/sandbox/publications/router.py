@@ -201,13 +201,12 @@ def _run[Result](db: Session, operation: Callable[[], Result]) -> Result:
         raise _error(error.code, error.message, error.status_code) from error
     except PublicationError as error:
         db.rollback()
-        refusal = _error(error.code, error.message, error.status_code)
+        detail: dict[str, object] = {"code": error.code, "message": error.message}
         if error.blockers:
-            assert isinstance(refusal.detail, dict)
-            refusal.detail["blockers"] = [
+            detail["blockers"] = [
                 blocker.model_dump(by_alias=True, mode="json") for blocker in error.blockers
             ]
-        raise refusal from error
+        raise HTTPException(status_code=error.status_code, detail=detail) from error
     except IntegrityError as error:
         db.rollback()
         raise _error(
