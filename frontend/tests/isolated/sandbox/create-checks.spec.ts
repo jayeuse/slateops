@@ -237,7 +237,7 @@ test("an add that the save would refuse is refused with its reason", () => {
       "field",
       "orders",
       draft("Status", { type: "Select", choices: "Open, Open" }),
-      "Select options must be unique.",
+      "Choices must be unique.",
     ],
     [
       "a name over 80 characters",
@@ -470,7 +470,7 @@ test("a refused Choice list shows a choice problem under Choices and the rest un
     [
       "a repeated choice",
       choiceList("Open, Open"),
-      "Select options must be unique.",
+      "Choices must be unique.",
       "choices",
     ],
     ["an empty name", draft("", { type: "Select" }), "Enter a name.", "name"],

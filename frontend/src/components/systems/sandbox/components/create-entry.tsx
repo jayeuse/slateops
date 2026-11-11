@@ -9,6 +9,8 @@ import {
   type KeyboardEvent,
 } from "react";
 
+import { FileStack } from "lucide-react";
+
 import { DepartmentMark } from "@/components/sandbox/department-mark";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -73,6 +75,11 @@ export type CreateEntryProps = {
   ) => SandboxCommandResult<Design> | Promise<SandboxCommandResult<Design>>;
   /** From `designAddHoldReason`: a publish, lifecycle action, or conflict holds the draft. */
   holdReason: string | null;
+  /**
+   * The department entry's "From a template" (FAST-7): the flow ends, with
+   * the last element it created, and the caller opens "Add from a template".
+   */
+  onFromTemplate?: (lastCreatedId: string | null) => void;
 };
 
 const WIDE_QUERY = "(min-width: 48rem)";
@@ -107,6 +114,7 @@ export function CreateEntry({
   onRequestClose,
   onAdd,
   holdReason,
+  onFromTemplate,
 }: CreateEntryProps) {
   const wide = useWideScreen();
   const entryId = useId();
@@ -141,6 +149,15 @@ export function CreateEntry({
         lastCreated.current = id;
       }}
       onClose={close}
+      onFromTemplate={
+        kind === "department" && onFromTemplate
+          ? () => {
+              if (closed.current) return;
+              closed.current = true;
+              onFromTemplate(lastCreated.current);
+            }
+          : undefined
+      }
       sheet={!wide}
       entryId={entryId}
     />
@@ -157,7 +174,8 @@ export function CreateEntry({
         aria-labelledby={`${entryId}-title`}
         className={cn(
           "slim-ui max-w-[calc(100vw-2rem)] gap-0 p-0",
-          kind === "field" ? "w-96" : "w-85",
+          // The department entry's footer also holds "From a template".
+          kind === "module" ? "w-85" : "w-96",
         )}
       >
         {body}
@@ -186,6 +204,7 @@ function CreateEntryBody({
   onAdd,
   onCreated,
   onClose,
+  onFromTemplate,
   sheet,
   entryId,
 }: {
@@ -196,6 +215,7 @@ function CreateEntryBody({
   onAdd: CreateEntryProps["onAdd"];
   onCreated: (id: string) => void;
   onClose: () => void;
+  onFromTemplate: (() => void) | undefined;
   sheet: boolean;
   entryId: string;
 }) {
@@ -287,6 +307,7 @@ function CreateEntryBody({
       }}
       onAdd={() => void add()}
       onDone={onClose}
+      onFromTemplate={onFromTemplate}
     />
   );
 }
@@ -313,6 +334,8 @@ export type CreateEntryFormProps = {
   onEnter: () => void;
   onAdd: () => void;
   onDone: () => void;
+  /** The department entry's "From a template"; absent for other kinds. */
+  onFromTemplate?: () => void;
 };
 
 /** The entry's controls, without the popover: controlled by `CreateEntry`. */
@@ -331,6 +354,7 @@ export function CreateEntryForm({
   onEnter,
   onAdd,
   onDone,
+  onFromTemplate,
 }: CreateEntryFormProps) {
   const id = useId();
   const refusalId = `${id}-refusal`;
@@ -473,10 +497,24 @@ export function CreateEntryForm({
         data-entry-footer=""
         className={cn(
           "flex items-center gap-2 border-t",
-          sheet ? "px-4 pt-2.5 pb-4" : "px-3.5 py-2.5",
+          sheet ? "flex-wrap px-4 pt-2.5 pb-4" : "px-3.5 py-2.5",
         )}
       >
-        {/* The department entry's "From a template" link (FAST-7) goes here. */}
+        {kind === "department" && onFromTemplate ? (
+          <Button
+            type="button"
+            variant="ghost"
+            className={cn(
+              control,
+              "gap-1.5 px-2 whitespace-nowrap text-[var(--action-text)]",
+              sheet ? "w-full justify-start" : "-ml-2",
+            )}
+            onClick={onFromTemplate}
+          >
+            <FileStack aria-hidden="true" />
+            From a template
+          </Button>
+        ) : null}
         <div className={cn("flex gap-1.5", sheet ? "flex-1" : "ml-auto")}>
           <Button
             type="button"

@@ -9,6 +9,7 @@ import {
   addInEntry,
   createEntry,
   elementBar,
+  expectPinnedDialog,
   openAuthenticatedSandbox,
 } from "./helpers/sandbox-api";
 import {
@@ -619,4 +620,107 @@ test("Add in the entry shows a choice problem under Choices and an empty name un
   await entry.getByRole("button", { name: "Add field" }).click();
   await expect(name).toBeFocused();
   await expect(name).toHaveAccessibleDescription("Enter a name.");
+});
+
+/** Opens "Add from a template" from the toolbar's department entry (FAST-7). */
+async function openTemplateDialog(page: Page): Promise<Locator> {
+  await page
+    .getByRole("toolbar", { name: "Canvas view controls" })
+    .getByRole("button", { name: "Add department", exact: true })
+    .click();
+  await createEntry(page, "Add department")
+    .getByRole("button", { name: "From a template" })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Add from a template" });
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+// UX-C13 (FAST-7)
+test("adding Sales from a template saves it once as Sales 2, selects it, and Undo removes it", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const sandbox = await openAuthenticatedSandbox(page, salesAndFinance());
+  const dialog = await openTemplateDialog(page);
+  const name = dialog.getByRole("textbox", { name: "Name" });
+  await expect(name).toBeFocused();
+
+  const list = dialog.getByRole("listbox", { name: "Template departments" });
+  await list.getByRole("option", { name: /^Sales, 3 modules$/ }).click();
+  // Arrows move the choice; the name follows it until it is typed.
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    list.getByRole("option", { name: /^Finance, 2 modules$/ }).first(),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(name).toHaveValue("Finance 2");
+  await page.keyboard.press("ArrowUp");
+  await expect(
+    list.getByRole("option", { name: /^Sales, 3 modules$/ }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(name).toHaveValue("Sales 2");
+  await expect(name).toHaveAccessibleDescription(
+    "Sales is taken in this design.",
+  );
+  await expect(
+    dialog.getByText("Adds 3 modules and 3 links, without triggers."),
+  ).toBeVisible();
+
+  await dialog.getByRole("button", { name: "Add department" }).click();
+  await expect(dialog).toBeHidden();
+  await expect
+    .poll(async () => (await savedDesign(sandbox)).departments.length)
+    .toBe(3);
+  expect(sandbox.documentWrites()).toBe(1);
+  const saved = sandbox.document();
+  const added = saved.design.departments[2]!;
+  // A new id and the chosen name; no setup value (the default setup).
+  expect(Object.keys(added).sort()).toEqual(["closed", "id", "name"]);
+  expect(added.name).toBe("Sales 2");
+  expect(added.id).not.toBe("sales");
+  expect(
+    saved.design.modules
+      .filter((item) => item.departmentId === added.id)
+      .map((item) => item.name),
+  ).toEqual(["Customers", "Opportunities", "Sales orders"]);
+  expect(saved.design.relationships.map((item) => item.name)).toEqual([
+    "Orders to Shipments",
+    "Invoices to Orders",
+    "Customer opportunities",
+    "Customer sales orders",
+    "Opportunity sales orders",
+  ]);
+  expect(saved.triggers).toEqual([]);
+  // The added department is the selection: its bar shows.
+  await expect(elementBar(page, "Sales 2")).toBeVisible();
+
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect
+    .poll(async () =>
+      (await savedDesign(sandbox)).departments.map((item) => item.name),
+    )
+    .toEqual(["Sales", "Finance"]);
+  expect((await savedDesign(sandbox)).modules).toHaveLength(4);
+});
+
+// FAST-7 at 390: the Sandbox dialog rule on phones.
+test("on a phone Add from a template is one scroller with its close button and Add department in view", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openAuthenticatedSandbox(page, salesAndFinance());
+  const dialog = await openTemplateDialog(page);
+  // The department list comes before the preview.
+  const list = dialog.getByRole("listbox", { name: "Template departments" });
+  const preview = dialog.getByRole("list", { name: "Procurement modules" });
+  const [listBox, previewBox] = await Promise.all([
+    list.boundingBox(),
+    preview.boundingBox(),
+  ]);
+  expect(previewBox!.y).toBeGreaterThan(listBox!.y + listBox!.height);
+  await expectPinnedDialog(
+    dialog,
+    "Close add from a template",
+    dialog.getByRole("button", { name: "Add department" }),
+  );
 });

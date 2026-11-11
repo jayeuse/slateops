@@ -31,6 +31,7 @@ import { addedElementIds } from "../state/save-queue";
 import { ConnectPopover } from "./connect-popover";
 import { CreateEntry } from "./create-entry";
 import { ElementBarControls, type ElementBarOpen } from "./element-bar";
+import { TemplateDepartmentDialog } from "./template-department-dialog";
 
 /** A new relationship's cardinality; it changes in the relationship's settings. */
 export const DEFAULT_CARDINALITY = "One-to-many";
@@ -94,6 +95,12 @@ export function useBuildCreate({
     targetId: string | null;
   } | null>(null);
   const [connectPreview, setConnectPreview] = useState<string | null>(null);
+  // "Add from a template" (FAST-7), opened from the department entry; it
+  // keeps the entry's anchor, which gets focus back.
+  const [templateFrom, setTemplateFrom] = useState<{
+    anchor: HTMLElement;
+    owner: string | null;
+  } | null>(null);
   // A bar stays while focus is in it, and while focus returns to it after
   // its popover closes and the selection moves to the new element.
   const [barFocus, setBarFocus] = useState<string | null>(null);
@@ -171,6 +178,19 @@ export function useBuildCreate({
       );
     settleFocus(current.anchor, current.owner);
   }
+  /** The department entry's "From a template": the entry ends, the dialog opens. */
+  function openTemplateDialog(lastCreatedId: string | null): void {
+    const current = entry;
+    if (current === null) return;
+    closeEntry(lastCreatedId);
+    setTemplateFrom({ anchor: current.anchor, owner: current.owner });
+  }
+  function closeTemplateDialog(): void {
+    const current = templateFrom;
+    if (current === null) return;
+    setTemplateFrom(null);
+    settleFocus(current.anchor, current.owner);
+  }
   function openConnect(
     sourceId: string,
     anchor: HTMLElement | null,
@@ -224,6 +244,7 @@ export function useBuildCreate({
     if (refusedSaveClosesCreate(previousHold.current, next)) {
       if (entry) closeEntry(null);
       if (connect) closeConnect();
+      if (templateFrom) closeTemplateDialog();
     }
     previousHold.current = next;
   }, [addHoldReason, saving]);
@@ -414,6 +435,20 @@ export function useBuildCreate({
         onRequestClose={closeEntry}
         onAdd={addFromEntry}
         holdReason={addHoldReason}
+        onFromTemplate={openTemplateDialog}
+      />
+      <TemplateDepartmentDialog
+        open={templateFrom !== null}
+        design={design}
+        holdReason={addHoldReason}
+        anchor={templateFrom?.anchor ?? null}
+        onAdd={addFromEntry}
+        onAdded={(departmentId) => {
+          // The added department becomes the selection (FAST-7).
+          setSelected(departmentId);
+          closeTemplateDialog();
+        }}
+        onClose={closeTemplateDialog}
       />
       {connectSource ? (
         <ConnectPopover
