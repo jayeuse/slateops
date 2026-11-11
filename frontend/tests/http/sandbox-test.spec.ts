@@ -729,3 +729,22 @@ test("from 640 to 1279 px every Test control keeps a 44 px target", async ({
     expect(box?.height).toBeGreaterThanOrEqual(44);
   }
 });
+
+test("on a phone with no module, Test still leads to Build", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openAuthenticatedSandbox(page, initialDesign);
+  await page.goto("/sandbox?section=test");
+  await expect(
+    page.getByRole("region", { name: "Modules" }).getByText("No modules yet"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Nothing to test yet" }),
+  ).toBeVisible();
+  const openBuild = page.getByRole("button", { name: "Open Build" });
+  const box = await openBuild.boundingBox();
+  expect(box?.height).toBeGreaterThanOrEqual(44);
+  await openBuild.click();
+  await expect(page).not.toHaveURL(/section=test/);
+});

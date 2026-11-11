@@ -36,6 +36,10 @@ test("with no module, the Modules pane says so and shows no search", () => {
   });
   expect(html).toContain("No modules yet");
   expect(html).not.toContain("Search modules");
+  // E7 and the test-empty comp: the reading says what to do next.
+  expect(html).toContain("Nothing to test yet");
+  expect(html).toContain("Add a module in Build to see what it does.");
+  expect(html).toContain(">Open Build<");
 });
 
 test("the Modules search is named by its placeholder and label, with no visible label", () => {

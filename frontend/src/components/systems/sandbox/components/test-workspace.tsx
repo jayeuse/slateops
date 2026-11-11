@@ -479,7 +479,9 @@ export function TestWorkspace({
       aria-label="Modules"
       className={cn(
         "border-border flex min-w-0 flex-col @min-[640px]/test:min-h-0 @min-[640px]/test:border-r",
-        phone && phoneView === "reading" && "hidden",
+        // With no module, a phone shows both panes, list then reading, so
+        // "Open Build" stays in reach (E7, QA-7).
+        phone && moduleCount > 0 && phoneView === "reading" && "hidden",
       )}
     >
       <div className="border-border flex min-h-14 items-center gap-2 border-b px-4 py-2">
@@ -617,12 +619,17 @@ export function TestWorkspace({
       aria-label="Reading"
       className={cn(
         "@container/reading flex min-w-0 flex-col @min-[640px]/test:min-h-0",
-        phone && phoneView === "list" && "hidden",
+        phone && moduleCount > 0 && phoneView === "list" && "hidden",
       )}
     >
       {!reading ? (
         <div className="grid flex-1 place-content-center justify-items-center gap-3 p-8 text-center">
-          <h3 className="font-semibold">Nothing to test yet</h3>
+          <div className="grid gap-1">
+            <h3 className="font-semibold">Nothing to test yet</h3>
+            <p className="text-muted-foreground text-sm">
+              Add a module in Build to see what it does.
+            </p>
+          </div>
           <Button variant="outline" className="min-h-11" onClick={onOpenBuild}>
             Open Build
           </Button>
