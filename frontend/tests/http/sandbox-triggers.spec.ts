@@ -8,8 +8,16 @@ import type { Design } from "../../src/components/systems/sandbox/domain/model";
 import { configuredSandboxDesign } from "../helpers/sandbox-fixtures";
 
 // Phase 4 of the Sandbox UI/UX pass (docs/specs/sandbox-ui-ux-pass.md):
-// TRG-1 to TRG-5. The two-pane list and When/If/Then rail come from the
-// Sandbox relayout (docs/specs/sandbox-relayout.md S5 to S7).
+// TRG-1 to TRG-5. The list and When/If/Then rail come from the Sandbox
+// relayout (docs/specs/sandbox-relayout.md S5 to S7); the structure region,
+// the whole-trigger sentence, the typed pickers, and trigger drafts from
+// docs/specs/sandbox-ux-redesign.md (TRIG-1 to TRIG-7, B1).
+
+/** Chooses an option of a module or field picker (a combobox). */
+async function choose(page: Page, picker: string, option: string) {
+  await page.getByRole("combobox", { name: picker, exact: true }).click();
+  await page.getByRole("option", { name: option, exact: true }).click();
+}
 
 async function openTriggers(page: Page, design?: Design) {
   const sandbox = await openAuthenticatedSandbox(page, design);
@@ -49,14 +57,15 @@ test("a select condition offers option labels and stores the option ID", async (
 }) => {
   const sandbox = await openTriggers(page);
   const settings = page.getByRole("region", { name: "Trigger details" });
-  await page.getByLabel("Condition 1 field").selectOption({ label: "Status" });
+  await choose(page, "Condition 1 field", "Status, Choice list");
   await settings
     .getByLabel("Value", { exact: true })
     .first()
     .selectOption({ label: "In progress" });
-  await expect(
-    page.getByRole("region", { name: "If", exact: true }),
-  ).toHaveAccessibleDescription("Status is In progress");
+  // The whole-trigger sentence names the choice by its label.
+  await expect(settings).toHaveAccessibleDescription(
+    /, if Status is In progress,/,
+  );
 
   await page.getByRole("button", { name: "Save triggers" }).click();
   await expect.poll(sandbox.documentWrites).toBe(1);
@@ -64,7 +73,7 @@ test("a select condition offers option labels and stores the option ID", async (
   const document = sandbox.document();
   const condition = document.triggers[0]!.conditionGroup.conditions[0]!;
   const status = document.design.modules
-    .flatMap((module) => module.fields)
+    .flatMap((modulePicker) => modulePicker.fields)
     .find((field) => field.id === condition.field.fieldId);
   if (status?.config.kind !== "select")
     throw new Error("The condition field is not a select field");
@@ -236,15 +245,13 @@ test("unsaved triggers are marked, a step Save will refuse warns first, and Ctrl
   await expect(list.getByText("Unsaved", { exact: true })).toHaveCount(0);
 
   // A required field with no value: the condition says so before Save.
-  await page
-    .getByLabel("Condition 1 field")
-    .selectOption({ label: "Request number" });
+  await choose(page, "Condition 1 field", "Request number, Text");
   await expect(list.getByText("Unsaved", { exact: true })).toHaveCount(1);
   await expect(condition).toHaveAccessibleDescription(
     "Request number is required.",
   );
 
-  await page.getByLabel("Condition 1 field").selectOption({ label: "Title" });
+  await choose(page, "Condition 1 field", "Title, Text");
   await expect(condition).not.toContainText("is required");
   await page.keyboard.press("ControlOrMeta+s");
   await expect.poll(sandbox.documentWrites).toBe(1);
@@ -343,34 +350,306 @@ test("a discard's Undo ends at the next edit", async ({ page }) => {
   await expect(page.getByText(/· 1 unsaved trigger change$/)).toBeVisible();
 });
 
-// Phase 8 (S25): a new trigger's empty required value warns once the step
-// is left or Save is tried, not as it opens; Save still refuses it.
-test("a new trigger warns about a required value only after it is left or Save is tried", async ({
-  page,
-}) => {
-  const sandbox = await openTriggers(page);
-  const create = page.getByRole("button", { name: "New trigger", exact: true });
-  await create.click();
-  const detail = page.getByRole("region", { name: "Trigger details" });
-  const action = detail.getByRole("group", { name: "Action 1" });
-  await expect(action).toBeVisible();
-  await expect(detail).not.toContainText("is required");
+// B1 rule c and T8: a new trigger starts empty (UXD-7), and Save checks it
+// in the browser first: no request, the save bar names the first missing
+// part, the row says Incomplete, and focus lands on the empty control.
+test(
+  "Save refuses an incomplete trigger with no request and points at its empty part",
+  { tag: ["@UX-C18", "@UX-C15", "@UX-C21"] },
+  async ({ page }) => {
+    const sandbox = await openTriggers(page);
+    const list = page.getByRole("navigation", { name: "Trigger list" });
+    const detail = page.getByRole("region", { name: "Trigger details" });
+    const modulePicker = page.getByRole("combobox", {
+      name: "Event module",
+      exact: true,
+    });
+    await page
+      .getByRole("button", { name: "New trigger", exact: true })
+      .click();
+    // Module empty and focused; the sentence reads the missing parts, and
+    // no required-value note shows as the trigger opens.
+    await expect(modulePicker).toBeFocused();
+    await expect(detail).not.toContainText("is required");
+    await expect(modulePicker).toHaveText(/Choose a module/);
+    await expect(detail).toHaveAccessibleDescription(
+      "When an item is added to a module, no action yet.",
+    );
 
-  await page.getByRole("button", { name: "Save triggers" }).click();
-  await expect(action).toHaveAccessibleDescription(
-    "Request number is required.",
-  );
-  expect(sandbox.documentWrites()).toBe(0);
+    await page.getByRole("button", { name: "Save triggers" }).click();
+    await expect(
+      page.getByText("1 trigger is incomplete; choose a module.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      list
+        .getByRole("button", { name: /New trigger/ })
+        .getByText("Incomplete", { exact: true }),
+    ).toBeVisible();
+    await expect(modulePicker).toBeFocused();
+    expect(sandbox.documentWrites()).toBe(0);
 
-  // Another new trigger: leaving its empty value shows the same note.
-  await create.click();
-  await expect(action).not.toContainText("is required");
-  await action.getByRole("textbox").first().focus();
-  await page.keyboard.press("Tab");
-  await expect(action).toHaveAccessibleDescription(
-    "Request number is required.",
-  );
-});
+    // Modules are grouped by department, with their field counts.
+    await modulePicker.click();
+    await expect(
+      page.getByRole("group", { name: "Commercial" }).getByRole("option", {
+        name: "Customers, 4 fields",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page
+      .getByRole("option", { name: "Service requests, 4 fields", exact: true })
+      .click();
+    await expect(
+      page.getByText("1 trigger is incomplete; add an action.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+
+    // Then offers Set a field only; the new action starts with no field.
+    const then = page.getByRole("region", { name: "Then", exact: true });
+    await then.getByRole("button", { name: "Add action" }).click();
+    const action = then.getByRole("group", { name: "Action 1" });
+    await expect(action).toHaveAccessibleDescription("Choose a field.");
+    // A chosen field with a required, empty value: Save still refuses it.
+    await choose(page, "Set field target", "Request number, Text");
+    await expect(action).toHaveAccessibleDescription(
+      "Request number is required.",
+    );
+    await page.getByRole("button", { name: "Save triggers" }).click();
+    expect(sandbox.documentWrites()).toBe(0);
+
+    await action.getByRole("textbox").fill("R-100");
+    await page.getByRole("button", { name: "Save triggers" }).click();
+    await expect.poll(sandbox.documentWrites).toBe(1);
+    await expect(list.getByText("Incomplete", { exact: true })).toHaveCount(0);
+  },
+);
+
+test(
+  "Save in the leave dialog refuses an incomplete trigger and stays open",
+  { tag: "@UX-C18" },
+  async ({ page }) => {
+    const sandbox = await openTriggers(page);
+    const dialog = page.getByRole("dialog", {
+      name: "Unsaved trigger changes",
+    });
+    await page
+      .getByRole("button", { name: "New trigger", exact: true })
+      .click();
+    await page.getByRole("link", { name: "Build", exact: true }).click();
+    await dialog.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(dialog).toContainText(
+      "1 trigger is incomplete; choose a module.",
+    );
+    await expect(dialog).toBeVisible();
+    await expect(page).toHaveURL(/section=triggers/);
+    expect(sandbox.documentWrites()).toBe(0);
+  },
+);
+
+test(
+  "the structure region shows the module's fields, types and links beside the editor",
+  { tag: "@UX-C14" },
+  async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const sandbox = await openTriggers(page);
+    await page.getByLabel("Trigger name").fill("Edited alert");
+    const region = page.getByRole("complementary", { name: "Structure" });
+    await expect(region).toBeVisible();
+    await expect(region).toContainText("Service requests");
+    await expect(region).toContainText("Operations");
+    await expect(
+      region.getByRole("listitem").filter({ hasText: "Title" }),
+    ).toContainText("Text");
+    await expect(
+      region.getByRole("listitem").filter({ hasText: "Status" }),
+    ).toContainText("Choice list");
+    await expect(
+      region.getByRole("listitem").filter({ hasText: "Equipment" }),
+    ).toContainText("Links to");
+    // Beside the editor, not instead of it; the unsaved edit stays.
+    const editor = await page
+      .getByRole("region", { name: "Trigger details" })
+      .boundingBox();
+    expect((await region.boundingBox())!.x).toBeGreaterThan(
+      editor!.x + editor!.width,
+    );
+    await expect(page.getByLabel("Trigger name")).toHaveValue("Edited alert");
+    await expect(page.locator("[data-sandbox-save-state]")).toHaveText(
+      /· 1 unsaved trigger change$/,
+    );
+    await expect(page).toHaveURL(/section=triggers/);
+    expect(sandbox.documentWrites()).toBe(0);
+  },
+);
+
+// The list row rule (Product Designer, PR1 gate R5): status 2.75rem, the
+// name the only part that clips (8rem floor), one badge on a second line
+// under the name, and the event as its 16px icon at every width.
+test(
+  "trigger list rows fit their pane with one badge under the name and the event as an icon",
+  { tag: "@UX-C18" },
+  async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openTriggers(page, listDesign);
+    const list = page.getByRole("navigation", { name: "Trigger list" });
+    const rows = list.getByRole("button");
+    const newRow = rows.filter({ hasText: "New trigger" });
+    const longName = list.getByText(
+      "Flag status changes for the operations follow-up review",
+      { exact: true },
+    );
+    const fits = async (locator: typeof list) =>
+      locator.evaluate((element) => element.scrollWidth - element.clientWidth);
+    const close = (actual: number, expected: number) =>
+      expect(Math.abs(actual - expected)).toBeLessThanOrEqual(1);
+    async function checkRows(unmarked: number, marked: number) {
+      expect(await fits(list)).toBe(0);
+      for (const row of await rows.all()) {
+        expect(await fits(row)).toBe(0);
+        const box = (await row.boundingBox())!;
+        const badged =
+          (await row.getByText(/^(Unsaved|Incomplete)$/).count()) > 0;
+        close(box.height, badged ? marked : unmarked);
+        // Status cell 2.75rem; the event is a 16px icon inside the row.
+        close((await row.getByText(/^(On|Off)$/).boundingBox())!.width, 44);
+        const icon = (await row.locator("svg").boundingBox())!;
+        close(icon.width, 16);
+        close(icon.height, 16);
+        expect(icon.x + icon.width).toBeLessThanOrEqual(box.x + box.width);
+        // No event word shows; it stays for assistive technology.
+        const word = row.getByText(/^(Item added|Schedule|Field changed)$/);
+        expect((await word.boundingBox())!.width).toBeLessThanOrEqual(1);
+      }
+      // The name never drops below 8rem, and a long name ends in an ellipsis.
+      const name = (await longName.boundingBox())!;
+      expect(name.width).toBeGreaterThanOrEqual(128);
+      expect(await fits(longName)).toBeGreaterThan(0);
+    }
+    async function checkBadge(word: "Unsaved" | "Incomplete") {
+      const other = word === "Unsaved" ? "Incomplete" : "Unsaved";
+      await expect(newRow.getByText(word, { exact: true })).toHaveCount(1);
+      await expect(newRow.getByText(other, { exact: true })).toHaveCount(0);
+      const badge = (await newRow
+        .getByText(word, { exact: true })
+        .boundingBox())!;
+      const name = (await newRow
+        .getByText("New trigger", { exact: true })
+        .boundingBox())!;
+      const row = (await newRow.boundingBox())!;
+      close(badge.x, name.x);
+      expect(badge.y).toBeGreaterThanOrEqual(name.y + name.height);
+      expect(badge.x + badge.width).toBeLessThanOrEqual(row.x + row.width);
+      expect(badge.y + badge.height).toBeLessThanOrEqual(row.y + row.height);
+    }
+
+    // T2: a new trigger is Unsaved only.
+    await page
+      .getByRole("button", { name: "New trigger", exact: true })
+      .click();
+    await checkBadge("Unsaved");
+    // T8: Save refuses it; the row is Incomplete only.
+    await page.getByRole("button", { name: "Save triggers" }).click();
+    await checkBadge("Incomplete");
+    await expect(newRow).toHaveAccessibleName(
+      "On, New trigger, Item added, Incomplete",
+    );
+
+    for (const size of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 1600, height: 900 },
+    ]) {
+      await page.setViewportSize(size);
+      await checkRows(40, 64);
+      await checkBadge("Incomplete");
+    }
+    // No page scroll at 1280×720.
+    await page.setViewportSize({ width: 1280, height: 720 });
+    expect(
+      await page.evaluate(
+        () =>
+          document.scrollingElement!.scrollHeight -
+          document.scrollingElement!.clientHeight,
+      ),
+    ).toBeLessThanOrEqual(0);
+    // The event word still finds rows.
+    await page
+      .getByRole("searchbox", { name: "Search triggers" })
+      .fill("added");
+    await expect(rows).toHaveCount(2);
+    await page.getByRole("searchbox", { name: "Search triggers" }).fill("");
+
+    // On a phone: 52px rows, 76px with a badge.
+    await page.setViewportSize({ width: 390, height: 844 });
+    // Narrowing mid-edit keeps the trigger in view; Back shows the list.
+    await page
+      .getByRole("button", { name: "Back to Triggers", exact: true })
+      .click();
+    await expect(list).toBeVisible();
+    await checkRows(52, 76);
+  },
+);
+
+test(
+  "on a phone, picker options are 44px tall",
+  { tag: "@UX-C15" },
+  async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const sandbox = await openAuthenticatedSandbox(page);
+    await page.goto("/sandbox?section=triggers");
+    await page
+      .getByRole("navigation", { name: "Trigger list" })
+      .getByRole("button", { name: sandbox.document().triggers[0]!.name })
+      .click();
+    await page
+      .getByRole("combobox", { name: "Condition 1 field", exact: true })
+      .click();
+    // The picker's own list: closed native selects on the page (Event,
+    // operator) hold options of their own.
+    const options = page.getByRole("listbox").getByRole("option");
+    await expect(options).toHaveCount(4);
+    for (const option of await options.all())
+      expect((await option.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  },
+);
+
+test(
+  "on a phone the module's fields open as a sheet one action away",
+  { tag: "@UX-C14" },
+  async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const sandbox = await openAuthenticatedSandbox(page);
+    await page.goto("/sandbox?section=triggers");
+    const name = sandbox.document().triggers[0]!.name;
+    await page
+      .getByRole("navigation", { name: "Trigger list" })
+      .getByRole("button", { name })
+      .click();
+    await page.getByLabel("Trigger name").fill("Edited on a phone");
+    await expect(
+      page.getByRole("complementary", { name: "Structure" }),
+    ).toBeHidden();
+    const open = page.getByRole("button", {
+      name: "Service requests fields",
+      exact: true,
+    });
+    expect((await open.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await open.click();
+    const sheet = page.getByRole("dialog", { name: "Service requests" });
+    await expect(sheet).toContainText("Request number");
+    await expect(sheet).toContainText("Choice list");
+    await sheet.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(sheet).toBeHidden();
+    await expect(open).toBeFocused();
+    await expect(page.getByLabel("Trigger name")).toHaveValue(
+      "Edited on a phone",
+    );
+    expect(sandbox.documentWrites()).toBe(0);
+  },
+);
 
 test("on a phone, choosing a trigger shows its detail first, with Back", async ({
   page,
@@ -391,10 +670,10 @@ test("on a phone, choosing a trigger shows its detail first, with Back", async (
   // The page title and the heading show whole, below the sticky app bar.
   await expectBelowAppBar(page, page.getByRole("heading", { level: 1 }));
   await expectBelowAppBar(page, heading);
-  // The detail is the rail: each step carries its own one-line summary.
-  await expect(
-    detail.getByRole("region", { name: "When", exact: true }),
-  ).toHaveAccessibleDescription("An item is added in Service requests");
+  // The whole-trigger sentence describes the detail.
+  await expect(detail).toHaveAccessibleDescription(
+    /^When an item is added to Service requests/,
+  );
   await expect(detail.getByLabel("Trigger name")).toBeVisible();
   // The Status switch has a tap target past its box: a click 20 px to its
   // right toggles it.
@@ -476,31 +755,33 @@ test("Status says On or Off beside its switch, and the list row follows", async 
   expect(sandbox.documentWrites()).toBe(0);
 });
 
-test("the rail edits each step in place and its summary follows", async ({
+test("the rail edits each step in place and the sentence follows", async ({
   page,
 }) => {
   const sandbox = await openTriggers(page);
+  const detail = page.getByRole("region", { name: "Trigger details" });
   const when = page.getByRole("region", { name: "When", exact: true });
   const ifStep = page.getByRole("region", { name: "If", exact: true });
   const then = page.getByRole("region", { name: "Then", exact: true });
-  await expect(when).toHaveAccessibleDescription(
-    "An item is added in Service requests",
+  await expect(detail).toHaveAccessibleDescription(
+    /^When an item is added to Service requests,/,
   );
   await expect(then.getByRole("group", { name: "Action 1" })).toBeVisible();
   await then.getByRole("button", { name: "Add action" }).click();
   await expect(then.getByLabel("Set field target")).toBeVisible();
 
   // The fields live in their step: the event changes the When rows.
+  // A new event keeps the module (TRIG-5).
   await when.getByLabel("Event", { exact: true }).selectOption("schedule");
-  await expect(when).toHaveAccessibleDescription(
-    "Daily at 09:00 in Service requests",
+  await expect(detail).toHaveAccessibleDescription(
+    /^Every day at 09:00 in Service requests,/,
   );
   await expect(when.getByLabel("Frequency")).toHaveValue("daily");
   await expect(when.getByLabel("Weekday")).toHaveCount(0);
   await when.getByLabel("Frequency").selectOption("weekly");
   await expect(when.getByLabel("Weekday")).toHaveValue("1");
-  await expect(when).toHaveAccessibleDescription(
-    "Every Monday at 09:00 in Service requests",
+  await expect(detail).toHaveAccessibleDescription(
+    /^Every Monday at 09:00 in Service requests,/,
   );
 
   // All or Any shows only from two conditions.
@@ -510,7 +791,7 @@ test("the rail edits each step in place and its summary follows", async ({
     ifStep.getByRole("group", { name: "Condition 2" }),
   ).toBeVisible();
   await ifStep.getByLabel("Condition group operator").selectOption("any");
-  await expect(ifStep).toHaveAccessibleDescription(/ or /);
+  await expect(detail).toHaveAccessibleDescription(/ or a field,/);
   await ifStep.getByRole("button", { name: "Remove condition 2" }).click();
   await expect(ifStep.getByRole("group", { name: "Condition 2" })).toHaveCount(
     0,
@@ -567,7 +848,7 @@ test("the attention count is announced when it changes and focus moves to the ti
   // drops the count to one.
   const then = page.getByRole("region", { name: "Then", exact: true });
   await then.getByRole("button", { name: "Add action" }).click();
-  await then.getByLabel("Set field target").selectOption({ label: "Title" });
+  await choose(page, "Set field target", "Title, Text");
   await then.getByRole("button", { name: "Remove action 1" }).click();
   await then.getByRole("textbox").fill("Follow up");
   await page.getByRole("button", { name: "Save triggers" }).click();
@@ -580,7 +861,7 @@ test("the attention count is announced when it changes and focus moves to the ti
     .getByRole("button", { name: /Second request alert/ })
     .click();
   await then.getByRole("button", { name: "Add action" }).click();
-  await then.getByLabel("Set field target").selectOption({ label: "Title" });
+  await choose(page, "Set field target", "Title, Text");
   await then.getByRole("button", { name: "Remove action 1" }).click();
   await then.getByRole("textbox").fill("Follow up");
   await attention.focus();

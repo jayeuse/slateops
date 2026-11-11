@@ -7,13 +7,14 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from sqlalchemy import event, func, select
+from sqlalchemy import event, func, select, text
 
 from app.core.config import get_settings
 from app.systems.access.users.models import Membership
 from app.systems.comms.conversations.models import CommsConversation
 from app.systems.comms.messages.models import CommsMessage
 from app.systems.manage.audit.models import AuditLog
+from app.systems.sandbox.derived.models import SandboxDerivedObject
 from app.systems.sandbox.lifecycle import challenge_verification
 from app.systems.sandbox.lifecycle.exceptions import LifecycleInvalidCredentials
 from tests.comms.routes.message_support import _ok, send
@@ -154,6 +155,51 @@ def test_purge_removes_owned_graph_and_reports_without_content_in_audit(
             "Purge source canary", "Purge reply canary", "Purge broadcast canary",
             "Purge reason canary",
         ))
+
+
+def test_purge_of_a_derived_channel_keeps_its_link_with_no_target(purge_case):
+    """SD-C24: an administrator purges a derived channel; its link stays, released and audited."""
+    case, org = purge_case, purge_case.world.first
+    with case.world.owner.begin() as connection:
+        connection.execute(text(
+            "UPDATE public.comms_conversations SET scope = 'department',"
+            " department_id = :department WHERE id = :conversation"
+        ), {"department": org.department, "conversation": org.conversation})
+    with case.world.session(org) as db:
+        link = SandboxDerivedObject(
+            org_id=org.id, department_id=org.department, role="channel",
+            conversation_id=org.conversation,
+        )
+        db.add(link)
+        db.commit()
+        link_id = link.id
+    try:
+        admin, path = archived(case)
+        preview = _ok(admin.post(path + "/purge/preview"))
+        assert _ok(admin.post(path + "/purge", json=confirmation(preview)))[
+            "purged_message_count"
+        ] == 0
+        assert admin.get(path).status_code == 404
+        with case.world.session(org) as db:
+            assert db.get(CommsConversation, org.conversation) is None
+            stored = db.get(SandboxDerivedObject, link_id)
+            assert stored is not None
+            assert (stored.department_id, stored.role, stored.conversation_id) == (
+                org.department, "channel", None,
+            )
+            released = db.scalars(select(AuditLog).where(
+                AuditLog.org_id == org.id, AuditLog.entity_id == link_id,
+                AuditLog.action == "update",
+            )).one()
+            assert released.entity_type == "sandbox_derived_objects"
+            assert released.department_id == org.department
+            assert released.before["conversation_id"] == str(org.conversation)
+            assert released.after["conversation_id"] is None
+    finally:
+        with case.world.owner.begin() as connection:
+            connection.execute(
+                text("DELETE FROM public.sandbox_derived_objects WHERE id = :id"), {"id": link_id},
+            )
 
 
 def test_password_success_does_not_preserve_admin_authority_after_demotion(purge_case, monkeypatch):

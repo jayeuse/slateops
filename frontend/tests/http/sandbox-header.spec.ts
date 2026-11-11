@@ -378,3 +378,155 @@ test("template cards are one radio group that arrow keys move through", async ({
     page.getByRole("button", { name: "Use Finance, accounting & sales" }),
   ).toBeVisible();
 });
+
+/** The setup a publish derives for one new department (BE-SD2), in R2 order. */
+function newDepartmentChanges(id: string, name: string) {
+  const change = (kind: string, role: string, label: string) => ({
+    kind,
+    action: "create",
+    sandboxId: `${id}#${role}`,
+    label,
+  });
+  return [
+    { kind: "department", action: "create", sandboxId: id, label: name },
+    change("group", "managers", `${name} managers · manage`),
+    change("group", "members", `${name} members · write`),
+    change("group", "viewers", `${name} viewers · read`),
+    change("dashboard", "dashboard", `${name} dashboard`),
+    change("board", "board", name),
+    change("category", "category", name),
+    change("channel", "channel", name),
+  ];
+}
+
+function withNewDepartments(departments: Array<{ id: string; name: string }>) {
+  return {
+    ...configuredSandboxDesign,
+    departments: [
+      ...configuredSandboxDesign.departments,
+      ...departments.map((item) => ({ ...item, closed: false })),
+    ],
+    rules: [],
+  };
+}
+
+// SD-C1, SD-C6, SD-C21 (contributor); states S1, S4, S5 of the setup design.
+test("the review lists each new department's setup, and a taken group name blocks Publish", async ({
+  page,
+}) => {
+  const taken =
+    'Sales needs the group name "Sales managers", which "sales MANAGERS" already uses';
+  const twice = 'Sales and sales need the same group name "Sales managers"';
+  await openAuthenticatedSandbox(
+    page,
+    withNewDepartments([
+      { id: "sales", name: "Sales" },
+      { id: "sales-lower", name: "sales" },
+    ]),
+    {
+      previewChanges: [
+        ...newDepartmentChanges("sales", "Sales"),
+        ...newDepartmentChanges("sales-lower", "sales"),
+      ],
+      previewBlockers: [
+        { code: "derived_name_unavailable", message: taken, targetId: "sales" },
+        {
+          code: "derived_name_unavailable",
+          message: twice,
+          targetId: "sales-lower",
+        },
+      ],
+    },
+  );
+  await page.getByRole("button", { name: "Review & Publish" }).click();
+  const dialog = page.getByRole("dialog", { name: "Review & Publish" });
+  // Every change is new, so the summary says it once and rows carry no chip.
+  await expect(
+    dialog.getByText(
+      "2 new departments · 6 new groups · 2 new dashboards · 2 new Boards · 2 new categories · 2 new channels",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    dialog
+      .getByRole("list", { name: "Setup for Sales", exact: true })
+      .getByRole("listitem"),
+  ).toHaveText([
+    /^Group\s*Sales managers · manage$/,
+    /^Group\s*Sales members · write$/,
+    /^Group\s*Sales viewers · read$/,
+    /^Dashboard\s*Sales dashboard$/,
+    /^Board\s*Sales$/,
+    /^Category\s*Sales$/,
+    /^Channel\s*Sales$/,
+  ]);
+  await expect(
+    dialog.getByText("Not in the sidebar until it has a module."),
+  ).toHaveCount(2);
+
+  // The blockers keep the setup listed, disable Publish, and open the
+  // department in Build.
+  const blocked = dialog
+    .getByRole("alert")
+    .filter({ hasText: "Publishing is blocked" });
+  await expect(blocked.getByRole("listitem")).toHaveText([
+    new RegExp(`^${taken}\\s*Show in Build$`),
+    new RegExp(`^${twice}\\s*Show in Build$`),
+  ]);
+  await expect(
+    dialog.getByRole("button", { name: "Publish changes" }),
+  ).toBeDisabled();
+  await expect(dialog.getByLabel("Your password")).toBeDisabled();
+  await blocked.getByRole("button", { name: "Show in Build" }).first().click();
+  await expect(dialog).toBeHidden();
+  await expect(page).toHaveURL(/[?&]inspect=sales(&|$)/);
+  await expect(page).toHaveURL(/[?&]section=build(&|$)/);
+});
+
+// SD-C22 (contributor); state S6: a 150-character department name gives
+// group labels of up to 168 characters, which wrap on a phone.
+test("on a phone a long department name wraps in the review without sideways scroll", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  // One long word: the label must break inside it, not only at spaces.
+  const name = `Sales ${"Service".repeat(21)}`.slice(0, 150);
+  expect(name).toHaveLength(150);
+  // The review shows the server's labels as they are. A live department name
+  // allows 150 characters, but a Sandbox draft name allows 80, so the draft
+  // keeps a short name for the same department and the preview carries the
+  // long one.
+  await openAuthenticatedSandbox(
+    page,
+    withNewDepartments([{ id: "sales", name: "Sales" }]),
+    {
+      previewChanges: [
+        ...newDepartmentChanges("sales", name),
+        {
+          kind: "trigger",
+          action: "update",
+          sandboxId: "alert",
+          label: "Alert",
+        },
+      ],
+    },
+  );
+  await page.getByRole("button", { name: "Review & Publish" }).click();
+  const dialog = page.getByRole("dialog", { name: "Review & Publish" });
+  const managers = dialog
+    .getByRole("list", { name: `Setup for ${name}` })
+    .getByRole("listitem")
+    .first();
+  await expect(managers).toContainText(`${name} managers · manage`);
+  const [row, frame] = await Promise.all([
+    managers.boundingBox(),
+    dialog.boundingBox(),
+  ]);
+  if (!row || !frame) throw new Error("The review has no box");
+  expect(row.x + row.width).toBeLessThanOrEqual(frame.x + frame.width);
+  expect(
+    await dialog.evaluate(
+      (element) => element.scrollWidth - element.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(0);
+});

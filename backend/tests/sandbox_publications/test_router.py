@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -18,7 +19,12 @@ from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleInvalidCredentials,
     LifecyclePasswordRateLimited,
 )
-from app.systems.sandbox.publications.schemas import PublicationRequest
+from app.systems.sandbox.publications.executor import PublicationError
+from app.systems.sandbox.publications.schemas import (
+    PublicationBlocker,
+    PublicationChange,
+    PublicationRequest,
+)
 from tests.conftest import create_member
 
 
@@ -110,12 +116,26 @@ def test_publication_rechecks_authorization_after_password_transaction(
             raise HTTPException(status_code=403, detail="Forbidden")
         return identity.user
 
+    order: list[str] = []
     monkeypatch.setattr(publication_router, "require_live_session", lambda *_a, **_k: None)
-    monkeypatch.setattr(publication_router, "require_fresh_exact_admin", authorize)
+
+    def reauthorize(*args: object, **kwargs: object) -> User:
+        order.append("reauthorize")
+        return authorize(*args, **kwargs)
+
+    monkeypatch.setattr(publication_router, "require_fresh_exact_admin", reauthorize)
+    monkeypatch.setattr(
+        publication_router, "lock_projection", lambda _db: order.append("projection")
+    )
+
+    def verify(*_args: object) -> object:
+        order.append("password")
+        return identity.user.id
+
     monkeypatch.setattr(
         publication_router,
         "ProviderPasswordGrantClient",
-        lambda _db: SimpleNamespace(verify_password=lambda *_args: identity.user.id),
+        lambda _db: SimpleNamespace(verify_password=verify),
     )
     monkeypatch.setattr(
         publication_router,
@@ -139,6 +159,8 @@ def test_publication_rechecks_authorization_after_password_transaction(
 
     assert denied.value.status_code == 403
     assert checked == 2
+    # SD19 step 1: the projection guard after the password check, before the second check.
+    assert order == ["reauthorize", "password", "projection", "reauthorize"]
     replay.assert_not_called()
     publish.assert_not_called()
 
@@ -155,3 +177,36 @@ def test_publication_integrity_failures_return_a_safe_unavailable_error() -> Non
     assert unavailable.value.status_code == 503
     assert unavailable.value.detail != "database detail"
     database.rollback.assert_called_once()
+
+
+def test_sd_c7_a_blocked_publication_returns_its_blockers() -> None:
+    database = Mock(spec=Session)
+    blocker = PublicationBlocker(
+        code="derived_name_unavailable", message="Sales needs a name", target_id="dep-sales"
+    )
+
+    def blocked() -> None:
+        raise PublicationError("publication_blocked", "Fix the blockers", blockers=(blocker,))
+
+    with pytest.raises(HTTPException) as refused:
+        publication_router._run(database, blocked)
+
+    assert refused.value.status_code == 409
+    assert refused.value.detail == {
+        "code": "publication_blocked",
+        "message": "Fix the blockers",
+        "blockers": [
+            {"code": "derived_name_unavailable", "message": "Sales needs a name",
+             "targetId": "dep-sales"}
+        ],
+    }
+    database.rollback.assert_called_once()
+
+
+@pytest.mark.parametrize("kind", ["group", "dashboard", "board", "category", "channel"])
+def test_sd_c22_a_derived_change_label_up_to_200_characters_is_accepted(kind: str) -> None:
+    change = {"kind": kind, "action": "create", "sandboxId": "dep#managers"}
+
+    assert PublicationChange.model_validate({**change, "label": "L" * 200}).label == "L" * 200
+    with pytest.raises(ValidationError):
+        PublicationChange.model_validate({**change, "label": "L" * 201})

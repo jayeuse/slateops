@@ -37,6 +37,7 @@ from tests.race_support import join, start, wait_until_blocked_by
 pytestmark = pytest.mark.integration
 
 PREVIOUS = "2bbcb1deeee9"
+REVISION = "bd01bc005861"
 DROPPED = "ix_comms_messages_live_roots"
 SEQUENCE_INDEX = "uq_comms_messages_sequence"
 # The D13 definition (`65bf3d1eb512`), as `pg_get_indexdef` prints it.
@@ -207,11 +208,14 @@ def test_the_head_has_no_live_roots_index_and_the_downgrade_restores_d13_a42a(
     upgraded = _indexes(engine)
     assert DROPPED not in upgraded
 
+    # Record only this revision's statements; later revisions change other tables.
+    run_alembic(environment, "downgrade", REVISION)
     with _statements() as down:
         run_alembic(environment, "downgrade", PREVIOUS)
     assert _indexes(engine)[DROPPED] == (D13_DEFINITION, True)
     with _statements() as up:
-        run_alembic(environment, "upgrade", head)
+        run_alembic(environment, "upgrade", REVISION)
+    run_alembic(environment, "upgrade", head)
 
     assert _indexes(engine) == upgraded
     changes = {

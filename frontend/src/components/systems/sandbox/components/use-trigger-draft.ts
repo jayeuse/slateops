@@ -14,15 +14,36 @@ import {
   triggerLiteralError,
   unsavedTriggerChanges,
 } from "../domain/trigger-rules";
+import {
+  checkTriggerDrafts,
+  encodeKeptTriggerDrafts,
+  incompleteTriggerIds,
+  parseKeptTriggerDrafts,
+  type IncompleteTriggers,
+  type SandboxTriggerDraft,
+} from "../domain/trigger-draft";
 import { SandboxCommandError } from "../state/commands";
+
+/** What a refused save returns, beside the words it shows. */
+export type TriggerSaveResult =
+  | { ok: true }
+  | {
+      ok: false;
+      error: string;
+      reference?: string;
+      /** Set when Save refused incomplete triggers before any request. */
+      incomplete?: Pick<IncompleteTriggers, "triggerId" | "step" | "part">;
+    };
 
 /**
  * Unsaved trigger edits. The page owns them, so leaving the Triggers view
  * (a section link, Back, Forward) keeps them, and a copy in session storage
- * survives a reload until the person restores or discards it.
+ * survives a reload until the person restores or discards it. Edits are
+ * trigger drafts (docs/specs/sandbox-ux-redesign.md B1): they may have empty
+ * parts, and Save sends nothing while a changed trigger is incomplete.
  */
 export type TriggerDraft = {
-  draft: SandboxTrigger[];
+  draft: SandboxTriggerDraft[];
   dirty: boolean;
   pending: boolean;
   /** Triggers added, changed, or deleted since the last save. */
@@ -32,19 +53,25 @@ export type TriggerDraft = {
   error: string;
   /** The saved triggers changed after these edits began. */
   baseChanged: boolean;
+  /**
+   * After Save refused incomplete triggers: which changed triggers still
+   * have an empty part, and what the save bar says. Null once they are
+   * complete, saved, or discarded.
+   */
+  incomplete: { ids: ReadonlySet<string>; message: string } | null;
   /** Edits kept from before a reload, waiting for Restore or Discard. */
   kept: KeptTriggerDraft | null;
   update: (
-    next: SandboxTrigger[] | ((current: SandboxTrigger[]) => SandboxTrigger[]),
+    next:
+      | SandboxTriggerDraft[]
+      | ((current: SandboxTriggerDraft[]) => SandboxTriggerDraft[]),
   ) => void;
   /** The failed save request's ID, shown under `error` (D1.6). */
   errorReference: string | undefined;
-  save: () => Promise<
-    { ok: true } | { ok: false; error: string; reference?: string }
-  >;
+  save: () => Promise<TriggerSaveResult>;
   /** Drops the edits and returns them, so Undo can put them back. */
-  discard: () => SandboxTrigger[] | null;
-  restore: (edits: SandboxTrigger[]) => void;
+  discard: () => SandboxTriggerDraft[] | null;
+  restore: (edits: SandboxTriggerDraft[]) => void;
   restoreKept: () => void;
   /** Drops the kept edits and returns them, so Undo can offer them again. */
   discardKept: () => KeptTriggerRecord | null;
@@ -73,10 +100,13 @@ export function triggerSaveFailure(caught: unknown): ApiErrorText {
 }
 
 /** Kept edits as stored: the saved triggers they began from, and the edits. */
-export type KeptTriggerRecord = { base: string; triggers: SandboxTrigger[] };
+export type KeptTriggerRecord = {
+  base: string;
+  triggers: SandboxTriggerDraft[];
+};
 
 export type KeptTriggerDraft = {
-  triggers: SandboxTrigger[];
+  triggers: SandboxTriggerDraft[];
   /** The saved triggers changed since these edits were kept. */
   baseChanged: boolean;
 };
@@ -128,7 +158,7 @@ export function writeKeptTriggerDraft(
       storage.removeItem(key);
       return;
     }
-    const text = JSON.stringify({ version: 1, ...record });
+    const text = encodeKeptTriggerDrafts(record);
     if (text.length > MAX_STORED_LENGTH) storage.removeItem(key);
     else storage.setItem(key, text);
   } catch {
@@ -137,8 +167,10 @@ export function writeKeptTriggerDraft(
 }
 
 /**
- * Reads kept edits and checks them with the document parser against the
- * current draft, so a damaged or stale record is dropped, not shown.
+ * Reads kept edits. Format 2 (B1 rule b) goes through the trigger-draft
+ * parser, which keeps incomplete triggers and drops only a damaged record.
+ * A version 1 record still reads through the document parser against the
+ * current draft, as before format 2.
  */
 export function readKeptTriggerDraft(
   storage: DraftStorage | undefined,
@@ -150,6 +182,13 @@ export function readKeptTriggerDraft(
     const text = storage.getItem(key);
     if (!text || text.length > MAX_STORED_LENGTH) return null;
     const value: unknown = JSON.parse(text);
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "version" in value &&
+      value.version === 2
+    )
+      return parseKeptTriggerDrafts(value);
     if (
       typeof value !== "object" ||
       value === null ||
@@ -210,13 +249,17 @@ export function useTriggerDraft({
 }): TriggerDraft {
   const saved = useMemo(() => document?.triggers ?? [], [document]);
   const savedKey = useMemo(() => JSON.stringify(saved), [saved]);
-  const [edits, setEditsState] = useState<SandboxTrigger[] | null>(null);
+  const [edits, setEditsState] = useState<SandboxTriggerDraft[] | null>(null);
   // Callbacks read the edits through a ref, so an Undo made later works on
   // the current edits, not the ones from when it was created.
-  const editsRef = useRef<SandboxTrigger[] | null>(null);
-  const setEdits = useCallback((next: SandboxTrigger[] | null) => {
+  const editsRef = useRef<SandboxTriggerDraft[] | null>(null);
+  // Set when Save refused incomplete triggers; the save bar and the list
+  // badges follow the drafts until they are complete, saved, or dropped.
+  const [refused, setRefused] = useState(false);
+  const setEdits = useCallback((next: SandboxTriggerDraft[] | null) => {
     editsRef.current = next;
     setEditsState(next);
+    if (next === null) setRefused(false);
   }, []);
   const [base, setBase] = useState("");
   const [pending, setPending] = useState(false);
@@ -291,11 +334,13 @@ export function useTriggerDraft({
   const savedRef = useRef({ saved, savedKey });
   const draftRef = useRef(draft);
   const dirtyRef = useRef(dirty);
+  const unsavedRef = useRef(unsaved);
   const designRef = useRef(document?.design);
   useEffect(() => {
     savedRef.current = { saved, savedKey };
     draftRef.current = draft;
     dirtyRef.current = dirty;
+    unsavedRef.current = unsaved;
     designRef.current = document?.design;
   });
 
@@ -337,13 +382,26 @@ export function useTriggerDraft({
     [setEdits],
   );
 
-  const save = useCallback(async (): Promise<
-    { ok: true } | { ok: false; error: string; reference?: string }
-  > => {
+  const save = useCallback(async (): Promise<TriggerSaveResult> => {
     // Nothing to save (for example Ctrl+S with no edits) writes nothing.
     if (!dirtyRef.current) return { ok: true };
-    const snapshot = structuredClone(draftRef.current);
     const design = designRef.current;
+    // B1 rule c: every changed trigger must be complete before any request,
+    // so an incomplete one never reaches `persist` or causes a 422.
+    const checked = design
+      ? checkTriggerDrafts(draftRef.current, design, unsavedRef.current)
+      : { ok: true as const, triggers: draftRef.current };
+    if (!checked.ok) {
+      const { message, triggerId, step, part } = checked.incomplete;
+      setRefused(true);
+      setError(null);
+      return {
+        ok: false,
+        error: message,
+        incomplete: { triggerId, step, part },
+      };
+    }
+    const snapshot = structuredClone(checked.triggers);
     const validationError = design
       ? snapshot
           .map((recordTrigger) => triggerLiteralError(recordTrigger, design))
@@ -382,7 +440,7 @@ export function useTriggerDraft({
   }, [setEdits]);
 
   const restore = useCallback(
-    (next: SandboxTrigger[]) => {
+    (next: SandboxTriggerDraft[]) => {
       setEdits(next);
       setBase(savedRef.current.savedKey);
       setError(null);
@@ -417,10 +475,23 @@ export function useTriggerDraft({
     [storageKey],
   );
 
+  const design = document?.design;
+  const incomplete = useMemo(() => {
+    if (!refused || !edits || !design) return null;
+    const checked = checkTriggerDrafts(edits, design, unsaved);
+    return checked.ok
+      ? null
+      : {
+          ids: incompleteTriggerIds(edits, design, unsaved),
+          message: checked.incomplete.message,
+        };
+  }, [design, edits, refused, unsaved]);
+
   return {
     draft,
     dirty,
     pending,
+    incomplete,
     changes: dirty && edits ? unsavedTriggerChanges(edits, saved) : 0,
     unsaved,
     error,

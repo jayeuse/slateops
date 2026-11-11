@@ -11,6 +11,7 @@ from app.systems.access.policy.models import AccessLevel
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditAction
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
+from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from tests.dashboards.dashboard_route_support import (
     _actor,
@@ -327,3 +328,136 @@ def test_dashboard_routes_let_a_department_reader_read_but_not_write(
         assert created.json()["department_id"] == str(department.id)
         listed = read_client.get("/api/dashboards").json()["items"]
         assert [item["id"] for item in listed] == [created.json()["id"]]
+
+
+def _closed_department_dashboards(
+    db: Session,
+) -> tuple[Department, Dashboard, Dashboard]:
+    """A closed department with its active home Dashboard and one archived Dashboard."""
+
+    department = _department(db, "Closed dashboards")
+    home = Dashboard(
+        org_id=department.org_id, department_id=department.id, name="Home", is_home=True
+    )
+    archived = Dashboard(
+        org_id=department.org_id,
+        department_id=department.id,
+        name="Archived",
+        position=1,
+        is_deleted=True,
+        deleted_at=datetime.now(UTC),
+    )
+    db.add_all([home, archived])
+    db.flush()
+    department.is_deleted = True
+    department.deleted_at = datetime.now(UTC)
+    db.flush()
+    return department, home, archived
+
+
+def _dashboard_state(db: Session, dashboard_id: UUID) -> tuple[str, int, bool, bool]:
+    row = db.get(Dashboard, dashboard_id, populate_existing=True)
+    assert row is not None
+    return row.name, row.revision, row.is_home, row.is_deleted
+
+
+def test_closed_department_dashboards_are_hidden_from_non_administrators(
+    integration_owner_db: Session,
+) -> None:
+    """OQ1-C1, OQ1-C3: a closed department's Dashboards read and list as unreadable items."""
+
+    db = integration_owner_db
+    manager = _actor(db)
+    department, home, archived = _closed_department_dashboards(db)
+    set_audit_actor(db, manager.id)
+
+    with _client(db, manager) as client:
+        for dashboard in (home, archived):
+            read = client.get(f"/api/dashboards/{dashboard.id}")
+            assert read.status_code == 404
+            assert read.json() == {"detail": "Dashboard not found"}
+        for params in (
+            {},
+            {"department_id": str(department.id)},
+            {"department_id": str(department.id), "deleted": "include"},
+        ):
+            listed = client.get("/api/dashboards", params=params)
+            assert listed.status_code == 200
+            assert listed.json()["items"] == []
+            assert listed.json()["pagination"]["total"] == 0
+
+
+@pytest.mark.parametrize(
+    ("method", "target", "request_args"),
+    [
+        ("PATCH", "home", {"json": {"revision": 1, "name": "Changed"}}),
+        ("PATCH", "home", {"json": {"revision": 1, "widgets": []}}),
+        ("DELETE", "home", {"params": {"revision": 1}}),
+        ("POST", "archived", {"json": {"revision": 1}}),
+    ],
+    ids=["update", "widgets", "archive-and-hand-over-home", "restore"],
+)
+def test_closed_department_dashboards_refuse_non_administrator_changes(
+    integration_owner_db: Session,
+    method: str,
+    target: str,
+    request_args: dict[str, object],
+) -> None:
+    """OQ1-C2: a manager of a closed department changes none of its Dashboards."""
+
+    db = integration_owner_db
+    manager = _actor(db)
+    _department_row, home, archived = _closed_department_dashboards(db)
+    dashboard = home if target == "home" else archived
+    path = f"/api/dashboards/{dashboard.id}"
+    if target == "archived":
+        path = f"{path}/restore"
+    set_audit_actor(db, manager.id)
+
+    with _client(db, manager) as client:
+        refused = client.request(method, path, **request_args)
+
+    assert refused.status_code == 404
+    assert refused.json() == {"detail": "Dashboard not found"}
+    assert _dashboard_state(db, home.id) == ("Home", 1, True, False)
+    assert _dashboard_state(db, archived.id) == ("Archived", 1, False, True)
+
+
+def test_administrator_reads_and_changes_closed_department_dashboards(
+    integration_owner_db: Session,
+) -> None:
+    """OQ1-C4: an administrator keeps full use; a reopened department serves its manager."""
+
+    db = integration_owner_db
+    manager = _actor(db)
+    admin = add_user(db, "dash-closed-admin", role="admin")
+    department, home, archived = _closed_department_dashboards(db)
+    set_audit_actor(db, admin.id)
+
+    with _client(db, admin) as client:
+        assert client.get(f"/api/dashboards/{home.id}").status_code == 200
+        listed = client.get(
+            "/api/dashboards",
+            params={"department_id": str(department.id), "deleted": "include"},
+        )
+        assert [item["id"] for item in listed.json()["items"]] == [str(home.id), str(archived.id)]
+        renamed = client.patch(
+            f"/api/dashboards/{home.id}", json={"revision": 1, "name": "Admin home"}
+        )
+        assert renamed.status_code == 200
+        assert renamed.json()["revision"] == 2
+        assert client.delete(
+            f"/api/dashboards/{home.id}", params={"revision": 2}
+        ).status_code == 204
+        restored = client.post(f"/api/dashboards/{archived.id}/restore", json={"revision": 1})
+        assert restored.status_code == 200
+
+    department.is_deleted = False
+    department.deleted_at = None
+    db.flush()
+    set_audit_actor(db, manager.id)
+    with _client(db, manager) as client:
+        reopened = client.get(f"/api/dashboards/{archived.id}")
+        assert reopened.status_code == 200
+        listed = client.get("/api/dashboards", params={"department_id": str(department.id)})
+        assert [item["id"] for item in listed.json()["items"]] == [str(archived.id)]

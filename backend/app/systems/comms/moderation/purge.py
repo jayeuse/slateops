@@ -45,6 +45,7 @@ from app.systems.comms.messages.mutations import lock_counter
 from app.systems.comms.moderation.models import CommsReport
 from app.systems.comms.previews.jobs import discard_preview_work
 from app.systems.comms.realtime.events import user_event
+from app.systems.comms.realtime.grants import lock_projection
 from app.systems.comms.realtime.models import CommsRealtimeGrant, CommsTyping
 from app.systems.comms.settings.models import (
     CommsCapabilityGrant,
@@ -55,6 +56,7 @@ from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import StorageBackend
 from app.systems.platform.files.purge import purge_confirmed
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork
+from app.systems.sandbox.derived.release import release_derived_target
 from app.systems.sandbox.lifecycle.purge_support import PURGE_DISABLED_MESSAGE
 
 BATCH_SIZE = 1000
@@ -183,6 +185,7 @@ def delete_files(
         )
     )
     if export_ids:
+        lock_projection(db)  # SD19 step 1: the guard before the conversation lock.
         _validate(db, actor, identity, expected, name)
         export_service.retire(db, export_ids, now=utc_now())
         db.commit()  # Persist source-bound artifact revocation before external cleanup.
@@ -246,10 +249,19 @@ def delete_files(
             file.is_deleted, file.deleted_at = True, file.deleted_at or utc_now()
             db.flush()
 
+        # SD19 step 1 (ID30): the guard is the claim's first lock, before the administrator
+        # and conversation locks. A claim of a file that another purge already finalized
+        # returns without a commit, and ``delete_graph`` then runs in the same transaction.
+        # The claim's commit releases the guard before any Storage call.
+        lock_projection(db)
         purge_confirmed(db, actor.id, file_id, storage, validate_locked=validate_locked)
 
 
 def delete_graph(db: Session, actor: User, identity: UUID, expected: str, name: str) -> Impact:
+    # SD19 step 1: the projection guard before any row lock. A publish holds it while it
+    # locks a derived channel's link and then the channel; this purge locks the channel and
+    # then releases its link, so without the guard the two can deadlock.
+    lock_projection(db)
     current = _validate(db, actor, identity, expected, name)
     org = bound_organization_column()
     if (
@@ -374,6 +386,8 @@ def delete_graph(db: Session, actor: User, identity: UUID, expected: str, name: 
         CommsExpiredSend,
     ):
         _delete_batches(db, owned, (owned.org_id == org) & (owned.conversation_id == identity))
+    # A derived channel's link stays, with no target (setup spec SD8, R7).
+    release_derived_target(db, conversation_id=identity)
     db.delete(current.conversation)
     for recipient in recipients:
         user_event(db, recipient, "structure", {})

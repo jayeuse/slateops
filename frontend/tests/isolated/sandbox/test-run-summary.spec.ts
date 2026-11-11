@@ -4,13 +4,24 @@ import {
   defaultTestTrigger,
   describeTrigger,
   summarizeTestRun,
+  everyEventLimitReason,
+  fieldValueText,
   testTraceSteps,
+  unmetConditionReason,
+  whatHappened,
 } from "../../../src/components/systems/sandbox/domain/test-run-summary";
 import type {
   SandboxTrigger,
   SandboxDocumentDesign,
 } from "../../../src/components/systems/sandbox/domain/document";
 import type { SandboxTestRun } from "../../../src/components/systems/sandbox/state/api";
+import {
+  condition as sectionCondition,
+  field,
+  literal,
+  ordersDesign,
+  trigger as sectionTrigger,
+} from "./test-section-design";
 
 const design = {
   departments: [],
@@ -299,4 +310,286 @@ test("the canvas steps repeat the result's caveats and keep both marks", () => {
     "This test needs attention: 1 issue. Go back to the result to fix it.",
   ]);
   expect(steps[2]?.marks).toEqual({ total: "trigger changed" });
+});
+
+// "What happened" in the redesigned result
+// (docs/specs/sandbox-ux-redesign.md TEST-5, E2, E10).
+
+function ordersRun(
+  overrides: Partial<SandboxTestRun> & {
+    traces?: SandboxTestRun["result"]["triggerTraces"];
+    resultValues?: SandboxTestRun["result"]["values"];
+  } = {},
+): SandboxTestRun {
+  const input = { amount: 150, status: "open", paid: false };
+  return {
+    id: "00000000-0000-4000-8000-000000000070",
+    createdAt: "2026-11-10T10:00:00Z",
+    documentRevision: 1,
+    input: { moduleId: "orders", values: input },
+    event: { kind: "record-created" },
+    triggerIds: overrides.triggerIds ?? null,
+    result: {
+      values: overrides.resultValues ?? { ...input, status: "review" },
+      routes: [],
+      triggerTraces: overrides.traces ?? [],
+      issues: [],
+    },
+  };
+}
+
+const ordersTriggers = [
+  sectionTrigger(
+    "flag",
+    "Flag large orders",
+    { kind: "record-created", moduleId: "orders" },
+    {
+      conditions: [sectionCondition("c1", "amount", ">=", literal(100))],
+      sets: [["status", "review"]],
+    },
+  ),
+  sectionTrigger(
+    "assign",
+    "Assign paid orders",
+    { kind: "record-created", moduleId: "orders" },
+    { conditions: [sectionCondition("c2", "paid", "=", literal(true))] },
+  ),
+  sectionTrigger(
+    "hold",
+    "Hold orders",
+    { kind: "record-created", moduleId: "orders" },
+    { enabled: false },
+  ),
+  sectionTrigger("invoice", "Invoice added", {
+    kind: "record-created",
+    moduleId: "invoices",
+  }),
+];
+
+test(
+  "what happened names each trigger that ran with its changes, and why each other did not",
+  { tag: "@UX-C26" },
+  () => {
+    const happened = whatHappened({
+      run: ordersRun({
+        traces: [
+          { triggerId: "flag", label: "Flag large orders", outcome: "Applied" },
+          {
+            triggerId: "assign",
+            label: "Assign paid orders",
+            outcome: "Conditions not met",
+          },
+          {
+            triggerId: "hold",
+            label: "Hold orders",
+            outcome: "Skipped — disabled",
+          },
+          // Another module's trigger never reads as part of this result.
+          {
+            triggerId: "invoice",
+            label: "Invoice added",
+            outcome: "Not triggered",
+          },
+        ],
+      }),
+      design: ordersDesign(),
+      triggers: ordersTriggers,
+    });
+    expect(happened.lines).toEqual([
+      {
+        kind: "ran",
+        triggerId: "flag",
+        name: "Flag large orders",
+        changes: [
+          {
+            fieldId: "status",
+            name: "Status",
+            before: "Open",
+            after: "Review",
+          },
+        ],
+      },
+      {
+        kind: "not-run",
+        triggerId: "assign",
+        name: "Assign paid orders",
+        status: "Conditions not met",
+        reason: "Paid is Unchecked; it needs Checked.",
+      },
+      {
+        kind: "not-run",
+        triggerId: "hold",
+        name: "Hold orders",
+        status: "Off",
+        // "Off" already says it; no second sentence (F8).
+        reason: null,
+      },
+    ]);
+    expect(happened.otherChanges).toEqual([]);
+    expect(happened.leftOut).toBeNull();
+  },
+);
+
+test(
+  "a narrowed run says which triggers did not run in this test",
+  { tag: "@UX-C33" },
+  () => {
+    const run = ordersRun({ triggerIds: ["flag"] });
+    // Run again with Assign unchecked: only the unchecked listener is named.
+    expect(
+      whatHappened({
+        run,
+        design: ordersDesign(),
+        triggers: ordersTriggers,
+        listeningIds: ["flag", "assign"],
+      }).leftOut,
+    ).toBe("Assign paid orders did not run in this test.");
+    // Try this trigger: the other triggers of the module, in one line.
+    expect(
+      whatHappened({
+        run,
+        design: ordersDesign(),
+        triggers: ordersTriggers,
+        onlyTrigger: true,
+      }).leftOut,
+    ).toBe("Other triggers on Orders did not run in this test.");
+  },
+);
+
+test("a trigger that runs again later in a chain reads as one line", () => {
+  const happened = whatHappened({
+    run: ordersRun({
+      traces: [
+        { triggerId: "flag", label: "Flag large orders", outcome: "Applied" },
+        {
+          triggerId: "flag",
+          label: "Flag large orders",
+          outcome: "No changes",
+        },
+      ],
+    }),
+    design: ordersDesign(),
+    triggers: ordersTriggers,
+  });
+  expect(happened.lines).toEqual([
+    {
+      kind: "ran",
+      triggerId: "flag",
+      name: "Flag large orders",
+      changes: [
+        { fieldId: "status", name: "Status", before: "Open", after: "Review" },
+      ],
+    },
+  ]);
+});
+
+test("a reason keeps each value's own case, as Values used shows it", () => {
+  const design = ordersDesign([
+    field("title", "Title", { kind: "text", defaultValue: "" }),
+  ]);
+  const orders = design.modules[0];
+  const needsReview = sectionTrigger(
+    "needs-review",
+    "Needs review",
+    { kind: "record-created", moduleId: "orders" },
+    { conditions: [sectionCondition("c1", "status", "=", literal("review"))] },
+  );
+  expect(unmetConditionReason(needsReview, orders, { status: "open" })).toBe(
+    "Status is Open; it needs Review.",
+  );
+  const titled = sectionTrigger(
+    "titled",
+    "Titled",
+    { kind: "record-created", moduleId: "orders" },
+    { conditions: [sectionCondition("c2", "title", "=", literal("Rush"))] },
+  );
+  expect(unmetConditionReason(titled, orders, { title: "Example title" })).toBe(
+    "Title is Example title; it needs Rush.",
+  );
+});
+
+for (const row of [
+  { needed: 1, left: 0, reason: "Needs 1 run; 0 left. Clear results first." },
+  { needed: 3, left: 1, reason: "Needs 3 runs; 1 left. Clear results first." },
+  { needed: 2, left: 2, reason: null },
+]) {
+  test(`Try every event with ${row.needed} needed and ${row.left} left reads ${String(row.reason)}`, () => {
+    expect(everyEventLimitReason(row.needed, row.left)).toBe(row.reason);
+  });
+}
+
+test("a trigger that did not run with no specific reason shows only its category", () => {
+  const happened = whatHappened({
+    // Paid is Checked, so the browser finds no failing condition to name.
+    run: ordersRun({
+      traces: [
+        {
+          triggerId: "assign",
+          label: "Assign paid orders",
+          outcome: "Conditions not met",
+        },
+        {
+          triggerId: "flag",
+          label: "Flag large orders",
+          outcome: "Not triggered",
+        },
+      ],
+      resultValues: { amount: 150, status: "open", paid: true },
+    }),
+    design: ordersDesign(),
+    triggers: ordersTriggers,
+  });
+  expect(
+    happened.lines.map((line) =>
+      line.kind === "not-run" ? [line.status, line.reason] : line.kind,
+    ),
+  ).toEqual([
+    ["Conditions not met", "Paid is Unchecked; it needs Checked."],
+    ["Not triggered", null],
+  ]);
+  const met = whatHappened({
+    run: {
+      ...ordersRun({
+        traces: [
+          {
+            triggerId: "assign",
+            label: "Assign paid orders",
+            outcome: "Conditions not met",
+          },
+        ],
+      }),
+      input: {
+        moduleId: "orders",
+        values: { amount: 150, status: "open", paid: true },
+      },
+    },
+    design: ordersDesign(),
+    triggers: ordersTriggers,
+  });
+  expect(met.lines).toEqual([
+    {
+      kind: "not-run",
+      triggerId: "assign",
+      name: "Assign paid orders",
+      status: "Conditions not met",
+      reason: null,
+    },
+  ]);
+});
+
+test("Values used reads dates in the workspace format and a zone-less time as written", () => {
+  const region = { timezone: "Asia/Manila", locale: "en-US" };
+  const due = field("due", "Due", { kind: "date", defaultValue: null });
+  const visit = field("visit", "Visit", {
+    kind: "datetime",
+    defaultValue: null,
+  });
+  expect(fieldValueText(due, "2026-11-11", null, region)).toBe("Nov 11, 2026");
+  // The evaluator reads a time with no zone as UTC; it shows as written.
+  expect(fieldValueText(visit, "2026-11-11T14:00", null, region)).toBe(
+    "Nov 11, 2026, 2:00 PM",
+  );
+  expect(fieldValueText(visit, "2026-11-11T14:00Z", null, region)).toBe(
+    "Nov 11, 2026, 10:00 PM",
+  );
 });

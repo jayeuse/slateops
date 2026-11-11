@@ -13,6 +13,7 @@ from operations.sample.client import SampleClient, SampleClientError
 from operations.sample.packs.interface import OrganizationPack
 from operations.sample.packs.registry import default_pack
 from operations.sample.population.content import SampleContentError, _id, _json, _pages
+from operations.sample.population.derived_dashboards import fill_derived_home
 
 _DATE_TYPES = {"date", "datetime"}
 _NUMBER_TYPES = {"number", "decimal", "int"}
@@ -371,37 +372,12 @@ def populate_openview(
             module_writer.record_mapping("views", logical_id, _id(saved))
             counts["views"] += 1
 
+        name = dashboard_name(str(department.get("name", department_key)), organization=pack)
         widgets = _dashboard_widgets(plans[department_key], anchor_date)
-        dashboard = _json(
-            writer,
-            "POST",
-            "/api/dashboards",
-            body={
-                "department_id": _id(department),
-                "name": dashboard_name(
-                    str(department.get("name", department_key)), organization=pack
-                ),
-                "position": 0,
-                "refresh_cadence": "manual",
-                "widgets": widgets,
-            },
-            expected=(201,),
+        counts["dashboard_widgets"] += fill_derived_home(
+            writer, department_key, _id(department), name, widgets
         )
-        dashboard_id = _id(dashboard)
-        saved_widgets = dashboard.get("widgets")
-        if not isinstance(saved_widgets, list) or len(saved_widgets) != len(widgets):
-            raise SampleContentError("Dashboard response did not contain its saved widgets")
-        writer.record_mapping("dashboards", f"department:{department_key}:dashboard", dashboard_id)
-        for index, widget in enumerate(saved_widgets):
-            if not isinstance(widget, dict):
-                raise SampleContentError("Dashboard response contains an invalid widget")
-            writer.record_mapping(
-                "widgets",
-                f"department:{department_key}:dashboard:widget:{index + 1:02d}",
-                _id(widget),
-            )
         counts["dashboards"] += 1
-        counts["dashboard_widgets"] += len(saved_widgets)
 
         for report_index, (module_key, module, active_fields) in enumerate(plans[department_key]):
             module_writer = _module_writer(pack, department_key, module_key, writer, actor_clients)

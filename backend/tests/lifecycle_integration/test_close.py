@@ -8,7 +8,11 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
-from app.systems.access.users.models import UserStatus
+from app.systems.access.users.models import User, UserStatus
+from app.systems.comms.access import conversation_level
+from app.systems.comms.conversations.models import CommsConversation
+from app.systems.comms.conversations.mutations import stage_department_channel
+from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleClosedAncestorError,
@@ -16,7 +20,11 @@ from app.systems.sandbox.lifecycle.exceptions import (
     LifecyclePreflightError,
 )
 from app.systems.sandbox.lifecycle.planner import plan_lifecycle
-from app.systems.sandbox.lifecycle.schemas import LifecycleBlockerCode, LifecycleTargetType
+from app.systems.sandbox.lifecycle.schemas import (
+    DerivedChange,
+    LifecycleBlockerCode,
+    LifecycleTargetType,
+)
 from app.systems.sandbox.lifecycle.service import close_lifecycle, reopen_lifecycle
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
@@ -27,6 +35,15 @@ from app.systems.sandbox.relationships.schemas import (
 )
 from tests.lifecycle_integration.lifecycle_integration_support import LifecycleGraph
 from tests.rbac.support import add_user
+from tests.sandbox_publications.derived_support import (
+    ROLES,
+    add_people,
+    derived_rows,
+    kept_counts,
+    link_rows,
+    with_sales,
+)
+from tests.sandbox_publications.support import bound_department
 
 pytestmark = [
     pytest.mark.integration,
@@ -337,3 +354,117 @@ def test_reopen_rejects_closed_nearest_ancestor_and_names_active_conflict(
     assert any(blocker.code is LifecycleBlockerCode.MODULE_NAME_CONFLICT for blocker in blockers)
     assert any(blocker.conflicting_entity_id == active_conflict.id for blocker in blockers)
     assert module.is_deleted is True
+
+
+def _change(channel: CommsConversation, action: str) -> DerivedChange:
+    return DerivedChange.model_validate(
+        {"role": "channel", "target_id": channel.id, "name": channel.name, "action": action}
+    )
+
+
+def test_sd_c11_c12_lifecycle_close_archives_the_channel_and_reopen_reports_it(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    publisher, _ = with_sales(db)
+    sales = bound_department(db, "dep-sales")
+    member, channel = add_people(db, sales, publisher)
+    kept = kept_counts(db, sales, channel)
+
+    closed = close_lifecycle(db, "department", sales.id, publisher.id)
+
+    assert closed.derived_changes == [_change(channel, "close")]
+    db.refresh(channel)
+    assert channel.archived_at is not None
+    assert kept_counts(db, sales, channel) == kept
+    links = link_rows(db, sales)
+    assert all(link.closed_at is not None for link in links.values())
+    assert {role: link.archived_by_close for role, link in links.items()} == {
+        role: role == "channel" for role in ROLES
+    }
+    assert links["channel"].close_archived_at == channel.archived_at
+    assert conversation_level(db, member, channel) == "none"
+    assert conversation_level(db, publisher, channel) != "none"
+
+    reopened = reopen_lifecycle(db, "department", sales.id, publisher.id)
+
+    assert reopened.derived_changes == [_change(channel, "reopen")]
+    db.refresh(channel)
+    assert channel.archived_at is None
+    assert all(
+        (link.closed_at, link.archived_by_close, link.close_archived_at) == (None, False, None)
+        for link in link_rows(db, sales).values()
+    )
+    assert conversation_level(db, member, channel) == "post"
+
+
+def test_sd_c13_lifecycle_reopen_keeps_a_channel_that_a_person_archived(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    publisher, _ = with_sales(db)
+    sales = bound_department(db, "dep-sales")
+    channel = derived_rows(db, sales)["channel"]
+    archived_at = utc_now()
+    channel.archived_at = archived_at
+    db.flush()
+
+    closed = close_lifecycle(db, "department", sales.id, publisher.id)
+    reopened = reopen_lifecycle(db, "department", sales.id, publisher.id)
+
+    assert closed.derived_changes == reopened.derived_changes == []
+    db.refresh(channel)
+    assert channel.archived_at == archived_at
+
+
+def _second_channel(db: Session, sales: Department, publisher: User) -> CommsConversation:
+    rows = derived_rows(db, sales)
+    return stage_department_channel(
+        db,
+        publisher,
+        department_id=sales.id,
+        category_id=rows["category"].id,
+        name="Sales leads",
+    )
+
+
+def test_sd_c32_close_preview_names_the_open_channel_and_the_close_does_exactly_that(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    publisher, _ = with_sales(db)
+    sales = bound_department(db, "dep-sales")
+    derived = derived_rows(db, sales)["channel"]
+    other = _second_channel(db, sales, publisher)
+    preview = plan_lifecycle(db, "department", sales.id, "close", publisher.id)
+
+    assert preview.response().derived_changes == [
+        _change(derived, "close"),
+        _change(other, "keep"),
+    ]
+
+    closed = close_lifecycle(db, "department", sales.id, publisher.id, plan=preview)
+
+    assert closed.derived_changes == preview.response().derived_changes
+    db.refresh(derived)
+    db.refresh(other)
+    assert derived.archived_at is not None
+    assert other.archived_at is None
+
+
+def test_be_sd7_a_channel_rename_after_the_close_preview_refuses_the_close(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    publisher, _ = with_sales(db)
+    sales = bound_department(db, "dep-sales")
+    other = _second_channel(db, sales, publisher)
+    preview = plan_lifecycle(db, "department", sales.id, "close", publisher.id)
+    other.name = "Sales escalations"
+    db.flush()
+
+    with pytest.raises(LifecyclePlanDriftError):
+        close_lifecycle(db, "department", sales.id, publisher.id, plan=preview)
+
+    assert derived_rows(db, sales)["channel"].archived_at is None
+    assert not sales.is_deleted

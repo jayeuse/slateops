@@ -60,6 +60,7 @@ def test_reports_use_module_managers_and_dashboards_use_department_leads(tmp_pat
     departments, modules, fields = _tables(pack)
     writes = []
     report_modules = {}
+    home_id = str(uuid4())
 
     def client_for(person):
         def handler(request):
@@ -68,8 +69,27 @@ def test_reports_use_module_managers_and_dashboards_use_department_leads(tmp_pat
                 return httpx.Response(
                     200, json={}, headers={"set-cookie": "slateops_csrf=c; Path=/"}
                 )
-            if request.method == "POST":
+            if request.method in {"POST", "PATCH"}:
                 writes.append((person, request.url.path, body.get("module_id")))
+            if request.method == "GET" and request.url.path == "/api/dashboards":
+                limit, offset = int(request.url.params["limit"]), int(request.url.params["offset"])
+                home = {
+                    "id": home_id,
+                    "department_id": request.url.params["department_id"],
+                    "is_home": True,
+                    "is_deleted": False,
+                    "revision": 1,
+                    "widgets": [],
+                }
+                pagination = {"limit": limit, "offset": offset, "count": 1, "total": 1}
+                return httpx.Response(
+                    200, json={"items": [home], "pagination": {**pagination, "has_more": False}}
+                )
+            if request.method == "PATCH":
+                widgets = [{"id": str(uuid4())} for _ in body["widgets"]]
+                return httpx.Response(
+                    200, json={"id": home_id, "name": body["name"], "widgets": widgets}
+                )
             result = {"id": str(uuid4())}
             if request.url.path == "/api/reports":
                 report_modules[result["id"]] = body["module_id"]
@@ -81,9 +101,6 @@ def test_reports_use_module_managers_and_dashboards_use_department_leads(tmp_pat
                     else "internal_ops_02"
                 )
                 assert person == expected_manager
-            if request.url.path == "/api/dashboards":
-                widgets = json.loads(request.content)["widgets"]
-                result["widgets"] = [{"id": str(uuid4())} for _ in widgets]
             if request.url.path.endswith("/runs"):
                 result.update(report_id=request.url.path.split("/")[-2], row_count=2)
             if request.url.path.endswith("/schedule"):
@@ -119,8 +136,9 @@ def test_reports_use_module_managers_and_dashboards_use_department_leads(tmp_pat
             ("internal_ops_lead", modules["requests"]["id"]),
             ("internal_ops_02", modules["updates"]["id"]),
         ]
-        assert [(person, path) for person, path, _ in writes if path == "/api/dashboards"] == [
-            ("internal_ops_lead", "/api/dashboards")
+        # The department lead fills the derived home; nobody posts a second Dashboard.
+        assert [(person, path) for person, path, _ in writes if "/dashboards" in path] == [
+            ("internal_ops_lead", f"/api/dashboards/{home_id}")
         ]
     finally:
         lead.close()

@@ -41,6 +41,7 @@ const lifecycleBlockerCodeSchema: z.ZodType<LifecycleBlockerCode> = z.enum([
   "purge_trigger_dependency",
   "purge_external_schema_dependency",
   "purge_file_dependency",
+  "comms_department_content",
 ]);
 
 const lifecycleRowStateSchema = z
@@ -96,6 +97,22 @@ const lifecycleBlockerSchema = z
   })
   .strict();
 
+const lifecycleDerivedChangeSchema = z
+  .object({
+    role: z.enum([
+      "managers",
+      "members",
+      "viewers",
+      "dashboard",
+      "category",
+      "channel",
+    ]),
+    target_id: uuidSchema,
+    name: z.string().min(1),
+    action: z.enum(["close", "reopen", "keep"]),
+  })
+  .strict();
+
 export const lifecycleImpactSchema: z.ZodType<LifecycleImpact> = z
   .object({
     target_type: lifecycleTargetTypeSchema,
@@ -106,6 +123,7 @@ export const lifecycleImpactSchema: z.ZodType<LifecycleImpact> = z
     external_impacts: z.array(lifecycleExternalImpactSchema),
     key_strips: z.array(lifecycleKeyStripSchema),
     blockers: z.array(lifecycleBlockerSchema),
+    derived_changes: z.array(lifecycleDerivedChangeSchema),
     impact_digest: z.string().regex(/^[a-f0-9]{64}$/),
   })
   .strict();

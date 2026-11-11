@@ -235,11 +235,13 @@ def _verify_lifecycle_controls(
         lifecycle_request_contract,
         parse_bindings,
     )
+    from operations.sample.controls.lifecycle_derived import DERIVED_KEY, verify_released
 
     counts = {
         "sandbox_lifecycle_targets_purged": 0,
         "sandbox_lifecycle_boards_purged": 0,
         "sandbox_lifecycle_versions_verified": 0,
+        "sandbox_lifecycle_derived_released": 0,
     }
     issues: list[str] = []
     expected = plan_lifecycle_controls(dataset)
@@ -287,7 +289,15 @@ def _verify_lifecycle_controls(
         operation = cast(str, action.values["operation"])
         target = "module" if operation == "prepare_lifecycle_bindings" else operation.split("_")[1]
         descriptors = row.get("request_evidence")
-        contract = lifecycle_request_contract(operation, ids)
+        derived = _mapping_ids(row, DERIVED_KEY) if operation == "purge_department" else {}
+        try:
+            contract = lifecycle_request_contract(operation, ids, derived or None)
+        except KeyError:
+            contract = []
+        if derived and not verify_released(admin, derived):
+            issues.append("Sandbox lifecycle derived channel, category or groups remain")
+        elif derived:
+            counts["sandbox_lifecycle_derived_released"] = 1
         valid = (
             row.get("target_id") == ids[target]
             and all(

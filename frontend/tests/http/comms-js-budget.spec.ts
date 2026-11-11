@@ -37,9 +37,15 @@ const gzip = {
 // announcer in the shell, and error references on every API error in Comms and
 // the shared alert, toast and picker. Measured 553,518 locally on d3efacd1 plus
 // that work. Revert if the owner prefers trimming.
+// Raised to 558,000 on 2026-11-11 for the approved Sandbox redesign and setup
+// (APR-0001, PR #100): the Triggers and Test screens share the side sheet and
+// the Workflow icon with the shell, which splits a shared shell chunk group
+// into 4 chunks (about 840 bytes in CI), and the lifecycle derived_changes
+// schema adds 78 bytes. Measured 556,386 in CI and 555,297 locally at
+// 5dbc909f. Revert if the owner prefers trimming.
 // Growth is reported against the last recorded measurement.
 const s04BaselineColdGzipBytes = 546_979;
-const coldTargetGzipBytes = 556_000;
+const coldTargetGzipBytes = 558_000;
 // docs/plans/ci-stability.md D3: a cold load within this many bytes of the
 // target warns, so the pull request that adds approved shell code records a new
 // target in the same commit instead of after a red run.

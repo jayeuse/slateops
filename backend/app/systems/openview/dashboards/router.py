@@ -1,7 +1,8 @@
 """Revisioned department Dashboards and their widgets on the 4 x 5 grid.
 
-Every user who can read something in a department reads its Dashboards. Only a
-user with ``manage`` on the department (or an administrator) changes them. One active
+Every user who can read something in an open department reads its Dashboards. Only a
+user with ``manage`` on the department (or an administrator) changes them. A closed
+department's Dashboards are read and changed by administrators only. One active
 Dashboard per department is its home.
 """
 
@@ -19,7 +20,7 @@ from app.common.dependencies import get_current_user
 from app.common.dependencies.auth import CurrentIdentity, get_current_identity
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
 from app.core.database import get_db
-from app.systems.access.policy.checks import department_filter, forbidden
+from app.systems.access.policy.checks import forbidden
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import effective_levels, forget_access
 from app.systems.access.users.models import User
@@ -36,6 +37,7 @@ from app.systems.openview.dashboards.schemas import (
     DashboardWidgetSpec,
 )
 from app.systems.openview.dashboards.service import claim_home_if_missing, hand_over_home
+from app.systems.openview.dashboards.visibility import dashboard_departments
 from app.systems.openview.dashboards.widget_validation import validate_dashboard_widgets
 from app.systems.sandbox.departments.models import Department
 
@@ -114,7 +116,7 @@ def _dashboard(
 ) -> Dashboard:
     statement = select(Dashboard).where(
         Dashboard.id == dashboard_id,
-        department_filter(db, user, Dashboard.department_id),
+        dashboard_departments(db, user, Dashboard.department_id),
     )
     if lock:
         statement = statement.with_for_update(nowait=nowait).execution_options(
@@ -272,7 +274,9 @@ def list_dashboards(
     db: Database,
     params: Annotated[DashboardListRequest, Query()],
 ) -> StandardListResponse[DashboardResponse]:
-    statement = select(Dashboard).where(department_filter(db, user, Dashboard.department_id))
+    statement = select(Dashboard).where(
+        dashboard_departments(db, user, Dashboard.department_id)
+    )
     if params.department_id is not None:
         statement = statement.where(Dashboard.department_id == params.department_id)
     if params.home is not None:

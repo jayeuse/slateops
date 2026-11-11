@@ -16,10 +16,14 @@ from sqlalchemy import create_engine, delete, func, select, text
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
+from app.systems.access.policy.models import Group
+from app.systems.comms.conversations.models import CommsConversation
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
+from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.derived.models import SandboxDerivedObject
 from app.systems.sandbox.designs.models import SandboxDocument as SandboxDocumentRow
-from app.systems.sandbox.designs.schemas import SandboxDocument
+from app.systems.sandbox.designs.schemas import DepartmentDocument, SandboxDocument
 from app.systems.sandbox.designs.service import read_document, replace_document
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.executor import PublicationError
@@ -32,7 +36,12 @@ from tests.organization_scope_support import in_context
 from tests.postgres_runtime import assert_runner_database_url
 from tests.race_support import WAIT, StatementPause, wait_until_blocked_by
 from tests.record_versions import record_version
-from tests.sandbox_publications.support import publish_saved
+from tests.sandbox_publications.support import (
+    bound_department,
+    publish_revision,
+    publish_saved,
+    publish_structure,
+)
 from tests.sandbox_record_triggers.support import (
     cleanup_committed_trigger,
     document_baseline,
@@ -41,6 +50,7 @@ from tests.sandbox_record_triggers.support import (
 )
 
 pytestmark = pytest.mark.integration
+
 
 def _audited(session: AuditSession, actor_id: UUID, path: str) -> AuditSession:
     session.info[AUDIT_CONTEXT_KEY] = AuditContext(
@@ -192,3 +202,105 @@ def test_a_publish_behind_a_record_edit_refuses_its_stale_review_and_writes_noth
                 baseline=baseline,
             )
         engine.dispose()
+
+
+def _review_draft(db, publisher, document: SandboxDocument):
+    current = read_document(db)
+    saved = replace_document(
+        db, actor_id=publisher.id, expected_revision=current.revision, document=document
+    )
+    return saved, publication_plan(db, saved.document)
+
+
+def _with_sales(document: SandboxDocument) -> SandboxDocument:
+    changed = document.model_copy(deep=True)
+    changed.design.departments.append(DepartmentDocument(id="dep-sales", name="Sales"))
+    changed.design.layout["dep-sales"] = changed.design.layout["sample-operations"].model_copy(
+        deep=True
+    )
+    return changed
+
+
+def test_sd_c7_a_group_created_after_the_review_refuses_the_publish_with_its_blocker(
+    integration_owner_db,
+) -> None:
+    db = integration_owner_db
+    publisher, document = publish_structure(db)
+    saved, review = _review_draft(db, publisher, _with_sales(document))
+    assert not review.blockers
+    org_id = bound_department(db, "sample-operations").org_id
+    # Another administrator's group route commits under the projection guard first.
+    db.add(Group(org_id=org_id, name="Sales managers"))
+    db.flush()
+
+    with pytest.raises(PublicationError) as refused:
+        publish_saved(
+            db, publisher.id, saved, review,
+            token_digest="c" * 64, idempotency_key=f"sales-race-{publisher.id}",
+        )
+    db.rollback()
+
+    assert (refused.value.code, refused.value.status_code) == ("publication_blocked", 409)
+    assert [(b.code, b.target_id) for b in refused.value.blockers] == [
+        ("derived_name_unavailable", "dep-sales")
+    ]
+    assert db.scalar(select(Department.id).where(Department.department_name == "Sales")) is None
+
+
+def _rename_channel(db, link: SandboxDerivedObject) -> None:
+    channel = db.get(CommsConversation, link.conversation_id)
+    assert channel is not None
+    channel.name = "sales-chat"
+
+
+def _release_link(db, link: SandboxDerivedObject) -> None:
+    link.conversation_id = None
+
+
+@pytest.mark.parametrize(
+    ("change_after_review", "rename_sales", "refused"),
+    [
+        pytest.param(_rename_channel, True, True, id="target-of-renamed-department"),
+        pytest.param(_release_link, True, True, id="link-of-renamed-department"),
+        pytest.param(_rename_channel, False, False, id="target-of-untouched-department"),
+    ],
+)
+def test_sd_c25_a_link_or_target_change_after_review_refuses_only_a_followed_department(
+    integration_owner_db, change_after_review, rename_sales, refused,
+) -> None:
+    db = integration_owner_db
+    publisher, document = publish_structure(db)
+    with_sales = _with_sales(document)
+    publish_revision(db, publisher, with_sales, "sales")
+    sales = bound_department(db, "dep-sales")
+    changed = with_sales.model_copy(deep=True)
+    if rename_sales:
+        changed.design.departments[-1].name = "Revenue"
+    else:
+        changed.design.modules[0].name = "Requests renamed"
+    saved, review = _review_draft(db, publisher, changed)
+    assert not review.blockers
+    link = db.scalar(
+        select(SandboxDerivedObject).where(
+            SandboxDerivedObject.department_id == sales.id,
+            SandboxDerivedObject.role == "channel",
+        )
+    )
+    assert link is not None
+    change_after_review(db, link)
+    db.flush()
+
+    def publish() -> None:
+        publish_saved(
+            db, publisher.id, saved, review,
+            token_digest="d" * 64, idempotency_key=f"follow-{publisher.id}",
+        )
+
+    if not refused:
+        publish()
+        return
+    with pytest.raises(PublicationError) as refusal:
+        publish()
+    db.rollback()
+    assert (refusal.value.code, refusal.value.status_code) == ("live_state_changed", 409)
+    assert db.get(Department, sales.id).department_name == "Sales"

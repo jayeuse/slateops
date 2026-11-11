@@ -1,19 +1,26 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Link2,
+  Play,
+  Search,
+  Upload,
+} from "lucide-react";
 import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Input } from "@/components/ui/input";
+import { DepartmentMark } from "@/components/sandbox/department-mark";
+import { ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
 import { useErrorText } from "@/lib/use-error-text";
 import { cn } from "@/lib/utils";
@@ -21,50 +28,53 @@ import type {
   SandboxDocumentDesign,
   SandboxFieldValue,
   SandboxTrigger,
-  SandboxTriggerEvent,
 } from "../domain/document";
+import { openFields, valueFits } from "../domain/example-values";
 import {
-  defaultTestTrigger,
-  summarizeTestRun,
+  blockKeyOfRun,
+  moduleReading,
+  testModuleGroups,
+  tryEventPlan,
+  type ModuleReading,
+  type ReadingBlock,
+  type TryPlan,
+} from "../domain/test-reading";
+import {
+  eventDescription,
+  everyEventLimitReason,
+  moduleName,
 } from "../domain/test-run-summary";
-import {
-  defaultTestValues,
-  matchingTestRun,
-  missingTestSetupValues,
-  relevantTestFieldIds,
-  sameTestEvent,
-  testEventDraft,
-  testEventOf,
-  testInputsChanged,
-  testModuleFields,
-  type TestEventDraft,
-  type TestSetupTarget,
-} from "../domain/test-setup";
-import type { SandboxTestEvent, SandboxTestRun } from "../state/api";
-import { TestEventRows } from "./test-event-rows";
-import {
-  TEST_OUTCOME_HEADLINE_ID,
-  TEST_RESULT_HEADING_ID,
-  TestResult,
-} from "./test-run-result";
-import { TestSetupAdvanced } from "./test-setup-advanced";
-import { SetupRow } from "./test-setup-rows";
-import { TestValues } from "./test-values";
+import { formatSavedTime } from "../domain/version-history";
+import { tryTriggerPlan } from "../domain/try-this-trigger";
+import type { SandboxTestRun } from "../state/api";
+import { TestEventBlock } from "./test-event-rows";
+import { TestResultCard } from "./test-run-result";
 
-// Test (docs/specs/sandbox-relayout.md S11): two panes, Setup and Result.
-// This component owns the setup, the chosen result, and the pending run;
-// the domain rules live in `domain/test-setup.ts`, the rows in
-// `test-setup-rows.tsx`, and the result in `test-run-result.tsx`.
+// Test (docs/specs/sandbox-ux-redesign.md TEST-1 to TEST-9, E1 to E11): the
+// Modules list, then the reading of the chosen module. The reading is built
+// from the saved draft with no request; a run happens only on "Try it",
+// "Try this trigger", "Try every event", and "Run again". This component
+// owns the chosen module, the result of each block, and the run in flight;
+// the rules live in `domain/test-reading.ts`, `domain/example-values.ts`,
+// and `domain/try-this-trigger.ts`.
+
+const STORE_LIMIT = 50;
+
+type Administrator = { id: string; name: string } | null;
 
 type Props = {
   design: SandboxDocumentDesign;
   triggers: readonly SandboxTrigger[];
+  /** Stored runs, newest first. */
   runs: readonly SandboxTestRun[];
-  /** Sends the run; resolves with the stored run. */
+  /** Stored runs that are not cleared (`GET /sandbox/tests` total). */
+  total: number;
+  /** Sends the run; resolves with the stored run. No `triggerIds` runs every
+   *  enabled trigger. */
   onRun: (input: {
     moduleId: string;
     values: Record<string, SandboxFieldValue>;
-    event: SandboxTestEvent;
+    event: TryPlan["event"];
     triggerIds?: string[];
   }) => Promise<SandboxTestRun>;
   onClear: () => Promise<void>;
@@ -74,365 +84,341 @@ type Props = {
   /** A result to open on, such as the one "Back to result" returns to. */
   initialRunId?: string | null;
   onShowOnCanvas: (run: SandboxTestRun) => void;
+  /** The signed-in administrator: the example for a User field. */
+  administrator: Administrator;
+  /** Live bindings; a department with none is new (E6). Null while loading. */
+  bindings: ReadonlyArray<{ kind: string; sandbox_id: string }> | null;
+  /** Why a run must wait for the draft ("Saving…"), or null. */
+  waitReason: string | null;
+  review: { reason: string | null; disabled: boolean; open: () => void };
+  onOpenBuild: () => void;
 };
 
-function savedValuesKey(moduleId: string) {
-  return `slateops.sandbox.test-values:${moduleId}`;
+/** The last run of one block, or the values it waits on (E4). */
+type BlockResult = {
+  moduleId: string;
+  blockKey: string;
+  /** Null until a request is sent. */
+  runId: string | null;
+  /** The trigger of a "Try this trigger" run. */
+  only: { id: string; name: string } | null;
+  plan: TryPlan;
+  values: Record<string, SandboxFieldValue>;
+  /** The Triggers row of "Change values". */
+  checked: string[];
+  editing: boolean;
+};
+
+type RunOutcome = "ran" | "waiting" | "stopped";
+
+function resultKey(moduleId: string, blockKey: string) {
+  return `${moduleId}\u0000${blockKey}`;
 }
 
-/** Saved test values for a module, kept only for fields that still exist. */
-function readSavedValues(
-  design: SandboxDocumentDesign,
-  moduleId: string,
-): Record<string, SandboxFieldValue> | null {
-  try {
-    const raw = sessionStorage.getItem(savedValuesKey(moduleId));
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== "object" || parsed === null) return null;
-    const defaults = defaultTestValues(design, moduleId);
-    for (const [id, value] of Object.entries(parsed)) {
-      if (
-        id in defaults &&
-        (value === null ||
-          ["string", "number", "boolean"].includes(typeof value))
-      )
-        defaults[id] = value as SandboxFieldValue;
-    }
-    return defaults;
-  } catch {
-    return null;
-  }
+function firstModuleId(groups: ReturnType<typeof testModuleGroups>): string {
+  return groups[0]?.modules[0]?.id ?? "";
 }
 
-function valueControlId(fieldId: string) {
-  return `sandbox-test-${fieldId}`;
+/** A stored run as a block result, for a result opened from the list. */
+function storedResult(
+  run: SandboxTestRun,
+  reading: ModuleReading,
+): BlockResult {
+  const blockKey = blockKeyOfRun(reading, run.event) ?? "added";
+  const block = reading.blocks.find((item) => item.key === blockKey);
+  const listening =
+    block?.triggers.filter((item) => item.enabled).map((item) => item.id) ?? [];
+  return {
+    moduleId: run.input.moduleId,
+    blockKey,
+    runId: run.id,
+    only: null,
+    plan: {
+      moduleId: run.input.moduleId,
+      values: run.input.values,
+      event: run.event,
+      triggerIds: run.triggerIds,
+      unfillable: [],
+      setFieldIds: [],
+      notes: [],
+    },
+    values: { ...run.input.values },
+    checked: run.triggerIds
+      ? listening.filter((id) => run.triggerIds?.includes(id))
+      : listening,
+    editing: false,
+  };
 }
 
 export function TestWorkspace({
   design,
   triggers,
   runs,
+  total,
   onRun,
   onClear,
   onPendingChange,
   draftRevision,
   initialRunId = null,
   onShowOnCanvas,
+  administrator,
+  bindings,
+  waitReason,
+  review,
+  onOpenBuild,
 }: Props) {
-  // Returning from the canvas reopens the traced result on its module.
+  const groups = testModuleGroups(design, triggers, bindings);
   const initialRun = runs.find((item) => item.id === initialRunId);
-  const initialModule =
+  const initialReading = initialRun
+    ? moduleReading(design, triggers, initialRun.input.moduleId)
+    : null;
+  const [moduleId, setModuleId] = useState(() =>
     initialRun &&
-    design.modules.some(
-      (item) => item.id === initialRun.input.moduleId && !item.closed,
+    groups.some((group) =>
+      group.modules.some((item) => item.id === initialRun.input.moduleId),
     )
       ? initialRun.input.moduleId
-      : (design.modules.find((item) => !item.closed)?.id ?? "");
-  const [moduleId, setModuleId] = useState(initialModule);
-  const [values, setValues] = useState<Record<string, SandboxFieldValue>>(
-    () =>
-      readSavedValues(design, initialModule) ??
-      defaultTestValues(design, initialModule),
+      : firstModuleId(groups),
   );
-  // Typed test values last for the browser tab, like the draft they test.
-  useEffect(() => {
-    if (!moduleId) return;
-    try {
-      sessionStorage.setItem(savedValuesKey(moduleId), JSON.stringify(values));
-    } catch {
-      // Storage can be unavailable; the values still work for this page.
-    }
-  }, [moduleId, values]);
-  // Start on the reopened result's event, or else on the event that runs the
-  // module's first enabled trigger, so the first test exercises something.
-  // Both shapes carry kind, fieldId, and the schedule fields read below.
-  const initialTrigger: SandboxTestEvent | SandboxTriggerEvent | null =
-    initialRun && initialModule === initialRun.input.moduleId
-      ? initialRun.event
-      : defaultTestTrigger(triggers, initialModule);
-  const [eventDraft, setEventDraft] = useState(() =>
-    testEventDraft(initialTrigger),
+  const [results, setResults] = useState<Record<string, BlockResult>>(() => {
+    if (!initialRun || !initialReading) return {};
+    const result = storedResult(initialRun, initialReading);
+    return { [resultKey(result.moduleId, result.blockKey)]: result };
+  });
+  const [search, setSearch] = useState("");
+  // The run in flight: its block result key and "event" or a trigger id.
+  const [running, setRunning] = useState<{
+    key: string;
+    which: string;
+  } | null>(null);
+  const [every, setEvery] = useState<{ index: number; count: number } | null>(
+    null,
   );
-  const [triggerMode, setTriggerMode] = useState<"all" | "selected">("all");
-  const [triggerIds, setTriggerIds] = useState<string[]>([]);
-  const [pending, setPending] = useState(false);
   const [clearing, setClearing] = useState(false);
+  // The store refused a run (409 run_history_full) since the last clear.
+  const [fullSeen, setFullSeen] = useState(false);
   const [errorFailure, setError] = useErrorText();
   const error = errorFailure?.message ?? "";
   const workspaceRef = useRef<HTMLElement>(null);
-  const [wide, setWide] = useState(false);
-  // Phones switch between Setup and Result; a run moves to the result.
   const [phone, setPhone] = useState(false);
-  const [phoneView, setPhoneView] = useState<"setup" | "result">(
-    initialRun ? "result" : "setup",
+  const [phoneView, setPhoneView] = useState<"list" | "reading">(
+    initialRun ? "reading" : "list",
   );
-  // After a run on a phone, the result heading takes focus once it renders.
-  const [focusResult, setFocusResult] = useState(false);
-  const [filter, setFilter] = useState<"relevant" | "all" | "edited">(
-    "relevant",
-  );
-  const [search, setSearch] = useState("");
-  const [limit, setLimit] = useState(12);
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(
-    initialRun?.id ?? null,
-  );
-  // The control that takes focus once it renders (an error or a shown input).
-  const [focusControlId, setFocusControlId] = useState<string | null>(null);
-  // What Run test found missing, by control id, until that control changes.
-  const [setupErrors, setSetupErrors] = useState<ReadonlyMap<string, string>>(
-    new Map(),
-  );
-  // The run made on this page: only its issues mark the setup's fields, and
-  // only until the field changes. A loaded result never marks the setup.
-  const [ownRunId, setOwnRunId] = useState<string | null>(null);
-  const [editedSinceRun, setEditedSinceRun] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
-  const moduleLabelId = useId();
-  const changedFieldLabelId = useId();
-  const previousValueLabelId = useId();
+  // The result heading that takes focus once it renders.
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const [recentOpen, setRecentOpen] = useState(false);
 
-  const fields = testModuleFields(design, moduleId);
-  const moduleTriggers = triggers.filter(
-    (recordTrigger) => recordTrigger.trigger.moduleId === moduleId,
+  const reading = moduleId ? moduleReading(design, triggers, moduleId) : null;
+  const selectedGroup = groups.find((group) =>
+    group.modules.some((item) => item.id === moduleId),
   );
-  const event = testEventOf(eventDraft, fields);
-  const relevantIds = relevantTestFieldIds({
-    design,
-    triggers,
-    moduleId,
-    eventFieldId: "fieldId" in event ? event.fieldId : null,
-    triggerIds: triggerMode === "all" ? "enabled" : triggerIds,
-  });
-  const editedFields = fields.filter(
-    (field) =>
-      !Object.is(
-        values[field.id],
-        field.config.kind === "user" ? null : field.config.defaultValue,
-      ),
-  );
-  const matchingFields = fields.filter((field) =>
-    search.trim()
-      ? field.name
-          .toLocaleLowerCase()
-          .includes(search.trim().toLocaleLowerCase())
-      : filter === "all" ||
-        (filter === "relevant"
-          ? relevantIds.has(field.id)
-          : editedFields.includes(field)),
-  );
-
-  // A result shows only for the setup it was run with (S11).
-  const shownRun = matchingTestRun(runs, { moduleId, event }, selectedRunId);
-  const shownSummary = shownRun
-    ? summarizeTestRun(shownRun, design, triggers, draftRevision)
-    : null;
-  const fieldIssues = new Map(
-    shownRun && shownSummary?.stale === null && shownRun.id === ownRunId
-      ? shownSummary.issues.flatMap((issue) =>
-          issue.subject?.kind === "field" &&
-          !editedSinceRun.has(issue.subject.id)
-            ? [[issue.subject.id, issue.message] as const]
-            : [],
-        )
-      : [],
-  );
-
-  // The shown result goes stale as soon as the setup differs from the inputs
-  // it ran with (TST-2), read from the run itself.
-  const inputsChanged =
-    shownRun !== undefined &&
-    testInputsChanged(shownRun, {
-      values,
-      event,
-      triggerIds: triggerMode === "all" ? null : triggerIds,
-    });
-
-  function clearSetupError(controlId: string) {
-    if (!setupErrors.has(controlId)) return;
-    const next = new Map(setupErrors);
-    next.delete(controlId);
-    setSetupErrors(next);
-  }
-
-  function setValue(id: string, value: SandboxFieldValue) {
-    setValues({ ...values, [id]: value });
-    clearSetupError(valueControlId(id));
-    if (!editedSinceRun.has(id))
-      setEditedSinceRun(new Set([...editedSinceRun, id]));
-  }
-
-  function chooseModule(
-    nextModuleId: string,
-    trigger: SandboxTestEvent | SandboxTriggerEvent | null,
-  ) {
-    if (nextModuleId !== moduleId) {
-      setModuleId(nextModuleId);
-      setValues(
-        readSavedValues(design, nextModuleId) ??
-          defaultTestValues(design, nextModuleId),
-      );
-      setTriggerIds([]);
-      setSearch("");
-      setFilter("relevant");
-      setLimit(12);
-    }
-    setSetupErrors(new Map());
-    setEventDraft(testEventDraft(trigger, eventDraft));
-  }
-
-  /** A changed When clears every setup error; a setting clears its own. */
-  function changeEvent(next: TestEventDraft) {
-    if (next.kind !== eventDraft.kind) setSetupErrors(new Map());
-    else {
-      if (next.fieldId !== eventDraft.fieldId)
-        clearSetupError(changedFieldLabelId);
-      if (next.previousValue !== eventDraft.previousValue)
-        clearSetupError(previousValueLabelId);
-    }
-    setEventDraft(next);
-  }
-
-  /** Shows a field that the filter, search, or limit hides. */
-  function revealField(id: string, viaAll: boolean) {
-    if (matchingFields.slice(0, limit).some((field) => field.id === id)) return;
-    setSearch("");
-    if (viaAll) {
-      setFilter("all");
-      setLimit(Math.max(limit, fields.findIndex((f) => f.id === id) + 1));
-      return;
-    }
-    // Required fields are always relevant.
-    setFilter("relevant");
-    setLimit(
-      Math.max(
-        12,
-        fields
-          .filter((field) => relevantIds.has(field.id))
-          .findIndex((field) => field.id === id) + 1,
-      ),
-    );
-  }
+  const sandboxModule = design.modules.find((item) => item.id === moduleId);
+  const fields = openFields(sandboxModule);
+  const count = fullSeen ? STORE_LIMIT : Math.min(total, STORE_LIMIT);
+  const full = count >= STORE_LIMIT;
+  const left = STORE_LIMIT - count;
+  const busy = running !== null || every !== null || clearing;
+  const tryReason = waitReason ?? (full ? "Clear results first." : null);
+  const tryBlocks =
+    reading?.blocks.filter((block) => block.triggers.length) ?? [];
+  const everyReason =
+    waitReason ?? everyEventLimitReason(tryBlocks.length, left);
 
   useEffect(() => {
     const element = workspaceRef.current;
     if (!element) return;
-    const observer = new ResizeObserver(([entry]) => {
-      setWide(entry.contentRect.width >= 900);
-      setPhone(entry.contentRect.width < 640);
-    });
+    const observer = new ResizeObserver(([entry]) =>
+      setPhone(entry.contentRect.width < 640),
+    );
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
   useEffect(() => {
-    if (!focusResult) return;
-    const heading = document.getElementById(TEST_RESULT_HEADING_ID);
-    const headline = document.getElementById(TEST_OUTCOME_HEADLINE_ID);
-    if (!heading || !headline) return;
-    // Show the whole result header, then read the outcome first.
-    heading.scrollIntoView({ block: "start" });
-    headline.focus({ preventScroll: true });
-    setFocusResult(false);
-  }, [focusResult, phoneView, shownRun?.id]);
-  useEffect(() => {
-    if (!focusControlId) return;
-    document.getElementById(focusControlId)?.focus();
-    setFocusControlId(null);
-  }, [focusControlId]);
-  useEffect(
-    () => onPendingChange?.(pending || clearing),
-    [clearing, onPendingChange, pending],
-  );
+    if (!focusId) return;
+    const heading = document.getElementById(focusId);
+    if (!heading) return;
+    heading.scrollIntoView({ block: "nearest" });
+    heading.focus({ preventScroll: true });
+    setFocusId(null);
+  }, [focusId, results, phoneView]);
+  useEffect(() => onPendingChange?.(busy), [busy, onPendingChange]);
   useEffect(() => () => onPendingChange?.(false), [onPendingChange]);
+  // A module closed or removed in the draft gives way to the first one.
+  if (
+    moduleId &&
+    !groups.some((group) => group.modules.some((item) => item.id === moduleId))
+  )
+    setModuleId(firstModuleId(groups));
 
-  useEffect(() => {
-    if (
-      moduleId &&
-      design.modules.some((item) => item.id === moduleId && !item.closed)
-    )
-      return;
-    const next = design.modules.find((item) => !item.closed)?.id ?? "";
-    setModuleId(next);
-    setValues(defaultTestValues(design, next));
-  }, [design, moduleId]);
-
-  function controlIdOf(target: TestSetupTarget) {
-    return target.kind === "event-field"
-      ? changedFieldLabelId
-      : target.kind === "previous-value"
-        ? previousValueLabelId
-        : valueControlId(target.fieldId);
+  function headingIdOf(blockKey: string) {
+    const index = reading?.blocks.findIndex((block) => block.key === blockKey);
+    return `sandbox-test-result-${index ?? 0}-heading`;
   }
 
-  async function run() {
-    if (!moduleId) {
-      setError("Add a module with fields before running a test.");
-      return;
-    }
-    // Missing values show beside their fields; nothing is sent or stored.
-    const problems = missingTestSetupValues({
-      fields,
-      values,
-      event,
-      previousValue: eventDraft.previousValue,
-    });
-    setSetupErrors(
-      new Map(
-        problems.map((problem) => [
-          controlIdOf(problem.target),
-          problem.message,
-        ]),
-      ),
-    );
-    const first = problems[0];
-    if (first) {
-      if (first.target.kind === "field")
-        revealField(first.target.fieldId, false);
-      setPhoneView("setup");
-      setFocusControlId(controlIdOf(first.target));
-      return;
-    }
-    await submit({
-      moduleId,
-      values,
-      event,
-      ...(triggerMode === "selected" ? { triggerIds } : {}),
-    });
+  function putResult(result: BlockResult) {
+    setResults((current) => ({
+      ...current,
+      [resultKey(result.moduleId, result.blockKey)]: result,
+    }));
   }
 
-  async function submit(input: Parameters<Props["onRun"]>[0]) {
-    setPending(true);
+  function chooseModule(id: string) {
+    setModuleId(id);
+    setError("");
+    if (phone) setPhoneView("reading");
+  }
+
+  /** Sends one run; a stop code ends "Try every event" (N10). */
+  async function send(
+    result: BlockResult,
+    triggerIds: string[] | null,
+  ): Promise<RunOutcome> {
+    const key = resultKey(result.moduleId, result.blockKey);
+    setRunning({ key, which: result.only?.id ?? "event" });
     setError("");
     try {
-      const stored = await onRun(input);
-      setSelectedRunId(stored.id);
-      setOwnRunId(stored.id);
-      setEditedSinceRun(new Set());
-      if (phone) {
-        setPhoneView("result");
-        setFocusResult(true);
-      }
-      return true;
+      const stored = await onRun({
+        moduleId: result.moduleId,
+        values: result.values,
+        event: result.plan.event,
+        ...(triggerIds ? { triggerIds } : {}),
+      });
+      putResult({ ...result, runId: stored.id, editing: false });
+      setFocusId(headingIdOf(result.blockKey));
+      return "ran";
     } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 409) {
+        if (reason.code === "run_history_full") {
+          setFullSeen(true);
+          return "stopped";
+        }
+        if (reason.code === "stale_revision") {
+          setError("Sandbox draft changed; reload before testing.", reason);
+          return "stopped";
+        }
+      }
       // The server's words never show (S1-C6); the shared path says it.
       setError(
         apiErrorMessage(reason, "The test could not run. Try again."),
         reason,
       );
-      return false;
+      return "stopped";
     } finally {
-      setPending(false);
+      setRunning(null);
+    }
+  }
+
+  function listeningIds(blockKey: string) {
+    return (
+      reading?.blocks
+        .find((block) => block.key === blockKey)
+        ?.triggers.filter((item) => item.enabled)
+        .map((item) => item.id) ?? []
+    );
+  }
+
+  /** Opens the values in "Change values" with no request (E4). */
+  function waitForValues(result: BlockResult): RunOutcome {
+    putResult({ ...result, editing: true });
+    setFocusId(headingIdOf(result.blockKey));
+    return "waiting";
+  }
+
+  async function tryBlock(block: ReadingBlock): Promise<RunOutcome> {
+    if (!reading) return "stopped";
+    const plan = tryEventPlan(design, reading.moduleId, block.event, {
+      now: new Date(),
+      administratorId: administrator?.id ?? null,
+    });
+    const result: BlockResult = {
+      moduleId: reading.moduleId,
+      blockKey: block.key,
+      runId: null,
+      only: null,
+      plan,
+      values: { ...plan.values },
+      checked: listeningIds(block.key),
+      editing: false,
+    };
+    if (plan.unfillable.length) return waitForValues(result);
+    return send(result, null);
+  }
+
+  async function tryTrigger(block: ReadingBlock, triggerId: string) {
+    const recordTrigger = triggers.find((item) => item.id === triggerId);
+    if (!reading || !recordTrigger || busy || tryReason) return;
+    const plan = tryTriggerPlan(design, recordTrigger, {
+      now: new Date(),
+      administratorId: administrator?.id ?? null,
+    });
+    const result: BlockResult = {
+      moduleId: reading.moduleId,
+      blockKey: block.key,
+      runId: null,
+      only: { id: recordTrigger.id, name: recordTrigger.name },
+      plan,
+      values: { ...plan.values },
+      checked: [recordTrigger.id],
+      editing: false,
+    };
+    if (plan.unfillable.length) {
+      waitForValues(result);
+      return;
+    }
+    await send(result, [recordTrigger.id]);
+  }
+
+  async function runAgain(result: BlockResult) {
+    if (busy) return;
+    const stillNeeded = result.plan.unfillable.filter((item) => {
+      const field = fields.find((candidate) => candidate.id === item.fieldId);
+      return (
+        !field ||
+        !valueFits(
+          design,
+          result.moduleId,
+          field,
+          result.values[item.fieldId] ?? null,
+        )
+      );
+    });
+    if (stillNeeded.length) {
+      waitForValues(result);
+      return;
+    }
+    const listening = listeningIds(result.blockKey);
+    // Every listening trigger checked sends null (today's rule, C5).
+    const triggerIds = result.only
+      ? [result.only.id]
+      : listening.every((id) => result.checked.includes(id))
+        ? null
+        : result.checked.filter((id) => listening.includes(id));
+    await send({ ...result, plan: { ...result.plan, triggerIds } }, triggerIds);
+  }
+
+  async function tryEvery() {
+    if (busy || everyReason || !reading) return;
+    const blocks = reading.blocks.filter((block) => block.triggers.length);
+    try {
+      for (const [index, block] of blocks.entries()) {
+        setEvery({ index: index + 1, count: blocks.length });
+        // Results that finished stay when a later run stops (N10).
+        if ((await tryBlock(block)) !== "ran") break;
+      }
+    } finally {
+      setEvery(null);
     }
   }
 
   async function clear() {
-    if (clearing) return;
+    if (busy) return;
     setClearing(true);
     setError("");
     try {
       await onClear();
-      setSelectedRunId(null);
+      setFullSeen(false);
+      setResults({});
+      setRecentOpen(false);
     } catch (reason) {
       setError(
         apiErrorMessage(
@@ -446,14 +432,436 @@ export function TestWorkspace({
     }
   }
 
-  /** Opens a recent result, with its module and event in the setup. */
-  function openRun(item: SandboxTestRun) {
-    setSelectedRunId(item.id);
-    if (item.input.moduleId !== moduleId || !sameTestEvent(item.event, event))
-      chooseModule(item.input.moduleId, item.event);
+  function openStoredRun(run: SandboxTestRun) {
+    const storedReading = moduleReading(design, triggers, run.input.moduleId);
+    if (!storedReading) return;
+    const result = storedResult(run, storedReading);
+    putResult(result);
+    setModuleId(run.input.moduleId);
+    setRecentOpen(false);
+    if (phone) setPhoneView("reading");
+    const index = storedReading.blocks.findIndex(
+      (block) => block.key === result.blockKey,
+    );
+    setFocusId(`sandbox-test-result-${Math.max(index, 0)}-heading`);
   }
 
-  const busy = pending || clearing;
+  /** The event's previous value as a "<field> before" row, if it has one. */
+  function beforeOf(result: BlockResult) {
+    const event = result.plan.event;
+    if (event.kind !== "field-changed" && event.kind !== "threshold-crossed")
+      return null;
+    const field = fields.find((item) => item.id === event.fieldId);
+    if (!field || event.previousValue === undefined) return null;
+    return {
+      label: `${field.name} before`,
+      field,
+      value: event.previousValue,
+    };
+  }
+
+  const query = search.trim().toLocaleLowerCase();
+  const shownGroups = groups
+    .map((group) => ({
+      ...group,
+      modules: group.modules.filter(
+        (item) => !query || item.name.toLocaleLowerCase().includes(query),
+      ),
+    }))
+    .filter((group) => group.modules.length);
+  const moduleCount = groups.reduce(
+    (sum, group) => sum + group.modules.length,
+    0,
+  );
+
+  const modulesPane = (
+    <section
+      aria-label="Modules"
+      className={cn(
+        "border-border flex min-w-0 flex-col @min-[640px]/test:min-h-0 @min-[640px]/test:border-r",
+        // With no module, a phone shows both panes, list then reading, so
+        // "Open Build" stays in reach (E7, QA-7).
+        phone && moduleCount > 0 && phoneView === "reading" && "hidden",
+      )}
+    >
+      <div className="border-border flex min-h-14 items-center gap-2 border-b px-4 py-2">
+        <h3 className="font-semibold">Modules</h3>
+        <span className="text-muted-foreground text-sm">{moduleCount}</span>
+      </div>
+      {/* No search over an empty list (F13); the Triggers search pattern:
+          placeholder and accessible name, no visible label (F7). */}
+      {moduleCount ? (
+        <div className="px-4 pt-3">
+          <div className="relative">
+            <Search
+              aria-hidden="true"
+              className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+            />
+            <Input
+              type="search"
+              aria-label="Search modules"
+              placeholder="Search modules"
+              className="min-h-11 pl-9"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </div>
+        </div>
+      ) : null}
+      <div className="min-h-0 flex-1 overflow-y-auto py-2">
+        {!moduleCount ? (
+          <p className="text-muted-foreground px-4 py-3 text-sm">
+            No modules yet
+          </p>
+        ) : null}
+        {shownGroups.map((group) => (
+          <div
+            key={group.departmentId}
+            role="group"
+            aria-label={group.departmentName}
+          >
+            <p className="text-muted-foreground flex items-center gap-2 px-4 pt-3 pb-1 text-xs font-semibold">
+              <DepartmentMark departmentIndex={group.departmentIndex} />
+              {group.departmentName}
+              {group.isNew ? <Badge variant="secondary">New</Badge> : null}
+            </p>
+            <ul>
+              {group.modules.map((item) => (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    aria-current={item.id === moduleId ? "true" : undefined}
+                    className={cn(
+                      "hover:bg-muted focus-visible:ring-ring flex min-h-11 w-full items-center justify-between gap-3 px-6 text-left text-sm outline-none focus-visible:ring-2 xl:min-h-10",
+                      item.id === moduleId && "bg-muted font-medium",
+                    )}
+                    onClick={() => chooseModule(item.id)}
+                  >
+                    <span className="min-w-0 [overflow-wrap:anywhere]">
+                      {item.name}
+                    </span>
+                    <span className="text-muted-foreground shrink-0 text-xs font-normal">
+                      {item.triggerCount
+                        ? `${item.triggerCount} trigger${item.triggerCount === 1 ? "" : "s"}`
+                        : "No triggers"}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+        {groups.length && !shownGroups.length ? (
+          <p className="text-muted-foreground px-4 py-3 text-sm">
+            No module matches.
+          </p>
+        ) : null}
+      </div>
+      <div className="border-border flex min-h-12 flex-wrap items-center justify-between gap-2 border-t px-4 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+        <Popover open={recentOpen} onOpenChange={setRecentOpen}>
+          <PopoverTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="sm"
+                className={cn(
+                  "min-h-11 px-2 xl:min-h-8",
+                  full && "text-warn-text",
+                )}
+                disabled={!runs.length}
+              />
+            }
+          >
+            Results {count} of {STORE_LIMIT}
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-80 p-1">
+            <ul
+              aria-label="Recent results"
+              className="max-h-72 overflow-y-auto"
+            >
+              {runs.map((run) => (
+                <li key={run.id}>
+                  <button
+                    type="button"
+                    className="hover:bg-muted focus-visible:ring-ring grid min-h-11 w-full gap-0.5 rounded-md px-3 py-2 text-left text-sm outline-none focus-visible:ring-2"
+                    onClick={() => openStoredRun(run)}
+                  >
+                    <span className="font-medium">
+                      {moduleName(design, run.input.moduleId)} ·{" "}
+                      {eventDescription(design, run)}
+                    </span>
+                    <span className="text-muted-foreground text-xs">
+                      {formatSavedTime(run.createdAt)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </PopoverContent>
+        </Popover>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-primary min-h-11 xl:min-h-8"
+          disabled={busy || (!runs.length && !count)}
+          pending={clearing}
+          pendingLabel="Clearing results…"
+          onClick={() => void clear()}
+        >
+          Clear results
+        </Button>
+      </div>
+    </section>
+  );
+
+  const readingPane = (
+    <section
+      aria-label="Reading"
+      className={cn(
+        "@container/reading flex min-w-0 flex-col @min-[640px]/test:min-h-0",
+        phone && moduleCount > 0 && phoneView === "list" && "hidden",
+      )}
+    >
+      {!reading ? (
+        <div className="grid flex-1 place-content-center justify-items-center gap-3 p-8 text-center">
+          <div className="grid gap-1">
+            <h3 className="font-semibold">Nothing to test yet</h3>
+            <p className="text-muted-foreground text-sm">
+              Add a module in Build to see what it does.
+            </p>
+          </div>
+          <Button variant="outline" className="min-h-11" onClick={onOpenBuild}>
+            Open Build
+          </Button>
+        </div>
+      ) : (
+        <>
+          <div className="border-border grid gap-2 border-b px-4 py-3 @min-[40rem]/reading:grid-cols-[minmax(0,1fr)_auto] @min-[40rem]/reading:items-start">
+            {phone ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="min-h-11 justify-self-start"
+                onClick={() => setPhoneView("list")}
+              >
+                <ArrowLeft aria-hidden />
+                Modules
+              </Button>
+            ) : null}
+            <div className="min-w-0">
+              <h3 className="flex flex-wrap items-center gap-2 text-lg font-semibold [overflow-wrap:anywhere]">
+                <DepartmentMark departmentIndex={reading.departmentIndex} />
+                {reading.name}
+                {selectedGroup?.isNew ? (
+                  <Badge variant="secondary">New</Badge>
+                ) : null}
+              </h3>
+              <p className="text-muted-foreground text-sm">{reading.facts}</p>
+            </div>
+            {tryBlocks.length ? (
+              <DisabledReason reason={busy ? null : everyReason}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="min-h-11 xl:min-h-8"
+                  disabled={busy && every === null}
+                  pending={every !== null}
+                  pendingLabel={
+                    every
+                      ? `Running ${every.index} of ${every.count}`
+                      : "Running…"
+                  }
+                  onClick={() => void tryEvery()}
+                >
+                  <Play aria-hidden />
+                  Try every event · {tryBlocks.length}{" "}
+                  {tryBlocks.length === 1 ? "run" : "runs"}
+                </Button>
+              </DisabledReason>
+            ) : null}
+          </div>
+          <div className="min-h-0 flex-1 px-4 @min-[640px]/test:overflow-y-auto">
+            {error ? (
+              <Alert
+                variant="destructive"
+                role="alert"
+                className="mt-4"
+                reference={errorFailure?.reference}
+              >
+                {error}
+              </Alert>
+            ) : null}
+            {selectedGroup?.isNew ? (
+              <div className="bg-muted/50 mt-4 flex flex-wrap items-center gap-3 rounded-md px-3 py-2 text-sm">
+                <Upload aria-hidden className="text-muted-foreground size-4" />
+                <p className="min-w-0 flex-1">
+                  Review &amp; Publish lists what publishing creates.
+                </p>
+                <DisabledReason reason={review.disabled ? review.reason : null}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-primary min-h-11 xl:min-h-8"
+                    disabled={review.disabled && !review.reason}
+                    onClick={review.open}
+                  >
+                    Open review
+                  </Button>
+                </DisabledReason>
+              </div>
+            ) : null}
+            {reading.blocks.map((block, index) => {
+              const result = results[resultKey(reading.moduleId, block.key)];
+              const run = result?.runId
+                ? runs.find((item) => item.id === result.runId)
+                : undefined;
+              const key = resultKey(reading.moduleId, block.key);
+              const runIndex = run
+                ? runs.findIndex((item) => item.id === run.id)
+                : -1;
+              const before = result ? beforeOf(result) : null;
+              return (
+                <TestEventBlock
+                  key={block.key}
+                  block={block}
+                  disabledReason={busy ? null : tryReason}
+                  busy={busy}
+                  runningKey={running?.key === key ? running.which : null}
+                  onTry={() => {
+                    if (!busy && !tryReason) void tryBlock(block);
+                  }}
+                  onTryTrigger={(triggerId) =>
+                    void tryTrigger(block, triggerId)
+                  }
+                >
+                  {result && (result.runId === null || run) ? (
+                    <TestResultCard
+                      design={design}
+                      triggers={triggers}
+                      draftRevision={draftRevision}
+                      administrator={administrator}
+                      run={run ?? null}
+                      title={
+                        result.only
+                          ? `Example item · ${result.only.name} only`
+                          : "Example item"
+                      }
+                      fields={fields}
+                      values={result.values}
+                      startValues={result.plan.values}
+                      setFieldIds={result.plan.setFieldIds}
+                      before={before}
+                      needed={result.plan.unfillable.filter((item) => {
+                        const field = fields.find(
+                          (candidate) => candidate.id === item.fieldId,
+                        );
+                        return (
+                          !field ||
+                          !valueFits(
+                            design,
+                            result.moduleId,
+                            field,
+                            result.values[item.fieldId] ?? null,
+                          )
+                        );
+                      })}
+                      notes={result.plan.notes}
+                      onlyTrigger={result.only !== null}
+                      triggerChoices={
+                        result.only
+                          ? null
+                          : block.triggers
+                              .filter((item) => item.enabled)
+                              .map((item) => ({ id: item.id, name: item.name }))
+                      }
+                      checkedTriggerIds={result.checked}
+                      editing={result.editing}
+                      runNumber={
+                        runIndex >= 0 ? Math.max(count - runIndex, 1) : null
+                      }
+                      running={running?.key === key}
+                      runDisabledReason={busy ? null : tryReason}
+                      idPrefix={`sandbox-test-result-${index}`}
+                      onEdit={() => putResult({ ...result, editing: true })}
+                      onValue={(fieldId, value) =>
+                        putResult({
+                          ...result,
+                          values: { ...result.values, [fieldId]: value },
+                        })
+                      }
+                      onCheckTrigger={(triggerId, checked) =>
+                        putResult({
+                          ...result,
+                          checked: checked
+                            ? [...result.checked, triggerId]
+                            : result.checked.filter((id) => id !== triggerId),
+                        })
+                      }
+                      onRunAgain={() => {
+                        if (!tryReason) void runAgain(result);
+                      }}
+                      onShowOnCanvas={onShowOnCanvas}
+                    />
+                  ) : null}
+                </TestEventBlock>
+              );
+            })}
+            <section
+              aria-labelledby="sandbox-test-links"
+              className="grid gap-2 py-4"
+            >
+              <div className="flex items-center gap-3">
+                <span className="border-border text-muted-foreground grid size-7 shrink-0 place-items-center rounded-md border">
+                  <Link2 aria-hidden className="size-3.5" />
+                </span>
+                <h4 id="sandbox-test-links" className="font-semibold">
+                  Links
+                </h4>
+              </div>
+              {reading.links.length ? (
+                <ul className="grid gap-1 text-sm sm:pl-10">
+                  {reading.links.map((link) => (
+                    <li
+                      key={link.key}
+                      className="flex min-w-0 flex-wrap items-center gap-x-2"
+                    >
+                      {link.direction === "out" ? (
+                        <ArrowRight
+                          aria-label="Links to"
+                          className="text-primary size-4 shrink-0"
+                        />
+                      ) : (
+                        <ArrowLeft
+                          aria-label="Linked from"
+                          className="text-primary size-4 shrink-0"
+                        />
+                      )}
+                      <span className="font-medium">{link.moduleName}</span>
+                      <span className="text-muted-foreground inline-flex items-center gap-1.5">
+                        <DepartmentMark
+                          departmentIndex={link.departmentIndex}
+                        />
+                        {link.departmentName}
+                      </span>
+                      <span className="text-muted-foreground ml-auto text-xs">
+                        {link.carries.length
+                          ? `carries ${link.carries.join(", ")}`
+                          : "no values"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-muted-foreground text-sm sm:pl-10">
+                  No links.
+                </p>
+              )}
+            </section>
+          </div>
+        </>
+      )}
+    </section>
+  );
 
   return (
     <section
@@ -461,194 +869,9 @@ export function TestWorkspace({
       aria-label="Sandbox test"
       className="@container/test flex h-full min-w-0 flex-col gap-4"
     >
-      {error ? (
-        <Alert
-          variant="destructive"
-          role="alert"
-          reference={errorFailure?.reference}
-        >
-          {error}
-        </Alert>
-      ) : null}
-      {phone ? (
-        <ToggleGroup
-          aria-label="Test view"
-          variant="segmented"
-          multiple={false}
-          value={[phoneView]}
-          onValueChange={(selection) => {
-            const next = selection[0];
-            if (next === "setup" || next === "result") setPhoneView(next);
-          }}
-        >
-          <ToggleGroupItem value="setup">Setup</ToggleGroupItem>
-          <ToggleGroupItem value="result">Result</ToggleGroupItem>
-        </ToggleGroup>
-      ) : null}
-      <div className="bg-card border-border min-w-0 shrink-0 rounded-xl border @min-[900px]/test:h-[calc(100dvh-15rem)] @min-[900px]/test:overflow-clip xl:@min-[900px]/test:h-auto xl:@min-[900px]/test:min-h-0 xl:@min-[900px]/test:flex-1 xl:@min-[900px]/test:shrink">
-        <ResizablePanelGroup
-          orientation="horizontal"
-          disabled={!wide}
-          className="block! h-auto! overflow-visible! @min-[900px]/test:flex! @min-[900px]/test:h-full! @min-[900px]/test:overflow-hidden!"
-        >
-          <ResizablePanel
-            id="sandbox-test-setup"
-            defaultSize="38%"
-            minSize={wide ? "20rem" : 0}
-            className={cn(
-              "min-w-0 overflow-visible! @min-[900px]/test:h-full @min-[900px]/test:overflow-hidden!",
-              phone && phoneView === "result" && "hidden",
-            )}
-          >
-            <section
-              aria-label="Test setup"
-              data-test-setup
-              className="border-border @container/setup flex min-w-0 flex-col border-b @min-[900px]/test:h-full @min-[900px]/test:border-b-0"
-            >
-              <div className="border-border flex min-h-14 items-center border-b px-4 py-2">
-                <h3
-                  aria-label="Test setup"
-                  data-slot="section-title"
-                  className="font-semibold"
-                >
-                  Setup
-                </h3>
-              </div>
-              <fieldset
-                disabled={busy}
-                className="flex min-w-0 flex-col @min-[900px]/test:min-h-0 @min-[900px]/test:flex-1"
-              >
-                {/* A control scrolled into view keeps clear of the Run test
-                    bar, which stays over the setup on phones (F12). */}
-                <div className="grid min-w-0 content-start gap-5 p-4 @min-[900px]/test:min-h-0 @min-[900px]/test:flex-1 @min-[900px]/test:overflow-y-auto [&_:is(input,select,button)]:scroll-mb-24 [&_[data-slot=native-select-wrapper]]:w-full [&_select]:w-full">
-                  <div className="grid gap-3 xl:gap-2">
-                    <SetupRow id={moduleLabelId} label="Module">
-                      <NativeSelect
-                        id={moduleLabelId}
-                        value={moduleId}
-                        onChange={(change) =>
-                          chooseModule(
-                            change.target.value,
-                            defaultTestTrigger(triggers, change.target.value),
-                          )
-                        }
-                      >
-                        {design.modules
-                          .filter((item) => !item.closed)
-                          .map((item) => (
-                            <NativeSelectOption key={item.id} value={item.id}>
-                              {item.name}
-                            </NativeSelectOption>
-                          ))}
-                      </NativeSelect>
-                    </SetupRow>
-                    <TestEventRows
-                      draft={eventDraft}
-                      fields={fields}
-                      changedFieldId={changedFieldLabelId}
-                      previousValueId={previousValueLabelId}
-                      errors={setupErrors}
-                      onChange={changeEvent}
-                    />
-                  </div>
-                  <TestValues
-                    fields={fields}
-                    shownFields={matchingFields}
-                    values={values}
-                    relevantCount={
-                      fields.filter((field) => relevantIds.has(field.id)).length
-                    }
-                    editedCount={editedFields.length}
-                    filter={filter}
-                    search={search}
-                    limit={limit}
-                    busy={busy}
-                    errorFor={(id) =>
-                      setupErrors.get(valueControlId(id)) ?? fieldIssues.get(id)
-                    }
-                    onFilter={setFilter}
-                    onSearch={setSearch}
-                    onLimit={setLimit}
-                    onValue={setValue}
-                  />
-                  <TestSetupAdvanced
-                    design={design}
-                    moduleTriggers={moduleTriggers}
-                    triggerMode={triggerMode}
-                    triggerIds={triggerIds}
-                    runs={runs}
-                    shownRunId={shownRun?.id}
-                    busy={busy}
-                    clearing={clearing}
-                    onTriggerMode={setTriggerMode}
-                    onTriggerIds={setTriggerIds}
-                    onOpenRun={openRun}
-                    onClear={() => void clear()}
-                  />
-                </div>
-                <div className="bg-card border-border sticky bottom-0 z-10 border-t px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] @min-[900px]/test:static">
-                  <DisabledReason
-                    reason={moduleId ? null : "Add a module first."}
-                  >
-                    <Button
-                      className="min-h-11 w-full"
-                      disabled={clearing || !moduleId}
-                      pending={pending}
-                      pendingLabel="Running…"
-                      onClick={() => void run()}
-                    >
-                      Run test
-                    </Button>
-                  </DisabledReason>
-                </div>
-              </fieldset>
-            </section>
-          </ResizablePanel>
-          {wide && (
-            <ResizableHandle withHandle aria-label="Resize test setup" />
-          )}
-          <ResizablePanel
-            id="sandbox-test-outcome"
-            minSize={wide ? "24rem" : 0}
-            className={cn(
-              "min-w-0 overflow-visible! @min-[900px]/test:h-full @min-[900px]/test:overflow-hidden!",
-              phone && phoneView === "setup" && "hidden",
-            )}
-          >
-            <TestResult
-              design={design}
-              run={shownRun}
-              summary={shownSummary}
-              running={pending}
-              pending={busy}
-              onRunAgain={(previous) =>
-                void submit({
-                  moduleId: previous.input.moduleId,
-                  values: previous.input.values,
-                  event: previous.event,
-                  ...(previous.triggerIds
-                    ? { triggerIds: previous.triggerIds }
-                    : {}),
-                })
-              }
-              onShowOnCanvas={onShowOnCanvas}
-              triggers={triggers}
-              onTryTrigger={(trigger) => {
-                chooseModule(trigger.moduleId ?? moduleId, trigger);
-                // On a phone the setup it changed is the other tab.
-                setPhoneView("setup");
-                setFocusControlId(moduleLabelId);
-              }}
-              inputsChanged={inputsChanged}
-              onRunCurrent={() => void run()}
-              onShowField={(id) => {
-                revealField(id, true);
-                setPhoneView("setup");
-                setFocusControlId(valueControlId(id));
-              }}
-            />
-          </ResizablePanel>
-        </ResizablePanelGroup>
+      <div className="bg-card border-border grid min-w-0 shrink-0 rounded-xl border @min-[640px]/test:grid-cols-[18rem_minmax(0,1fr)] @min-[900px]/test:h-[calc(100dvh-15rem)] @min-[900px]/test:overflow-clip xl:@min-[900px]/test:h-auto xl:@min-[900px]/test:min-h-0 xl:@min-[900px]/test:flex-1 xl:@min-[900px]/test:shrink">
+        {modulesPane}
+        {readingPane}
       </div>
     </section>
   );

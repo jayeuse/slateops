@@ -3,11 +3,14 @@
 from uuid import UUID
 
 import pytest
+from uuid6 import uuid7
 
 from app.core.base_model import utc_now
+from app.systems.access.policy.models import AccessLevel
 from app.systems.openview.charts.models import Chart
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
 from tests.charts.chart_route_support import chart_world as chart_world
+from tests.rbac.support import add_department, make_group_access
 
 pytestmark = pytest.mark.integration
 
@@ -146,3 +149,58 @@ def test_referenced_chart_can_change_visualization_but_not_widget_category(chart
         )
         assert rejected.status_code == 409 and "PRIVATE" not in rejected.text
         assert client.get(f"/api/charts/{chart_id}").json()["chart_type"] == "pie"
+
+
+def test_usage_lists_only_open_department_dashboards_for_non_administrators(chart_world):
+    """OQ1-C3: chart usage lists only dashboards of open departments for non-administrators."""
+
+    world = chart_world
+    closed = add_department(world.db, "Closed consumer " + uuid7().hex)
+    make_group_access(world.db, [world.users["manager"]], closed, level=AccessLevel.READ)
+    world.db.flush()
+    with world.client("manager") as client:
+        chart_id = UUID(client.post("/api/charts", json=world.body()).json()["id"])
+        open_dashboard = Dashboard(
+            org_id=world.module.org_id,
+            department_id=world.module.department_id,
+            name="Open consumer",
+        )
+        closed_dashboard = Dashboard(
+            org_id=closed.org_id, department_id=closed.id, name="CLOSED CONSUMER CANARY"
+        )
+        world.db.add_all([open_dashboard, closed_dashboard])
+        world.db.flush()
+        world.db.add_all(
+            DashboardWidget(
+                org_id=dashboard.org_id,
+                dashboard_id=dashboard.id,
+                position=0,
+                widget_type="chart",
+                chart_id=chart_id,
+                config=None,
+            )
+            for dashboard in (open_dashboard, closed_dashboard)
+        )
+        closed.is_deleted = True
+        closed.deleted_at = utc_now()
+        world.db.commit()
+
+        listed = client.get(f"/api/charts/{chart_id}/usage")
+        assert listed.status_code == 200
+        assert [item["id"] for item in listed.json()["items"]] == [str(open_dashboard.id)]
+        assert listed.json()["pagination"]["total"] == 1
+        assert listed.json()["has_restricted_usage"] is True
+        blocked = client.delete(f"/api/charts/{chart_id}", params={"revision": 1})
+        assert blocked.status_code == 409
+        usage = blocked.json()["detail"]["usage"]
+        assert [item["id"] for item in usage["items"]] == [str(open_dashboard.id)]
+        for response in (listed, blocked):
+            for canary in ("CLOSED CONSUMER", str(closed_dashboard.id)):
+                assert canary not in response.text
+    with world.client("admin") as admin:
+        everything = admin.get(f"/api/charts/{chart_id}/usage").json()
+        assert {item["id"] for item in everything["items"]} == {
+            str(open_dashboard.id),
+            str(closed_dashboard.id),
+        }
+        assert everything["has_restricted_usage"] is False

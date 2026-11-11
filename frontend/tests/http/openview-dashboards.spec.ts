@@ -189,6 +189,65 @@ test("a reader of a department without a dashboard sees that none exists", async
   await expect(page.getByRole("button", { name: "Overview" })).toHaveCount(0);
 });
 
+// QA-1: a new department's home exists from the publish with no widgets, so
+// its managers still get the presets, and a preset fills that home.
+test("an empty home offers its managers the presets and a preset fills that home", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page, {
+    identity: manager,
+    dashboards: [dashboardWire({ widgets: [] })],
+  });
+  await page.goto(homeUrl);
+  await expect(
+    page.getByRole("heading", { name: "Set up the Field service dashboard" }),
+  ).toBeVisible();
+  // The home is already empty, so there is no "Start empty".
+  await expect(page.getByRole("button", { name: "Start empty" })).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: "Overview" }).click();
+  await page.getByRole("button", { name: "Add a bar chart" }).click();
+  await page
+    .getByRole("dialog", { name: "Add a chart" })
+    .getByRole("button", { name: "Add to dashboard" })
+    .click();
+  await page.getByRole("button", { name: "Save layout" }).click();
+  await expect(page.getByRole("toolbar", { name: "Edit layout" })).toHaveCount(
+    0,
+  );
+  expect(api.writes.filter((write) => write.method === "POST")).toEqual([]);
+  const save = api.writes.find((write) => write.method === "PATCH");
+  expect(save?.path).toBe(`/api/dashboards/${ids.home}`);
+  expect(save?.body?.revision).toBe(3);
+  expect(
+    (save?.body?.widgets as Record<string, unknown>[]).map((item) => [
+      item.widget_type,
+      item.grid_column,
+      item.grid_row,
+      item.column_span,
+      item.row_span,
+    ]),
+  ).toEqual([["chart", 0, 1, 2, 2]]);
+});
+
+test("a reader of an empty home sees the dashboard, not the presets", async ({
+  page,
+}) => {
+  await installDashboardApi(page, {
+    identity: reader,
+    dashboards: [dashboardWire({ widgets: [] })],
+  });
+  await page.goto(homeUrl);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Field service dashboard" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Set up the Field service dashboard" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Overview" })).toHaveCount(0);
+});
+
 test("a manager arranges the layout with the keyboard alone and saves one update with the revision", async ({
   page,
 }) => {

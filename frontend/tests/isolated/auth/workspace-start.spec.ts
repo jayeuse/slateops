@@ -193,7 +193,7 @@ for (const row of rows) {
         );
       if (path.startsWith("/api/sandbox/tests?"))
         return row.sandbox === "allowed"
-          ? Response.json({ items: [] })
+          ? Response.json({ items: [], total: 0 })
           : Response.json({ detail: "Forbidden" }, { status: 403 });
       if (path.startsWith("/api/views/data-sources?"))
         return Response.json({

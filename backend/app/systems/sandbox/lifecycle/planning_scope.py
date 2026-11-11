@@ -18,6 +18,7 @@ from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleRecordCloseError,
 )
 from app.systems.sandbox.lifecycle.schemas import (
+    DerivedChange,
     LifecycleBlocker,
     LifecycleEdgeState,
     LifecycleExternalImpact,
@@ -65,6 +66,7 @@ class LifecyclePlan:
     blockers: tuple[LifecycleBlocker, ...]
     impact_digest: str
     field_positions: dict[UUID, int] = field(default_factory=dict)
+    derived_changes: tuple[DerivedChange, ...] = ()
 
     def response(self) -> LifecycleImpactResponse:
         return LifecycleImpactResponse(
@@ -76,6 +78,7 @@ class LifecyclePlan:
             external_impacts=list(self.external_impacts),
             key_strips=list(self.key_strips),
             blockers=list(self.blockers),
+            derived_changes=list(self.derived_changes),
             impact_digest=self.impact_digest,
         )
 
@@ -95,6 +98,7 @@ def canonical_lifecycle_digest(
     blockers: tuple[LifecycleBlocker, ...] | list[LifecycleBlocker] = (),
     *,
     internal_state: object | None = None,
+    derived_changes: tuple[DerivedChange, ...] = (),
 ) -> str:
     """Hash the stable operation/root/actor and sorted current database state."""
 
@@ -127,6 +131,8 @@ def canonical_lifecycle_digest(
     }
     if internal_state is not None:
         payload["internal_state"] = internal_state
+    if derived_changes:  # BE-SD7: a renamed or re-archived channel is a drift
+        payload["derived_changes"] = [change.model_dump(mode="json") for change in derived_changes]
     return hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()
 
 

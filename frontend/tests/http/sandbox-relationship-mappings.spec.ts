@@ -1614,7 +1614,7 @@ test("a detailed template remains usable when moving from Triggers to Test", asy
 
   await expect(
     page.getByRole("heading", {
-      name: /Test setup|Workspace data could not be opened/,
+      name: /^Modules$|Workspace data could not be opened/,
     }),
   ).toBeVisible();
   expect({ pageErrors, consoleErrors }).toEqual({
@@ -1622,7 +1622,7 @@ test("a detailed template remains usable when moving from Triggers to Test", asy
     consoleErrors: [],
   });
   await expect(
-    page.getByRole("heading", { name: "Test setup", exact: true }),
+    page.getByRole("heading", { name: "Modules", exact: true }),
   ).toBeVisible();
 });
 
@@ -2032,7 +2032,27 @@ test("an empty Sandbox authors and persists a complete connected organization", 
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
   await page.getByRole("button", { name: "New trigger" }).click();
   await page.getByLabel("Trigger name").fill("Notify inventory intake");
+  // A new trigger starts empty (UXD-7): choose its module and its action.
+  await page
+    .getByRole("combobox", { name: "Event module", exact: true })
+    .click();
+  await page
+    .getByRole("option", { name: "Suppliers, 1 field", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Add action" }).click();
+  await page
+    .getByRole("combobox", { name: "Set field target", exact: true })
+    .click();
+  await page
+    .getByRole("option", { name: "Supplier name, Text", exact: true })
+    .click();
+  await page
+    .getByRole("region", { name: "Then", exact: true })
+    .getByRole("textbox")
+    .fill("Acme supplies");
   await page.getByRole("button", { name: "Save triggers" }).click();
+  // The save is a request: read the stored document once it has landed.
+  await expect.poll(() => sandbox.document().triggers.length).toBe(1);
 
   const document = sandbox.document();
   expect(document.design.departments).toHaveLength(1);
@@ -2153,8 +2173,9 @@ test("running and clearing tests protect browser exits until each request settle
   });
   await page.getByRole("link", { name: "Test", exact: true }).click();
 
-  await page.getByLabel("Request number", { exact: true }).fill("REQ-001");
-  await page.getByRole("button", { name: "Run test" }).click();
+  await page
+    .getByRole("button", { name: "Try it: When an item is added" })
+    .click();
   await expect.poll(() => runStarted).toBe(true);
   await expect.poll(() => exitGuarded(page)).toBe(true);
   await expect(
@@ -2169,15 +2190,17 @@ test("running and clearing tests protect browser exits until each request settle
   ).toBeDisabled();
   await page.keyboard.press("Escape");
   releaseRun();
-  await expect(
-    page.getByRole("heading", { name: "No field changes in this test" }),
-  ).toBeVisible();
+  const result = page.getByRole("region", {
+    name: "Example item",
+    exact: true,
+  });
+  await expect(result).toBeVisible();
 
   await page.getByRole("button", { name: "Clear results" }).click();
   await expect.poll(() => clearStarted).toBe(true);
   await expect.poll(() => exitGuarded(page)).toBe(true);
   releaseClear();
-  await expect(page.getByText("Run a test to see the result.")).toBeVisible();
+  await expect(result).toHaveCount(0);
 });
 
 test("a trigger issue opens the trigger it identifies", async ({ page }) => {
@@ -3072,8 +3095,9 @@ test("daily Test history with a nullable weekday loads and a failed clear remain
 
   await page.goto("/sandbox?section=test");
   await expect(
-    page.getByRole("heading", { name: "Test setup", exact: true }),
+    page.getByRole("heading", { name: "Modules", exact: true }),
   ).toBeVisible();
+  await expect(page.getByText("Results 1 of 50")).toBeVisible();
   const clear = page.getByRole("button", { name: "Clear results" });
   await expect(clear).toBeEnabled();
   await clear.click();
@@ -3094,7 +3118,7 @@ test("daily Test history with a nullable weekday loads and a failed clear remain
   await expect(clear).toBeEnabled();
 });
 
-test("the trigger rail summaries follow the unsaved rule draft", async ({
+test("the trigger sentence follows the unsaved rule draft", async ({
   page,
 }) => {
   const sandbox = await openAuthenticatedSandbox(page);
@@ -3104,7 +3128,8 @@ test("the trigger rail summaries follow the unsaved rule draft", async ({
   const when = settings.getByRole("region", { name: "When", exact: true });
   const ifStep = settings.getByRole("region", { name: "If", exact: true });
   const then = settings.getByRole("region", { name: "Then", exact: true });
-  // Each step carries its own summary; no separate summary or preview.
+  // The whole-trigger sentence describes the detail (TRIG-6); there is no
+  // separate summary or preview.
   await expect(
     page.getByRole("region", { name: "Trigger summary" }),
   ).toHaveCount(0);
@@ -3116,12 +3141,15 @@ test("the trigger rail summaries follow the unsaved rule draft", async ({
 
   const savedTriggers = sandbox.document().triggers;
   await page
-    .getByLabel("Condition 1 field")
-    .selectOption({ label: "Priority" });
+    .getByRole("combobox", { name: "Condition 1 field", exact: true })
+    .click();
+  await page
+    .getByRole("option", { name: "Priority, Text", exact: true })
+    .click();
   const conditionValue = settings.getByLabel("Value", { exact: true }).first();
   await conditionValue.fill("Needs immediate review");
-  await expect(ifStep).toHaveAccessibleDescription(
-    "Priority is Needs immediate review",
+  await expect(settings).toHaveAccessibleDescription(
+    /, if Priority is Needs immediate review,/,
   );
   expect(sandbox.document().triggers).toEqual(savedTriggers);
 
@@ -3131,7 +3159,9 @@ test("the trigger rail summaries follow the unsaved rule draft", async ({
   await expect(then.getByRole("group", { name: "Action 2" })).toHaveCount(0);
 
   await page.getByLabel("Event", { exact: true }).selectOption("schedule");
-  await expect(when).toHaveAccessibleDescription(/^Daily at 09:00 in /);
+  await expect(settings).toHaveAccessibleDescription(
+    /^Every day at 09:00 in Service requests,/,
+  );
 });
 
 test("unsaved Service request follow-up trigger draft fits the original viewport and theme matrix", async ({
@@ -3147,19 +3177,19 @@ test("unsaved Service request follow-up trigger draft fits the original viewport
   await page.getByLabel("Trigger name").fill("Service request follow-up");
   await page.getByLabel("Event", { exact: true }).selectOption("field-changed");
   const settings = page.getByRole("region", { name: "Trigger details" });
-  await settings
-    .getByLabel("Event module")
-    .selectOption({ label: "Service requests" });
-  await settings.getByLabel("Event field").selectOption({ label: "Status" });
+  // Module and field pickers (TRIG-2); a new trigger starts with no module,
+  // no field, and no action (UXD-7).
+  const choose = async (picker: string, option: string) => {
+    await settings.getByRole("combobox", { name: picker, exact: true }).click();
+    await page.getByRole("option", { name: option, exact: true }).click();
+  };
+  await choose("Event module", "Service requests, 4 fields");
+  await choose("Event field", "Status, Choice list");
   await page.getByRole("button", { name: "Add condition" }).click();
-  await settings
-    .getByLabel("Condition 1 field")
-    .selectOption({ label: "Status" });
+  await choose("Condition 1 field", "Status, Choice list");
   await settings.getByLabel("Condition 1 operator").selectOption("=");
-  await settings
-    .getByLabel("Set field target")
-    .first()
-    .selectOption({ label: "Status" });
+  await page.getByRole("button", { name: "Add action" }).click();
+  await choose("Set field target", "Status, Choice list");
   // Status is a select field, so its values are picked by label.
   const values = settings.getByLabel("Value", { exact: true });
   await values.first().selectOption({ label: "Open" });
@@ -3194,8 +3224,10 @@ test("trigger panels resize with their requested minimum widths and remain usabl
   await openAuthenticatedSandbox(page);
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
   const list = page.getByRole("complementary", { name: "Trigger list" });
-  // Two panes since the relayout (S5): one handle sits between the list and
-  // the trigger detail, which holds the settings.
+  // One handle sits between the list and the trigger detail (relayout S5);
+  // the structure region beside them has a fixed width (TRIG-1). The list
+  // can narrow to 248px, its width from 1280 to 1439px, and the detail to
+  // 384px, so the three panes fit from 1280px.
   const settings = page.getByRole("region", { name: "Trigger details" });
   const listHandle = page.getByRole("separator", {
     name: "Resize trigger list",
@@ -3219,9 +3251,9 @@ test("trigger panels resize with their requested minimum widths and remain usabl
   await drag(listHandle, 120);
   await expect.poll(() => width(list)).toBeGreaterThan(initialListWidth + 80);
   await drag(listHandle, -1500);
-  await expect.poll(() => width(list)).toBeCloseTo(20 * rem, 0);
+  await expect.poll(() => width(list)).toBeCloseTo(15.5 * rem, 0);
   await drag(listHandle, 1500);
-  await expect.poll(() => width(settings)).toBeCloseTo(28 * rem, 0);
+  await expect.poll(() => width(settings)).toBeCloseTo(24 * rem, 0);
   await settings
     .getByLabel("Trigger name")
     .fill("Narrow settings stay editable");
@@ -3599,20 +3631,31 @@ test("Sandbox Test treats User values as simulated UUIDs without live eligibilit
     },
   });
   await page.getByRole("link", { name: "Test", exact: true }).click();
-  const setup = page.getByRole("region", { name: "Test setup", exact: true });
+  const reading = page.getByRole("region", { name: "Reading", exact: true });
+  await reading
+    .getByRole("button", { name: "Try it: When an item is added" })
+    .click();
+  const result = reading.getByRole("region", {
+    name: "Example item",
+    exact: true,
+  });
+  // The example is the signed-in administrator, not a looked-up person.
+  await expect
+    .poll(() => submitted?.["sandbox-assignee"])
+    .toBe("00000000-0000-4000-8000-000000000001");
+  await result.getByRole("button", { name: "Change values" }).click();
   // The help says the ID is used as typed and nobody's access is checked.
   await expect(
-    setup.getByText(
+    result.getByText(
       "The test uses this ID as is. It does not check that the person can sign in.",
     ),
   ).toBeVisible();
 
   const simulatedUserId = "00000000-0000-4000-8000-000000000042";
-  await setup.getByLabel("Request number", { exact: true }).fill("REQ-001");
-  await setup
+  await result
     .getByLabel("Assigned user", { exact: true })
     .fill(simulatedUserId);
-  await setup.getByRole("button", { name: "Run test", exact: true }).click();
+  await result.getByRole("button", { name: "Run again", exact: true }).click();
   await expect
     .poll(() => submitted?.["sandbox-assignee"])
     .toBe(simulatedUserId);
@@ -3625,12 +3668,11 @@ test("Sandbox Test treats User values as simulated UUIDs without live eligibilit
   ).toEqual([]);
 });
 
-test("Sandbox Test field search preserves hidden edits in the submitted temporary values", async ({
+test("Sandbox Test sends every changed value, including fields far down the list, and the result waits for Run again", async ({
   page,
 }) => {
   let submitted: Record<string, unknown> | undefined;
   const design = structuredClone(configuredSandboxDesign);
-  design.rules = [];
   for (let index = 1; index <= 24; index++) {
     design.modules[0].fields.push({
       id: `extra-${index}`,
@@ -3656,66 +3698,31 @@ test("Sandbox Test field search preserves hidden edits in the submitted temporar
     },
   });
   await page.getByRole("link", { name: "Test", exact: true }).click();
-  const setup = page.getByRole("region", { name: "Test setup", exact: true });
-  await expect(setup.getByLabel("Find a field")).toBeVisible();
-  await expect(setup.getByLabel("Title", { exact: true })).toHaveCount(0);
-  await setup.getByLabel("Request number", { exact: true }).fill("TEST-001");
-  await setup.getByRole("button", { name: /^All \(/ }).click();
-  await expect(setup.getByLabel("Extra field 24", { exact: true })).toHaveCount(
-    0,
-  );
-  await setup
-    .getByRole("button", { name: "Show more fields", exact: true })
+  const reading = page.getByRole("region", { name: "Reading", exact: true });
+  await reading
+    .getByRole("button", { name: "Try it: When an item is added" })
     .click();
-  await setup
-    .getByRole("button", { name: "Show more fields", exact: true })
-    .click();
-  await setup
+  const result = reading.getByRole("region", {
+    name: "Example item",
+    exact: true,
+  });
+  const happened = result.getByRole("region", { name: "What happened" });
+  await expect(happened).toContainText("Complete");
+  await result.getByRole("button", { name: "Change values" }).click();
+  await result.getByLabel("Request number", { exact: true }).fill("TEST-001");
+  await result
     .getByLabel("Extra field 24", { exact: true })
     .fill("Retained beyond first page");
-  await setup.getByLabel("Find a field").fill("Title");
-  await setup.getByLabel("Title", { exact: true }).fill("Keep this hidden");
-  await setup.getByLabel("Find a field").fill("");
-  await setup.getByRole("button", { name: /^Relevant \(/ }).click();
-  await expect(setup.getByLabel("Title", { exact: true })).toHaveCount(0);
-  await setup.getByRole("button", { name: /^Edited \(/ }).click();
-  await expect(setup.getByLabel("Title", { exact: true })).toHaveValue(
-    "Keep this hidden",
-  );
-  await setup.getByRole("button", { name: /^Relevant \(/ }).click();
-  await setup.getByRole("button", { name: "Run test", exact: true }).click();
+  await result.getByLabel("Title", { exact: true }).fill("Keep this hidden");
+  // Typing changes no shown result until Run again.
+  await expect(happened).toContainText("Complete");
+  await result.getByRole("button", { name: "Run again", exact: true }).click();
   await expect
     .poll(() => submitted?.["sample-field-Title"])
     .toBe("Keep this hidden");
   expect(submitted?.["extra-24"]).toBe("Retained beyond first page");
-  await expect(
-    page
-      .getByRole("region", { name: "Field comparison", exact: true })
-      .getByRole("row", { name: /Status/ }),
-  ).toContainText("Complete");
-  await setup.getByLabel("Find a field").fill("Status");
-  await setup.getByLabel("Status", { exact: true }).selectOption("Open");
-  await expect(
-    page
-      .getByRole("region", { name: "Field comparison", exact: true })
-      .getByRole("row", { name: /Status/ }),
-  ).toContainText("Complete");
-  // The Test setup panel resizes by keyboard and keeps typed values, and the
-  // Test page fits from 1920 to 390 px without page overflow.
-  await setup.getByLabel("Find a field").fill("");
-  await page.setViewportSize({ width: 1920, height: 1000 });
-  const handle = page.getByRole("separator", { name: "Resize test setup" });
-  await expect(handle).toBeVisible();
-  const beforeWidth = (await setup.boundingBox())!.width;
-  await handle.focus();
-  await page.keyboard.press("ArrowRight");
-  await expect
-    .poll(async () => (await setup.boundingBox())!.width)
-    .toBeGreaterThan(beforeWidth);
-  await expect(setup.getByLabel("Request number", { exact: true })).toHaveValue(
-    "TEST-001",
-  );
-  await page.keyboard.press("ArrowLeft");
+  expect(submitted?.["sample-field-Request number"]).toBe("TEST-001");
+  // The Test page fits from 1920 to 390 px without page overflow.
   for (const height of [768, 1000]) {
     await page.setViewportSize({ width: 1440, height });
     await expect
@@ -3743,7 +3750,7 @@ test("Sandbox Test field search preserves hidden edits in the submitted temporar
   }
 });
 
-test("Sandbox Test comparisons use saved inputs, preserve typed values, and distinguish missing results", async ({
+test("Sandbox Test results show the saved inputs, the changed fields, and no change for a refused value", async ({
   page,
 }) => {
   const design = structuredClone(configuredSandboxDesign);
@@ -3828,68 +3835,55 @@ test("Sandbox Test comparisons use saved inputs, preserve typed values, and dist
     ],
   });
   await page.getByRole("link", { name: "Test", exact: true }).click();
-  const comparison = page.getByRole("region", {
-    name: "Field comparison",
+  const modules = page.getByRole("region", { name: "Modules" });
+  const recent = page.getByRole("list", { name: "Recent results" });
+  const reading = page.getByRole("region", { name: "Reading", exact: true });
+  const result = reading.getByRole("region", {
+    name: "Example item",
     exact: true,
   });
-  await page
-    .getByRole("button", { name: "Show Priority input", exact: true })
-    .click();
+  const values = result.getByRole("region", { name: "Values used" });
+  const happened = result.getByRole("region", { name: "What happened" });
+
+  // The older run: its saved inputs, and the field it changed.
+  await modules.getByRole("button", { name: "Results 2 of 50" }).click();
+  await recent.getByRole("button").filter({ hasText: "10:00 AM" }).click();
+  // A `dl` pairs each name with its value; the value is the next `dd`.
+  const valueOf = (name: string) =>
+    values
+      .locator("dt", { hasText: new RegExp(`^${name}$`) })
+      .locator("xpath=following-sibling::dd[1]");
+  await expect(valueOf("Priority")).toHaveText("0");
+  await expect(valueOf("Title")).toHaveText("No value");
+  await expect(valueOf("Needs review")).toHaveText("Unchecked");
   await expect(
-    page
-      .getByRole("region", { name: "Test setup", exact: true })
-      .getByLabel("Priority", { exact: true }),
-  ).toBeFocused();
-  await expect(comparison).toBeVisible();
-  await comparison.getByRole("button", { name: /^All fields \(/ }).click();
-  await expect(comparison.getByRole("row", { name: /Priority/ })).toContainText(
-    "No value",
-  );
-  await page
-    .getByRole("region", { name: "Recent test results", exact: true })
-    // Rows are named by what they show; the second is the older result.
-    .locator("button[aria-pressed]")
-    .nth(1)
-    .click();
-  await expect(
-    comparison.getByRole("row", { name: /Needs review/ }),
-  ).toContainText("No");
-  await expect(
-    comparison.getByRole("row", { name: /Needs review/ }),
-  ).toContainText("Yes");
-  await expect(comparison.getByRole("row", { name: /Priority/ })).toHaveCount(
-    0,
-  );
-  await comparison.getByRole("button", { name: /^All fields \(/ }).click();
-  await expect(
-    comparison
-      .getByRole("row", { name: /Priority/ })
-      .getByRole("cell", { name: "0", exact: true }),
-  ).toHaveCount(2);
-  await expect(
-    comparison
-      .getByRole("row", { name: /Title/ })
-      .getByRole("cell", { name: "No value", exact: true }),
-  ).toHaveCount(2);
-  const setup = page.getByRole("region", { name: "Test setup", exact: true });
-  // Small modules show no search; All lists every input.
-  await setup.getByRole("button", { name: /^All \(/ }).click();
-  await setup.getByLabel("Priority", { exact: true }).fill("42");
-  await expect(
-    comparison
-      .getByRole("row", { name: /Priority/ })
-      .getByRole("cell", { name: "0", exact: true }),
-  ).toHaveCount(2);
-  // A result shows only for the setup it was run with.
-  await setup
-    .getByLabel("Module", { exact: true })
-    .selectOption("sample-equipment");
-  await expect(comparison).toHaveCount(0);
-  await expect(
-    page
-      .getByRole("region", { name: "Test outcome" })
-      .getByText("Run a test to see the result.", { exact: true }),
+    happened.getByText("Needs review Unchecked → Checked"),
   ).toBeVisible();
+  // A trigger traced again later in the chain reads as one line.
+  await expect(happened.getByText("Urgent request alert ran")).toHaveCount(1);
+
+  // Typed values change no shown result until Run again.
+  await values.getByRole("button", { name: "Change values" }).click();
+  await values.getByLabel("Priority", { exact: true }).fill("42");
+  await expect(
+    happened.getByText("Needs review Unchecked → Checked"),
+  ).toBeVisible();
+
+  // The newer run refused Priority: its issue shows, and a value missing
+  // from the result is not a change to "No value".
+  await modules.getByRole("button", { name: "Results 2 of 50" }).click();
+  await recent.getByRole("button").filter({ hasText: "10:01 AM" }).click();
+  await expect(
+    happened.getByText("Priority: Priority must be a number."),
+  ).toBeVisible();
+  await expect(happened.getByText(/^Priority .* → /)).toHaveCount(0);
+
+  // A result shows only on the module it was run on.
+  await modules.getByRole("button", { name: /^Equipment/ }).click();
+  await expect(
+    reading.getByRole("heading", { name: "Equipment" }),
+  ).toBeVisible();
+  await expect(result).toHaveCount(0);
 });
 
 // Which count shows the warning is owned by isolated/sandbox/version-capacity
@@ -4642,18 +4636,24 @@ test("a Test result from an older draft says so and can show its module on the c
     ],
   });
   await page.goto("/sandbox?section=test");
-  const outcome = page.getByRole("region", { name: "Test outcome" });
+  await page.getByRole("button", { name: "Results 1 of 50" }).click();
+  await page
+    .getByRole("list", { name: "Recent results" })
+    .getByRole("button")
+    .click();
+  const outcome = page.getByRole("region", {
+    name: "Example item",
+    exact: true,
+  });
   await expect(
-    outcome.getByText("Draft changed", { exact: true }),
+    outcome.getByText("From an older draft", { exact: true }),
   ).toBeVisible();
   await expect(
     outcome.getByRole("button", { name: "Run again" }),
   ).toBeVisible();
-  const issues = outcome.getByRole("list", { name: "Issues" });
-  await expect(issues.getByRole("listitem")).toHaveCount(1);
-  await expect(issues.getByRole("listitem")).toContainText("(3 times)");
+  await expect(outcome.getByText(/\(3 times\)/)).toHaveCount(1);
 
-  await outcome.getByRole("button", { name: "Show test on canvas" }).click();
+  await outcome.getByRole("button", { name: "Show on canvas" }).click();
   await expect(page).toHaveURL(/section=build/);
   const canvas = page.getByRole("region", { name: "Organization canvas" });
   const cell = (id: string) =>
@@ -4670,7 +4670,13 @@ test("a Test run plays out on the canvas in three still steps", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+  // A trigger on Status changes, so the stored run has its event block.
+  const design = structuredClone(configuredSandboxDesign);
+  design.rules = design.rules.map((rule) => ({
+    ...rule,
+    trigger: "Field change",
+  }));
+  await openAuthenticatedSandbox(page, design, {
     testRuns: [
       {
         id: "00000000-0000-4000-8000-000000000010",
@@ -4695,15 +4701,15 @@ test("a Test run plays out on the canvas in three still steps", async ({
     ],
   });
   await page.goto("/sandbox?section=test");
-  // The stored run shows once the setup asks the same question.
-  const setup = page.getByRole("region", { name: "Test setup", exact: true });
-  await setup.getByLabel("When", { exact: true }).selectOption("field-changed");
-  await setup
-    .getByLabel("Changed field", { exact: true })
-    .selectOption({ label: "Status" });
+  // The stored run opens from the results list, under its event.
+  await page.getByRole("button", { name: "Results 1 of 50" }).click();
   await page
-    .getByRole("region", { name: "Test outcome" })
-    .getByRole("button", { name: "Show test on canvas" })
+    .getByRole("list", { name: "Recent results" })
+    .getByRole("button")
+    .click();
+  await page
+    .getByRole("region", { name: "Example item", exact: true })
+    .getByRole("button", { name: "Show on canvas" })
     .click();
 
   const canvas = page.getByRole("region", { name: "Organization canvas" });

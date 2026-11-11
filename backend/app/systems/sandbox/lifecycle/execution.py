@@ -19,6 +19,7 @@ from app.systems.boards.models import Board, BoardGroup
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import BoardPostRevisionRecordLink, BoardRecordLink
 from app.systems.boards.reminder_models import BoardEventReminder
+from app.systems.comms.conversations.models import CommsConversation
 from app.systems.comms.realtime.grants import lock_projection, revoke_stale
 from app.systems.manage.audit.context import get_audit_context, set_audit_actor
 from app.systems.manage.audit.models import SecurityEventOutcome
@@ -31,8 +32,11 @@ from app.systems.openview.views.models import SavedView
 from app.systems.platform.files.models import File
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork
 from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.derived.models import SandboxDerivedObject
+from app.systems.sandbox.derived.sync import sync_derived_objects
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.lifecycle.board_card_dependencies import CARD_ROW_MODELS
+from app.systems.sandbox.lifecycle.derived_changes import planned_steps
 from app.systems.sandbox.lifecycle.design_sync import document_row, synchronize_design
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleError,
@@ -97,6 +101,8 @@ _LOCK_MODELS: tuple[tuple[str, type[Any]], ...] = (
     ("record_trigger_events", RecordTriggerEvent),
     ("record_trigger_runs", RecordTriggerRun),
     ("sandbox_bindings", SandboxBinding),
+    ("sandbox_derived_objects", SandboxDerivedObject),  # setup spec SD19 step 5
+    ("comms_conversations", CommsConversation),
 )
 
 
@@ -304,6 +310,13 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
                 raise LifecycleUnavailable("Lifecycle operation row is no longer available")
             db.delete(binding)
     db.flush()
+    # A department's link rows go before its dashboards and itself, as bindings do (SD20).
+    for link_id in plan.scope_ids.get("sandbox_derived_objects", ()):
+        link = db.get(SandboxDerivedObject, link_id)
+        if link is None:
+            raise LifecycleUnavailable("Lifecycle operation row is no longer available")
+        db.delete(link)
+    db.flush()
 
     for entity_type in (
         "group_access",
@@ -388,6 +401,9 @@ def _execute(db: Session, plan: LifecyclePlan) -> LifecycleImpactResponse:
                     # A closed Department archives its Board; a reopen restores it,
                     # or recreates it so that an open Department always has one.
                     sync_department_board(db, instance, create=not instance.is_deleted)
+                    # SD10: the derived items follow, as previewed (close) or by R9 (reopen).
+                    steps = planned_steps(current.derived_changes)
+                    sync_derived_objects(db, instance, steps, current.actor_id)
         if plan.target_type in (LifecycleTargetType.DEPARTMENT, LifecycleTargetType.MODULE):
             revoke_stale(db)
         db.commit()

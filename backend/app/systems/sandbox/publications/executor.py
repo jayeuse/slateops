@@ -16,6 +16,10 @@ from sqlalchemy.orm import Session
 from app.systems.access.users.membership import bound_organization
 from app.systems.platform.scheduling.notification_creation import notify_sandbox_publication
 from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.derived.actions import planned_derived
+from app.systems.sandbox.derived.locks import lock_followed_groups
+from app.systems.sandbox.derived.planning import create_derived_items
+from app.systems.sandbox.derived.sync import follow_derived_items
 from app.systems.sandbox.designs.service import (
     _append_version,
     _locked_document,
@@ -38,7 +42,11 @@ from app.systems.sandbox.publications.rules import (
     operational_config,
     relationship_metadata,
 )
-from app.systems.sandbox.publications.schemas import PublicationResponse, PublicationVersion
+from app.systems.sandbox.publications.schemas import (
+    PublicationBlocker,
+    PublicationResponse,
+    PublicationVersion,
+)
 from app.systems.sandbox.publications.structure_mutations import (
     close_removed_structure,
     stage_bound_names_and_positions,
@@ -52,10 +60,14 @@ from app.systems.sandbox.relationships.models import RelationshipEdge
 
 
 class PublicationError(Exception):
-    def __init__(self, code: str, message: str, status_code: int = 409) -> None:
+    def __init__(
+        self, code: str, message: str, status_code: int = 409,
+        blockers: tuple[PublicationBlocker, ...] = (),
+    ) -> None:
         self.code = code
         self.message = message
         self.status_code = status_code
+        self.blockers = blockers
         super().__init__(message)
 
 
@@ -135,14 +147,19 @@ def apply_publication(
     if replay is not None:
         return replay
     document = _parse_row_document(document_row)
+    locks = lock_followed_groups(db, document)  # SD19 step 2, before the FOR SHARE pass
     lock_operational_rows(db)
+    locks.lock_targets(db, document)  # SD19 step 4
     plan = locked_publication_plan(db, document)
     if plan.blockers:
-        raise PublicationError("publication_blocked", "Fix the listed publication blockers")
+        raise PublicationError(
+            "publication_blocked", "Fix the listed publication blockers", blockers=plan.blockers
+        )
+    # A live change also changes the follow changes the review listed (SD-C25): report it.
+    if plan.live_state_digest != expected_live_state_digest or not locks.covers(db, plan.changes):
+        raise PublicationError("live_state_changed", "Live structure changed after review")
     if plan.impact_digest != impact_digest:
         raise PublicationError("preview_mismatch", "The review no longer matches this publication")
-    if plan.live_state_digest != expected_live_state_digest:
-        raise PublicationError("live_state_changed", "Live structure changed after review")
     bindings = _binding_map(list(db.scalars(select(SandboxBinding).with_for_update()).all()))
     try:
         normalize_legacy_field_bindings(document, bindings, persist=True)
@@ -158,7 +175,11 @@ def apply_publication(
     _apply_title_fields(document, modules, fields, actor_id)
     _apply_relationships(db, document, bindings, modules, actor_id, lifecycle_closed)
     close_removed_structure(db, document, bindings, actor_id, retired)
-    sync_department_boards(db, actor_id)
+    made = sync_department_boards(db, actor_id, bindings, departments)
+    made += follow_derived_items(db, plan.changes, bindings, actor_id)  # SD10, SD18, SD27
+    made += create_derived_items(db, plan.changes, departments, actor_id)
+    if planned_derived(made) != planned_derived(plan.changes):  # SD25, SD-C26
+        raise PublicationError("publication_unavailable", "Publication left its review", 500)
     version = _append_version(
         db,
         row=document_row,

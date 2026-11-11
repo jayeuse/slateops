@@ -12,7 +12,9 @@ import httpx
 import pytest
 
 from app.systems.sandbox.designs.schemas import SandboxDocument
+from operations.sample.client import SampleClient
 from operations.sample.population.people import _GROUP_ACCESS, _people
+from operations.sample.verification.configuration import verify_configuration
 from operations.sample.verification.core import SampleVerificationError
 from operations.sample.verification.run import read_run_manifest, verify_sample_data
 from tests.operations.sample.sample_datasets import (
@@ -562,3 +564,75 @@ def test_verifier_requires_exact_foundation_readback(
         assert "the pack administrator's identity, role or account state differs" in result.issues
     if changed == "operator_missing":
         assert "identity roster differs from the recorded run" in result.issues
+
+
+@pytest.mark.parametrize(
+    ("changed", "accepted"),
+    (
+        # SD5, SD-C15: an organization populated before derived setup has no derived group.
+        ("legacy", True),
+        # SD12, SD-C16: the initial publish derives three empty groups for each department.
+        ("derived", True),
+        ("member", False),
+        ("access", False),
+        ("unplanned_name", False),
+        # SD-C15: a later publish must not derive items for existing departments.
+        ("one_department", False),
+    ),
+)
+def test_group_readback_accepts_only_the_complete_empty_derived_set(
+    tmp_path: Path, changed: str, accepted: bool
+) -> None:
+    payloads, manifest, context = _configuration_fixture()
+    departments = payloads["/api/departments"]
+    derived = [
+        {
+            "id": _id(f"derived:{department['id']}:{role}"),
+            "name": f"{department['department_name']} {role}",
+            "member_ids": [],
+            "access": [{"department_id": department["id"], "module_id": None, "level": level}],
+            "is_deleted": False,
+        }
+        for department in departments
+        for role, level in (("managers", "manage"), ("members", "write"), ("viewers", "read"))
+    ]
+    groups = payloads["/api/access/groups"]
+    if changed == "one_department":
+        groups.extend(derived[:3])
+    elif changed != "legacy":
+        groups.extend(derived)
+    if changed == "member":
+        derived[0]["member_ids"] = [manifest["admin_id"]]
+    elif changed == "access":
+        derived[0]["access"][0]["level"] = "read"
+    elif changed == "unplanned_name":
+        derived[0]["name"] = f"{departments[0]['department_name']} observers"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        payload = payloads[request.url.path]
+        if not isinstance(payload, list):
+            return httpx.Response(200, json=payload)
+        offset, limit = int(request.url.params["offset"]), int(request.url.params["limit"])
+        rows = payload[offset : offset + limit]
+        paging = {"limit": limit, "offset": offset, "count": len(rows), "total": len(payload)}
+        more = offset + len(rows) < len(payload)
+        if request.url.path.startswith("/api/sandbox/"):
+            return httpx.Response(200, json={"items": rows, **paging, "hasMore": more})
+        return httpx.Response(200, json={"items": rows, "pagination": {**paging, "has_more": more}})
+
+    with SampleClient(
+        "https://api.example.test",
+        "https://workspace.example.test",
+        tmp_path / "journal.jsonl",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        _, issues = verify_configuration(
+            client,
+            dataset=context["dataset"],
+            mappings=manifest["mappings"],
+            people=manifest["people"],
+        )
+    assert ("live Access groups differ from the sample run" not in issues) is accepted
+    if accepted:
+        assert issues == []

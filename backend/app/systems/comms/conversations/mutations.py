@@ -81,6 +81,56 @@ def create_channel(db: Session, user: User, payload: ChannelRequest) -> CommsCon
     return row
 
 
+def stage_category(db: Session, *, department_id: UUID, name: str) -> CommsCategory:
+    """A department's category after every live category; no commit (setup spec SD11).
+
+    The caller owns the actor's authority, the commit, and the rollback.
+    """
+    last = db.scalar(
+        select(func.max(CommsCategory.position)).where(
+            CommsCategory.org_id == bound_organization_column(),
+            CommsCategory.is_deleted.is_(False),
+            CommsCategory.deleted_at.is_(None),
+        )
+    )
+    payload = CategoryRequest(
+        name=name, position=0 if last is None else last + 1, department_id=department_id
+    )
+    require_department(db, payload.department_id)
+    row = CommsCategory(org_id=bound_organization(db), **payload.model_dump())
+    db.add(row)
+    db.flush()
+    return row
+
+
+def stage_department_channel(
+    db: Session, user: User, *, department_id: UUID, category_id: UUID, name: str,
+) -> CommsConversation:
+    """A department channel in the department's category, with no member row (SD11).
+
+    ``user`` is the creator (``created_by``); people read and manage it by department role
+    (D44). No commit: the caller owns the actor's authority, the commit, and the rollback.
+    """
+    payload = DepartmentChannelRequest(
+        scope="department", department_id=department_id, category_id=category_id,
+        name=name, topic="", position=0,
+    )
+    require_department(db, payload.department_id)
+    require_category_binding(db, payload.category_id, payload.department_id)
+    return stage_conversation(
+        db,
+        user,
+        people=set(),
+        kind="channel",
+        scope=payload.scope,
+        name=payload.name,
+        topic=payload.topic,
+        category_id=payload.category_id,
+        position=payload.position,
+        department_id=payload.department_id,
+    )
+
+
 def create_category(db: Session, user: User, payload: CategoryRequest) -> CommsCategory:
     require_creation(db, user, None, channel=False)
     require_department(db, payload.department_id)

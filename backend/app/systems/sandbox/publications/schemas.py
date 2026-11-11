@@ -28,10 +28,14 @@ class PublicationRequest(StrictModel):
 
 
 class PublicationChange(StrictModel):
-    kind: Literal["department", "module", "field", "relationship", "trigger"]
+    kind: Literal[
+        "department", "module", "field", "relationship", "trigger",
+        "group", "dashboard", "board", "category", "channel",
+    ]
     action: Literal["create", "update", "close", "reopen"]
     sandbox_id: str = Field(alias="sandboxId", min_length=1, max_length=1_000)
-    label: str = Field(min_length=1, max_length=150)
+    # A derived group's label adds " managers · manage" to a department name (BE-SD2).
+    label: str = Field(min_length=1, max_length=200)
 
 
 class PublicationBlocker(StrictModel):
@@ -46,6 +50,11 @@ class PublicationCounts(StrictModel):
     fields: int = 0
     relationships: int = 0
     triggers: int = 0
+    groups: int = 0
+    dashboards: int = 0
+    boards: int = 0
+    categories: int = 0
+    channels: int = 0
 
 
 class PublicationPreviewResponse(StrictModel):

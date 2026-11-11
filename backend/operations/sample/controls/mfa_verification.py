@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from app.systems.manage.audit.schemas import SecurityEventResponse
 from operations.sample.blueprint import SampleDataset
 from operations.sample.client import SampleClient, SampleClientError
+from operations.sample.controls.derived_groups import with_derived
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.actions import SamplePhaseActionError, _read_json
 from operations.sample.verification.core import (
@@ -178,17 +179,16 @@ def _result(
             "mfa_result",
         )
     original = result.get("original_group_members")
+    planned = {
+        _uuid(groups.get(group), "mfa_result"): sorted(
+            _uuid(users.get(person.key), "mfa_result")
+            for person in people.values()
+            if group in person.groups
+        )
+        for group in dataset.organization.actors.group_access
+    }
     _require(
-        isinstance(original, Mapping)
-        and original
-        == {
-            _uuid(groups.get(group), "mfa_result"): sorted(
-                _uuid(users.get(person.key), "mfa_result")
-                for person in people.values()
-                if group in person.groups
-            )
-            for group in dataset.organization.actors.group_access
-        },
+        isinstance(original, Mapping) and with_derived(original, planned, dataset),
         "mfa_result",
     )
     owner = result.get("owner_factors")

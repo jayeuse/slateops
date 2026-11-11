@@ -17,6 +17,7 @@ from app.systems.sandbox.lifecycle.schemas import (
     LifecyclePurgePreviewResponse,
 )
 from operations.sample.blueprint import SampleDataset
+from operations.sample.controls import lifecycle_derived
 from operations.sample.controls.sandbox import (
     OPERATIONS,
     VERSION_KEY,
@@ -327,19 +328,17 @@ class _LifecycleJourney:
                 "offset": 0,
             },
         )
-        rows = page.get("items")
-        metadata = page.get("pagination")
-        if (
+        rows, metadata = page.get("items"), page.get("pagination")
+        counts = {"limit": 100, "offset": 0, "count": 1, "total": 1}
+        if (  # The server's PaginationMetadata shape, total_is_capped included.
             not isinstance(rows, list)
             or len(rows) != 1
             or not isinstance(rows[0], dict)
             or not isinstance(metadata, dict)
-            or any(
-                type(metadata.get(key)) is not int for key in ("limit", "offset", "count", "total")
-            )
-            or metadata.get("has_more") is not False
-            or page.get("pagination")
-            != {"limit": 100, "offset": 0, "count": 1, "total": 1, "has_more": False}
+            or any(type(metadata.get(key)) is not int for key in counts)
+            or metadata != {**counts, "total_is_capped": False, "has_more": False}
+            or metadata["total_is_capped"] is not False
+            or metadata["has_more"] is not False
         ):
             raise SamplePhaseActionError(
                 "Lifecycle Department Board collection differed", step=step
@@ -414,7 +413,7 @@ class _LifecycleJourney:
 
 
 def lifecycle_request_contract(
-    operation: str, ids: Mapping[str, str]
+    operation: str, ids: Mapping[str, str], derived: Mapping[str, str] | None = None
 ) -> list[tuple[str, str, str, int]]:
     if operation == OPERATIONS[0]:
         return [
@@ -434,6 +433,8 @@ def lifecycle_request_contract(
                 (f"reclose_{kind}", "POST", path + "/close", 200),
             ]
         )
+        if kind == "department" and derived is not None:  # SD20, OQ2 (a); none before SD12
+            steps.extend(lifecycle_derived.derived_release_contract(derived, ids[kind]))
     return steps + [
         (f"preview_{operation}", "POST", path + f"/{verb}/preview", 200),
         (operation, "POST", path + f"/{verb}", 200),
@@ -463,6 +464,8 @@ def execute_lifecycle_control(
             run.change(target, "close", f"reclose_{target}")
             closed = expected_lifecycle_document(dataset, f"close_{target}", after=True)
             revision = run.state(closed, f"after_reclose_{target}", revision)
+            if target == "department":
+                lifecycle_derived.release_derived_items(run, dataset)
         run.change(target, verb, operation)
         run.state(
             expected_lifecycle_document(dataset, operation, after=True),

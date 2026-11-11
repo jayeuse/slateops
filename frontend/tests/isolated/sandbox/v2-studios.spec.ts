@@ -52,18 +52,21 @@ const design: SandboxDocumentDesign = {
 };
 
 test("new triggers author only same-module Set field actions", () => {
-  const recordTrigger = defaultTrigger(design);
+  // A new trigger takes no module, field, or action on its own (UXD-7); a
+  // module preset from its context is the only start.
+  const recordTrigger = defaultTrigger(design, "requests");
   const expanded = addTriggerAction(
-    addTriggerCondition(recordTrigger, design),
+    addTriggerAction(addTriggerCondition(recordTrigger, design), design),
     design,
   );
 
-  expect(recordTrigger.actions).toEqual([
+  expect(recordTrigger.actions).toEqual([]);
+  expect(expanded.actions[0]).toEqual(
     expect.objectContaining({
       kind: "set-field",
-      target: { moduleId: "requests", fieldId: "title" },
+      target: { moduleId: "requests", fieldId: "" },
     }),
-  ]);
+  );
   expect(expanded.actions).toHaveLength(2);
   expect(expanded.actions.every((action) => action.kind === "set-field")).toBe(
     true,

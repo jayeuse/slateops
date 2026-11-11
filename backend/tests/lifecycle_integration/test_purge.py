@@ -9,8 +9,10 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 import app.systems.sandbox.lifecycle.execution as lifecycle_execution
+from app.systems.access.policy.models import Group
 from app.systems.manage.audit.models import AuditLog
 from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.derived.models import SandboxDerivedObject
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecyclePlanDriftError,
@@ -18,7 +20,7 @@ from app.systems.sandbox.lifecycle.exceptions import (
 )
 from app.systems.sandbox.lifecycle.planner import plan_lifecycle
 from app.systems.sandbox.lifecycle.schemas import LifecycleBlockerCode, LifecycleTargetType
-from app.systems.sandbox.lifecycle.service import purge_lifecycle
+from app.systems.sandbox.lifecycle.service import close_lifecycle, purge_lifecycle
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.models import SandboxBinding
 from app.systems.sandbox.record_triggers.models import (
@@ -36,6 +38,8 @@ from tests.lifecycle_integration.lifecycle_integration_support import (
 )
 from tests.rbac.support import organization
 from tests.sandbox_designs.fixtures import create_document
+from tests.sandbox_publications.derived_support import derived_rows, link_rows, with_sales
+from tests.sandbox_publications.support import bound_department
 from tests.sandbox_record_triggers.support import publish_trigger
 
 pytestmark = [
@@ -490,3 +494,59 @@ def test_purge_writes_per_row_snapshots_under_the_request_context(
     assert field_log.before is not None and field_log.after is None
     record_logs = [log for log in logs if log.entity_type == "records"]
     assert all(log.before and log.after for log in record_logs)
+
+
+def test_sd_c17_a_department_with_opencomms_content_is_not_purged(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    publisher, _ = with_sales(db)
+    sales = bound_department(db, "dep-sales")
+    close_lifecycle(db, "department", sales.id, publisher.id)
+
+    plan = plan_lifecycle(db, "department", sales.id, "purge", publisher.id)
+
+    assert [
+        (blocker.code, blocker.entity_type, blocker.entity_id, blocker.detail)
+        for blocker in plan.blockers
+    ] == [
+        (
+            LifecycleBlockerCode.COMMS_DEPARTMENT_CONTENT,
+            "departments",
+            sales.id,
+            "Sales has 1 category and 1 channel in OpenComms, so it stays closed",
+        )
+    ]
+    assert sorted(
+        row.entity_id for row in plan.rows if row.entity_type == "sandbox_derived_objects"
+    ) == sorted(link.id for link in link_rows(db, sales).values())
+    with pytest.raises(LifecyclePreflightError):
+        purge_lifecycle(db, "department", sales.id, publisher.id, plan=plan)
+    assert db.get(Department, sales.id) is not None
+
+
+def test_sd20_a_department_purge_deletes_its_link_rows_before_its_dashboard(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    publisher, _ = with_sales(db)
+    sales = bound_department(db, "dep-sales")
+    elsewhere = bound_department(db, "sample-operations")
+    rows = derived_rows(db, sales)
+    # People moved the category and its channel to another department: nothing in
+    # OpenComms references Sales, and its links still name the dashboard and the groups.
+    rows["category"].department_id = rows["channel"].department_id = elsewhere.id
+    db.flush()
+    close_lifecycle(db, "department", sales.id, publisher.id)
+    plan = plan_lifecycle(db, "department", sales.id, "purge", publisher.id)
+    assert not plan.blockers
+
+    purge_lifecycle(db, "department", sales.id, publisher.id, plan=plan)
+
+    assert db.get(Department, sales.id) is None
+    assert not db.scalars(
+        select(SandboxDerivedObject).where(SandboxDerivedObject.department_id == sales.id)
+    ).all()
+    assert all(
+        db.get(Group, rows[role].id) is not None for role in ("managers", "members", "viewers")
+    )

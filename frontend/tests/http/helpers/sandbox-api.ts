@@ -4,6 +4,7 @@ import {
   sendOpenViewEvent,
 } from "./openview-event-source";
 import type { Design } from "../../../src/components/systems/sandbox/domain/model";
+import type { SandboxDocumentV4 } from "../../../src/components/systems/sandbox/domain/document";
 import {
   configuredSandboxDesign,
   sandboxDocumentFromDesign,
@@ -28,6 +29,12 @@ type TestRunEcho = {
   onRequest?: (request: TestRunRequest) => void | Promise<void>;
   /** The result values; the submitted values when omitted. */
   resultValues?: (values: Record<string, unknown>) => Record<string, unknown>;
+  /** The trigger outcomes of the run; none when omitted. */
+  triggerTraces?: (
+    request: TestRunRequest,
+  ) => Array<{ triggerId: string; label: string; outcome: string }>;
+  /** A 409 code (`run_history_full`, `stale_revision`) refuses the run. */
+  refusal?: (request: TestRunRequest) => string | undefined;
 };
 
 export type SandboxOptions = {
@@ -39,6 +46,10 @@ export type SandboxOptions = {
   hasUnpublishedChanges?: boolean;
   publishedHash?: string | null;
   testRuns?: unknown[];
+  /** Stored runs not cleared; the length of `testRuns` when omitted. */
+  testTotal?: number;
+  /** The draft's triggers, for journeys the old model cannot express. */
+  triggers?: SandboxDocumentV4["triggers"];
   /** Answers each Test run with a run that echoes the submitted values. */
   testRunEcho?: TestRunEcho;
   /** The draft revision the session starts at. */
@@ -55,6 +66,7 @@ export type SandboxOptions = {
   pruneFailure?: { status: number; code: string };
   versions?: Array<Record<string, unknown>>;
   previewChanges?: Array<Record<string, string>>;
+  previewBlockers?: Array<{ code: string; message: string; targetId: string }>;
   bindings?: Array<{
     kind: "department" | "module" | "field" | "relationship" | "trigger";
     sandbox_id: string;
@@ -92,6 +104,7 @@ export async function openAuthenticatedSandbox(
   const pruneRequests: unknown[] = [];
   const checkpointRequests: unknown[] = [];
   let document = sandboxDocumentFromDesign(designFixture);
+  if (options.triggers) document = { ...document, triggers: options.triggers };
   let bindings = options.bindings ?? [];
   let bindingFailure = options.bindingFailure;
   let bindingRevision = options.bindingRevision;
@@ -328,6 +341,15 @@ export async function openAuthenticatedSandbox(
       const echo = options.testRunEcho;
       const request = route.request().postDataJSON() as TestRunRequest;
       await echo.onRequest?.(request);
+      const refusal = echo.refusal?.(request);
+      if (refusal) {
+        await route.fulfill({
+          status: 409,
+          headers: answeredHeaders,
+          json: { detail: { code: refusal, message: "Refused" } },
+        });
+        return;
+      }
       await route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({
@@ -340,7 +362,7 @@ export async function openAuthenticatedSandbox(
           result: {
             values: echo.resultValues?.(request.values) ?? request.values,
             routes: [],
-            triggerTraces: [],
+            triggerTraces: echo.triggerTraces?.(request) ?? [],
             issues: [],
           },
         }),
@@ -362,8 +384,8 @@ export async function openAuthenticatedSandbox(
         items: options.testRuns ?? [],
         limit: 50,
         offset: 0,
-        count: 0,
-        total: 0,
+        count: (options.testRuns ?? []).length,
+        total: options.testTotal ?? (options.testRuns ?? []).length,
         hasMore: false,
       }),
     });
@@ -387,13 +409,18 @@ export async function openAuthenticatedSandbox(
         changes: options.previewChanges ?? [],
         counts: {
           departments: 0,
+          groups: 0,
+          dashboards: 0,
+          boards: 0,
+          categories: 0,
+          channels: 0,
           modules: 0,
           fields: 0,
           relationships: 0,
           triggers: 0,
         },
         warnings: [],
-        blockers: [],
+        blockers: options.previewBlockers ?? [],
       }),
     });
   });
@@ -451,6 +478,7 @@ export function lifecycleImpactFixture(
     ],
     external_impacts: [],
     key_strips: [],
+    derived_changes: [],
     blockers: [],
     impact_digest: "d".repeat(64),
   };

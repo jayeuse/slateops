@@ -29,6 +29,7 @@ def live_state_digest(
     timezone: str,
     *,
     snapshot: PublicationSnapshot | None = None,
+    derived: list[list[object]] | None = None,
 ) -> str:
     if snapshot is None:
         snapshot = load_publication_snapshot(db, bindings)
@@ -260,7 +261,11 @@ def live_state_digest(
             )
         ],
     }
-    return _digest({"timezone": timezone, "bindings": rows, "live": structural})
+    payload: dict[str, object] = {"timezone": timezone, "bindings": rows, "live": structural}
+    if derived:
+        # SD25: only the links and targets of departments this publish renames or changes state.
+        payload["derived"] = derived
+    return _digest(payload)
 
 
 def _digest(value: object) -> str:

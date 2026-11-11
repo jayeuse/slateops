@@ -12,18 +12,33 @@ import { Button } from "@/components/ui/button";
 import type { SandboxPublicationChange } from "../state/api";
 
 type Change = SandboxPublicationChange;
-/** The part of the draft needed to place field changes under modules. */
+/**
+ * The part of the draft needed to place changes: field changes under their
+ * module, setup changes under their department, and the sidebar note.
+ */
 export type PublishReviewDesign = {
+  departments: ReadonlyArray<{ id: string; name: string; closed: boolean }>;
   modules: ReadonlyArray<{
     id: string;
+    departmentId: string;
     name: string;
+    closed: boolean;
     fields: ReadonlyArray<{ id: string }>;
   }>;
 };
 type Kind = Change["kind"];
+type SetupKind = Extract<
+  Kind,
+  "group" | "dashboard" | "board" | "category" | "channel"
+>;
 
 const KIND_NOUNS: Record<Kind, readonly [string, string]> = {
   department: ["department", "departments"],
+  group: ["group", "groups"],
+  dashboard: ["dashboard", "dashboards"],
+  board: ["Board", "Boards"],
+  category: ["category", "categories"],
+  channel: ["channel", "channels"],
   module: ["module", "modules"],
   field: ["field", "fields"],
   relationship: ["relationship", "relationships"],
@@ -31,10 +46,33 @@ const KIND_NOUNS: Record<Kind, readonly [string, string]> = {
 };
 const KIND_ORDER: readonly Kind[] = [
   "department",
+  "group",
+  "dashboard",
+  "board",
+  "category",
+  "channel",
   "module",
   "field",
   "relationship",
   "trigger",
+];
+const SETUP_KIND_WORDS: Record<SetupKind, string> = {
+  group: "Group",
+  dashboard: "Dashboard",
+  board: "Board",
+  category: "Category",
+  channel: "Channel",
+};
+// The setup of one department, in R2 order. A setup change's `sandboxId` is
+// `<department sandboxId>#<role>` (BE-SD2).
+const SETUP_ROLE_ORDER = [
+  "managers",
+  "members",
+  "viewers",
+  "dashboard",
+  "board",
+  "category",
+  "channel",
 ];
 const ACTION_LABELS: Record<Change["action"], string> = {
   create: "New",
@@ -42,6 +80,33 @@ const ACTION_LABELS: Record<Change["action"], string> = {
   close: "Closed",
   reopen: "Reopened",
 };
+
+function isSetupKind(kind: Kind): kind is SetupKind {
+  return kind in SETUP_KIND_WORDS;
+}
+
+/** OpenComms archives and restores a channel; it never closes one. */
+function chipWord(change: Change): string {
+  if (change.kind === "channel" && change.action === "close") return "Archived";
+  if (change.kind === "channel" && change.action === "reopen")
+    return "Restored";
+  return ACTION_LABELS[change.action];
+}
+
+/** The department and role of a setup change; the role follows the last "#". */
+function setupParent(change: Change) {
+  const split = change.sandboxId.lastIndexOf("#");
+  if (split <= 0) return null;
+  return {
+    departmentId: change.sandboxId.slice(0, split),
+    role: change.sandboxId.slice(split + 1),
+  };
+}
+
+function setupRank(change: Change): number {
+  const rank = SETUP_ROLE_ORDER.indexOf(setupParent(change)?.role ?? "");
+  return rank < 0 ? SETUP_ROLE_ORDER.length : rank;
+}
 // Groups longer than this show a "Show all" control.
 const VISIBLE_ROWS = 5;
 
@@ -103,9 +168,17 @@ type ModuleEntry = {
   fields: Change[];
 };
 
+type DepartmentEntry = {
+  id: string;
+  name: string;
+  change?: Change;
+  setup: Change[];
+};
+
 /**
- * Sort changes into reading order. Field changes nest under their module
- * when the draft design still holds the field; the rest go to "Other".
+ * Sort changes into reading order. Setup changes nest under their department
+ * (SD23), in R2 order. Field changes nest under their module when the draft
+ * design still holds the field; the rest go to "Other".
  */
 export function groupPublicationChanges(
   changes: readonly Change[],
@@ -118,9 +191,40 @@ export function groupPublicationChanges(
       ),
     ),
   );
+  const draftDepartments = new Map(
+    design.departments.map((item) => [item.id, item.name] as const),
+  );
+  const departments = new Map<string, DepartmentEntry>();
   const modules = new Map<string, ModuleEntry>();
   const other: Change[] = [];
   for (const change of changes) {
+    if (change.kind === "department") {
+      const entry = departments.get(change.sandboxId);
+      if (entry) Object.assign(entry, { name: change.label, change });
+      else
+        departments.set(change.sandboxId, {
+          id: change.sandboxId,
+          name: change.label,
+          change,
+          setup: [],
+        });
+      continue;
+    }
+    if (isSetupKind(change.kind)) {
+      const parent = setupParent(change);
+      if (!parent) {
+        other.push(change);
+        continue;
+      }
+      const entry = departments.get(parent.departmentId) ?? {
+        id: parent.departmentId,
+        name: draftDepartments.get(parent.departmentId) ?? "",
+        setup: [],
+      };
+      entry.setup.push(change);
+      departments.set(parent.departmentId, entry);
+      continue;
+    }
     if (change.kind === "module") {
       const entry = modules.get(change.sandboxId);
       if (entry) entry.change = change;
@@ -146,8 +250,16 @@ export function groupPublicationChanges(
     entry.fields.push(change);
     modules.set(owner.id, entry);
   }
+  for (const entry of departments.values()) {
+    entry.setup.sort((left, right) => setupRank(left) - setupRank(right));
+    // A department missing from the draft takes its Board's name (R2).
+    if (!entry.name)
+      entry.name = (
+        entry.setup.find((change) => change.kind === "board") ?? entry.setup[0]
+      ).label;
+  }
   return {
-    departments: changes.filter((change) => change.kind === "department"),
+    departments: [...departments.values()],
     modules: [...modules.values()],
     relationships: changes.filter((change) => change.kind === "relationship"),
     triggers: changes.filter((change) => change.kind === "trigger"),
@@ -155,30 +267,42 @@ export function groupPublicationChanges(
   };
 }
 
+function ActionChip({ change }: { change: Change }) {
+  return (
+    <Badge
+      variant={change.action === "close" ? "warning" : "outline"}
+      className="w-20 shrink-0 justify-center"
+    >
+      {chipWord(change)}
+    </Badge>
+  );
+}
+
 function ChangeRow({ change }: { change: Change }) {
   if (!useContext(ShowActions))
-    return <span className="min-w-0 break-words">{change.label}</span>;
+    return <span className="min-w-0 wrap-anywhere">{change.label}</span>;
   return (
     <>
-      <Badge
-        variant={change.action === "close" ? "warning" : "outline"}
-        className="w-20 shrink-0 justify-center"
-      >
-        {ACTION_LABELS[change.action]}
-      </Badge>
-      <span className="min-w-0 break-words">{change.label}</span>
+      <ActionChip change={change} />
+      <span className="min-w-0 wrap-anywhere">{change.label}</span>
     </>
   );
 }
 
-function ChangeGroup<T>({
+/**
+ * A titled list of review rows; more than five rows show five and a
+ * "Show all" control. An optional note sits directly under the title.
+ */
+export function ChangeGroup<T>({
   title,
+  note,
   noun,
   items,
   render,
   itemKey,
 }: {
   title: string;
+  note?: string;
   noun: readonly [string, string];
   items: readonly T[];
   render: (item: T) => ReactNode;
@@ -193,6 +317,9 @@ function ChangeGroup<T>({
       <h4 id={headingId} className="text-sm font-medium">
         {title}
       </h4>
+      {note ? (
+        <p className="text-muted-foreground -mt-1 text-sm">{note}</p>
+      ) : null}
       <ul className="grid gap-1.5 text-sm">
         {shown.map((item) => (
           <li key={itemKey(item)} className="grid gap-1.5">
@@ -271,6 +398,86 @@ function ModuleChanges({ entry }: { entry: ModuleEntry }) {
   );
 }
 
+/** A new open department with no open module is not in the sidebar (SD15). */
+function waitsForModule(entry: DepartmentEntry, design: PublishReviewDesign) {
+  return (
+    entry.change?.action === "create" &&
+    design.departments.some((item) => item.id === entry.id && !item.closed) &&
+    !design.modules.some(
+      (item) => item.departmentId === entry.id && !item.closed,
+    )
+  );
+}
+
+/**
+ * One department row with its setup always open: this list is the only place
+ * the owner sees what a publish creates (SD6). A nested row shows its chip
+ * only when the chip's word differs from its department's.
+ */
+function DepartmentChanges({
+  entry,
+  design,
+}: {
+  entry: DepartmentEntry;
+  design: PublishReviewDesign;
+}) {
+  const showActions = useContext(ShowActions);
+  const parentWord = entry.change ? chipWord(entry.change) : "Unchanged";
+  return (
+    <>
+      <div className="flex items-start gap-2">
+        {entry.change ? (
+          <ChangeRow change={entry.change} />
+        ) : (
+          <>
+            {showActions ? (
+              <span className="text-muted-foreground w-20 shrink-0 text-center text-xs leading-5">
+                Unchanged
+              </span>
+            ) : null}
+            <span className="min-w-0 flex-1 wrap-anywhere">{entry.name}</span>
+          </>
+        )}
+      </div>
+      {waitsForModule(entry, design) ? (
+        <p
+          className={`text-muted-foreground -mt-1 text-xs ${showActions ? "ml-22" : ""}`}
+        >
+          Not in the sidebar until it has a module.
+        </p>
+      ) : null}
+      {entry.setup.length ? (
+        <ul
+          aria-label={`Setup for ${entry.name}`}
+          className={`border-border grid gap-1.5 border-l pl-3 ${showActions ? "ml-10" : "ml-1"}`}
+        >
+          {entry.setup.map((change) => (
+            <li
+              key={changeKey(change)}
+              className="flex flex-wrap items-start gap-x-2 gap-y-0.5 sm:flex-nowrap"
+            >
+              {showActions ? (
+                chipWord(change) === parentWord ? (
+                  // Keeps the kind words in one column.
+                  <span aria-hidden="true" className="w-20 shrink-0" />
+                ) : (
+                  <ActionChip change={change} />
+                )
+              ) : null}
+              <span className="text-muted-foreground w-20 shrink-0 text-xs leading-5">
+                {isSetupKind(change.kind) ? SETUP_KIND_WORDS[change.kind] : ""}
+              </span>
+              <span className="min-w-0 flex-[1_1_10rem] wrap-anywhere">
+                {change.label}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </>
+  );
+}
+
 const changeKey = (change: Change) => `${change.kind}-${change.sandboxId}`;
 const flatRow = (change: Change) => (
   <div className="flex items-start gap-2">
@@ -296,8 +503,10 @@ export function PublishChangeGroups({
           title="Departments"
           noun={KIND_NOUNS.department}
           items={groups.departments}
-          itemKey={changeKey}
-          render={flatRow}
+          itemKey={(entry) => entry.id}
+          render={(entry) => (
+            <DepartmentChanges entry={entry} design={design} />
+          )}
         />
         <ChangeGroup
           title="Modules"
