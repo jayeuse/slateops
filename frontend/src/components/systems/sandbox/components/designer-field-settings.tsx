@@ -725,7 +725,7 @@ export function FieldSettings({
             aria-label={`${field.name} lifecycle actions`}
             className="flex flex-wrap gap-2"
           >
-            <DisabledReason reason={closeReason}>
+            <DisabledReason stable reason={closeReason}>
               <Button
                 variant="outline"
                 size="sm"
@@ -750,18 +750,23 @@ export function FieldSettings({
               </Button>
             ) : null}
             {onPurge ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-danger-text"
-                disabled={pending || lifecycleDisabled}
-                onClick={async () => {
-                  const result = await onPurge();
-                  if (!result.ok) setError(result.error, result.reference);
-                }}
+              <DisabledReason
+                stable
+                reason={lifecycleDisabled ? (lifecycleReason ?? null) : null}
               >
-                Delete field forever
-              </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-danger-text"
+                  disabled={pending || lifecycleDisabled}
+                  onClick={async () => {
+                    const result = await onPurge();
+                    if (!result.ok) setError(result.error, result.reference);
+                  }}
+                >
+                  Delete field forever
+                </Button>
+              </DisabledReason>
             ) : null}
           </div>
         </AdvancedSection>

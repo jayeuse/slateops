@@ -226,12 +226,16 @@ export function LifecycleActions({
       className="flex flex-col gap-1.5"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <DisabledReason reason={disabled ? reason : null}>
+        <DisabledReason stable reason={disabled ? reason : null}>
           <Button
             size="sm"
             variant="outline"
             disabled={disabled}
-            aria-describedby="sandbox-lifecycle-note"
+            // While it waits, the reason alone describes it ("Saving…",
+            // DESIGN.md); the standing note below stays visible.
+            aria-describedby={
+              disabled && reason ? undefined : "sandbox-lifecycle-note"
+            }
             onClick={onToggle}
           >
             {`${closed ? "Reopen" : "Close"} ${kind}`}
@@ -247,15 +251,17 @@ export function LifecycleActions({
           Delete {kind}
         </Button>
         {canPurge ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="text-danger-text"
-            disabled={disabled}
-            onClick={onPurge}
-          >
-            Delete {kind} forever
-          </Button>
+          <DisabledReason stable reason={disabled ? reason : null}>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-danger-text"
+              disabled={disabled}
+              onClick={onPurge}
+            >
+              Delete {kind} forever
+            </Button>
+          </DisabledReason>
         ) : null}
       </div>
       <p id="sandbox-lifecycle-note" className="text-muted-foreground text-xs">

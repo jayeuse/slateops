@@ -52,11 +52,17 @@ import {
   type VersionCapacityActions,
 } from "./version-capacity-banner";
 import { apiErrorReference, type ApiErrorText } from "@/lib/api-errors";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 
 type Props = {
   versionsRefreshKey: number;
   versionCapacity: VersionCapacityActions;
   pending: boolean;
+  /**
+   * The Build save queue holds the draft (N1 rule 5): each command waits,
+   * and its control says "Saving…". Menu items stay enabled.
+   */
+  saving: boolean;
   /** The page owns the template dialog so the empty canvas can open it too. */
   templatesOpen: boolean;
   onTemplatesOpenChange: (open: boolean) => void;
@@ -99,6 +105,7 @@ export function SandboxHeaderActions({
   versionsRefreshKey,
   versionCapacity,
   pending,
+  saving,
   templatesOpen,
   onTemplatesOpenChange,
   checkpointOpen,
@@ -113,6 +120,8 @@ export function SandboxHeaderActions({
 }: Props) {
   const input = useRef<HTMLInputElement | null>(null);
   const menuId = useId();
+  // Only the save queue gives a reason here; other holds keep none.
+  const savingReason = saving ? "Saving…" : null;
   // A disabled menu item says why on a muted second line.
   const checkpointReason = canCheckpoint
     ? null
@@ -213,7 +222,14 @@ export function SandboxHeaderActions({
     setStaged(null);
   }
   async function exportDocument() {
-    if (pending || busy || suspended || !countReady || exportController.current)
+    if (
+      pending ||
+      saving ||
+      busy ||
+      suspended ||
+      !countReady ||
+      exportController.current
+    )
       return;
     const controller = new AbortController();
     exportController.current = controller;
@@ -350,6 +366,7 @@ export function SandboxHeaderActions({
       <OrganizationTemplateDialog
         open={templatesOpen}
         pending={pending || busy}
+        saving={saving}
         onOpenChange={onTemplatesOpenChange}
         onApply={onApplyTemplate}
       />
@@ -405,16 +422,18 @@ export function SandboxHeaderActions({
               >
                 Cancel
               </Button>
-              <Button
-                className="min-h-11"
-                disabled={pending}
-                pending={busy}
-                pendingLabel="Saving…"
-                onClick={() => void checkpoint()}
-              >
-                <Save />
-                Save checkpoint
-              </Button>
+              <DisabledReason stable reason={savingReason}>
+                <Button
+                  className="min-h-11"
+                  disabled={pending || saving}
+                  pending={busy}
+                  pendingLabel="Saving…"
+                  onClick={() => void checkpoint()}
+                >
+                  <Save />
+                  Save checkpoint
+                </Button>
+              </DisabledReason>
             </DialogFooter>
           </DialogFrameFooter>
         </DialogContent>
@@ -504,24 +523,30 @@ export function SandboxHeaderActions({
             </Alert>
           ) : null}
           <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              className="min-h-11"
-              disabled={pending || busy || exportBusy || !countReady}
-              onClick={() => void exportDocument()}
-            >
-              <Download />
-              {exportBusy ? "Downloading…" : "Download a backup"}
-            </Button>
-            <Button
-              variant="outline"
-              className="min-h-11"
-              disabled={pending || busy || exportBusy}
-              onClick={() => input.current?.click()}
-            >
-              <Upload />
-              Load a backup
-            </Button>
+            <DisabledReason stable reason={savingReason}>
+              <Button
+                variant="outline"
+                className="min-h-11"
+                disabled={
+                  pending || saving || busy || exportBusy || !countReady
+                }
+                onClick={() => void exportDocument()}
+              >
+                <Download />
+                {exportBusy ? "Downloading…" : "Download a backup"}
+              </Button>
+            </DisabledReason>
+            <DisabledReason stable reason={savingReason}>
+              <Button
+                variant="outline"
+                className="min-h-11"
+                disabled={pending || saving || busy || exportBusy}
+                onClick={() => input.current?.click()}
+              >
+                <Upload />
+                Load a backup
+              </Button>
+            </DisabledReason>
           </div>
           <input
             ref={input}
@@ -550,16 +575,18 @@ export function SandboxHeaderActions({
                 Cancel
               </Button>
               {staged ? (
-                <Button
-                  className="min-h-11"
-                  disabled={pending || exportBusy}
-                  pending={busy}
-                  pendingLabel="Importing…"
-                  onClick={() => void importDocument()}
-                >
-                  <FileDown />
-                  Import draft
-                </Button>
+                <DisabledReason stable reason={savingReason}>
+                  <Button
+                    className="min-h-11"
+                    disabled={pending || saving || exportBusy}
+                    pending={busy}
+                    pendingLabel="Importing…"
+                    onClick={() => void importDocument()}
+                  >
+                    <FileDown />
+                    Import draft
+                  </Button>
+                </DisabledReason>
               ) : null}
             </DialogFooter>
           </DialogFrameFooter>
@@ -596,17 +623,19 @@ export function SandboxHeaderActions({
               >
                 Cancel
               </Button>
-              <Button
-                variant="destructive"
-                className="min-h-11"
-                disabled={pending}
-                pending={busy}
-                pendingLabel="Discarding…"
-                onClick={() => void discard()}
-              >
-                <RotateCcw />
-                Discard draft
-              </Button>
+              <DisabledReason stable reason={savingReason}>
+                <Button
+                  variant="destructive"
+                  className="min-h-11"
+                  disabled={pending || saving}
+                  pending={busy}
+                  pendingLabel="Discarding…"
+                  onClick={() => void discard()}
+                >
+                  <RotateCcw />
+                  Discard draft
+                </Button>
+              </DisabledReason>
             </DialogFooter>
           </DialogFrameFooter>
         </DialogContent>

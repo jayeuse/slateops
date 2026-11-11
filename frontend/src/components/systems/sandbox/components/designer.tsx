@@ -350,6 +350,7 @@ export function Designer({
   notifyUndoable,
   onStartFromTemplate,
   pending,
+  saving,
   bindings,
   purgeEnabled,
   onLifecycle,
@@ -381,6 +382,8 @@ export function Designer({
   notifyUndoable: (s: string) => void;
   onStartFromTemplate: () => void;
   pending: boolean;
+  /** The Build save queue holds the draft: live-state changes wait (N1). */
+  saving: boolean;
   bindings: readonly SandboxBinding[] | null;
   purgeEnabled: boolean;
   onLifecycle: (
@@ -936,6 +939,7 @@ export function Designer({
       canPurge: purgeEnabled && Boolean(binding?.is_deleted),
       disabled:
         inputs.pending ||
+        saving ||
         inputs.bindings === null ||
         Boolean(binding && inputs.draftDirty),
     };
@@ -1874,6 +1878,7 @@ export function Designer({
       outlinePending,
       outlineDraftDirty,
       purgeEnabled,
+      saving,
     ],
   );
   const outlineHandlers = useStableHandlers({
@@ -1954,8 +1959,9 @@ export function Designer({
     </aside>
   );
   // Why a live-state change is unavailable, when it is.
-  const lifecycleReason =
-    bindings === null
+  const lifecycleReason = saving
+    ? "Saving…"
+    : bindings === null
       ? "Live state is still loading."
       : localDraftDirty
         ? "Save or cancel your edits first."

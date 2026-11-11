@@ -29,10 +29,13 @@ import {
   type SandboxOrganizationTemplate,
 } from "../domain/templates";
 import type { ApiErrorText } from "@/lib/api-errors";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 
 type OrganizationTemplateDialogProps = {
   open: boolean;
   pending: boolean;
+  /** The Build save queue holds the draft: Apply waits and says "Saving…". */
+  saving: boolean;
   onOpenChange: (open: boolean) => void;
   onApply: (
     template: SandboxOrganizationTemplate,
@@ -42,6 +45,7 @@ type OrganizationTemplateDialogProps = {
 export function OrganizationTemplateDialog({
   open,
   pending,
+  saving,
   onOpenChange,
   onApply,
 }: OrganizationTemplateDialogProps) {
@@ -238,25 +242,27 @@ export function OrganizationTemplateDialog({
             >
               Cancel
             </Button>
-            <Button
-              disabled={pending || applying || !selectedTemplate}
-              onClick={async () => {
-                if (!selectedTemplate) return;
-                setError("");
-                setApplying(true);
-                const result = await onApply(selectedTemplate);
-                setApplying(false);
-                if (!result.ok) {
-                  setError(result.error, result.reference);
-                  return;
-                }
-                onOpenChange(false);
-              }}
-            >
-              {applying
-                ? "Applying…"
-                : `Use ${selectedTemplate?.name ?? "template"}`}
-            </Button>
+            <DisabledReason stable reason={saving ? "Saving…" : null}>
+              <Button
+                disabled={pending || saving || applying || !selectedTemplate}
+                onClick={async () => {
+                  if (!selectedTemplate) return;
+                  setError("");
+                  setApplying(true);
+                  const result = await onApply(selectedTemplate);
+                  setApplying(false);
+                  if (!result.ok) {
+                    setError(result.error, result.reference);
+                    return;
+                  }
+                  onOpenChange(false);
+                }}
+              >
+                {applying
+                  ? "Applying…"
+                  : `Use ${selectedTemplate?.name ?? "template"}`}
+              </Button>
+            </DisabledReason>
           </DialogFooter>
         </DialogFrameFooter>
         {applying ? (

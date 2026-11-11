@@ -164,7 +164,7 @@ export function AttentionRow({
           </>
         )}
       </span>
-      <DisabledReason reason={reason}>
+      <DisabledReason stable reason={reason}>
         <Button
           variant="ghost"
           className="min-h-11 px-3 xl:h-8 xl:min-h-8 xl:px-2.5"
