@@ -110,6 +110,8 @@ def test_the_revision_only_builds_and_drops_indexes_concurrently(
     for name, table in NEW.items():
         assert f"ON public.{table} USING btree (org_id, created_at, id)" in upgraded[name][0]
 
+    # Record only this revision's statements; later revisions change other tables.
+    run_alembic(environment, "downgrade", REVISION)
     with _statements() as down:
         run_alembic(environment, "downgrade", PREVIOUS)
     restored = _indexes(engine)
