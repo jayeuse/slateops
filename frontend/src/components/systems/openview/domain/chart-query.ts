@@ -194,13 +194,6 @@ export type InlineChartEditorValue =
     }
   | { widgetType: "records"; config: OpenViewDashboardRecordsConfig };
 
-// Switching source never destroys the caller's incomplete inline instructions.
-// A saved source stores only its ID; resolved definitions are result metadata.
-export type ChartSourceDraft = {
-  inline: ChartEditorDraft;
-  chartId: string | null;
-};
-
 export function changeChartEditorWidgetType(
   value: ChartEditorDraft,
   widgetType: ChartEditorDraft["widgetType"],

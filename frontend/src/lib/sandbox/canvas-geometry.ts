@@ -5,11 +5,7 @@
  * owner's layout (`SandboxCanvasLayout`) stores.
  */
 
-import {
-  FIELD_TYPE_META,
-  type SandboxCanvasLayout,
-  type SandboxFieldType,
-} from "./model";
+import { FIELD_TYPE_META, type SandboxFieldType } from "./model";
 
 /** The shared canvas unit used by node dragging and the visual world grid. */
 export const SANDBOX_GRID_SIZE = 24;
@@ -267,33 +263,6 @@ export function boxContains(box: CanvasBox, point: CanvasPosition): boolean {
 export interface CanvasBoxes {
   departments: readonly { id: string; box: CanvasBox }[];
   modules: readonly { id: string; departmentId: string; box: CanvasBox }[];
-}
-
-export function boxesFromLayout(
-  layout: SandboxCanvasLayout,
-  structure: {
-    departments: readonly { id: string }[];
-    modules: readonly { id: string; departmentId: string }[];
-  },
-): CanvasBoxes {
-  return {
-    departments: structure.departments.flatMap((department) => {
-      const box = layout[department.id];
-      return box ? [{ id: department.id, box }] : [];
-    }),
-    modules: structure.modules.flatMap((sandboxModule) => {
-      const box = layout[sandboxModule.id];
-      return box
-        ? [
-            {
-              id: sandboxModule.id,
-              departmentId: sandboxModule.departmentId,
-              box,
-            },
-          ]
-        : [];
-    }),
-  };
 }
 
 /** The department frame under a canvas point, topmost (last drawn) first. */

@@ -1980,14 +1980,6 @@
       ],
       "baseline": null
     },
-    "app/systems/sandbox/designs/defaults.py": {
-      "owners": [
-        "tests/reset_application_data/test_execution.py",
-        "tests/reset_application_data/test_storage.py",
-        "tests/sandbox_designs/test_seed.py"
-      ],
-      "baseline": null
-    },
     "app/systems/sandbox/designs/field_schemas.py": {
       "owners": [
         "tests/sandbox_designs/test_portability.py",
@@ -6020,6 +6012,7 @@
     "app/systems/sandbox/departments/models.py",
     "app/systems/sandbox/departments/schemas.py",
     "app/systems/sandbox/designs/__init__.py",
+    "app/systems/sandbox/designs/defaults.py",
     "app/systems/sandbox/designs/models.py",
     "app/systems/sandbox/designs/pruning.py",
     "app/systems/sandbox/fields/__init__.py",
@@ -6110,6 +6103,7 @@
     "operations/sample/verification/__init__.py",
     "operations/sample/verification/history.py",
     "operations/sample/vocabulary.py",
-    "tests/operations/sample/sample_datasets.py"
+    "tests/operations/sample/sample_datasets.py",
+    "tests/sandbox_designs/fixtures.py"
   ]
 }

@@ -7,11 +7,29 @@ from uuid import NAMESPACE_URL, uuid5
 from sqlalchemy.orm import Session
 
 from app.systems.manage.workspace.models import WorkspaceProfile
-from app.systems.sandbox.designs.defaults import empty_document
 from app.systems.sandbox.designs.models import SandboxDocument as SandboxDocumentRow
-from app.systems.sandbox.designs.schemas import SandboxDocument
+from app.systems.sandbox.designs.schemas import DOCUMENT_SCHEMA_VERSION, SandboxDocument
 from app.systems.sandbox.designs.service import canonical_document
 from tests.sandbox_documents import sandbox_document_payload, trigger_payload
+
+EMPTY_SANDBOX_DOCUMENT: dict[str, object] = {
+    "kind": "slateops-sandbox",
+    "schemaVersion": DOCUMENT_SCHEMA_VERSION,
+    "design": {
+        "departments": [],
+        "modules": [],
+        "relationships": [],
+        "layout": {},
+    },
+    "triggers": [],
+    "scenarios": [],
+}
+
+
+def empty_document() -> SandboxDocument:
+    """Return a new validated Sandbox document with no configured entities."""
+
+    return SandboxDocument.model_validate(EMPTY_SANDBOX_DOCUMENT)
 
 
 def create_document(db: Session, organization: WorkspaceProfile) -> SandboxDocumentRow:

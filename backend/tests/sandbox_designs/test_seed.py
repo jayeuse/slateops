@@ -5,19 +5,8 @@ import json
 import pytest
 from sqlalchemy import text
 
-from app.systems.sandbox.designs.defaults import EMPTY_SANDBOX_DOCUMENT, empty_document
 from app.systems.sandbox.designs.validation import validate_document
-
-
-def test_default_document_contains_no_placeholder_entities() -> None:
-    seed = empty_document()
-
-    assert seed.design.departments == []
-    assert seed.design.modules == []
-    assert seed.design.relationships == []
-    assert seed.design.layout == {}
-    assert seed.triggers == []
-    assert seed.scenarios == []
+from tests.sandbox_designs.fixtures import EMPTY_SANDBOX_DOCUMENT, empty_document
 
 
 def test_empty_document_round_trips_through_the_v4_contract() -> None:

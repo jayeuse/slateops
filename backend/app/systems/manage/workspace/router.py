@@ -22,7 +22,7 @@ from app.systems.platform.files import service as file_service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import (
     ProviderUnavailable,
-    Storage,
+    StorageBackend,
     file_processing,
     hold_file_worker,
 )
@@ -36,7 +36,7 @@ from app.systems.platform.files.storage import get_storage
 
 router = APIRouter(prefix="/workspace", tags=["workspace"])
 WorkspaceReadUser = Annotated[User, Depends(get_current_user)]
-StorageDependency = Annotated[Storage, Depends(get_storage)]
+StorageDependency = Annotated[StorageBackend, Depends(get_storage)]
 
 
 def _workspace_unavailable() -> HTTPException:
@@ -246,7 +246,7 @@ def get_workspace_logo(
         return _deliver_workspace_logo(user, db, storage)
 
 
-def _deliver_workspace_logo(user: User, db: Session, storage: Storage) -> Response:
+def _deliver_workspace_logo(user: User, db: Session, storage: StorageBackend) -> Response:
     profile = _workspace(db, lock=True, shared_lock=True)
     logo_file_id = profile.logo_file_id
     if logo_file_id is None:
