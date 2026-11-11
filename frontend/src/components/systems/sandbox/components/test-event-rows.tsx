@@ -65,7 +65,7 @@ function TriggerRow({
           <Button
             variant="ghost"
             size="sm"
-            className="text-primary min-h-11 justify-self-start sm:min-h-8"
+            className="text-primary min-h-11 justify-self-start xl:min-h-8"
             disabled={busy && !running}
             pending={running}
             pendingLabel="Running…"
@@ -124,7 +124,7 @@ export function TestEventBlock({
             <Button
               variant="ghost"
               size="sm"
-              className="min-h-11 sm:min-h-8"
+              className="min-h-11 xl:min-h-8"
               aria-label={`Try it: ${block.title}`}
               disabled={busy && runningKey !== "event"}
               pending={runningKey === "event"}

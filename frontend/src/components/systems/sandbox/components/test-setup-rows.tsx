@@ -127,8 +127,9 @@ export function TestValueRow({
           value={String(value === true)}
           onChange={(event) => onChange(event.target.value === "true")}
         >
-          <NativeSelectOption value="true">Yes</NativeSelectOption>
-          <NativeSelectOption value="false">No</NativeSelectOption>
+          {/* The words Values used shows for a Checkbox (F10). */}
+          <NativeSelectOption value="true">Checked</NativeSelectOption>
+          <NativeSelectOption value="false">Unchecked</NativeSelectOption>
         </NativeSelect>
       </SetupRow>
     );

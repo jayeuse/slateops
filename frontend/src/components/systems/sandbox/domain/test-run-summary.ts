@@ -8,6 +8,11 @@ import type {
   SandboxDocumentDesign,
   SandboxFieldValue,
 } from "./document";
+import {
+  formatWorkspaceDate,
+  formatWorkspaceDateTime,
+  type WorkspaceRegion,
+} from "@/lib/date-time-display";
 import { compareTestValues } from "./example-values";
 import { valueWords } from "./test-reading";
 
@@ -247,16 +252,46 @@ const neededWords: Record<SandboxComparisonOperator, string> = {
   "<=": "at most ",
 };
 
-/** A value in a field's words; a choice by label, a box as checked. */
+/** Until the workspace region loads, dates read in US English. */
+const FALLBACK_REGION: WorkspaceRegion = { timezone: "UTC", locale: "en-US" };
+
+/**
+ * A date in the workspace format. A date and time with no zone is read as
+ * UTC by the evaluator, so it shows as written; a zoned one shows in the
+ * workspace zone.
+ */
+function dateText(
+  kind: "date" | "datetime",
+  value: string,
+  region: WorkspaceRegion | undefined,
+): string {
+  const shown = region ?? FALLBACK_REGION;
+  if (kind === "date") return formatWorkspaceDate(value, shown);
+  return /(?:Z|[+-]\d{2}:\d{2})$/.test(value)
+    ? formatWorkspaceDateTime(value, shown)
+    : formatWorkspaceDateTime(`${value}Z`, { ...shown, timezone: "UTC" });
+}
+
+/**
+ * A value in a field's words: a choice by its label, a box as Checked or
+ * Unchecked, the signed-in administrator by name, and a date in the
+ * workspace format. Inputs keep the stored text.
+ */
 export function fieldValueText(
   field: SandboxDocumentField | undefined,
   value: SandboxFieldValue | undefined,
   administrator?: { id: string; name: string } | null,
+  region?: WorkspaceRegion,
 ): string {
   if (value === undefined || value === null || value === "") return "No value";
   if (field?.config.kind === "checkbox") return value ? "Checked" : "Unchecked";
   if (field?.config.kind === "user" && value === administrator?.id)
     return administrator.name;
+  if (
+    (field?.config.kind === "date" || field?.config.kind === "datetime") &&
+    typeof value === "string"
+  )
+    return dateText(field.config.kind, value, region);
   return valueWords(field, value);
 }
 
@@ -271,6 +306,7 @@ export function unmetConditionReason(
   recordTrigger: SandboxTrigger,
   sandboxModule: SandboxDocumentModule | undefined,
   values: Readonly<Record<string, SandboxFieldValue>>,
+  region?: WorkspaceRegion,
 ): string | null {
   const { conditions, operator } = recordTrigger.conditionGroup;
   const reasons: string[] = [];
@@ -298,9 +334,9 @@ export function unmetConditionReason(
     const needed =
       source.kind === "field-reference"
         ? `the value of ${sandboxModule?.fields.find((item) => item.id === source.fieldId)?.name ?? "another field"}`
-        : fieldValueText(field, expected);
+        : fieldValueText(field, expected, null, region);
     reasons.push(
-      `${field?.name ?? "A field"} is ${fieldValueText(field, actual)}; it needs ${neededWords[condition.operator]}${needed}.`,
+      `${field?.name ?? "A field"} is ${fieldValueText(field, actual, null, region)}; it needs ${neededWords[condition.operator]}${needed}.`,
     );
     if (operator === "all") return reasons[0];
   }
@@ -326,7 +362,8 @@ export type HappenedLine =
       triggerId: string;
       name: string;
       status: "Not triggered" | "Conditions not met" | "Off";
-      reason: string;
+      /** Null when the status says it all (F8): no second sentence. */
+      reason: string | null;
     }
   | { kind: "attention"; triggerId: string; name: string; reasons: string[] };
 
@@ -353,6 +390,7 @@ export function whatHappened({
   onlyTrigger = false,
   listeningIds = null,
   administrator = null,
+  region,
 }: {
   run: SandboxTestRun;
   design: SandboxDocumentDesign;
@@ -362,6 +400,8 @@ export function whatHappened({
   /** The triggers of the event's block; the Triggers row chose among them. */
   listeningIds?: readonly string[] | null;
   administrator?: { id: string; name: string } | null;
+  /** The workspace region, for dates. */
+  region?: WorkspaceRegion;
 }): WhatHappened {
   const moduleId = run.input.moduleId;
   const sandboxModule = design.modules.find((item) => item.id === moduleId);
@@ -372,8 +412,13 @@ export function whatHappened({
     .map((row) => ({
       fieldId: row.id,
       name: fieldOf(row.id)?.name ?? "Unavailable field",
-      before: fieldValueText(fieldOf(row.id), row.before, administrator),
-      after: fieldValueText(fieldOf(row.id), row.after, administrator),
+      before: fieldValueText(
+        fieldOf(row.id),
+        row.before,
+        administrator,
+        region,
+      ),
+      after: fieldValueText(fieldOf(row.id), row.after, administrator, region),
     }));
   const claimed = new Set<string>();
   const own = new Map(
@@ -418,21 +463,25 @@ export function whatHappened({
       });
       continue;
     }
+    // Only a reason the status does not already say (F8).
     const reason =
       trace.outcome === "Skipped — disabled"
-        ? "It is off."
-        : trace.outcome === "Conditions not met"
-          ? [
-              ...notes,
-              unmetConditionReason(
-                recordTrigger,
-                sandboxModule,
-                run.input.values,
-              ) ?? "Its conditions were not met.",
-            ].join(" ")
-          : notes.length
-            ? notes.join(" ")
-            : "This event does not run it.";
+        ? null
+        : [
+            ...notes,
+            ...(trace.outcome === "Conditions not met"
+              ? [
+                  unmetConditionReason(
+                    recordTrigger,
+                    sandboxModule,
+                    run.input.values,
+                    region,
+                  ),
+                ]
+              : []),
+          ]
+            .filter((part): part is string => Boolean(part))
+            .join(" ") || null;
     lines.push({
       kind: "not-run",
       triggerId: trace.triggerId,

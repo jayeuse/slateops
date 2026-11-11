@@ -694,3 +694,38 @@ test("changed values and their Edited marks stay when another module is chosen a
   await expect(result.getByLabel("Amount")).toHaveValue("150");
   await expect(result.getByText("Edited")).toBeVisible();
 });
+
+test("from 640 to 1279 px every Test control keeps a 44 px target", async ({
+  page,
+}) => {
+  // The Sandbox uses slim 32 px controls only from 1280 px (xl).
+  await page.setViewportSize({ width: 1024, height: 768 });
+  const { reading } = await openTest(page);
+  const tryIt = reading.getByRole("button", {
+    name: "Try it: When an item is added",
+  });
+  await tryIt.click();
+  const result = reading.getByRole("region", {
+    name: "Example item",
+    exact: true,
+  });
+  await expect(result).toBeVisible();
+  const modules = page.getByRole("region", { name: "Modules" });
+  for (const control of [
+    tryIt,
+    reading.getByRole("button", { name: /^Try every event/ }),
+    reading
+      .getByRole("listitem")
+      .filter({ hasText: "Flag large orders" })
+      .getByRole("button", { name: "Try this trigger" }),
+    result.getByRole("button", { name: "Show on canvas" }),
+    result.getByRole("button", { name: "Change values" }),
+    result.getByRole("button", { name: "Run again" }),
+    modules.getByRole("button", { name: /^Orders/ }),
+    modules.getByRole("button", { name: /^Results/ }),
+    modules.getByRole("button", { name: "Clear results" }),
+  ]) {
+    const box = await control.boundingBox();
+    expect(box?.height).toBeGreaterThanOrEqual(44);
+  }
+});

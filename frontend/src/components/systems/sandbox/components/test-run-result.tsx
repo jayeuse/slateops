@@ -11,6 +11,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/disabled-reason";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import type {
   SandboxDocumentDesign,
   SandboxDocumentField,
@@ -18,6 +19,7 @@ import type {
   SandboxTrigger,
 } from "../domain/document";
 import {
+  fieldValueText,
   summarizeTestRun,
   whatHappened,
   type HappenedLine,
@@ -42,7 +44,12 @@ export type TestResultCardProps = {
   values: Readonly<Record<string, SandboxFieldValue>>;
   startValues: Readonly<Record<string, SandboxFieldValue>>;
   setFieldIds: readonly string[];
-  before: { label: string; text: string } | null;
+  /** The event's previous value, as a "<field> before" row. */
+  before: {
+    label: string;
+    field: SandboxDocumentField;
+    value: SandboxFieldValue;
+  } | null;
   needed: readonly { fieldId: string; name: string }[];
   notes: readonly string[];
   onlyTrigger: boolean;
@@ -117,7 +124,9 @@ function Happened({ line }: { line: HappenedLine }) {
             · {line.status}
           </span>
         </p>
-        <p className="text-muted-foreground">{line.reason}</p>
+        {line.reason ? (
+          <p className="text-muted-foreground">{line.reason}</p>
+        ) : null}
       </div>
     </li>
   );
@@ -138,6 +147,8 @@ export function TestResultCard(props: TestResultCardProps) {
     runDisabledReason,
     idPrefix,
   } = props;
+  // Dates read in the workspace format (F9); inputs keep the stored text.
+  const region = useWorkspaceDisplayRegion();
   const summary = run
     ? summarizeTestRun(run, design, triggers, draftRevision)
     : null;
@@ -150,6 +161,7 @@ export function TestResultCard(props: TestResultCardProps) {
         onlyTrigger: props.onlyTrigger,
         listeningIds: props.triggerChoices?.map((choice) => choice.id) ?? null,
         administrator,
+        region,
       })
     : null;
   // Issues about a value or a link, not about one trigger.
@@ -181,7 +193,7 @@ export function TestResultCard(props: TestResultCardProps) {
           <Button
             variant="ghost"
             size="sm"
-            className="ml-auto min-h-11 sm:min-h-8"
+            className="ml-auto min-h-11 xl:min-h-8"
             onClick={() => props.onShowOnCanvas(run)}
           >
             <Workflow aria-hidden />
@@ -202,7 +214,7 @@ export function TestResultCard(props: TestResultCardProps) {
               <Button
                 variant="ghost"
                 size="sm"
-                className="text-primary min-h-11 sm:min-h-8"
+                className="text-primary min-h-11 xl:min-h-8"
                 disabled={running}
                 onClick={props.onEdit}
               >
@@ -215,8 +227,21 @@ export function TestResultCard(props: TestResultCardProps) {
             values={props.values}
             startValues={props.startValues}
             setFieldIds={props.onlyTrigger ? props.setFieldIds : []}
-            before={props.before}
+            before={
+              props.before
+                ? {
+                    label: props.before.label,
+                    text: fieldValueText(
+                      props.before.field,
+                      props.before.value,
+                      administrator,
+                      region,
+                    ),
+                  }
+                : null
+            }
             administrator={administrator}
+            region={region}
             editing={editing}
             idPrefix={idPrefix}
             needed={new Set(props.needed.map((item) => item.fieldId))}
@@ -322,7 +347,7 @@ export function TestResultCard(props: TestResultCardProps) {
           <Button
             variant={editing ? "default" : "outline"}
             size="sm"
-            className="ml-auto min-h-11 sm:min-h-8"
+            className="ml-auto min-h-11 xl:min-h-8"
             pending={running}
             pendingLabel="Running…"
             onClick={props.onRunAgain}

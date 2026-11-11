@@ -5,6 +5,7 @@ import {
   describeTrigger,
   summarizeTestRun,
   everyEventLimitReason,
+  fieldValueText,
   testTraceSteps,
   unmetConditionReason,
   whatHappened,
@@ -420,7 +421,8 @@ test(
         triggerId: "hold",
         name: "Hold orders",
         status: "Off",
-        reason: "It is off.",
+        // "Off" already says it; no second sentence (F8).
+        reason: null,
       },
     ]);
     expect(happened.otherChanges).toEqual([]);
@@ -515,3 +517,79 @@ for (const row of [
     expect(everyEventLimitReason(row.needed, row.left)).toBe(row.reason);
   });
 }
+
+test("a trigger that did not run with no specific reason shows only its category", () => {
+  const happened = whatHappened({
+    // Paid is Checked, so the browser finds no failing condition to name.
+    run: ordersRun({
+      traces: [
+        {
+          triggerId: "assign",
+          label: "Assign paid orders",
+          outcome: "Conditions not met",
+        },
+        {
+          triggerId: "flag",
+          label: "Flag large orders",
+          outcome: "Not triggered",
+        },
+      ],
+      resultValues: { amount: 150, status: "open", paid: true },
+    }),
+    design: ordersDesign(),
+    triggers: ordersTriggers,
+  });
+  expect(
+    happened.lines.map((line) =>
+      line.kind === "not-run" ? [line.status, line.reason] : line.kind,
+    ),
+  ).toEqual([
+    ["Conditions not met", "Paid is Unchecked; it needs Checked."],
+    ["Not triggered", null],
+  ]);
+  const met = whatHappened({
+    run: {
+      ...ordersRun({
+        traces: [
+          {
+            triggerId: "assign",
+            label: "Assign paid orders",
+            outcome: "Conditions not met",
+          },
+        ],
+      }),
+      input: {
+        moduleId: "orders",
+        values: { amount: 150, status: "open", paid: true },
+      },
+    },
+    design: ordersDesign(),
+    triggers: ordersTriggers,
+  });
+  expect(met.lines).toEqual([
+    {
+      kind: "not-run",
+      triggerId: "assign",
+      name: "Assign paid orders",
+      status: "Conditions not met",
+      reason: null,
+    },
+  ]);
+});
+
+test("Values used reads dates in the workspace format and a zone-less time as written", () => {
+  const region = { timezone: "Asia/Manila", locale: "en-US" };
+  const due = field("due", "Due", { kind: "date", defaultValue: null });
+  const visit = field("visit", "Visit", {
+    kind: "datetime",
+    defaultValue: null,
+  });
+  expect(fieldValueText(due, "2026-11-11", null, region)).toBe("Nov 11, 2026");
+  // The evaluator reads a time with no zone as UTC; it shows as written.
+  expect(fieldValueText(visit, "2026-11-11T14:00", null, region)).toBe(
+    "Nov 11, 2026, 2:00 PM",
+  );
+  expect(fieldValueText(visit, "2026-11-11T14:00Z", null, region)).toBe(
+    "Nov 11, 2026, 10:00 PM",
+  );
+});

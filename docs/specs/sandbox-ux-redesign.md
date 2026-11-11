@@ -392,7 +392,7 @@ The open sheet and the region never touch unsaved trigger edits: they belong to 
 
 **Pickers (TRIG-2).** Every module picker groups modules under their department (mark and name), with a search and each module's field count. Every field picker shows each field's type on the right in the code face, and the closed select shows it too.
 
-**Operators (TRIG-3, TRIG-4).** Number, Whole number, Date, Date and time: is, is not, is more than, is at least, is less than, is at most. Text, Long text, Choice list, Email, Web link, User, Checkbox: is, is not. A saved operator that does not fit stays selected; the select takes the warn edge; its list shows it last, dim, "saved · does not fit"; the line under the row reads "Does not fit Text; choose is or is not." Nothing changes until the administrator picks. Save triggers does not refuse it (OQ-2 default).
+**Operators (TRIG-3, TRIG-4).** Number, Whole number, Date, Date and time: is, is not, is more than, is at least, is less than, is at most. Text, Long text, Choice list, Email, Web link, User, Checkbox: is, is not. A saved operator that does not fit stays selected; the select takes the warn edge; its list shows it last, dim, with the option text "<operator> · saved"; the line under the row reads "Does not fit Text; choose is or is not." Nothing changes until the administrator picks. Save triggers does not refuse it (OQ-2 default).
 
 **No silent choice (TRIG-5).** "New trigger" opens with Module empty and focused (module first, then event). From Build ("New trigger" in a module's item menu, TRIG-8) the module is preset. A change of event keeps the module. A step that a change makes invalid shows empty with its reason in warn ink (the trigger draft of B1 holds it), and Save triggers refuses it in the browser (B1 rule c): "Choose the field to watch." (Field changed), "Choose a number or date field." (Threshold crossed, when the field does not fit), "Not in Customers; choose a field." (module change). A new condition row and a new action row start with the field empty ("Choose a field.") and no value; today's first-field defaults (`domain/trigger-rules.ts:458-480`, `addTriggerAction`) are not used (UXD-7).
 
@@ -440,7 +440,7 @@ A fill is used only when the value is valid for its field and for every linked t
 
 The browser copies no order, priority, or chain of other triggers.
 
-**Result (TEST-5).** Under the event block that ran: head "Example item", the chip "Test only · live data unchanged", and "Show on canvas". Left, "Values used" with "Change values"; right, "What happened": each trigger that ran, with each field change "Status Open → Review"; each that did not run, with the reason in words ("Paid is Unchecked; it needs Checked.", "It is off."); each that needs attention; each linked module and the value it carries. Footer: "Run 13 of 50 kept" and "Run again".
+**Result (TEST-5).** Under the event block that ran: head "Example item", the chip "Test only · live data unchanged", and "Show on canvas". Left, "Values used" with "Change values"; right, "What happened": each trigger that ran, with each field change "Status Open → Review"; each that did not run, with the reason in words when there is a specific one ("Paid is Unchecked; it needs Checked."); "Off" and "Not triggered" show as the status only; each that needs attention; each linked module and the value it carries. Footer: "Run 13 of 50 kept" and "Run again".
 
 **Result of Try this trigger.** It appears under the trigger's own event block, in the same card, with three differences: the head reads "Example item · Flag large orders only"; each value that the trigger's conditions set carries a "Set for this trigger" mark ("Amount 100"); and "What happened" ends with one line, "Other triggers on Orders did not run in this test." A condition that kept its example value reads under the trigger as "Conditions not met" with the reason ("Amount is compared with Total; values kept."). "Run again" repeats the same single-trigger run.
 
@@ -469,7 +469,7 @@ The browser copies no order, priority, or chain of other triggers.
 | T2 | New trigger | Module empty and focused, grouped module list, region lists the whole structure, sentence with missing parts |
 | T3 | Field picker open | Fields with types |
 | T4 | Operator by type | Two or six operators |
-| T5 | Operator does not fit | Warn edge, "saved · does not fit" row, one-line reason |
+| T5 | Operator does not fit | Warn edge, "· saved" option text, with the does-not-fit line under the row, one-line reason |
 | T6 | Step emptied | Empty step with its reason in warn ink |
 | T7 | Triggers at 390 | Detail with "Orders fields" button and bottom sheet |
 | E1 | Reading | Event blocks, listening triggers, links; no run |
@@ -553,7 +553,7 @@ Renders: `.playwright-mcp/sandbox-ux-redesign/comp/`.
 | 8 | Test: reading, Try it result, empty, full store, new department | `test-reading.html?state=reading`, `?state=result`, `?state=empty`, `?state=full`, `?state=newdept` | `test-reading-1440.png`, `test-result-1440.png`, `test-empty-1440.png`, `test-full-1440.png`, `test-newdept-1440.png`, `test-reading-390.png`, `test-result-390.png` |
 | 9 | Test: Try this trigger and its result (TEST-9) | `test-reading.html?state=trythis` | `test-trythis-1440.png` |
 
-At 390 px, comps 3, 4, and 6 use the same bottom sheet with 44 px controls as comp 2, so they have no separate 390 render. The template dialog (comp 5) follows the existing Sandbox dialog rule on phones (pinned header and footer, the dialog is the only scroller) with the department list above the preview; it is not comped at 390. Revised 2026-11-10 after the review: the reading, result, full, and new-department comps predate TEST-9 and show no "Try this trigger" on the trigger rows; comp 9 shows it, and the rules above win. The comps draw a short sample structure (Sales, Finance, Field service), not Harbor data. They do not show states B5c, B5d, B11, E3, E4, E8, E11, T6, T8, or T9, the template dialog at 390, or the open operator list of T5 (the saved operator listed last, dim, "saved · does not fit"); the rules above define them.
+At 390 px, comps 3, 4, and 6 use the same bottom sheet with 44 px controls as comp 2, so they have no separate 390 render. The template dialog (comp 5) follows the existing Sandbox dialog rule on phones (pinned header and footer, the dialog is the only scroller) with the department list above the preview; it is not comped at 390. Revised 2026-11-10 after the review: the reading, result, full, and new-department comps predate TEST-9 and show no "Try this trigger" on the trigger rows; comp 9 shows it, and the rules above win. The comps draw a short sample structure (Sales, Finance, Field service), not Harbor data. They do not show states B5c, B5d, B11, E3, E4, E8, E11, T6, T8, or T9, the template dialog at 390, or the open operator list of T5 (the saved operator listed last, dim, as "<operator> · saved"); the rules above define them.
 
 ## Where each capability goes (Product Designer)
 

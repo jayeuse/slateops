@@ -100,6 +100,8 @@ export type ReadingLink = {
   moduleName: string;
   departmentId: string;
   departmentName: string;
+  /** The department's position in the design, for its mark. */
+  departmentIndex: number;
   /** This module's fields that the link's mappings carry. */
   carries: string[];
 };
@@ -109,6 +111,8 @@ export type ModuleReading = {
   name: string;
   departmentId: string;
   departmentName: string;
+  /** The department's position in the design, for its mark. */
+  departmentIndex: number;
   /** "Sales · 6 fields · 4 triggers · 2 links"; zero counts left out. */
   facts: string;
   blocks: ReadingBlock[];
@@ -317,6 +321,12 @@ export function moduleReading(
 
   const departmentName = (id: string) =>
     design.departments.find((item) => item.id === id)?.name ?? "Department";
+  // The position in the design, as the canvas colors each department.
+  const departmentIndex = (id: string) =>
+    Math.max(
+      0,
+      design.departments.findIndex((item) => item.id === id),
+    );
   const links: ReadingLink[] = design.relationships.flatMap((relationship) => {
     const out = relationship.sourceModuleId === moduleId;
     const into = relationship.targetModuleId === moduleId;
@@ -339,6 +349,7 @@ export function moduleReading(
       moduleName: other?.name ?? "Unavailable module",
       departmentId: other?.departmentId ?? "",
       departmentName: other ? departmentName(other.departmentId) : "",
+      departmentIndex: departmentIndex(other?.departmentId ?? ""),
       carries,
     });
     // A link from a module to itself reads both ways.
@@ -356,6 +367,7 @@ export function moduleReading(
     name: sandboxModule.name,
     departmentId: sandboxModule.departmentId,
     departmentName: department?.name ?? "Department",
+    departmentIndex: departmentIndex(sandboxModule.departmentId),
     facts,
     blocks: ordered,
     links,
@@ -384,6 +396,8 @@ export type TestModuleRow = { id: string; name: string; triggerCount: number };
 export type TestModuleGroup = {
   departmentId: string;
   departmentName: string;
+  /** The department's position in the design, for its mark. */
+  departmentIndex: number;
   /** No live department yet: the New chip (E6). */
   isNew: boolean;
   modules: TestModuleRow[];
@@ -400,10 +414,12 @@ export function testModuleGroups(
   bindings: ReadonlyArray<{ kind: string; sandbox_id: string }> | null,
 ): TestModuleGroup[] {
   return design.departments
-    .filter((department) => !department.closed)
-    .map((department) => ({
+    .map((department, departmentIndex) => ({ department, departmentIndex }))
+    .filter(({ department }) => !department.closed)
+    .map(({ department, departmentIndex }) => ({
       departmentId: department.id,
       departmentName: department.name,
+      departmentIndex,
       isNew:
         bindings !== null &&
         !bindings.some(

@@ -288,3 +288,23 @@ test("Try it on a weekly schedule sends the schedule and no previous value", () 
     weekday: 1,
   });
 });
+
+test("the Modules list, the reading head and its links carry each department's position for its mark", () => {
+  const reading = moduleReading(linkedOrders(), triggers, "orders");
+  expect(reading?.departmentIndex).toBe(0);
+  expect(
+    reading?.links.map((link) => [link.moduleName, link.departmentIndex]),
+  ).toEqual([
+    ["Customers", 0],
+    ["Invoices", 1],
+  ]);
+  expect(
+    testModuleGroups(ordersDesign(), triggers, null).map((group) => [
+      group.departmentName,
+      group.departmentIndex,
+    ]),
+  ).toEqual([
+    ["Sales", 0],
+    ["Finance", 1],
+  ]);
+});

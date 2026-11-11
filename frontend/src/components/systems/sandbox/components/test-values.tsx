@@ -2,6 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import type { WorkspaceRegion } from "@/lib/date-time-display";
 import type {
   SandboxDocumentField,
   SandboxFieldValue,
@@ -26,6 +27,8 @@ type Props = {
   /** The event's previous value, shown and sent as "<field> before". */
   before: { label: string; text: string } | null;
   administrator: { id: string; name: string } | null;
+  /** The workspace region, for dates in read mode. */
+  region: WorkspaceRegion | undefined;
   editing: boolean;
   idPrefix: string;
   /** Fields whose settings allow no value: named until they get one (E4). */
@@ -44,6 +47,7 @@ export function TestValues({
   setFieldIds,
   before,
   administrator,
+  region,
   editing,
   idPrefix,
   needed,
@@ -61,7 +65,7 @@ export function TestValues({
               {field.name}
             </dt>
             <dd className="flex min-w-0 flex-wrap items-center gap-2 [overflow-wrap:anywhere]">
-              {fieldValueText(field, values[field.id], administrator)}
+              {fieldValueText(field, values[field.id], administrator, region)}
               {setFieldIds.includes(field.id) ? (
                 <Badge variant="secondary">Set for this trigger</Badge>
               ) : null}
@@ -103,7 +107,7 @@ export function TestValues({
               <label
                 key={choice.id}
                 htmlFor={`${idPrefix}-trigger-${choice.id}`}
-                className="flex min-h-11 items-center gap-2 text-sm sm:min-h-8"
+                className="flex min-h-11 items-center gap-2 text-sm xl:min-h-8"
               >
                 <Checkbox
                   id={`${idPrefix}-trigger-${choice.id}`}

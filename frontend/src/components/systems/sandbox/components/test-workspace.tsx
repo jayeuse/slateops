@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Link2, Play, Upload } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Link2,
+  Play,
+  Search,
+  Upload,
+} from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,7 +18,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { SearchField } from "@/components/ui/search-field";
+import { Input } from "@/components/ui/input";
+import { DepartmentMark } from "@/components/sandbox/department-mark";
 import { ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
 import { useErrorText } from "@/lib/use-error-text";
@@ -34,7 +42,6 @@ import {
 import {
   eventDescription,
   everyEventLimitReason,
-  fieldValueText,
   moduleName,
 } from "../domain/test-run-summary";
 import { formatSavedTime } from "../domain/version-history";
@@ -448,7 +455,8 @@ export function TestWorkspace({
     if (!field || event.previousValue === undefined) return null;
     return {
       label: `${field.name} before`,
-      text: fieldValueText(field, event.previousValue, administrator),
+      field,
+      value: event.previousValue,
     };
   }
 
@@ -478,14 +486,32 @@ export function TestWorkspace({
         <h3 className="font-semibold">Modules</h3>
         <span className="text-muted-foreground text-sm">{moduleCount}</span>
       </div>
-      <div className="px-4 pt-3">
-        <SearchField
-          label="Search modules"
-          value={search}
-          onValueChange={setSearch}
-        />
-      </div>
+      {/* No search over an empty list (F13); the Triggers search pattern:
+          placeholder and accessible name, no visible label (F7). */}
+      {moduleCount ? (
+        <div className="px-4 pt-3">
+          <div className="relative">
+            <Search
+              aria-hidden="true"
+              className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+            />
+            <Input
+              type="search"
+              aria-label="Search modules"
+              placeholder="Search modules"
+              className="min-h-11 pl-9"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </div>
+        </div>
+      ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto py-2">
+        {!moduleCount ? (
+          <p className="text-muted-foreground px-4 py-3 text-sm">
+            No modules yet
+          </p>
+        ) : null}
         {shownGroups.map((group) => (
           <div
             key={group.departmentId}
@@ -493,6 +519,7 @@ export function TestWorkspace({
             aria-label={group.departmentName}
           >
             <p className="text-muted-foreground flex items-center gap-2 px-4 pt-3 pb-1 text-xs font-semibold">
+              <DepartmentMark departmentIndex={group.departmentIndex} />
               {group.departmentName}
               {group.isNew ? <Badge variant="secondary">New</Badge> : null}
             </p>
@@ -503,7 +530,7 @@ export function TestWorkspace({
                     type="button"
                     aria-current={item.id === moduleId ? "true" : undefined}
                     className={cn(
-                      "hover:bg-muted focus-visible:ring-ring flex min-h-11 w-full items-center justify-between gap-3 px-6 text-left text-sm outline-none focus-visible:ring-2 sm:min-h-10",
+                      "hover:bg-muted focus-visible:ring-ring flex min-h-11 w-full items-center justify-between gap-3 px-6 text-left text-sm outline-none focus-visible:ring-2 xl:min-h-10",
                       item.id === moduleId && "bg-muted font-medium",
                     )}
                     onClick={() => chooseModule(item.id)}
@@ -536,7 +563,7 @@ export function TestWorkspace({
                 variant="ghost"
                 size="sm"
                 className={cn(
-                  "min-h-11 px-2 sm:min-h-8",
+                  "min-h-11 px-2 xl:min-h-8",
                   full && "text-warn-text",
                 )}
                 disabled={!runs.length}
@@ -573,7 +600,7 @@ export function TestWorkspace({
         <Button
           variant="ghost"
           size="sm"
-          className="text-primary min-h-11 sm:min-h-8"
+          className="text-primary min-h-11 xl:min-h-8"
           disabled={busy || (!runs.length && !count)}
           pending={clearing}
           pendingLabel="Clearing results…"
@@ -616,6 +643,7 @@ export function TestWorkspace({
             ) : null}
             <div className="min-w-0">
               <h3 className="flex flex-wrap items-center gap-2 text-lg font-semibold [overflow-wrap:anywhere]">
+                <DepartmentMark departmentIndex={reading.departmentIndex} />
                 {reading.name}
                 {selectedGroup?.isNew ? (
                   <Badge variant="secondary">New</Badge>
@@ -628,7 +656,7 @@ export function TestWorkspace({
                 <Button
                   variant="outline"
                   size="sm"
-                  className="min-h-11 sm:min-h-8"
+                  className="min-h-11 xl:min-h-8"
                   disabled={busy && every === null}
                   pending={every !== null}
                   pendingLabel={
@@ -666,7 +694,7 @@ export function TestWorkspace({
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="text-primary min-h-11 sm:min-h-8"
+                    className="text-primary min-h-11 xl:min-h-8"
                     disabled={review.disabled && !review.reason}
                     onClick={review.open}
                   >
@@ -802,7 +830,10 @@ export function TestWorkspace({
                         />
                       )}
                       <span className="font-medium">{link.moduleName}</span>
-                      <span className="text-muted-foreground">
+                      <span className="text-muted-foreground inline-flex items-center gap-1.5">
+                        <DepartmentMark
+                          departmentIndex={link.departmentIndex}
+                        />
                         {link.departmentName}
                       </span>
                       <span className="text-muted-foreground ml-auto text-xs">
