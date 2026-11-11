@@ -82,7 +82,15 @@ export function TemplateDepartmentDialog({
       }}
     >
       <DialogContent
-        initialFocus={() => document.getElementById(`${formId}-name`)}
+        // From 768 px the Name; on a phone the chosen department, at the top
+        // of the list that comes first (B8).
+        initialFocus={() =>
+          window.matchMedia("(min-width: 48rem)").matches
+            ? document.getElementById(`${formId}-name`)
+            : document
+                .getElementById(`${formId}-list`)
+                ?.querySelector<HTMLElement>('[aria-selected="true"]')
+        }
         finalFocus={() => anchor ?? true}
         className={cn(
           dialogFrameContentClass,
@@ -266,6 +274,7 @@ export function TemplateDepartmentForm({
     <>
       <div className="grid gap-4 md:min-h-0 md:flex-1 md:grid-cols-[17rem_minmax(0,1fr)] md:overflow-hidden">
         <div
+          id={`${formId}-list`}
           role="listbox"
           aria-label="Template departments"
           className="grid content-start gap-0.5 md:-ml-2 md:overflow-y-auto md:pr-1 md:pl-2"

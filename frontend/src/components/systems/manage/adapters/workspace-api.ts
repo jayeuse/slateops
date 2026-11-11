@@ -63,8 +63,9 @@ const workspaceCommonProfileSchema = z.object({
   week_start: z.enum(["monday", "sunday"]),
   business_hours: z.string().max(200),
   theme: organizationThemeSchema,
-  // Required by the contract since BE-SD6; a reply without it shows no
-  // "New departments" group, and the Sandbox writes no default.
+  // Required by the contract since BE-SD6; a reply without it shows the
+  // "New departments" group with an "Unavailable" row, and the Sandbox
+  // writes no default.
   department_setup_defaults: departmentSetupDefaultsSchema.optional(),
   revision: z.number().int().positive(),
 });

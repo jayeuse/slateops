@@ -744,6 +744,66 @@ test("on a phone Add from a template is one scroller with its close button and A
   );
 });
 
+/** The canvas toolbar's Add department: it opens the department entry. */
+function toolbarAddDepartment(page: Page): Locator {
+  return page
+    .getByRole("toolbar", { name: "Canvas view controls" })
+    .getByRole("button", { name: "Add department", exact: true });
+}
+
+// FAST-7, B8 (Product Designer review F1): below 768 px the closing entry
+// sheet must not pull focus out of the dialog that replaced it.
+test("on a phone From a template keeps focus on the chosen department, and Escape or Cancel returns it to Add department", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openAuthenticatedSandbox(page, salesAndFinance());
+  const dialog = await openTemplateDialog(page);
+  const chosen = dialog.getByRole("option", {
+    name: "Procurement, 2 modules",
+  });
+  await expect(chosen).toBeFocused();
+  // Still there once the entry sheet has finished closing.
+  await expect(createEntry(page, "Add department")).toBeHidden();
+  await expect(chosen).toBeFocused();
+  expect(await dialog.evaluate((root) => root.scrollTop)).toBe(0);
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(toolbarAddDepartment(page)).toBeFocused();
+
+  await openTemplateDialog(page);
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(toolbarAddDepartment(page)).toBeFocused();
+});
+
+// FAST-7 (Product Designer review N1): every way out of the dialog returns
+// focus to the control that opened the entry.
+test("Escape, Cancel, and Add department each return focus to the toolbar's Add department", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page, salesAndFinance());
+  const dialog = await openTemplateDialog(page);
+  await expect(dialog.getByRole("textbox", { name: "Name" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(toolbarAddDepartment(page)).toBeFocused();
+
+  await openTemplateDialog(page);
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(toolbarAddDepartment(page)).toBeFocused();
+
+  await openTemplateDialog(page);
+  await dialog.getByRole("button", { name: "Add department" }).click();
+  await expect(dialog).toBeHidden();
+  // The added department is the selection; focus is back where it started.
+  await expect(elementBar(page, "Procurement")).toBeVisible();
+  await expect(toolbarAddDepartment(page)).toBeFocused();
+});
+
 /** A new, empty Sales whose Setup has one item cleared: a wide bar. */
 function newSales(): Design {
   return {

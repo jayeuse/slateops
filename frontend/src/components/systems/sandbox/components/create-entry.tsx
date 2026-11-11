@@ -124,10 +124,14 @@ export function CreateEntry({
   // One close per flow, with the last element this flow created.
   const lastCreated = useRef<string | null>(null);
   const closed = useRef(false);
+  // Handed off to "Add from a template": the dialog owns focus, so the
+  // closing entry moves none (B8).
+  const handedOff = useRef(false);
   useEffect(() => {
     if (!open) return;
     lastCreated.current = null;
     closed.current = false;
+    handedOff.current = false;
   }, [open]);
   const close = () => {
     if (closed.current) return;
@@ -137,7 +141,7 @@ export function CreateEntry({
   const onOpenChange = (next: boolean) => {
     if (!next) close();
   };
-  const finalFocus = () => anchor ?? true;
+  const finalFocus = () => (handedOff.current ? false : (anchor ?? true));
   // The portal mounts the body with the popup and unmounts it after the
   // exit, so each flow starts from an empty entry and never closes empty.
   const body = (
@@ -156,6 +160,7 @@ export function CreateEntry({
           ? () => {
               if (closed.current) return;
               closed.current = true;
+              handedOff.current = true;
               onFromTemplate(lastCreated.current);
             }
           : undefined

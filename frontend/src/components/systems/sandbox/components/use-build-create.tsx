@@ -123,6 +123,11 @@ export function useBuildCreate({
     anchor: HTMLElement;
     owner: string | null;
   } | null>(null);
+  // The closing dialog keeps its anchor until its exit ends, so its final
+  // focus goes back to that control, not to the page body (N1).
+  const [shownTemplate, setShownTemplate] = useState(templateFrom);
+  if (templateFrom !== null && templateFrom !== shownTemplate)
+    setShownTemplate(templateFrom);
   // A bar stays while focus is in it, and while focus returns to it after
   // its popover closes and the selection moves to the new element.
   const [barFocus, setBarFocus] = useState<string | null>(null);
@@ -157,13 +162,24 @@ export function useBuildCreate({
       if (reopenTimer.current !== null) clearTimeout(reopenTimer.current);
     };
   }, []);
-  function settleFocus(anchor: HTMLElement, owner: string | null): void {
-    lastClose.current = anchor;
-    if (reopenTimer.current !== null) clearTimeout(reopenTimer.current);
-    reopenTimer.current = setTimeout(() => {
-      reopenTimer.current = null;
-      if (lastClose.current === anchor) lastClose.current = null;
-    }, 400);
+  /**
+   * After a popover or dialog closes. `reopenGuard` ignores the click that
+   * follows a press on the anchor of an open popover; a modal dialog's
+   * outside press lands on its backdrop, never on the anchor, so it skips it.
+   */
+  function settleFocus(
+    anchor: HTMLElement,
+    owner: string | null,
+    reopenGuard = true,
+  ): void {
+    if (reopenGuard) {
+      lastClose.current = anchor;
+      if (reopenTimer.current !== null) clearTimeout(reopenTimer.current);
+      reopenTimer.current = setTimeout(() => {
+        reopenTimer.current = null;
+        if (lastClose.current === anchor) lastClose.current = null;
+      }, 400);
+    }
     setClosingOwner(owner);
     // Focus goes back to the anchor; if the selection change re-rendered it,
     // it is moved back once the selection settles.
@@ -188,7 +204,7 @@ export function useBuildCreate({
     setSetup(null);
     setEntry({ kind, parentId, anchor, owner, toolbar });
   }
-  function closeEntry(lastCreatedId: string | null): void {
+  function closeEntry(lastCreatedId: string | null, returnFocus = true): void {
     const current = entry;
     if (current === null) return;
     setEntry(null);
@@ -199,20 +215,22 @@ export function useBuildCreate({
           ? canvasFieldId(current.parentId, lastCreatedId)
           : lastCreatedId,
       );
-    settleFocus(current.anchor, current.owner);
+    if (returnFocus) settleFocus(current.anchor, current.owner);
   }
   /** The department entry's "From a template": the entry ends, the dialog opens. */
   function openTemplateDialog(lastCreatedId: string | null): void {
     const current = entry;
     if (current === null) return;
-    closeEntry(lastCreatedId);
+    // The dialog takes focus; the closing entry moves none (B8). The dialog
+    // returns it to the entry's anchor when it closes.
+    closeEntry(lastCreatedId, false);
     setTemplateFrom({ anchor: current.anchor, owner: current.owner });
   }
   function closeTemplateDialog(): void {
     const current = templateFrom;
     if (current === null) return;
     setTemplateFrom(null);
-    settleFocus(current.anchor, current.owner);
+    settleFocus(current.anchor, current.owner, false);
   }
   function openConnect(
     sourceId: string,
@@ -529,7 +547,7 @@ export function useBuildCreate({
         open={templateFrom !== null}
         design={design}
         holdReason={addHoldReason}
-        anchor={templateFrom?.anchor ?? null}
+        anchor={shownTemplate?.anchor ?? null}
         onAdd={addFromEntry}
         onAdded={(departmentId) => {
           // The added department becomes the selection (FAST-7).

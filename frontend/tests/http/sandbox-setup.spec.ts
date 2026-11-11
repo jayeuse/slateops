@@ -189,6 +189,16 @@ test("after a Setup toggle from the bar, Escape returns focus to Setup", async (
   await expect(
     bar.getByRole("button", { name: "Setup for Sales: 1 item cleared" }),
   ).toBeVisible();
+  // The popover stays where it opened, 6 px under Setup: it does not jump.
+  const [control, panel] = await Promise.all([
+    bar
+      .getByRole("button", { name: "Setup for Sales: 1 item cleared" })
+      .boundingBox(),
+    popover.boundingBox(),
+  ]);
+  expect(
+    Math.abs(panel!.y - (control!.y + control!.height + 6)),
+  ).toBeLessThanOrEqual(1);
 
   await page.keyboard.press("Escape");
   await expect(popover).toBeHidden();
