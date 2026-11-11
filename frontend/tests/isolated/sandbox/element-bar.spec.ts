@@ -223,3 +223,41 @@ test("a department bar adds modules, and a closed module's bar has no Connect", 
   expect(elementBarActions("module", false)).toEqual(["field", "connect"]);
   expect(elementBarActions("module", true)).toEqual(["field"]);
 });
+
+// UX-C29 (FIT-1, B3): a new department's bar adds Setup next to + Module,
+// and its item menu adds "Setup…" (the keyboard route); a published or
+// closed department has neither.
+test("a new open department's bar and item menu add Setup, and no other element's do", () => {
+  expect(elementBarActions("department", false, true)).toEqual([
+    "module",
+    "setup",
+  ]);
+  expect(elementBarActions("department", false, false)).toEqual(["module"]);
+  expect(elementBarActions("department", true, true)).toEqual(["module"]);
+
+  const labels = (entries: ReturnType<typeof itemMenuEntries>) =>
+    entries.map((entry) => entry.label);
+  const base = {
+    closed: false,
+    canPurge: false,
+    lifecycle: true,
+    duplicate: true,
+    connect: true,
+    newTrigger: true,
+    setup: true,
+  };
+  expect(labels(itemMenuEntries("department", base))).toEqual([
+    "Rename department",
+    "Close department",
+    "Duplicate department",
+    "Setup…",
+    "Delete department",
+  ]);
+  expect(
+    labels(itemMenuEntries("department", { ...base, setup: false })),
+  ).not.toContain("Setup…");
+  expect(
+    labels(itemMenuEntries("department", { ...base, closed: true })),
+  ).not.toContain("Setup…");
+  expect(labels(itemMenuEntries("module", base))).not.toContain("Setup…");
+});

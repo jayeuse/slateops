@@ -142,6 +142,7 @@ import {
   type SandboxCommandResult,
 } from "../state/commands";
 import { EmptyCanvasPanel } from "./empty-canvas-panel";
+import { setupOffered } from "../domain/department-setup";
 import { useLatestPublishedVersion } from "../state/use-latest-published-version";
 import {
   SANDBOX_WORKBENCH_MAX_WIDTH,
@@ -941,6 +942,13 @@ export function Designer({
     return {
       closed: binding?.is_deleted ?? draftClosed ?? false,
       canPurge: purgeEnabled && Boolean(binding?.is_deleted),
+      // FIT-1: Setup applies to an open department with no live binding,
+      // known only once live state has loaded.
+      setup:
+        target.kind === "department" &&
+        inputs.bindings !== null &&
+        draftClosed !== undefined &&
+        setupOffered({ closed: draftClosed }, binding !== undefined),
       disabled:
         inputs.pending ||
         saving ||
@@ -1570,6 +1578,10 @@ export function Designer({
     canvasFrameRef,
     setSelected,
     showProperties: () => setWorkbenchTab("Inspector"),
+    setupOffered: (departmentId: string) =>
+      lifecycleState({ kind: "department", id: departmentId }).setup,
+    setupHeld: pending || saving,
+    notifyError,
   });
   /** The canvas item menu: the Structure tree's items for the same target. */
   function canvasItemMenu(
@@ -1597,6 +1609,14 @@ export function Designer({
             ? () => {
                 menu.leave();
                 create.connectFromCanvas(target.id);
+              }
+            : undefined
+        }
+        onSetup={
+          kind === "department" && state.setup
+            ? () => {
+                menu.leave();
+                create.setupFromCanvas(target.id);
               }
             : undefined
         }
@@ -1691,6 +1711,8 @@ export function Designer({
     },
     onConnect: (id: string, anchor: HTMLElement) =>
       requestAnimationFrame(() => create.openConnect(id, anchor, null)),
+    onSetup: (id: string, anchor: HTMLElement) =>
+      requestAnimationFrame(() => create.openSetup(id, anchor, null)),
     onFocusItem: create.setFocusedItem,
   });
   const structurePane = (

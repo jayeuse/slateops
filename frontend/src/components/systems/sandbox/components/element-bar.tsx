@@ -7,10 +7,13 @@ import { DepartmentMark } from "@/components/sandbox/department-mark";
 import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/disabled-reason";
 import { cn } from "@/lib/utils";
+import { setupAccessibleName } from "../domain/department-setup";
+import type { DepartmentSetup } from "../domain/model";
 import { elementBarActions } from "../helpers/element-bar";
+import { SetupControlWords } from "./setup-popover";
 
 /** What a bar control opens, while it is open. */
-export type ElementBarOpen = "module" | "field" | "connect" | null;
+export type ElementBarOpen = "module" | "field" | "connect" | "setup" | null;
 
 export type ElementBarControlsProps = {
   kind: "department" | "module";
@@ -27,12 +30,18 @@ export type ElementBarControlsProps = {
   onAddModule: (anchor: HTMLElement) => void;
   onAddField: (anchor: HTMLElement) => void;
   onConnect: (anchor: HTMLElement) => void;
+  /**
+   * A new open department's Setup (FIT-1): its draft value, or absent when
+   * the department offers no Setup.
+   */
+  setup?: { value: DepartmentSetup | undefined } | null;
+  onSetup?: (anchor: HTMLElement) => void;
 };
 
 /**
  * The controls of an element bar (docs/specs/sandbox-ux-redesign.md,
- * "Element bar"): a department adds a module; a module adds a field or
- * connects. Visible labels are one word; accessible names name the result
+ * "Element bar"): a department adds a module, and a new one holds Setup; a
+ * module adds a field or connects. Visible labels are one word; accessible names name the result
  * and the parent.
  */
 export function ElementBarControls({
@@ -46,11 +55,13 @@ export function ElementBarControls({
   onAddModule,
   onAddField,
   onConnect,
+  setup = null,
+  onSetup,
 }: ElementBarControlsProps) {
   const control = (
     action: Exclude<ElementBarOpen, null>,
     label: string,
-    word: string,
+    word: ReactNode,
     icon: ReactNode,
     run: (anchor: HTMLElement) => void,
   ) => (
@@ -84,13 +95,32 @@ export function ElementBarControls({
         </span>
       ) : null}
       {kind === "department" ? (
-        control(
-          "module",
-          `Add module to ${name}`,
-          "Module",
-          <Plus aria-hidden="true" />,
-          onAddModule,
-        )
+        <>
+          {control(
+            "module",
+            `Add module to ${name}`,
+            "Module",
+            <Plus aria-hidden="true" />,
+            onAddModule,
+          )}
+          {setup &&
+          onSetup &&
+          elementBarActions(kind, closed, true).includes("setup") ? (
+            <>
+              <span
+                aria-hidden="true"
+                className="bg-border mx-0.5 h-4 w-px shrink-0"
+              />
+              {control(
+                "setup",
+                setupAccessibleName(name, setup.value),
+                <SetupControlWords setup={setup.value} />,
+                null,
+                onSetup,
+              )}
+            </>
+          ) : null}
+        </>
       ) : (
         <>
           {control(

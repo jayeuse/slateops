@@ -3,7 +3,12 @@ import {
   dateTimeInstant,
   dateValueInRange,
 } from "./date-values";
-import { canonicalFieldType, normalizeField, type FieldConfig } from "./model";
+import {
+  canonicalFieldType,
+  normalizeField,
+  type DepartmentSetup,
+  type FieldConfig,
+} from "./model";
 import {
   SANDBOX_DOCUMENT_LIMITS,
   type SandboxDocumentParseResult,
@@ -459,6 +464,33 @@ function parseLayout(value: unknown): Record<string, SandboxLayoutBox> {
   );
 }
 
+const DEPARTMENT_SETUP_ITEMS = [
+  "groups",
+  "dashboard",
+  "category",
+  "channel",
+] as const;
+
+/**
+ * BE-SD5: an optional object of strict booleans, each on unless it says
+ * false; null, like a missing value, means every item is on.
+ */
+function parseDepartmentSetup(value: unknown): DepartmentSetup | undefined {
+  if (value === undefined || value === null) return undefined;
+  const source = record(value, "department setup");
+  exactKeys(source, DEPARTMENT_SETUP_ITEMS, "department setup");
+  const item = (key: (typeof DEPARTMENT_SETUP_ITEMS)[number]) =>
+    source[key] === undefined
+      ? true
+      : boolean(source[key], `department setup ${key}`);
+  return {
+    groups: item("groups"),
+    dashboard: item("dashboard"),
+    category: item("category"),
+    channel: item("channel"),
+  };
+}
+
 function parseDesign(value: unknown, semantic = true): SandboxDocumentDesign {
   const source = record(value, "design");
   exactKeys(
@@ -478,7 +510,8 @@ function parseDesign(value: unknown, semantic = true): SandboxDocumentDesign {
   const parsedDepartments = departments.map(
     (item): SandboxDocumentDepartment => {
       const source = record(item, "department");
-      exactKeys(source, ["id", "name", "closed"], "department");
+      exactKeys(source, ["id", "name", "closed", "setup"], "department");
+      const setup = parseDepartmentSetup(source.setup);
       return {
         id: boundedString(source.id, "department id"),
         name: boundedString(
@@ -487,6 +520,8 @@ function parseDesign(value: unknown, semantic = true): SandboxDocumentDesign {
           SANDBOX_DOCUMENT_LIMITS.nameCharacters,
         ),
         closed: boolean(source.closed, "department closed"),
+        // Absent stays absent, so the document keeps its stored form.
+        ...(setup === undefined ? {} : { setup }),
       };
     },
   );

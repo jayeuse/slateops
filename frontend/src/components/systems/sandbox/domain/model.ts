@@ -70,7 +70,23 @@ export type Field = {
   description?: string;
   config?: FieldConfig;
 };
-export type Department = { id: string; name: string; closed: boolean };
+/**
+ * What the first publish creates for a new department (setup spec SD13,
+ * BE-SD5): its three groups, dashboard, category, and channel; the Board is
+ * always created. No value means every item is on.
+ */
+export type DepartmentSetup = {
+  groups: boolean;
+  dashboard: boolean;
+  category: boolean;
+  channel: boolean;
+};
+export type Department = {
+  id: string;
+  name: string;
+  closed: boolean;
+  setup?: DepartmentSetup;
+};
 export type Module = {
   id: string;
   department: string;

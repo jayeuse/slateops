@@ -1,4 +1,5 @@
 import { canvasFieldId, projectedField } from "./bridge";
+import { newDepartment } from "../domain/create-checks";
 import {
   compactDefaultLayout,
   uid,
@@ -85,13 +86,17 @@ export function duplicateDesignTarget(
         ...design,
         departments: [
           ...design.departments,
+          // FIT-4: the copy starts from the default setup, like any new
+          // department; it never copies the source's value (UX-C34).
           {
-            ...source,
-            id: departmentId,
-            name: copiedName(
-              source.name,
-              design.departments.map((item) => item.name),
+            ...newDepartment(
+              departmentId,
+              copiedName(
+                source.name,
+                design.departments.map((item) => item.name),
+              ),
             ),
+            closed: source.closed,
           },
         ],
         modules: [...design.modules, ...copiedModules],

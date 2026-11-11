@@ -66,6 +66,10 @@ export type SandboxOptions = {
   pruneFailure?: { status: number; code: string };
   versions?: Array<Record<string, unknown>>;
   previewChanges?: Array<Record<string, string>>;
+  /** Answers each review from the saved draft, as the planner does. */
+  previewChangesFor?: (
+    document: SandboxDocumentV4,
+  ) => Array<Record<string, string>>;
   previewBlockers?: Array<{ code: string; message: string; targetId: string }>;
   bindings?: Array<{
     kind: "department" | "module" | "field" | "relationship" | "trigger";
@@ -438,7 +442,8 @@ export async function openAuthenticatedSandbox(
         documentRevision: revision,
         documentHash: "a".repeat(64),
         expiresAt: "2026-09-22T12:00:00Z",
-        changes: options.previewChanges ?? [],
+        changes:
+          options.previewChangesFor?.(document) ?? options.previewChanges ?? [],
         counts: {
           departments: 0,
           groups: 0,

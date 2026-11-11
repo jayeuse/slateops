@@ -114,6 +114,7 @@ import { TriggerLeaveDialog } from "./components/trigger-leave-dialog";
 import { DisabledReason } from "@/components/ui/disabled-reason";
 import { TestWorkspace } from "./components/test-workspace";
 import { ReviewPublishDialog } from "./components/review-publish-dialog";
+import { withSetupItem } from "./domain/department-setup";
 import { SandboxHeaderActions } from "./components/sandbox-header-actions";
 import {
   SandboxHistoryButtons,
@@ -2147,6 +2148,12 @@ function SandboxWorkspace() {
               createSandboxPublicationPreview({
                 expectedRevision: session.revision,
               })
+            }
+            onSetupChange={(departmentId, item, on) =>
+              // The same change as Build's Setup popover (DQ4).
+              change((current) =>
+                withSetupItem(current, departmentId, item, on),
+              )
             }
             onPublish={({ preview, password, note, idempotencyKey }) =>
               publishSandbox({

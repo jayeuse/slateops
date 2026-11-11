@@ -386,3 +386,38 @@ test("removing a projected rule removes its canonical trigger", () => {
 
   expect(mergeProjectedDesign(document, projected, next).triggers).toEqual([]);
 });
+
+// N14 (BE-SD5): every Build save rebuilds the design from its projection, so
+// the projection carries the setup choice and an unrelated save keeps it; a
+// department without one is saved without one.
+test("a department's setup choice survives a later unrelated Build save", () => {
+  const document = fixture();
+  document.design.departments = [
+    {
+      id: "operations",
+      name: "Operations",
+      closed: false,
+      setup: { groups: true, dashboard: true, category: true, channel: false },
+    },
+    { id: "finance", name: "Finance", closed: false },
+  ];
+  document.design.layout.finance = { x: 760, y: 10, width: 360, height: 240 };
+  const projected = projectSandboxDocument(document);
+  const renamed = structuredClone(projected);
+  renamed.modules[0]!.name = "Service requests";
+
+  const saved = mergeProjectedDesign(document, projected, renamed);
+
+  expect(saved.design.modules[0]?.name).toBe("Service requests");
+  expect(saved.design.departments[0]?.setup).toEqual({
+    groups: true,
+    dashboard: true,
+    category: true,
+    channel: false,
+  });
+  expect(saved.design.departments[1]).toEqual({
+    id: "finance",
+    name: "Finance",
+    closed: false,
+  });
+});

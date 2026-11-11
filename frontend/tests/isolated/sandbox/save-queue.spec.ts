@@ -230,6 +230,28 @@ test("only appended Build elements count as an add", () => {
         },
         { kind: "edit" },
       ],
+      // P4-F3: a setup toggle edits an existing department, so it takes the
+      // edit path (it waits for the queue and holds the page while it saves).
+      [
+        "a department's setup choice",
+        {
+          ...before,
+          departments: [
+            {
+              id: "operations",
+              name: "Operations",
+              closed: false,
+              setup: {
+                groups: true,
+                dashboard: true,
+                category: true,
+                channel: false,
+              },
+            },
+          ],
+        },
+        { kind: "edit" },
+      ],
       [
         "trigger change",
         {

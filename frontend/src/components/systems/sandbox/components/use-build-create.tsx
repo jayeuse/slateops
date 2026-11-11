@@ -15,7 +15,13 @@ import type {
 } from "@/components/sandbox/sandbox-canvas";
 import type { SandboxState } from "@/lib/sandbox/model";
 import type { CreateKind } from "../domain/create-checks";
-import { uid, type Design, type DesignUpdate } from "../domain/model";
+import { withSetupItem } from "../domain/department-setup";
+import {
+  uid,
+  type DepartmentSetup,
+  type Design,
+  type DesignUpdate,
+} from "../domain/model";
 import {
   connectTargetGroups,
   relationshipNamesInUse,
@@ -31,6 +37,7 @@ import { addedElementIds } from "../state/save-queue";
 import { ConnectPopover } from "./connect-popover";
 import { CreateEntry } from "./create-entry";
 import { ElementBarControls, type ElementBarOpen } from "./element-bar";
+import { SetupPopover } from "./setup-popover";
 import { TemplateDepartmentDialog } from "./template-department-dialog";
 
 /** A new relationship's cardinality; it changes in the relationship's settings. */
@@ -55,6 +62,9 @@ export function useBuildCreate({
   canvasFrameRef,
   setSelected,
   showProperties,
+  setupOffered,
+  setupHeld,
+  notifyError,
 }: {
   design: Design;
   /** The canvas's projection of the design, with canvas field ids. */
@@ -74,6 +84,12 @@ export function useBuildCreate({
   setSelected: (id: string) => void;
   /** Shows Properties in the workbench, as a canvas selection does. */
   showProperties: () => void;
+  /** The department has no live binding and is open (FIT-1). */
+  setupOffered: (departmentId: string) => boolean;
+  /** A save or command holds the draft: Setup's boxes wait for it. */
+  setupHeld: boolean;
+  /** An error notice for a refused setup change. */
+  notifyError: (message: string, reference?: string) => void;
 }) {
   // Create where the element grows (FIND-1 to FIND-6): the entry for a
   // department, module, or field, and Connect for a relationship. Each is
@@ -95,6 +111,12 @@ export function useBuildCreate({
     targetId: string | null;
   } | null>(null);
   const [connectPreview, setConnectPreview] = useState<string | null>(null);
+  // A new department's Setup popover (FIT-1, B9).
+  const [setup, setSetup] = useState<{
+    departmentId: string;
+    anchor: HTMLElement;
+    owner: string | null;
+  } | null>(null);
   // "Add from a template" (FAST-7), opened from the department entry; it
   // keeps the entry's anchor, which gets focus back.
   const [templateFrom, setTemplateFrom] = useState<{
@@ -163,6 +185,7 @@ export function useBuildCreate({
   ): void {
     if (anchor === null || justClosed(anchor)) return;
     setConnect(null);
+    setSetup(null);
     setEntry({ kind, parentId, anchor, owner, toolbar });
   }
   function closeEntry(lastCreatedId: string | null): void {
@@ -199,7 +222,53 @@ export function useBuildCreate({
   ): void {
     if (anchor === null || justClosed(anchor)) return;
     setEntry(null);
+    setSetup(null);
     setConnect({ sourceId, anchor, owner, targetId });
+  }
+  function openSetup(
+    departmentId: string,
+    anchor: HTMLElement | null,
+    owner: string | null,
+  ): void {
+    if (anchor === null || justClosed(anchor)) return;
+    setEntry(null);
+    setConnect(null);
+    setSetup({ departmentId, anchor, owner });
+  }
+  function closeSetup(): void {
+    const current = setup;
+    if (current === null) return;
+    setSetup(null);
+    settleFocus(current.anchor, current.owner);
+  }
+  /**
+   * Setup from the canvas item menu: the department is selected, so its bar
+   * shows, and the popover opens from the bar's Setup.
+   */
+  function setupFromCanvas(departmentId: string): void {
+    setSelected(departmentId);
+    showProperties();
+    afterFrame(() =>
+      afterFrame(() => {
+        const anchor = barControl(departmentId, "setup");
+        openSetup(
+          departmentId,
+          anchor ?? canvasFrameRef.current,
+          anchor ? departmentId : null,
+        );
+      }),
+    );
+  }
+  /** One toggle is one change: one save and one Undo step (FIT-3). */
+  async function toggleSetup(
+    departmentId: string,
+    item: keyof DepartmentSetup,
+    on: boolean,
+  ): Promise<void> {
+    const result = await change((current) =>
+      withSetupItem(current, departmentId, item, on),
+    );
+    if (!result.ok) notifyError(result.error, result.reference);
   }
   function closeConnect(): void {
     const current = connect;
@@ -244,6 +313,7 @@ export function useBuildCreate({
     if (refusedSaveClosesCreate(previousHold.current, next)) {
       if (entry) closeEntry(null);
       if (connect) closeConnect();
+      if (setup) closeSetup();
       if (templateFrom) closeTemplateDialog();
     }
     previousHold.current = next;
@@ -305,6 +375,11 @@ export function useBuildCreate({
   if (entry !== null && entry !== shownEntry) setShownEntry(entry);
   const [shownConnect, setShownConnect] = useState(connect);
   if (connect !== null && connect !== shownConnect) setShownConnect(connect);
+  const [shownSetup, setShownSetup] = useState(setup);
+  if (setup !== null && setup !== shownSetup) setShownSetup(setup);
+  const setupDepartment = shownSetup
+    ? design.departments.find((item) => item.id === shownSetup.departmentId)
+    : undefined;
   const connectSource = shownConnect
     ? design.modules.find((item) => item.id === shownConnect.sourceId)
     : undefined;
@@ -317,7 +392,12 @@ export function useBuildCreate({
       ? design.modules.find((item) => item.id === shownEntry.parentId)
       : undefined;
   const elementBars: SandboxElementBars = {
-    held: entry?.owner ?? connect?.owner ?? closingOwner ?? barFocus,
+    held:
+      entry?.owner ??
+      connect?.owner ??
+      setup?.owner ??
+      closingOwner ??
+      barFocus,
     focused: focusedOwner,
     label: (owner) =>
       `${
@@ -347,7 +427,9 @@ export function useBuildCreate({
             : "field"
           : connect?.owner === owner
             ? "connect"
-            : null;
+            : setup?.owner === owner
+              ? "setup"
+              : null;
       return (
         <ElementBarControls
           kind={departmentItem ? "department" : "module"}
@@ -362,6 +444,12 @@ export function useBuildCreate({
           onAddModule={(anchor) => openEntry("module", owner, anchor, owner)}
           onAddField={(anchor) => openEntry("field", owner, anchor, owner)}
           onConnect={(anchor) => openConnect(owner, anchor, owner)}
+          setup={
+            departmentItem && setupOffered(owner)
+              ? { value: departmentItem.setup }
+              : null
+          }
+          onSetup={(anchor) => openSetup(owner, anchor, owner)}
         />
       );
     },
@@ -450,6 +538,25 @@ export function useBuildCreate({
         }}
         onClose={closeTemplateDialog}
       />
+      {setupDepartment ? (
+        <SetupPopover
+          open={setup !== null}
+          anchor={shownSetup?.anchor ?? null}
+          onRequestClose={closeSetup}
+          name={setupDepartment.name}
+          departmentIndex={Math.max(
+            0,
+            design.departments.findIndex(
+              (item) => item.id === setupDepartment.id,
+            ),
+          )}
+          setup={setupDepartment.setup}
+          held={setupHeld}
+          onToggle={(item, on) =>
+            void toggleSetup(setupDepartment.id, item, on)
+          }
+        />
+      ) : null}
       {connectSource ? (
         <ConnectPopover
           source={{
@@ -476,6 +583,8 @@ export function useBuildCreate({
     openEntry,
     openConnect,
     connectFromCanvas,
+    openSetup,
+    setupFromCanvas,
     setFocusedItem,
     elementBars,
     canvasMarks,

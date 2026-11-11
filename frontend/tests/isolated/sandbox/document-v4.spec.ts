@@ -204,3 +204,51 @@ test("renaming a select label through the Designer bridge preserves its option I
     options: [{ id: selectedOptionId, label: "Active" }],
   });
 });
+
+// BE-SD5 (setup slice 4): a department may carry its setup choice; each item
+// is optional and on unless it says false, and a department without one
+// stays without one, so its stored form does not change.
+test("a department's setup choice is read, and a department without one keeps none", () => {
+  const fixture = documentFixture();
+  const box = { x: 0, y: 300, width: 360, height: 240 };
+  fixture.design.layout = { ...fixture.design.layout, sales: box, legal: box };
+  (fixture.design as { departments: unknown[] }).departments = [
+    { id: "ops", name: "Operations", closed: false, setup: { channel: false } },
+    { id: "sales", name: "Sales", closed: false },
+    { id: "legal", name: "Legal", closed: false, setup: null },
+  ];
+  const parsed = parseSandboxDocument(JSON.stringify(fixture));
+  if (!parsed.ok) throw new Error(parsed.error);
+
+  const [ops, sales, legal] = parsed.document.design.departments;
+  expect(ops?.setup).toEqual({
+    groups: true,
+    dashboard: true,
+    category: true,
+    channel: false,
+  });
+  expect(sales).not.toHaveProperty("setup");
+  expect(legal).not.toHaveProperty("setup");
+});
+
+// BE-SD5: the server's setup items are strict booleans with no other keys.
+test("a setup choice that is not true or false, or names another item, is refused", () => {
+  const rows: Array<[string, unknown]> = [
+    ["a word for an item", { channel: "false" }],
+    ["a number for an item", { groups: 0 }],
+    ["a null item", { dashboard: null }],
+    ["an unknown item", { board: false }],
+    ["not an object", "all"],
+  ];
+  for (const [label, setup] of rows) {
+    const fixture = documentFixture() as unknown as {
+      design: { departments: Array<Record<string, unknown>> };
+    };
+    fixture.design.departments = [
+      { id: "ops", name: "Operations", closed: false, setup },
+    ];
+    const parsed = parseSandboxDocument(JSON.stringify(fixture));
+    expect(parsed.ok, label).toBe(false);
+    if (!parsed.ok) expect(parsed.error, label).toMatch(/department setup/);
+  }
+});

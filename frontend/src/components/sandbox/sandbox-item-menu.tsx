@@ -30,6 +30,8 @@ export type SandboxItemMenuProps = {
   onDuplicate?: () => void;
   onConnect?: () => void;
   onNewTrigger?: () => void;
+  /** "Setup…" of a new open department (FIT-1); absent otherwise. */
+  onSetup?: () => void;
 };
 
 /**
@@ -51,6 +53,7 @@ export function SandboxItemMenuItems({
   onDuplicate,
   onConnect,
   onNewTrigger,
+  onSetup,
 }: SandboxItemMenuProps) {
   const entries = itemMenuEntries(kind, {
     closed,
@@ -59,6 +62,7 @@ export function SandboxItemMenuItems({
     duplicate: onDuplicate !== undefined,
     connect: onConnect !== undefined,
     newTrigger: onNewTrigger !== undefined,
+    setup: onSetup !== undefined,
   });
   const handlers: Record<ItemMenuAction, (() => void) | undefined> = {
     rename: onRename,
@@ -67,6 +71,7 @@ export function SandboxItemMenuItems({
     duplicate: onDuplicate,
     connect: onConnect,
     newTrigger: onNewTrigger,
+    setup: onSetup,
     delete: onDelete,
   };
   const disabled: Record<ItemMenuAction, boolean> = {
@@ -77,6 +82,8 @@ export function SandboxItemMenuItems({
     connect: connectDisabled,
     // The move to Triggers waits for the same work as the other items.
     newTrigger: pending,
+    // The popover opens at once; its boxes wait for a save themselves.
+    setup: false,
     delete: pending,
   };
   const item = (entry: (typeof entries)[number]) => (

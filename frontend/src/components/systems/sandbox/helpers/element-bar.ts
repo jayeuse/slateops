@@ -167,6 +167,7 @@ export type ItemMenuAction =
   | "duplicate"
   | "connect"
   | "newTrigger"
+  | "setup"
   | "delete";
 export type ItemMenuEntry = {
   action: ItemMenuAction;
@@ -178,7 +179,8 @@ export type ItemMenuEntry = {
 /**
  * The item menu of a department, module, or field: the same in the
  * Structure tree and on the canvas (FIND-6). A module adds "Connect…" and,
- * when Triggers can take it, "New trigger" (TRIG-8).
+ * when Triggers can take it, "New trigger" (TRIG-8); a new open department
+ * adds "Setup…".
  */
 export function itemMenuEntries(
   kind: ItemMenuKind,
@@ -190,6 +192,8 @@ export function itemMenuEntries(
     duplicate: boolean;
     connect: boolean;
     newTrigger: boolean;
+    /** The department has no live binding, so Setup applies. */
+    setup?: boolean;
   },
 ): ItemMenuEntry[] {
   const entry = (
@@ -214,14 +218,19 @@ export function itemMenuEntries(
     ...(kind === "module" && options.newTrigger && !options.closed
       ? [entry("newTrigger", "New trigger")]
       : []),
+    // The keyboard route to a new open department's Setup (FIT-1).
+    ...(kind === "department" && options.setup && !options.closed
+      ? [entry("setup", "Setup…")]
+      : []),
     entry("delete", `Delete ${kind}`, true),
   ];
 }
 
-export type ElementBarAction = "module" | "field" | "connect";
+export type ElementBarAction = "module" | "field" | "connect" | "setup";
 
 /**
- * The controls of an element's bar: a department adds modules; a module
+ * The controls of an element's bar: a department adds modules, and a new open
+ * one also holds Setup (FIT-1); a module
  * adds fields and connects, except a closed one, which Connect leaves out of
  * its targets and so connects to nothing (as its item menu has no
  * "Connect…").
@@ -229,7 +238,9 @@ export type ElementBarAction = "module" | "field" | "connect";
 export function elementBarActions(
   kind: "department" | "module",
   closed: boolean,
+  setup = false,
 ): ElementBarAction[] {
-  if (kind === "department") return ["module"];
+  if (kind === "department")
+    return setup && !closed ? ["module", "setup"] : ["module"];
   return closed ? ["field"] : ["field", "connect"];
 }

@@ -56,6 +56,7 @@ type OutlineProps = Pick<
   | "onAddRelationship"
   | "onConnect"
   | "onNewTrigger"
+  | "onSetup"
   | "onFocusItem"
   | "savingIds"
   | "newestId"
@@ -233,6 +234,7 @@ export function SandboxInspectorOutline({
   onAddRelationship,
   onConnect,
   onNewTrigger,
+  onSetup,
   onFocusItem,
   savingIds,
   newestId = null,
@@ -495,6 +497,19 @@ export function SandboxInspectorOutline({
           // Focus returns to this row while the move to Triggers waits for
           // the save queue; Triggers then focuses its Event.
           kind === "module" && onNewTrigger ? () => onNewTrigger(id) : undefined
+        }
+        onSetup={
+          // The keyboard route to Setup: the popover anchors to this row.
+          kind === "department" && live?.setup && onSetup
+            ? () => {
+                const anchor = outlineRef.current?.querySelector<HTMLElement>(
+                  `[data-outline-id="${CSS.escape(id)}"]`,
+                );
+                if (!anchor) return;
+                menuLeavesFocus.current = true;
+                onSetup(id, anchor);
+              }
+            : undefined
         }
       />
     );
