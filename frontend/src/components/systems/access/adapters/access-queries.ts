@@ -202,13 +202,15 @@ export function afterAccessUserChange(client: QueryClient): Promise<void> {
  * A group was created, renamed, deleted, or had its access or members
  * replaced. Every person's effective access may change, and the signed-in
  * person may be a member, so their access (and with it the navigation) is
- * read again.
+ * read again. The user summary lists the departments without a manager, so
+ * it is read again too.
  */
 export function afterAccessGroupChange(client: QueryClient): Promise<void> {
   return invalidateAll(client, [
     accessKeys.groups,
     accessKeys.userAccessAll,
     accessKeys.directory(),
+    accessKeys.userSummary(),
     authMeOptions().queryKey,
   ]);
 }

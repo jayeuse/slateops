@@ -4,6 +4,8 @@ import {
   attentionItems,
   departmentAccess,
   lastSignInSegments,
+  managerGroupAction,
+  noManagerItems,
   notCountedWords,
   recentSignIns,
   signedInNow,
@@ -17,7 +19,10 @@ import type {
   AccessSecurityEvent,
   AccessSecurityEventsRequest,
 } from "../../../src/components/systems/access/adapters/security-events-api";
-import type { AccessGroup } from "../../../src/components/systems/access/state/api-contracts";
+import type {
+  AccessGroup,
+  AccessLevel,
+} from "../../../src/components/systems/access/state/api-contracts";
 
 const id = (index: number) =>
   `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
@@ -411,6 +416,141 @@ test("one active administrator is an attention item; unknown two-step links to i
   });
   expect(items[1]?.href).toBe("/access?view=people&role=admin&mfa=unknown");
   expect(clear).toContain("administrators without two-step");
+});
+
+// SD-C14: a department with no manager is one row each, last, in catalog
+// order, read from the server's list (never from the client counts).
+test("needs attention lists departments without a manager last and names the zero", () => {
+  const sales = id(61);
+  const finance = id(62);
+  const departments = noManagerItems(
+    [sales, finance, id(63)],
+    [
+      { id: finance, name: "Finance" },
+      { id: id(64), name: "Legal" },
+      { id: sales, name: "Sales" },
+    ],
+    null,
+  );
+  const {
+    items,
+    departments: rows,
+    clear,
+  } = attentionItems({ ...zero, guestsEndingSoon: 1 }, {}, departments);
+  expect(items.map((item) => item.id)).toEqual(["guestsEndingSoon"]);
+  // An id with no department name never shows; the order is the catalog's.
+  expect(rows.map((row) => [row.name, row.text, row.verb, row.tone])).toEqual([
+    ["Finance", "has no manager", "Add a manager", "info"],
+    ["Sales", "has no manager", "Add a manager", "info"],
+  ]);
+  expect(clear).not.toContain("departments without a manager");
+
+  const none = attentionItems(zero, {}, []);
+  expect(none.departments).toEqual([]);
+  expect(none.clear.at(-1)).toBe("departments without a manager");
+});
+
+function managers(
+  index: number,
+  name: string,
+  entries: { department: string; module?: boolean; level: AccessLevel }[],
+  deleted = false,
+): AccessGroup {
+  return {
+    id: id(700 + index),
+    name,
+    description: "",
+    revision: 1,
+    member_ids: [],
+    access: entries.map((entry) => ({
+      department_id: entry.department,
+      module_id: entry.module ? id(900 + index) : null,
+      level: entry.level,
+      department_name: "Unused",
+      module_name: null,
+    })),
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    deleted_at: deleted ? "2026-01-02T00:00:00Z" : null,
+    is_deleted: deleted,
+    performed_by: null,
+  };
+}
+
+// SD-C14: "Add a manager" leads to the group that gives manage on the
+// department, to Create group when none exists, or to the Groups list when
+// the group read cannot say.
+test("add a manager opens the managers group, else Create group, else the Groups list", () => {
+  const sales = { id: id(71), name: "Sales" };
+  const other = id(72);
+  const members = (index: number) =>
+    `/access?view=groups&group=${id(700 + index)}&tab=members`;
+  const notManage = [
+    managers(1, "Sales writers", [{ department: sales.id, level: "write" }]),
+    managers(2, "Sales module", [
+      { department: sales.id, module: true, level: "manage" },
+    ]),
+    managers(
+      3,
+      "Old managers",
+      [{ department: sales.id, level: "manage" }],
+      true,
+    ),
+    managers(4, "Other managers", [{ department: other, level: "manage" }]),
+  ];
+  for (const row of [
+    {
+      branch: "one group at department manage",
+      groups: [
+        ...notManage,
+        managers(5, "Leads", [{ department: sales.id, level: "manage" }]),
+      ],
+      complete: true,
+      action: { kind: "link", href: members(5) },
+    },
+    {
+      branch: "several: the one named '<Department> managers', any case",
+      groups: [
+        managers(6, "Area leads", [{ department: sales.id, level: "manage" }]),
+        managers(7, "SALES Managers", [
+          { department: sales.id, level: "manage" },
+        ]),
+      ],
+      complete: true,
+      action: { kind: "link", href: members(7) },
+    },
+    {
+      branch: "several, none by that name: the first by name",
+      groups: [
+        managers(8, "Zone leads", [{ department: sales.id, level: "manage" }]),
+        managers(9, "Area leads", [{ department: sales.id, level: "manage" }]),
+      ],
+      complete: true,
+      action: { kind: "link", href: members(9) },
+    },
+    {
+      branch: "none, and the group read is complete",
+      groups: notManage,
+      complete: true,
+      action: { kind: "create" },
+    },
+    {
+      branch: "none, and the group read is partial",
+      groups: notManage,
+      complete: false,
+      action: { kind: "link", href: "/access?view=groups" },
+    },
+  ]) {
+    expect(
+      managerGroupAction(sales, { items: row.groups, complete: row.complete }),
+      row.branch,
+    ).toEqual(row.action);
+  }
+  // Loading or failed: the Groups list.
+  expect(managerGroupAction(sales, null)).toEqual({
+    kind: "link",
+    href: "/access?view=groups",
+  });
 });
 
 function group(

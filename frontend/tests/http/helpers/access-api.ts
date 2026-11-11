@@ -187,6 +187,8 @@ export type Api = {
   countReads: URLSearchParams[];
   summaryReads: number;
   summaryQueries: URLSearchParams[];
+  /** The summary's open departments without a manager; none by default. */
+  departmentsWithoutManager: string[];
   users: Map<string, User>;
   groups: Map<string, Group>;
   workspace: Workspace;
@@ -390,6 +392,7 @@ export async function mockAccessApi(
     countReads: [],
     summaryReads: 0,
     summaryQueries: [],
+    departmentsWithoutManager: [],
     users,
     groups,
     workspace: {
@@ -485,6 +488,7 @@ export async function mockAccessApi(
           ).length,
           as_of: new Date(capturedAt).toISOString(),
           inactive_days: inactiveDays,
+          departments_without_manager: api.departmentsWithoutManager,
         },
       });
     }

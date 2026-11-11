@@ -8,6 +8,7 @@ import {
   getAccessGroup,
   getAccessInvitationSettings,
   getAccessUserAccess,
+  getAccessUserSummary,
   inviteAccessUser,
   listAccessDepartments,
   listAccessGroups,
@@ -367,6 +368,37 @@ test("invitation settings read the workspace and save with its revision in the b
   } finally {
     mock.restore();
     restoreCookie();
+  }
+});
+
+// SD-C14
+test("the user summary keeps the departments without a manager and refuses an unknown field", async () => {
+  const body = {
+    admins_without_mfa: 0,
+    admins_mfa_unknown: 0,
+    no_recorded_sign_in: 0,
+    inactive_people: 0,
+    as_of: "2026-01-02T03:04:05Z",
+    inactive_days: 30,
+    departments_without_manager: [ids.department],
+  };
+  const mock = installFetch(() => Response.json(body));
+  try {
+    await expect(getAccessUserSummary()).resolves.toMatchObject({
+      departments_without_manager: [ids.department],
+    });
+  } finally {
+    mock.restore();
+  }
+  const extra = installFetch(() =>
+    Response.json({ ...body, departments_without_members: [] }),
+  );
+  try {
+    await expect(getAccessUserSummary()).rejects.toBeInstanceOf(
+      ApiContractError,
+    );
+  } finally {
+    extra.restore();
   }
 });
 

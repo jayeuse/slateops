@@ -617,7 +617,7 @@ test("Needs attention lists only counts above zero, names the rest, and each ver
     /^1 guest's access ends soon\s*Show$/,
   ]);
   await expect(attention(page)).toContainText(
-    "All clear: administrators without two-step.",
+    "All clear: administrators without two-step, departments without a manager.",
   );
 
   await items
@@ -657,6 +657,74 @@ test("Needs attention lists only counts above zero, names the rest, and each ver
     .click();
   await expect(people.getByRole("row")).toHaveCount(2);
   await expect(people.getByRole("row", { name: /Ana Santos/ })).toBeVisible();
+});
+
+// SD-C14
+test("a department without a manager shows in Needs attention until a manager joins its group", async ({
+  page,
+}) => {
+  const api = await mockAccessApi(page);
+  const managers = fixtureId(620);
+  api.groups.set(
+    managers,
+    group(
+      managers,
+      "Finance managers",
+      [],
+      [{ department_id: ids.finance, module_id: null, level: "manage" }],
+    ),
+  );
+  // Inventory has no group at manage: its verb opens Create group.
+  api.departmentsWithoutManager = [ids.finance, ids.inventory];
+  // The server lists Finance until a manager joins its group.
+  api.on("PUT", `/api/access/groups/${managers}/members`, () => {
+    api.departmentsWithoutManager = [ids.inventory];
+    return "next";
+  });
+  await page.goto("/access?view=overview");
+  const panel = attention(page);
+  const items = panel.getByRole("listitem");
+  // Last, in the order of the department catalog read.
+  await expect(items.filter({ hasText: "has no manager" })).toHaveText([
+    /^Inventory has no manager\s*Add a manager$/,
+    /^Finance has no manager\s*Add a manager$/,
+  ]);
+  await expect(items.last()).toHaveText(/^Finance has no manager/);
+  await expect(panel).toContainText(/Needs attention\s*7/);
+  await expect(panel).not.toContainText("departments without a manager");
+
+  await items
+    .getByRole("button", { name: "Add a manager: Inventory has no manager" })
+    .click();
+  const create = page.getByRole("dialog", { name: "Create a group" });
+  await expect(create).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(create).toBeHidden();
+
+  await items
+    .getByRole("link", { name: "Add a manager: Finance has no manager" })
+    .click();
+  await expect(page).toHaveURL(
+    new RegExp(`/access\\?view=groups&group=${managers}&tab=members$`),
+  );
+  const sheet = page.getByRole("dialog", { name: "Finance managers" });
+  await sheet.getByRole("button", { name: "Add Ben Cruz" }).click();
+  await sheet.getByRole("button", { name: "Save members" }).click();
+  await expect(
+    sheet.getByRole("button", { name: /^(Save members|Saving…)$/ }),
+  ).toHaveCount(0);
+  await sheet.getByRole("button", { name: "Close" }).click();
+
+  // Back through the sidebar, so the cache is kept: the summary is read again.
+  const reads = api.summaryReads;
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Overview", exact: true })
+    .click();
+  await expect(items.filter({ hasText: "has no manager" })).toHaveText([
+    /^Inventory has no manager/,
+  ]);
+  expect(api.summaryReads).toBeGreaterThan(reads);
 });
 
 test("the last active administrator is flagged first after two-step", async ({
