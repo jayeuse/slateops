@@ -39,6 +39,10 @@ def test_document_read_is_administrator_only(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["document"]["schemaVersion"] == 4
+    # BE-SD5: a department without ``setup`` keeps its wire form (the frontend parser's keys).
+    assert response.json()["document"]["design"]["departments"][0] == {
+        "id": "sample-operations", "name": "Operations", "closed": False,
+    }
 
 
 def test_document_write_returns_route_local_stale_revision_conflict(monkeypatch) -> None:

@@ -104,9 +104,10 @@ def stage_category(db: Session, *, department_id: UUID, name: str) -> CommsCateg
 
 
 def stage_department_channel(
-    db: Session, user: User, *, department_id: UUID, category_id: UUID, name: str,
+    db: Session, user: User, *, department_id: UUID, category_id: UUID | None, name: str,
 ) -> CommsConversation:
-    """A department channel in the department's category, with no member row (SD11).
+    """A department channel in the department's category or none (SD14), with no member row
+    (SD11).
 
     ``user`` is the creator (``created_by``); people read and manage it by department role
     (D44). No commit: the caller owns the actor's authority, the commit, and the rollback.

@@ -7229,6 +7229,16 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "setup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DepartmentSetup"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -7320,6 +7330,115 @@
           "performed_by"
         ],
         "title": "DepartmentResponse",
+        "type": "object"
+      },
+      "DepartmentSetup": {
+        "additionalProperties": false,
+        "description": "SD13: the derived items a new department gets at its first publish; each is on.",
+        "properties": {
+          "category": {
+            "default": true,
+            "title": "Category",
+            "type": "boolean"
+          },
+          "channel": {
+            "default": true,
+            "title": "Channel",
+            "type": "boolean"
+          },
+          "dashboard": {
+            "default": true,
+            "title": "Dashboard",
+            "type": "boolean"
+          },
+          "groups": {
+            "default": true,
+            "title": "Groups",
+            "type": "boolean"
+          }
+        },
+        "title": "DepartmentSetup",
+        "type": "object"
+      },
+      "DepartmentSetupDefaults": {
+        "description": "The setup items that a department added in the Sandbox starts with (BE-SD6).",
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "boolean"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "boolean"
+          },
+          "dashboard": {
+            "title": "Dashboard",
+            "type": "boolean"
+          },
+          "groups": {
+            "title": "Groups",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "groups",
+          "dashboard",
+          "category",
+          "channel"
+        ],
+        "title": "DepartmentSetupDefaults",
+        "type": "object"
+      },
+      "DepartmentSetupDefaultsUpdate": {
+        "additionalProperties": false,
+        "description": "The items to change; an omitted item keeps its saved value.",
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "channel": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel"
+          },
+          "dashboard": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dashboard"
+          },
+          "groups": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Groups"
+          }
+        },
+        "title": "DepartmentSetupDefaultsUpdate",
         "type": "object"
       },
       "DepartmentSortField": {
@@ -23998,6 +24117,14 @@
             "title": "As Of",
             "type": "string"
           },
+          "departments_without_manager": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Departments Without Manager",
+            "type": "array"
+          },
           "inactive_days": {
             "maximum": 3650.0,
             "minimum": 1.0,
@@ -24021,7 +24148,8 @@
           "no_recorded_sign_in",
           "inactive_people",
           "as_of",
-          "inactive_days"
+          "inactive_days",
+          "departments_without_manager"
         ],
         "title": "UserSummaryResponse",
         "type": "object"
@@ -25074,6 +25202,9 @@
             "title": "Currency",
             "type": "string"
           },
+          "department_setup_defaults": {
+            "$ref": "#/components/schemas/DepartmentSetupDefaults"
+          },
           "description": {
             "anyOf": [
               {
@@ -25184,6 +25315,7 @@
           "theme",
           "invitation_expiry_days",
           "guest_duration_days",
+          "department_setup_defaults",
           "revision",
           "created_at",
           "updated_at",
@@ -25230,6 +25362,9 @@
           "currency": {
             "title": "Currency",
             "type": "string"
+          },
+          "department_setup_defaults": {
+            "$ref": "#/components/schemas/DepartmentSetupDefaults"
           },
           "description": {
             "anyOf": [
@@ -25352,6 +25487,7 @@
           "theme",
           "invitation_expiry_days",
           "guest_duration_days",
+          "department_setup_defaults",
           "revision",
           "created_at",
           "updated_at",
@@ -25846,6 +25982,16 @@
               }
             ],
             "title": "Currency"
+          },
+          "department_setup_defaults": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DepartmentSetupDefaultsUpdate"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "description": {
             "anyOf": [

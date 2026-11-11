@@ -237,7 +237,7 @@ def department_outcomes(
     draft = {item.id: item for item in document.design.departments}
     keys = {binding.department_id: key for key, binding in bindings["department"].items()}
     outcomes = [
-        DepartmentOutcome(item.id, item.name, item.closed, True, None)
+        DepartmentOutcome(item.id, item.name, item.closed, True, None, item.setup)
         for item in document.design.departments
         if item.id in created
     ]

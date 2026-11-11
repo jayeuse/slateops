@@ -16,6 +16,7 @@ from uuid import UUID
 from app.systems.access.policy.models import AccessLevel
 from app.systems.boards.models import BoardStatus
 from app.systems.sandbox.derived.models import DERIVED_ROLES
+from app.systems.sandbox.designs.schemas import DepartmentSetup
 from app.systems.sandbox.publications.schemas import PublicationChange, PublicationCounts
 
 DerivedKind = Literal["group", "dashboard", "board", "category", "channel"]
@@ -50,7 +51,8 @@ class DepartmentOutcome:
     """A department as the publish leaves it.
 
     ``key`` is the department's Sandbox id, or its live id when no binding names it.
-    ``created`` is true when this publish creates the department row.
+    ``created`` is true when this publish creates the department row; ``setup`` is its draft
+    selection (SD13), read only then.
     """
 
     key: str
@@ -58,6 +60,7 @@ class DepartmentOutcome:
     closed: bool
     created: bool
     board: BoardState | None
+    setup: DepartmentSetup | None = None
 
 
 _ROLE_KINDS: dict[str, DerivedKind] = {
@@ -72,6 +75,20 @@ _ROLE_KINDS: dict[str, DerivedKind] = {
 
 def role_kind(role: str) -> DerivedKind:
     return _ROLE_KINDS[role]
+
+
+def created_roles(department: DepartmentOutcome) -> tuple[str, ...]:
+    """The roles a publish creates for a department (R1, SD13).
+
+    None unless the publish creates the department open. A cleared setup item removes its roles
+    (``groups`` all three groups); a missing setup clears nothing.
+    """
+    if not department.created or department.closed:
+        return ()
+    setup = department.setup or DepartmentSetup()
+    return tuple(
+        role for role in DERIVED_ROLES if getattr(setup, "groups" if role in GROUP_LEVELS else role)
+    )
 
 
 def derived_name(role: str, department_name: str) -> str:
@@ -100,8 +117,8 @@ def derived_changes(departments: Iterable[DepartmentOutcome]) -> list[Publicatio
     """Every derived change of a publish (SD7, SD9, R1, R2).
 
     The Board follows every department the Board loop visits. The other items are created
-    only for a department that this publish creates and leaves open; existing and reopened
-    departments derive nothing.
+    only for a department that this publish creates and leaves open, less the items its setup
+    clears; existing and reopened departments derive nothing.
     """
     changes: list[PublicationChange] = []
     for department in departments:
@@ -110,9 +127,7 @@ def derived_changes(departments: Iterable[DepartmentOutcome]) -> list[Publicatio
             changes.append(
                 _change("board", action, f"{department.key}#board", department.name[:200])
             )
-        if not department.created or department.closed:
-            continue
-        for role in DERIVED_ROLES:
+        for role in created_roles(department):
             name = derived_name(role, department.name)
             changes.append(
                 _change(

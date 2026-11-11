@@ -1,5 +1,6 @@
 """Real PostgreSQL checks for Sandbox document locking, snapshots, and audit redaction."""
 
+import json
 from uuid import uuid4
 
 import pytest
@@ -7,18 +8,23 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 import app.systems.sandbox.designs.service as design_service
+from app.systems.access.users.models import UserRole
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.audit.snapshots import REDACTED
 from app.systems.sandbox.designs.models import SandboxDocument as SandboxDocumentRow
 from app.systems.sandbox.designs.models import SandboxVersion
+from app.systems.sandbox.designs.schemas import PortableBundle, SandboxDocument
 from app.systems.sandbox.designs.service import (
     SandboxDesignError,
     create_version,
+    export_bundle,
+    import_bundle,
+    portable_bundle_bytes,
     read_document,
     replace_document,
     restore_version,
 )
-from tests.rbac.support import organization
+from tests.rbac.support import add_user, organization
 from tests.sandbox_designs.fixtures import create_document, sample_document
 
 pytestmark = pytest.mark.integration
@@ -28,6 +34,65 @@ def _document_with_module_name(name: str):
     document = sample_document().model_copy(deep=True)
     document.design.modules[0].name = name
     return document
+
+
+# BE-SD5: a department without ``setup`` keeps its stored form; one with it keeps every item.
+_SETUP_DEPARTMENTS = [
+    {"id": "sample-operations", "name": "Operations", "closed": False},
+    {
+        "id": "sample-commercial",
+        "name": "Commercial",
+        "closed": False,
+        "setup": {"groups": True, "dashboard": True, "category": True, "channel": False},
+    },
+]
+
+
+def test_be_sd5_department_setup_survives_save_version_export_and_import(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    create_document(db, organization(db))
+    author = add_user(db, role=UserRole.ADMIN).id
+    payload = sample_document().model_dump(by_alias=True, mode="json")
+    payload["design"]["departments"][1]["setup"] = {"channel": False}
+    saved = replace_document(
+        db,
+        actor_id=author,
+        expected_revision=read_document(db).revision,
+        document=SandboxDocument.model_validate_json(json.dumps(payload)),
+    )
+    stored = db.scalar(select(SandboxDocumentRow))
+    assert stored is not None
+    assert stored.document["design"]["departments"] == _SETUP_DEPARTMENTS
+
+    checkpoint = create_version(
+        db,
+        actor_id=author,
+        expected_revision=saved.revision,
+        kind="checkpoint",
+        label="With setup",
+        note=None,
+    )
+    version = design_service.read_version(db, checkpoint.id).model_dump(by_alias=True, mode="json")
+    assert version["document"]["design"]["departments"] == _SETUP_DEPARTMENTS
+
+    exported = json.loads(portable_bundle_bytes(export_bundle(db, include_versions=True)))
+    assert exported["design"]["departments"] == _SETUP_DEPARTMENTS
+    assert exported["versions"][0]["document"]["design"]["departments"] == _SETUP_DEPARTMENTS
+
+    exported["design"]["departments"][1]["setup"]["dashboard"] = False
+    imported = import_bundle(
+        db,
+        actor_id=author,
+        expected_revision=read_document(db).revision,
+        bundle=PortableBundle.model_validate_json(json.dumps(exported)),
+    )
+    departments = imported.document.model_dump(by_alias=True, mode="json")["design"]["departments"]
+    assert departments[0] == _SETUP_DEPARTMENTS[0]
+    assert departments[1]["setup"] == {
+        "groups": True, "dashboard": False, "category": True, "channel": False,
+    }
 
 
 def test_replace_checkpoint_restore_and_stale_revision_are_persistent_and_audited(
