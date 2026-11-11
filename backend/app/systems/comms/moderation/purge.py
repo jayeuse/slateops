@@ -185,6 +185,7 @@ def delete_files(
         )
     )
     if export_ids:
+        lock_projection(db)  # SD19 step 1: the guard before the conversation lock.
         _validate(db, actor, identity, expected, name)
         export_service.retire(db, export_ids, now=utc_now())
         db.commit()  # Persist source-bound artifact revocation before external cleanup.
@@ -248,6 +249,11 @@ def delete_files(
             file.is_deleted, file.deleted_at = True, file.deleted_at or utc_now()
             db.flush()
 
+        # SD19 step 1 (ID30): the guard is the claim's first lock, before the administrator
+        # and conversation locks. A claim of a file that another purge already finalized
+        # returns without a commit, and ``delete_graph`` then runs in the same transaction.
+        # The claim's commit releases the guard before any Storage call.
+        lock_projection(db)
         purge_confirmed(db, actor.id, file_id, storage, validate_locked=validate_locked)
 
 
