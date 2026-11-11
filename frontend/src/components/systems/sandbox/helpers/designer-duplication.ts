@@ -1,7 +1,9 @@
 import { canvasFieldId, projectedField } from "./bridge";
+import { newDepartment } from "../domain/create-checks";
 import {
   compactDefaultLayout,
   uid,
+  type DepartmentSetup,
   type Design,
   type Field,
   type SandboxDesignTarget,
@@ -35,6 +37,7 @@ function clonedField(field: Field, id: string, name = field.name): Field {
 export function duplicateDesignTarget(
   design: Design,
   target: SandboxDesignTarget,
+  setup?: DepartmentSetup,
 ): { design: Design; selected: string } | null {
   const usedIds = new Set([
     ...design.departments.map((item) => item.id),
@@ -85,13 +88,18 @@ export function duplicateDesignTarget(
         ...design,
         departments: [
           ...design.departments,
+          // FIT-4: the copy starts from the default setup, like any new
+          // department; it never copies the source's value (UX-C34).
           {
-            ...source,
-            id: departmentId,
-            name: copiedName(
-              source.name,
-              design.departments.map((item) => item.name),
+            ...newDepartment(
+              departmentId,
+              copiedName(
+                source.name,
+                design.departments.map((item) => item.name),
+              ),
+              setup,
             ),
+            closed: source.closed,
           },
         ],
         modules: [...design.modules, ...copiedModules],

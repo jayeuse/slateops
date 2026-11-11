@@ -257,7 +257,7 @@ test("select default: a renamed default after a four-choice reorder keeps its ID
 
 test("select default: removing the default choice is refused", () => {
   expect(buildField(field, draft("In progress, Complete", "id-open"))).toBe(
-    "Default value must match a select option.",
+    "Default value must match a choice.",
   );
 });
 
@@ -329,5 +329,24 @@ test("select default: an unsaved default choice that is removed is refused", () 
   );
   expect(
     buildField(field, draft("Open, In progress, Complete", "new:0", removed)),
-  ).toBe("Default value must match a select option.");
+  ).toBe("Default value must match a choice.");
+});
+
+// A Choice list's save refusals use the Choice list words (TASK-0050,
+// Product Designer review of PR3); each row takes its own refusal branch.
+test("a Choice list save refuses each choice problem in the Choice list words", () => {
+  const rows: Array<[string, string]> = [
+    ["Open, Open", "Choices must be unique."],
+    [" , ", "Add at least one choice."],
+    [
+      Array.from({ length: 101 }, (_, index) => `Choice ${index}`).join(", "),
+      "A Choice list holds up to 100 choices.",
+    ],
+    [
+      `Open, ${"x".repeat(101)}`,
+      "Each choice must be 100 characters or fewer.",
+    ],
+  ];
+  for (const [choices, refusal] of rows)
+    expect(buildField(field, draft(choices, ""))).toBe(refusal);
 });

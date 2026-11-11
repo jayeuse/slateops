@@ -119,6 +119,12 @@ export function wireWorkspace({
   revision = 1,
   today,
   purge_enabled,
+  department_setup_defaults = {
+    groups: true,
+    dashboard: true,
+    category: true,
+    channel: true,
+  },
 }: {
   id: string;
   display_name?: string;
@@ -138,6 +144,12 @@ export function wireWorkspace({
   revision?: number;
   today: string;
   purge_enabled: boolean;
+  department_setup_defaults?: {
+    groups: boolean;
+    dashboard: boolean;
+    category: boolean;
+    channel: boolean;
+  };
 }) {
   return {
     id,
@@ -158,6 +170,7 @@ export function wireWorkspace({
     revision,
     today,
     purge_enabled,
+    department_setup_defaults,
   };
 }
 

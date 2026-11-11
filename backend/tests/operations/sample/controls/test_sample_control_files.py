@@ -80,6 +80,9 @@ class FileWire:
             "theme": ORIGINAL_THEME,
             "invitation_expiry_days": 7,
             "guest_duration_days": 30,
+            "department_setup_defaults": dict.fromkeys(
+                ("groups", "dashboard", "category", "channel"), True
+            ),
             "revision": ORIGINAL_REVISION,
             **dict.fromkeys(("created_at", "updated_at"), STAMP),
         }

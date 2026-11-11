@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import Select, and_, exists, false, or_, select, true
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.base_model import utc_now
@@ -152,6 +152,34 @@ def department_level_reader_statement(
     if minimum != AccessLevel.READ:
         statement = statement.where(Membership.role != UserRole.GUEST.value)
     return statement
+
+
+def departments_without_manager_statement(*, now: datetime | None = None) -> Select[tuple[UUID]]:
+    """Open departments of the bound organization that no one manages (BE-SD8, R13).
+
+    A manager is an active, non-guest, non-administrator account with a live
+    department ``manage`` row through a live group: the rows of
+    :func:`department_level_reader_statement` at ``MANAGE`` without administrators.
+    Module-only rows do not count. A closed department (``is_deleted``) is never listed.
+    """
+    org = bound_organization_column()
+    department = aliased(Department)
+    managers = department_level_reader_statement(
+        select(Department.id)
+        .where(Department.org_id == org, Department.id == department.id)
+        .correlate(department),
+        AccessLevel.MANAGE,
+        now=now,
+    ).where(Membership.role != UserRole.ADMIN.value)
+    return (
+        select(department.id)
+        .where(
+            department.org_id == org,
+            department.is_deleted.is_(False),
+            ~managers.exists(),
+        )
+        .order_by(department.id)
+    )
 
 
 def department_level_clause(

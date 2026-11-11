@@ -75,6 +75,37 @@ export function SettingsRow({
   );
 }
 
+/**
+ * A row whose label names a set of choices (checkboxes), not one control:
+ * the label is text, and it names the group the choices sit in. It sits
+ * level with the first choice, as `SettingsRow`'s label does.
+ */
+export function SettingsChoiceRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  const labelId = useId();
+  return (
+    <div className={cn(rowGrid, "py-1 md:items-start")}>
+      <p
+        id={labelId}
+        className={cn(
+          labelText,
+          "md:flex md:min-h-11 md:items-center xl:min-h-8",
+        )}
+      >
+        {label}
+      </p>
+      <div role="group" aria-labelledby={labelId} className="grid min-w-0">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function RowNote({ id, children }: { id: string; children: ReactNode }) {
   return (
     <p id={id} className="text-muted-foreground text-xs">

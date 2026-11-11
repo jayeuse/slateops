@@ -194,10 +194,14 @@ export function projectSandboxDocument(document: SandboxDocumentV4): Design {
   const layout = structuredClone(document.design.layout) as SandboxCanvasLayout;
   const designWithoutRules: Omit<Design, "rules"> = {
     layout,
+    // N14: the projection carries the setup choice, so every save keeps it.
     departments: document.design.departments.map((department) => ({
       id: department.id,
       name: department.name,
       closed: department.closed,
+      ...(department.setup === undefined
+        ? {}
+        : { setup: { ...department.setup } }),
     })),
     modules: document.design.modules.map((sandboxModule) => ({
       id: sandboxModule.id,
@@ -429,6 +433,10 @@ function documentDesign(nextDesign: Design): SandboxDocumentDesign {
       id: department.id,
       name: department.name,
       closed: department.closed,
+      // Absent stays absent (BE-SD5): a save without a toggle writes none.
+      ...(department.setup === undefined
+        ? {}
+        : { setup: { ...department.setup } }),
     })),
     modules: nextDesign.modules.map((sandboxModule) => ({
       id: sandboxModule.id,

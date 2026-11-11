@@ -39,6 +39,7 @@ import {
   attentionItems,
   departmentAccess,
   lastSignInSegments,
+  noManagerItems,
   signedInNow,
   signInPage,
   signInWhen,
@@ -93,10 +94,14 @@ const namesOptions = (ids: string[]) =>
     offset: 0,
   });
 
-/** The department catalog page People rows use for their marks. */
+/**
+ * The department catalog, in name order, for Access by department and the
+ * names of the departments without a manager: the largest page (100), so
+ * each listed department has its name.
+ */
 const overviewDepartmentsOptions = () =>
   accessCatalogOptions("departments", {
-    limit: 25,
+    limit: 100,
     offset: 0,
     search: "",
     deleted: "exclude",
@@ -382,6 +387,23 @@ export function OverviewView() {
     },
   );
 
+  // Departments without a manager (R13): the rows wait for the summary and
+  // the department names, never for the group read; without it "Add a
+  // manager" opens the Groups list.
+  const withoutManager = month.data?.departments_without_manager ?? [];
+  const catalog = departments.data
+    ? catalogDepartments(departments.data.items).map((department) => ({
+        id: department.id,
+        name: department.department_name,
+      }))
+    : [];
+  const managerGroups = groups.data
+    ? {
+        items: groups.data.items,
+        complete: groups.data.pagination.total <= groups.data.items.length,
+      }
+    : null;
+
   const counts = [
     administrators,
     month,
@@ -390,6 +412,7 @@ export function OverviewView() {
     noAccess,
     noMembers,
     ending,
+    ...(withoutManager.length ? [departments] : []),
   ];
   const attention = blockState(counts, () =>
     administrators.data &&
@@ -419,15 +442,13 @@ export function OverviewView() {
             groupsWithoutMembers: noMembers.data.pagination.total_is_capped,
             guestsEndingSoon: ending.data.pagination.total_is_capped,
           },
+          noManagerItems(withoutManager, catalog, managerGroups),
         )
       : null,
   );
 
   const byDepartment = blockState([groups, departments, guests], () => {
     if (!groups.data || !departments.data || !guests.data) return null;
-    const catalog = catalogDepartments(departments.data.items).map(
-      (department) => ({ id: department.id, name: department.department_name }),
-    );
     const rows = departmentAccess(
       catalog,
       groups.data.items,
@@ -498,7 +519,10 @@ export function OverviewView() {
       />
       {/* Needs attention comes first on a phone; from 1280px the grid
           areas place it beside the feed. */}
-      <NeedsAttention state={attention} />
+      <NeedsAttention
+        state={attention}
+        onCreateGroup={() => setCreateOpen(true)}
+      />
       <RecentSignIns
         state={feedState}
         bodyRef={feedBody}

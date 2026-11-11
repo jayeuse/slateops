@@ -534,3 +534,40 @@ test("on a phone a long department name wraps in the review without sideways scr
     ),
   ).toBeLessThanOrEqual(0);
 });
+
+/** Sales is new and open; the review lists its full setup. */
+async function openSalesReview(
+  page: Parameters<typeof openAuthenticatedSandbox>[0],
+  options: Parameters<typeof openAuthenticatedSandbox>[2] = {},
+) {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(
+    page,
+    withNewDepartments([{ id: "sales", name: "Sales" }]),
+    { previewChanges: newDepartmentChanges("sales", "Sales"), ...options },
+  );
+  await page.getByRole("button", { name: "Review & Publish" }).click();
+  const dialog = page.getByRole("dialog", { name: "Review & Publish" });
+  await dialog
+    .getByRole("button", { name: "Setup for Sales", exact: true })
+    .click();
+  const setup = page.getByRole("dialog", { name: "Setup for Sales" });
+  return { dialog, setup };
+}
+
+// N1 rule 3, B5c: a refused save still closes the review, and the page
+// shows its alert with the edits kept.
+test("a Setup toggle whose save fails closes the review and the page shows its alert", async ({
+  page,
+}) => {
+  const { dialog, setup } = await openSalesReview(page, {
+    saveFailure: "Database unavailable",
+  });
+  await setup.getByRole("checkbox", { name: "Channel" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(
+    page.getByRole("alert").filter({
+      hasText: "Not saved. Your edits are still here.",
+    }),
+  ).toBeVisible();
+});

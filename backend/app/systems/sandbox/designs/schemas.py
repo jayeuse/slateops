@@ -67,10 +67,21 @@ class SandboxBindingsResponse(StrictModel):
     items: list[SandboxBindingResponse]
 
 
+class DepartmentSetup(StrictModel):
+    """SD13: the derived items a new department gets at its first publish; each is on."""
+
+    groups: bool = True
+    dashboard: bool = True
+    category: bool = True
+    channel: bool = True
+
+
 class DepartmentDocument(StrictModel):
     id: ID
     name: Name
     closed: bool = False
+    # BE-SD5: omitted when absent, so a document without it keeps its stored form and hash.
+    setup: DepartmentSetup | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ModuleDocument(StrictModel):

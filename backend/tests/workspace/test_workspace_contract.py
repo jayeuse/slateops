@@ -27,6 +27,9 @@ def _schemas_module() -> ModuleType:
     return schemas
 
 
+ALL_SETUP = {"groups": True, "dashboard": True, "category": True, "channel": True}
+
+
 def _profile(revision: int = 3) -> WorkspaceProfile:
     return WorkspaceProfile(
         id=uuid7(),
@@ -46,6 +49,7 @@ def _profile(revision: int = 3) -> WorkspaceProfile:
         theme="slate",
         invitation_expiry_days=7,
         guest_duration_days=30,
+        department_setup_defaults=dict(ALL_SETUP),
         revision=revision,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         updated_at=datetime(2026, 1, 1, tzinfo=UTC),
@@ -259,6 +263,13 @@ def test_workspace_patch_rejects_stale_revision_without_writing(
         {"revision": 3, "theme": " stockroom "},
         {"revision": 3, "purge_enabled": False},
         {"revision": 3, "purge_enabled": True},
+        {"revision": 3, "department_setup_defaults": None},
+        {"revision": 3, "department_setup_defaults": {}},
+        {"revision": 3, "department_setup_defaults": [True]},
+        {"revision": 3, "department_setup_defaults": {"channel": None}},
+        {"revision": 3, "department_setup_defaults": {"channel": "no"}},
+        {"revision": 3, "department_setup_defaults": {"channel": 0}},
+        {"revision": 3, "department_setup_defaults": {"board": False}},
     ],
 )
 def test_workspace_patch_rejects_invalid_supplied_region_without_writing(
@@ -309,6 +320,27 @@ def test_workspace_patch_uses_exact_admin_and_increments_revision(
     assert database.commit_count == 1
 
 
+def test_workspace_patch_changes_one_department_setup_default_and_keeps_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = _profile()
+    database = _Session(profile)
+
+    response = _client(monkeypatch, database).patch(
+        "/api/workspace", json={"revision": 3, "department_setup_defaults": {"channel": False}}
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    expected = {"groups": True, "dashboard": True, "category": True, "channel": False}
+    assert response.json()["department_setup_defaults"] == expected
+    assert profile.department_setup_defaults == expected
+    assert type(profile.department_setup_defaults) is dict
+    assert profile.display_name == "Slate Operations"
+    assert profile.theme == "slate"
+    assert response.json()["revision"] == 4
+    assert database.commit_count == 1
+
+
 def test_workspace_patch_propagates_exact_admin_denial(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -351,6 +383,7 @@ def test_workspace_response_contract_has_only_public_profile_fields() -> None:
         "theme",
         "invitation_expiry_days",
         "guest_duration_days",
+        "department_setup_defaults",
         "revision",
         "created_at",
         "updated_at",

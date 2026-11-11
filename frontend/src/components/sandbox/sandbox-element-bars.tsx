@@ -9,8 +9,16 @@ import {
 } from "react";
 import { useStore } from "@xyflow/react";
 
-import { DEPARTMENT_HEAD_HEIGHT } from "@/lib/sandbox/canvas-geometry";
-import type { PointerRestEvent } from "@/components/systems/sandbox/helpers/element-bar";
+import {
+  DEPARTMENT_HEAD_HEIGHT,
+  MODULE_TABLE,
+} from "@/lib/sandbox/canvas-geometry";
+import {
+  departmentBarPlacement,
+  moduleBarPlacement,
+  type BarPlacement,
+  type PointerRestEvent,
+} from "@/components/systems/sandbox/helpers/element-bar";
 import { absoluteBoxes, type SandboxFlowNode } from "./sandbox-flow-model";
 
 /**
@@ -35,14 +43,13 @@ export interface SandboxElementBars {
   onFocusChange: (ownerId: string, focused: boolean) => void;
 }
 
-/** Space between an element and its bar, in screen pixels. */
-const BAR_GAP = 6;
-
 /**
- * The element bars, drawn at screen scale over the canvas: a department's in
- * its head band after the name, a module's under its card (above the header
- * when the card bottom is out of view). Below 768px the selected element's
- * bar is pinned to the bottom of the canvas instead, with its name.
+ * The element bars, drawn at screen scale over the canvas. Each tries three
+ * places (helpers/element-bar.ts): a department's in its head band after
+ * the name, then above the frame, then under the band inside the frame; a
+ * module's under its card, then above the header, then under the header.
+ * Below 768px the selected element's bar is pinned to the bottom of the
+ * canvas instead, with its name.
  */
 export function ElementBarLayer({
   owners,
@@ -77,10 +84,12 @@ export function ElementBarLayer({
       }
       const height = bar.offsetHeight;
       const width = bar.offsetWidth;
-      let left = box.x * zoom + x;
-      let top: number;
+      const frameLeft = box.x * zoom + x;
+      const frameTop = box.y * zoom + y;
+      let placement: BarPlacement;
       if (node.type === "department") {
-        // In the head band, after the name, clear of the module count.
+        // Measured from the drawn head band, so the bar never covers the
+        // name or the module count.
         const part = (name: string) =>
           container
             .querySelector(
@@ -89,17 +98,32 @@ export function ElementBarLayer({
             ?.getBoundingClientRect();
         const name = part("department-name");
         const count = part("module-count");
-        left = (name ? name.right - view.left : left + 34 * zoom) + 8;
-        top = (box.y + DEPARTMENT_HEAD_HEIGHT / 2) * zoom + y - height / 2;
-        if (count && left + width > count.left - view.left - 8)
-          top = box.y * zoom + y - height - BAR_GAP;
+        const identity = part("identity");
+        const frameRight = (box.x + box.width) * zoom + x;
+        placement = departmentBarPlacement({
+          frameTop,
+          bandBottom: (box.y + DEPARTMENT_HEAD_HEIGHT) * zoom + y,
+          nameRight: name ? name.right - view.left : frameLeft + 34 * zoom,
+          identityLeft: identity
+            ? identity.left - view.left
+            : frameLeft + 16 * zoom,
+          countLeft: count ? count.left - view.left : frameRight - 16 * zoom,
+          countRight: count ? count.right - view.left : frameRight - 16 * zoom,
+          width,
+          height,
+        });
       } else {
-        // Under the card, where the next field appears; above the header
-        // when the card bottom is out of view.
-        top = (box.y + box.height) * zoom + y + BAR_GAP;
-        if (top + height > view.height - BAR_GAP)
-          top = box.y * zoom + y - height - BAR_GAP;
+        placement = moduleBarPlacement({
+          left: frameLeft,
+          top: frameTop,
+          headerBottom: (box.y + MODULE_TABLE.headerHeight) * zoom + y,
+          bottom: (box.y + box.height) * zoom + y,
+          viewHeight: view.height,
+          height,
+        });
       }
+      const { left, top, place } = placement;
+      bar.dataset.place = place;
       bar.style.left = `${Math.round(left)}px`;
       bar.style.top = `${Math.round(top)}px`;
       bar.style.visibility = "visible";

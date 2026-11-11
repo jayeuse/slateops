@@ -390,8 +390,11 @@ const attentionRules: AttentionRule[] = [
 export function attentionItems(
   counts: AttentionCounts,
   capped: AttentionCapped = {},
+  withoutManager?: readonly NoManagerItem[],
 ): {
   items: AttentionItem[];
+  /** One row per department without a manager; they come last. */
+  departments: NoManagerItem[];
   clear: string[];
 } {
   const items: AttentionItem[] = [];
@@ -411,7 +414,92 @@ export function attentionItems(
       });
     else if (rule.clear) clear.push(rule.clear);
   }
-  return { items, clear };
+  // Unknown (no list given) is never named as clear.
+  if (withoutManager?.length === 0) clear.push("departments without a manager");
+  return { items, departments: [...(withoutManager ?? [])], clear };
+}
+
+// Departments without a manager (R13, SD-C14)
+
+/** Where "Add a manager" leads: a page, or the Create group dialog. */
+export type ManagerAction = { kind: "link"; href: string } | { kind: "create" };
+
+export type NoManagerItem = {
+  /** The department's id. */
+  id: string;
+  name: string;
+  text: string;
+  verb: string;
+  action: ManagerAction;
+  tone: "info";
+};
+
+/** The Overview's group read, or null while it loads or after it failed. */
+export type ManagerGroups = {
+  items: readonly AccessGroup[];
+  /** False when the read holds only the first page of the groups. */
+  complete: boolean;
+} | null;
+
+const groupsList = "/access?view=groups";
+
+/**
+ * The group that gives manage on the whole department, opened on its
+ * Members tab. Several: the one named "<Department> managers", else the
+ * first by name. None in a complete read: Create group. Otherwise the
+ * group can be beyond the read, so the Groups list.
+ */
+export function managerGroupAction(
+  department: { id: string; name: string },
+  groups: ManagerGroups,
+): ManagerAction {
+  if (!groups) return { kind: "link", href: groupsList };
+  const managing = groups.items
+    .filter(
+      (group) =>
+        !group.is_deleted &&
+        group.access.some(
+          (entry) =>
+            entry.department_id === department.id &&
+            entry.module_id === null &&
+            entry.level === "manage",
+        ),
+    )
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const named = `${department.name} managers`.toLocaleLowerCase();
+  const chosen =
+    managing.find((group) => group.name.toLocaleLowerCase() === named) ??
+    managing[0];
+  if (chosen)
+    return {
+      kind: "link",
+      href: `${groupsList}&group=${chosen.id}&tab=members`,
+    };
+  return groups.complete
+    ? { kind: "create" }
+    : { kind: "link", href: groupsList };
+}
+
+/**
+ * One row per department in the server's list, in catalog order. An id
+ * without a department name (closed since the summary) never shows.
+ */
+export function noManagerItems(
+  ids: readonly string[],
+  catalog: readonly { id: string; name: string }[],
+  groups: ManagerGroups,
+): NoManagerItem[] {
+  const listed = new Set(ids);
+  return catalog
+    .filter((department) => listed.has(department.id))
+    .map((department) => ({
+      id: department.id,
+      name: department.name,
+      text: "has no manager",
+      verb: "Add a manager",
+      action: managerGroupAction(department, groups),
+      tone: "info",
+    }));
 }
 
 // Access by department

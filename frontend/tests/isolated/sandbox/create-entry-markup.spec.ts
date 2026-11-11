@@ -84,6 +84,27 @@ test("the department and module entries name only what they add", () => {
   expect(moduleEntry).toContain(">Add module</button>");
 });
 
+// FAST-7: only the department entry offers a template, and only when the
+// page can open one.
+test("the department entry offers From a template; other entries do not", () => {
+  const onFromTemplate = () => undefined;
+  const department = entry({
+    kind: "department",
+    parentName: null,
+    departmentIndex: null,
+    onFromTemplate,
+  });
+  expect(department).toMatch(
+    /<button[^>]*>(?:<svg[\s\S]*?<\/svg>)?From a template<\/button>/,
+  );
+  expect(
+    entry({ kind: "module", parentName: "Sales", onFromTemplate }),
+  ).not.toContain("From a template");
+  expect(
+    entry({ kind: "department", parentName: null, departmentIndex: null }),
+  ).not.toContain("From a template");
+});
+
 // N2: refused in place, under the name, and the name stays.
 test("a refused add shows its reason under the name and keeps the name", () => {
   const html = entry({

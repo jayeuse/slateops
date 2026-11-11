@@ -5,11 +5,10 @@ from collections.abc import Iterator
 
 import pytest
 from sqlalchemy import Connection, Engine, text
-from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 from uuid6 import uuid7
 
-from tests.conftest import alembic_heads, create_organization, guarded_create_engine
+from tests.conftest import alembic_heads, guarded_create_engine
 from tests.database_pool import dispose_process_engines
 from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
@@ -52,9 +51,17 @@ def test_upgrade_hashes_stored_runs_and_downgrade_keeps_them_without_the_column(
 ) -> None:
     environment, engine = migration
     ids = {name: uuid7() for name in ("department", "module", "report", "run", "empty")}
-    with Session(engine) as db:
-        ids["org"] = create_organization(db).id
-        db.commit()
+    ids["org"] = uuid7()
+    # Raw SQL like every other row here: the current model maps columns that this older
+    # schema does not have yet.
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO public.organizations (id, slug, display_name, timezone, locale) "
+                "VALUES (:org, :slug, 'Hash backfill', 'UTC', 'en-US')"
+            ),
+            {"org": ids["org"], "slug": f"test-{ids['org']}"},
+        )
     try:
         with engine.begin() as connection:
             for statement in (

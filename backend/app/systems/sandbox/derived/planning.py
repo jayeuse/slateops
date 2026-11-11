@@ -31,6 +31,7 @@ from app.systems.sandbox.derived.actions import (
     GROUP_LEVELS,
     DepartmentOutcome,
     FollowStep,
+    created_roles,
     derived_changes,
     derived_label,
     derived_name,
@@ -135,8 +136,8 @@ def _name_blockers(
     wanted = [
         (outcome, derived_name(role, outcome.name))
         for outcome in outcomes
-        if outcome.created and not outcome.closed
-        for role in GROUP_LEVELS
+        for role in created_roles(outcome)
+        if role in GROUP_LEVELS
     ] + [(outcome, step.name) for outcome, step in renamed]
     if not wanted:
         return []
@@ -314,8 +315,11 @@ def _stage(
         return stage_dashboard(db, department_id=department.id, name=name)
     if kind == "category":
         return stage_category(db, department_id=department.id, name=name)
-    if category is None:
-        raise ValueError("A derived channel needs its department's category")
+    # SD14: with the category cleared, the channel is in no category.
     return stage_department_channel(
-        db, actor, department_id=department.id, category_id=category.id, name=name
+        db,
+        actor,
+        department_id=department.id,
+        category_id=None if category is None else category.id,
+        name=name,
     )

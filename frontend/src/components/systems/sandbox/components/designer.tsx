@@ -142,6 +142,9 @@ import {
   type SandboxCommandResult,
 } from "../state/commands";
 import { EmptyCanvasPanel } from "./empty-canvas-panel";
+import { setupOffered } from "../domain/department-setup";
+import { useDepartmentSetupDefault } from "../state/use-department-setup-default";
+import { useLatestPublishedVersion } from "../state/use-latest-published-version";
 import {
   SANDBOX_WORKBENCH_MAX_WIDTH,
   SANDBOX_WORKBENCH_MIN_WIDTH,
@@ -350,6 +353,7 @@ export function Designer({
   savingIds,
   addHoldReason,
   onNewTrigger,
+  publishedVersionId = null,
 }: {
   initialSelected: string;
   /** A link asked for one item, so narrow screens open on its Properties. */
@@ -407,9 +411,15 @@ export function Designer({
   addHoldReason: string | null;
   /** "New trigger" in a module's item menu (TRIG-8); absent until wired. */
   onNewTrigger?: (moduleId: string) => void;
+  /** The latest published version, whose field types the field settings
+   * warn against (FAST-5); null when nothing is published. */
+  publishedVersionId?: string | null;
 }) {
   const { keyboardShortcuts, disabled: preferencesDisabled } =
     useUserPreferences();
+  const publishedTypeOf = useLatestPublishedVersion(publishedVersionId);
+  // A Duplicate starts from the saved Manage default (FIT-4, SD-C20).
+  const setupDefault = useDepartmentSetupDefault();
   const shortcutsEnabled = keyboardShortcuts === true && !preferencesDisabled;
   const [viewPreferences, setViewPreferences] =
     useState<SandboxViewPreferences>(loadSandboxViewPreferences);
@@ -824,7 +834,7 @@ export function Designer({
     if (pending) return;
     const selectedId = { current: "" };
     const result = await change((current) => {
-      const duplicated = duplicateDesignTarget(current, target);
+      const duplicated = duplicateDesignTarget(current, target, setupDefault);
       if (!duplicated) return current;
       selectedId.current = duplicated.selected;
       return duplicated.design;
@@ -935,6 +945,13 @@ export function Designer({
     return {
       closed: binding?.is_deleted ?? draftClosed ?? false,
       canPurge: purgeEnabled && Boolean(binding?.is_deleted),
+      // FIT-1: Setup applies to an open department with no live binding,
+      // known only once live state has loaded.
+      setup:
+        target.kind === "department" &&
+        inputs.bindings !== null &&
+        draftClosed !== undefined &&
+        setupOffered({ closed: draftClosed }, binding !== undefined),
       disabled:
         inputs.pending ||
         saving ||
@@ -1552,6 +1569,11 @@ export function Designer({
   // The toolbar's Add department anchors the department entry, also when the
   // empty design's "Add your first department" opens it.
   const addDepartmentRef = useRef<HTMLButtonElement>(null);
+  // The last loaded bindings: kept while bindings reload after a save, for
+  // the Structure outline and the bar's Setup.
+  const [outlineBindings, setOutlineBindings] = useState(bindings);
+  if (bindings !== null && bindings !== outlineBindings)
+    setOutlineBindings(bindings);
   const create = useBuildCreate({
     design,
     projected,
@@ -1564,6 +1586,16 @@ export function Designer({
     canvasFrameRef,
     setSelected,
     showProperties: () => setWorkbenchTab("Inspector"),
+    // A save moves the draft to a new revision whose bindings load again;
+    // meanwhile the last loaded ones keep Setup on the bar, so the control
+    // the popover returns focus to is not removed (QA D-1).
+    setupOffered: (departmentId: string) =>
+      lifecycleState(
+        { kind: "department", id: departmentId },
+        { ...currentLifecycleInputs, bindings: outlineBindings },
+      ).setup,
+    setupHeld: pending || saving,
+    notifyError,
   });
   /** The canvas item menu: the Structure tree's items for the same target. */
   function canvasItemMenu(
@@ -1594,6 +1626,14 @@ export function Designer({
               }
             : undefined
         }
+        onSetup={
+          kind === "department" && state.setup
+            ? () => {
+                menu.leave();
+                create.setupFromCanvas(target.id);
+              }
+            : undefined
+        }
         onNewTrigger={
           // Focus returns to the canvas while the move to Triggers waits for
           // the save queue; Triggers then focuses its Event.
@@ -1611,9 +1651,6 @@ export function Designer({
   const outlineDesign = useDeferredValue(design);
   const outlinePending = useDelayedFlag(pending, 300);
   const outlineDraftDirty = useDeferredValue(localDraftDirty);
-  const [outlineBindings, setOutlineBindings] = useState(bindings);
-  if (bindings !== null && bindings !== outlineBindings)
-    setOutlineBindings(bindings);
   const outlineStateJson = useMemo(
     () => JSON.stringify(projectDesign(outlineDesign, selected)),
     [outlineDesign, selected],
@@ -1685,6 +1722,8 @@ export function Designer({
     },
     onConnect: (id: string, anchor: HTMLElement) =>
       requestAnimationFrame(() => create.openConnect(id, anchor, null)),
+    onSetup: (id: string, anchor: HTMLElement) =>
+      requestAnimationFrame(() => create.openSetup(id, anchor, null)),
     onFocusItem: create.setFocusedItem,
   });
   const structurePane = (
@@ -1699,6 +1738,7 @@ export function Designer({
         lifecycleState={outlineLifecycleState}
         pending={outlinePending}
         savingIds={create.savingMarks}
+        createOpen={create.createOpen}
         newestId={create.newestShown}
         onNewTrigger={onNewTrigger}
         {...outlineHandlers}
@@ -1919,6 +1959,9 @@ export function Designer({
                           index={i}
                           count={selectedModule.fields.length}
                           titleFieldId={selectedModule.titleFieldId ?? null}
+                          publishedType={
+                            publishedTypeOf?.(selectedModule.id, f.id) ?? null
+                          }
                           onSave={(nextField) =>
                             change((previous) => {
                               const currentModule = previous.modules.find(

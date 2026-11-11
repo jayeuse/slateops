@@ -5,6 +5,8 @@ import {
   isStaleWorkspaceRevision,
   organizationLocaleLabel,
   organizationLocaleTag,
+  workspacePatchApplied,
+  workspacePatchChangeCount,
   workspaceSettingsFormFields,
   workspaceSettingsPatch,
   type ManageWorkspaceProfile,
@@ -275,3 +277,123 @@ for (const row of revisionErrors)
   test(`${row.name} is ${row.stale ? "" : "not "}a stale revision`, () => {
     expect(isStaleWorkspaceRevision(row.error)).toBe(row.stale);
   });
+
+// "New departments" (plan 11.2; BE-SD6, SD-C20): the four boxes join the
+// one organization patch with only the changed items, and each changed box
+// is one unsaved change in the footer chip.
+const withSetupDefaults: ManageWorkspaceProfile = {
+  ...fullProfile,
+  department_setup_defaults: {
+    groups: true,
+    dashboard: true,
+    category: true,
+    channel: true,
+  },
+};
+const allOn = { groups: true, dashboard: true, category: true, channel: true };
+
+// SD-C20, plan 11.2 "Save": only the changed items travel; equal is no patch.
+test("the organization patch sends only the changed new-department items", () => {
+  const rows: {
+    label: string;
+    profile: ManageWorkspaceProfile;
+    draft: Parameters<typeof workspaceSettingsPatch>[1];
+    patch: ReturnType<typeof workspaceSettingsPatch>;
+  }[] = [
+    {
+      label: "channel cleared",
+      profile: withSetupDefaults,
+      draft: { setupDefaults: { ...allOn, channel: false } },
+      patch: { revision: 4, department_setup_defaults: { channel: false } },
+    },
+    {
+      label: "category and channel cleared, with a name",
+      profile: withSetupDefaults,
+      draft: {
+        name: "Harbor",
+        setupDefaults: { ...allOn, category: false, channel: false },
+      },
+      patch: {
+        revision: 4,
+        display_name: "Harbor",
+        department_setup_defaults: { category: false, channel: false },
+      },
+    },
+    {
+      label: "boxes equal to the saved value",
+      profile: withSetupDefaults,
+      draft: { setupDefaults: allOn },
+      patch: null,
+    },
+    {
+      label: "a reply that carries no defaults",
+      profile: fullProfile,
+      draft: { setupDefaults: { ...allOn, channel: false } },
+      patch: null,
+    },
+  ];
+  for (const row of rows)
+    expect(
+      workspaceSettingsPatch(row.profile, row.draft, "slate"),
+      row.label,
+    ).toEqual(row.patch);
+});
+
+// Plan 11.2 "Save": "Each changed box counts as one unsaved change".
+test("each changed field and each changed box is one unsaved change", () => {
+  const rows: [
+    string,
+    Parameters<typeof workspacePatchChangeCount>[0],
+    number,
+  ][] = [
+    ["no patch", null, 0],
+    ["one field", { revision: 4, display_name: "Harbor" }, 1],
+    [
+      "one box",
+      { revision: 4, department_setup_defaults: { channel: false } },
+      1,
+    ],
+    [
+      "a field and two boxes",
+      {
+        revision: 4,
+        legal_name: "Harbor Ltd",
+        department_setup_defaults: { category: false, channel: false },
+      },
+      3,
+    ],
+  ];
+  for (const [label, patch, count] of rows)
+    expect(workspacePatchChangeCount(patch), label).toBe(count);
+});
+
+// A lost save response is adopted only when the read shows every sent value,
+// including the sent boxes (page.tsx "matches" check).
+test("a read shows a patch only when every sent value and box matches", () => {
+  const saved: ManageWorkspaceProfile = {
+    ...withSetupDefaults,
+    revision: 5,
+    display_name: "Harbor",
+    department_setup_defaults: { ...allOn, channel: false },
+  };
+  const rows: [string, Parameters<typeof workspacePatchApplied>[1], boolean][] =
+    [
+      [
+        "the name and the box",
+        {
+          revision: 4,
+          display_name: "Harbor",
+          department_setup_defaults: { channel: false },
+        },
+        true,
+      ],
+      [
+        "a box the read does not show",
+        { revision: 4, department_setup_defaults: { category: false } },
+        false,
+      ],
+      ["a name the read does not show", { revision: 4, mark: "HB" }, false],
+    ];
+  for (const [label, patch, applied] of rows)
+    expect(workspacePatchApplied(saved, patch), label).toBe(applied);
+});

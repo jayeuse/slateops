@@ -9,6 +9,7 @@ import type { OrganizationTheme } from "@/lib/appearance-preferences";
 import { WorkspaceLogo } from "../../shared/runtime/workspace-logo";
 import {
   organizationLocaleLabel,
+  type DepartmentSetupDefaults,
   type ManageWorkspaceProfile,
   type WorkspaceProfileFormFields,
   type WorkspaceProfileField,
@@ -68,6 +69,12 @@ type OrganizationPanelProps = {
   /** Access People and the Sandbox open only for an administrator (MD3). */
   relatedAreasVisible: boolean;
   logo: OrganizationLogoProps;
+  /** The editor's "New departments" boxes; the reader does not show them. */
+  setupDefaults: DepartmentSetupDefaults | undefined;
+  onSetupDefaultChange: (
+    item: keyof DepartmentSetupDefaults,
+    on: boolean,
+  ) => void;
 };
 
 /**
@@ -101,6 +108,8 @@ export function OrganizationPanel({
   contactsVisible,
   relatedAreasVisible,
   logo,
+  setupDefaults,
+  onSetupDefaultChange,
 }: OrganizationPanelProps) {
   const { saveSection, current, changeSetting, errors, clearDraft } = form;
   const organizationName =
@@ -185,6 +194,8 @@ export function OrganizationPanel({
                   contactsVisible={contactsVisible}
                   logo={logo}
                   organizationName={organizationName}
+                  setupDefaults={setupDefaults}
+                  onSetupDefaultChange={onSetupDefaultChange}
                 />
               </div>
               <OrganizationFooter

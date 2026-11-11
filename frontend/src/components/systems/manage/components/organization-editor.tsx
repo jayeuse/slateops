@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { TriangleAlert } from "lucide-react";
+import { useId, useState } from "react";
 
 import { AdvancedSection } from "@/components/ui/advanced-section";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { FilePickerButton } from "@/components/ui/file-picker-button";
 import { Input } from "@/components/ui/input";
 import { LoadingRegion } from "@/components/ui/loading-region";
@@ -14,10 +16,13 @@ import { Textarea } from "@/components/ui/textarea";
 import type { OrganizationTheme } from "@/lib/appearance-preferences";
 import { timezoneCatalog, timezoneOption } from "@/lib/timezone-options";
 
+import { SETUP_ITEMS } from "../../sandbox/domain/department-setup";
+
 import { WorkspaceLogo } from "../../shared/runtime/workspace-logo";
 import {
   organizationLocaleLabel,
   organizationLocaleTags,
+  type DepartmentSetupDefaults,
   type ManageWorkspaceProfile,
   type WorkspaceProfileField,
   type WorkspaceProfileFormFields,
@@ -29,6 +34,7 @@ import { OrganizationLook } from "./organization-look";
 import {
   RowError,
   RowNote,
+  SettingsChoiceRow,
   SettingsGroup,
   SettingsRow,
 } from "./organization-rows";
@@ -46,9 +52,9 @@ const describedBy = (...ids: (string | false | undefined)[]) =>
   ids.filter(Boolean).join(" ") || undefined;
 
 /**
- * The administrator's settings (MD4): Identity, Region and Look as
- * label-left rows, then the optional Profile in one closed block, last. The
- * pinned footer that saves them belongs to the panel.
+ * The administrator's settings (MD4): Identity, Region, Look and New
+ * departments as label-left rows, then the optional Profile in one closed
+ * block, last. The pinned footer that saves them belongs to the panel.
  */
 export function OrganizationEditor({
   current,
@@ -65,6 +71,8 @@ export function OrganizationEditor({
   contactsVisible,
   logo,
   organizationName,
+  setupDefaults,
+  onSetupDefaultChange,
 }: {
   current: ManageSettings;
   errors: Partial<Record<keyof ManageSettings, string>>;
@@ -80,6 +88,12 @@ export function OrganizationEditor({
   contactsVisible: boolean;
   logo: OrganizationLogoProps;
   organizationName: string;
+  /** The "New departments" boxes as drafted; none when the read has none. */
+  setupDefaults: DepartmentSetupDefaults | undefined;
+  onSetupDefaultChange: (
+    item: keyof DepartmentSetupDefaults,
+    on: boolean,
+  ) => void;
 }) {
   const localeOptions: string[] = [...organizationLocaleTags];
   if (current.locale && !localeOptions.includes(current.locale))
@@ -396,13 +410,31 @@ export function OrganizationEditor({
       <SettingsGroup
         title="Look"
         hint="Words and layout stay the same; each person still picks light or dark."
-        className={profile ? undefined : "border-b-0"}
       >
         <OrganizationLook
           theme={theme}
           onChange={onThemeChange}
           disabled={editDisabled}
         />
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="New departments"
+        hint="Each department added in the Sandbox from now on starts with these."
+        className={profile ? undefined : "border-b-0"}
+      >
+        {ready && setupDefaults ? (
+          <SetupDefaultsRow
+            value={setupDefaults}
+            onChange={onSetupDefaultChange}
+          />
+        ) : (
+          <PlaceholderRow
+            id="setup-defaults"
+            label="Created at publish"
+            loading={workspaceLoading}
+          />
+        )}
       </SettingsGroup>
 
       {profile ? (
@@ -470,6 +502,73 @@ const profileLimits: Record<WorkspaceProfileField, number> = {
   contactPhone: 50,
   postalAddress: 2000,
 };
+
+/**
+ * "Created at publish" (plan 11.2, SD2, BE-SD6): the Setup popover's four
+ * checkboxes in its order and words (B9), then the Board as text. With
+ * Category off, the SD14 line shows under it. Rows are 44px below 1280px,
+ * label included, and 32px from it.
+ */
+function SetupDefaultsRow({
+  value,
+  onChange,
+}: {
+  value: DepartmentSetupDefaults;
+  onChange: (item: keyof DepartmentSetupDefaults, on: boolean) => void;
+}) {
+  const id = useId();
+  return (
+    <SettingsChoiceRow label="Created at publish">
+      {SETUP_ITEMS.map(({ item, label, detail }) => {
+        const itemId = `${id}-${item}`;
+        const noteId = `${itemId}-note`;
+        // SD14: a cleared category puts the channel in no category.
+        const note =
+          item === "category" && !value.category
+            ? "The channel goes in no category."
+            : null;
+        return (
+          <div key={item} className="grid min-w-0">
+            <div className="flex min-h-11 min-w-0 items-center gap-2 xl:min-h-8">
+              <Checkbox
+                id={itemId}
+                checked={value[item]}
+                aria-describedby={note ? noteId : undefined}
+                onCheckedChange={(checked) => onChange(item, checked === true)}
+              />
+              <label
+                htmlFor={itemId}
+                className="flex min-h-11 min-w-0 flex-1 flex-wrap items-center gap-x-1.5 text-sm xl:min-h-8"
+              >
+                {label}
+                {detail ? (
+                  <span className="text-muted-foreground text-xs">
+                    · {detail}
+                  </span>
+                ) : null}
+              </label>
+            </div>
+            {note ? (
+              <p
+                id={noteId}
+                className="text-warn-text -mt-1 ml-6 flex items-start gap-1.5 pb-1 text-xs"
+              >
+                <TriangleAlert
+                  aria-hidden="true"
+                  className="mt-px size-3.5 shrink-0"
+                />
+                {note}
+              </p>
+            ) : null}
+          </div>
+        );
+      })}
+      <p className="text-muted-foreground flex min-h-11 items-center pl-6 text-sm xl:min-h-8">
+        Board · always created
+      </p>
+    </SettingsChoiceRow>
+  );
+}
 
 function PlaceholderRow({
   id,

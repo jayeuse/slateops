@@ -66,6 +66,10 @@ export type SandboxOptions = {
   pruneFailure?: { status: number; code: string };
   versions?: Array<Record<string, unknown>>;
   previewChanges?: Array<Record<string, string>>;
+  /** Answers each review from the saved draft, as the planner does. */
+  previewChangesFor?: (
+    document: SandboxDocumentV4,
+  ) => Array<Record<string, string>>;
   previewBlockers?: Array<{ code: string; message: string; targetId: string }>;
   bindings?: Array<{
     kind: "department" | "module" | "field" | "relationship" | "trigger";
@@ -78,6 +82,16 @@ export type SandboxOptions = {
   bindingRevision?: number;
   /** The page the journey opens on; Build with nothing selected by default. */
   path?: string;
+  /** The latest published version: every document reply names it, and
+   * `GET /sandbox/versions/{id}` answers its own document (FAST-5). */
+  latestPublished?: { sequence: number; document: SandboxDocumentV4 };
+  /** The saved Manage default for new departments (BE-SD6); all on by default. */
+  setupDefaults?: {
+    groups: boolean;
+    dashboard: boolean;
+    category: boolean;
+    channel: boolean;
+  };
 };
 
 export async function openAuthenticatedSandbox(
@@ -86,7 +100,18 @@ export async function openAuthenticatedSandbox(
   options: SandboxOptions = {},
 ) {
   await installOpenViewEventSource(page);
-  const workspace = { purge_enabled: true as boolean | undefined };
+  const workspace: {
+    purge_enabled: boolean | undefined;
+    department_setup_defaults?: SandboxOptions["setupDefaults"];
+  } = {
+    purge_enabled: true,
+    department_setup_defaults: options.setupDefaults ?? {
+      groups: true,
+      dashboard: true,
+      category: true,
+      channel: true,
+    },
+  };
   let workspaceFailure = false;
   await page.route("**/api/workspace", (route) =>
     route.fulfill(
@@ -108,6 +133,22 @@ export async function openAuthenticatedSandbox(
   let bindings = options.bindings ?? [];
   let bindingFailure = options.bindingFailure;
   let bindingRevision = options.bindingRevision;
+  const publishedVersion = options.latestPublished
+    ? historyVersionFixture(
+        options.latestPublished.sequence,
+        `Published ${options.latestPublished.sequence}`,
+        "published",
+      )
+    : null;
+  const latestPublishedVersion = publishedVersion
+    ? {
+        id: publishedVersion.id,
+        sequence: publishedVersion.sequence,
+        label: publishedVersion.label,
+        createdAt: publishedVersion.createdAt,
+      }
+    : null;
+  let publishedReads = 0;
   await page.route("**/api/sandbox/document", async (route) => {
     if (route.request().method() === "GET") {
       documentReads += 1;
@@ -155,7 +196,7 @@ export async function openAuthenticatedSandbox(
         contentHash: "a".repeat(64),
         byteCount: JSON.stringify(document).length,
         issues: options.issues ?? [],
-        latestPublishedVersion: null,
+        latestPublishedVersion,
         publishedHash: options.publishedHash ?? null,
         hasUnpublishedChanges: options.hasUnpublishedChanges ?? true,
       }),
@@ -191,7 +232,7 @@ export async function openAuthenticatedSandbox(
         contentHash: "b".repeat(64),
         byteCount: JSON.stringify(document).length,
         issues: [],
-        latestPublishedVersion: null,
+        latestPublishedVersion,
         publishedHash: options.publishedHash ?? null,
         hasUnpublishedChanges: options.hasUnpublishedChanges ?? true,
       }),
@@ -241,6 +282,19 @@ export async function openAuthenticatedSandbox(
   await page.route("**/api/sandbox/versions/*", async (route) => {
     if (route.request().method() === "GET") {
       const id = new URL(route.request().url()).pathname.split("/").at(-1);
+      if (
+        publishedVersion &&
+        options.latestPublished &&
+        id === publishedVersion.id
+      ) {
+        publishedReads += 1;
+        return route.fulfill({
+          json: {
+            ...publishedVersion,
+            document: options.latestPublished.document,
+          },
+        });
+      }
       const version = versions.find(
         (item) => item.id === id && !item.isDeleted,
       );
@@ -406,7 +460,8 @@ export async function openAuthenticatedSandbox(
         documentRevision: revision,
         documentHash: "a".repeat(64),
         expiresAt: "2026-09-22T12:00:00Z",
-        changes: options.previewChanges ?? [],
+        changes:
+          options.previewChangesFor?.(document) ?? options.previewChanges ?? [],
         counts: {
           departments: 0,
           groups: 0,
@@ -438,6 +493,7 @@ export async function openAuthenticatedSandbox(
     document: () => structuredClone(document),
     documentReads: () => documentReads,
     documentWrites: () => documentWrites,
+    publishedReads: () => publishedReads,
     pruneRequests: () => structuredClone(pruneRequests),
     checkpointRequests: () => structuredClone(checkpointRequests),
     versions: () => structuredClone(versions),

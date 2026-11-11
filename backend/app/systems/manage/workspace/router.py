@@ -196,8 +196,14 @@ def _save_workspace(
             }
             if old_id is not None and old_id != payload.logo_file_id:
                 claim = claim_logo_replacement(db, logos[old_id], actor_id)
-        for field in payload.model_fields_set - {"revision"}:
+        for field in payload.model_fields_set - {"revision", "department_setup_defaults"}:
             setattr(profile, field, getattr(payload, field))
+        if payload.department_setup_defaults is not None:
+            # A new dict, so the JSONB change is flushed and audited.
+            profile.department_setup_defaults = {
+                **profile.department_setup_defaults,
+                **payload.department_setup_defaults.model_dump(exclude_unset=True),
+            }
         profile.revision += 1
         profile.performed_by = actor_id
         db.flush()

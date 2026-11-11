@@ -3,11 +3,14 @@
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
   type KeyboardEvent,
 } from "react";
+
+import { FileStack } from "lucide-react";
 
 import { DepartmentMark } from "@/components/sandbox/department-mark";
 import { Button } from "@/components/ui/button";
@@ -38,6 +41,7 @@ import {
   SandboxCommandError,
   type SandboxCommandResult,
 } from "../state/commands";
+import { useDepartmentSetupDefault } from "../state/use-department-setup-default";
 
 /**
  * The add-next entry (docs/specs/sandbox-ux-redesign.md, "The entry", FAST-1,
@@ -73,6 +77,11 @@ export type CreateEntryProps = {
   ) => SandboxCommandResult<Design> | Promise<SandboxCommandResult<Design>>;
   /** From `designAddHoldReason`: a publish, lifecycle action, or conflict holds the draft. */
   holdReason: string | null;
+  /**
+   * The department entry's "From a template" (FAST-7): the flow ends, with
+   * the last element it created, and the caller opens "Add from a template".
+   */
+  onFromTemplate?: (lastCreatedId: string | null) => void;
 };
 
 const WIDE_QUERY = "(min-width: 48rem)";
@@ -107,6 +116,7 @@ export function CreateEntry({
   onRequestClose,
   onAdd,
   holdReason,
+  onFromTemplate,
 }: CreateEntryProps) {
   const wide = useWideScreen();
   const entryId = useId();
@@ -114,10 +124,14 @@ export function CreateEntry({
   // One close per flow, with the last element this flow created.
   const lastCreated = useRef<string | null>(null);
   const closed = useRef(false);
+  // Handed off to "Add from a template": the dialog owns focus, so the
+  // closing entry moves none (B8).
+  const handedOff = useRef(false);
   useEffect(() => {
     if (!open) return;
     lastCreated.current = null;
     closed.current = false;
+    handedOff.current = false;
   }, [open]);
   const close = () => {
     if (closed.current) return;
@@ -127,7 +141,7 @@ export function CreateEntry({
   const onOpenChange = (next: boolean) => {
     if (!next) close();
   };
-  const finalFocus = () => anchor ?? true;
+  const finalFocus = () => (handedOff.current ? false : (anchor ?? true));
   // The portal mounts the body with the popup and unmounts it after the
   // exit, so each flow starts from an empty entry and never closes empty.
   const body = (
@@ -141,6 +155,16 @@ export function CreateEntry({
         lastCreated.current = id;
       }}
       onClose={close}
+      onFromTemplate={
+        kind === "department" && onFromTemplate
+          ? () => {
+              if (closed.current) return;
+              closed.current = true;
+              handedOff.current = true;
+              onFromTemplate(lastCreated.current);
+            }
+          : undefined
+      }
       sheet={!wide}
       entryId={entryId}
     />
@@ -157,7 +181,8 @@ export function CreateEntry({
         aria-labelledby={`${entryId}-title`}
         className={cn(
           "slim-ui max-w-[calc(100vw-2rem)] gap-0 p-0",
-          kind === "field" ? "w-96" : "w-85",
+          // The department entry's footer also holds "From a template".
+          kind === "module" ? "w-85" : "w-96",
         )}
       >
         {body}
@@ -186,6 +211,7 @@ function CreateEntryBody({
   onAdd,
   onCreated,
   onClose,
+  onFromTemplate,
   sheet,
   entryId,
 }: {
@@ -196,10 +222,13 @@ function CreateEntryBody({
   onAdd: CreateEntryProps["onAdd"];
   onCreated: (id: string) => void;
   onClose: () => void;
+  onFromTemplate: (() => void) | undefined;
   sheet: boolean;
   entryId: string;
 }) {
   const [draft, setDraft] = useState<CreateDraft>(emptyCreateDraft);
+  // A new department starts from the saved Manage default (FIT-4, SD-C20).
+  const setupDefault = useDepartmentSetupDefault();
   const [refusal, setRefusal] = useState<{
     reason: string;
     on: "name" | "choices";
@@ -215,6 +244,12 @@ function CreateEntryBody({
   const adding = useRef(false);
   // Focus asked for by a type click; the Choices input mounts first.
   const pendingFocus = useRef<"name" | "choices" | null>(null);
+  // The name has focus in the commit that opens the entry, before the next
+  // key: a person who presses Enter and types at once loses no letter to
+  // the control that opened it (TASK-0050 D-1).
+  useLayoutEffect(() => {
+    focus("name");
+  }, []);
   useEffect(() => {
     const target = pendingFocus.current;
     if (!target) return;
@@ -233,7 +268,14 @@ function CreateEntryBody({
     const submitted = draft;
     // Checked before the draft changes, so the update itself never refuses
     // under a hold (N2).
-    const check = addElement(design, kind, id, parentId, submitted);
+    const check = addElement(
+      design,
+      kind,
+      id,
+      parentId,
+      submitted,
+      setupDefault,
+    );
     if (!check.ok) {
       refuse(submitted, check.reason);
       return;
@@ -243,7 +285,14 @@ function CreateEntryBody({
     try {
       result = await onAdd((current) => {
         // Placed from the latest design, so fast adds take separate slots.
-        const next = addElement(current, kind, id, parentId, submitted);
+        const next = addElement(
+          current,
+          kind,
+          id,
+          parentId,
+          submitted,
+          setupDefault,
+        );
         if (!next.ok) throw new SandboxCommandError(next.reason);
         return next.design;
       });
@@ -287,6 +336,7 @@ function CreateEntryBody({
       }}
       onAdd={() => void add()}
       onDone={onClose}
+      onFromTemplate={onFromTemplate}
     />
   );
 }
@@ -313,6 +363,8 @@ export type CreateEntryFormProps = {
   onEnter: () => void;
   onAdd: () => void;
   onDone: () => void;
+  /** The department entry's "From a template"; absent for other kinds. */
+  onFromTemplate?: () => void;
 };
 
 /** The entry's controls, without the popover: controlled by `CreateEntry`. */
@@ -331,6 +383,7 @@ export function CreateEntryForm({
   onEnter,
   onAdd,
   onDone,
+  onFromTemplate,
 }: CreateEntryFormProps) {
   const id = useId();
   const refusalId = `${id}-refusal`;
@@ -473,10 +526,24 @@ export function CreateEntryForm({
         data-entry-footer=""
         className={cn(
           "flex items-center gap-2 border-t",
-          sheet ? "px-4 pt-2.5 pb-4" : "px-3.5 py-2.5",
+          sheet ? "flex-wrap px-4 pt-2.5 pb-4" : "px-3.5 py-2.5",
         )}
       >
-        {/* The department entry's "From a template" link (FAST-7) goes here. */}
+        {kind === "department" && onFromTemplate ? (
+          <Button
+            type="button"
+            variant="ghost"
+            className={cn(
+              control,
+              "gap-1.5 px-2 whitespace-nowrap text-[var(--action-text)]",
+              sheet ? "w-full justify-start" : "-ml-2",
+            )}
+            onClick={onFromTemplate}
+          >
+            <FileStack aria-hidden="true" />
+            From a template
+          </Button>
+        ) : null}
         <div className={cn("flex gap-1.5", sheet ? "flex-1" : "ml-auto")}>
           <Button
             type="button"

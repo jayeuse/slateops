@@ -23,6 +23,10 @@ import {
   PublishChangeGroups,
   type PublishReviewDesign,
 } from "./publish-change-groups";
+import { SetupControl } from "./setup-popover";
+import { departmentSetup } from "../domain/department-setup";
+import type { DepartmentSetup } from "../domain/model";
+import type { SandboxCommandResult } from "../state/commands";
 import {
   publicationRefusalBlockers,
   type SandboxPublication,
@@ -52,6 +56,17 @@ type Props = {
     idempotencyKey: string;
   }) => Promise<SandboxPublication>;
   onPublished: (publication: SandboxPublication) => void;
+  /**
+   * FIT-3 (plan 11.3, DQ4): one Setup toggle of a new department, applied to
+   * the draft through the Build save queue. On a conflict or a failed save
+   * the page closes the review and shows its alert; the review shows any
+   * other refusal itself.
+   */
+  onSetupChange?: (
+    departmentId: string,
+    item: keyof DepartmentSetup,
+    on: boolean,
+  ) => Promise<SandboxCommandResult<unknown>>;
 };
 
 export function publicationIdempotencyKey(
@@ -105,10 +120,21 @@ export function ReviewPublishDialog({
   onPreview,
   onPublish,
   onPublished,
+  onSetupChange,
 }: Props) {
   const [preview, setPreview] = useState<SandboxPublicationPreview | null>(
     null,
   );
+  // The draft revision the shown review was made from. A newer revision
+  // keeps the list on screen until the next review replaces it.
+  const [previewRevision, setPreviewRevision] = useState<number | null>(null);
+  const stale = preview !== null && previewRevision !== expectedRevision;
+  // Setup toggles on their way to the draft; the last one shows at once
+  // (FIT-3). Each leaves the list when its own change settles.
+  const [pendingSetups, setPendingSetups] = useState<
+    ReadonlyArray<{ departmentId: string; setup: DepartmentSetup }>
+  >([]);
+  const pendingSetup = pendingSetups.at(-1) ?? null;
   const [password, setPassword] = useState("");
   const [note, setNote] = useState("");
   // One request at a time: loading the review, or publishing it.
@@ -119,6 +145,10 @@ export function ReviewPublishDialog({
   // next to the password and Publish that caused them.
   const [errorFailure, setError] = useErrorText();
   const error = errorFailure?.message ?? "";
+  // A refused Setup toggle (NB-5) shows in the same place. It stays until
+  // the next toggle or the next open, so the save it waited for and the
+  // review after it do not clear it at once.
+  const [setupError, setSetupError] = useState("");
   const [publishErrorFailure, setPublishError] = useErrorText();
   const publishError = publishErrorFailure?.message ?? "";
   const [passwordRejected, setPasswordRejected] = useState(false);
@@ -131,12 +161,20 @@ export function ReviewPublishDialog({
   // round number also drops a review that finishes after the dialog closed.
   const round = useRef(0);
   const autoReviewed = useRef<number | null>(null);
+  const wasOpen = useRef(false);
 
   useEffect(() => {
     round.current += 1;
     autoReviewed.current = null;
+    const opened = open && !wasOpen.current;
+    wasOpen.current = open;
     if (!open) return;
-    setPreview(null);
+    // Only an open starts empty; a new revision during an open review keeps
+    // the list until the next review replaces it in place (plan 11.3).
+    if (opened) {
+      setPreview(null);
+      setSetupError("");
+    }
     setError("");
     setPublishError("");
     setPasswordRejected(false);
@@ -145,15 +183,37 @@ export function ReviewPublishDialog({
   useEffect(() => onPendingChange?.(pending), [onPendingChange, pending]);
   useEffect(() => () => onPendingChange?.(false), [onPendingChange]);
 
+  // A failed second review removes the list and the Setup control that had
+  // focus; focus then moves to Try again, not to the page (CI run
+  // 43029850886).
+  const retryRef = useRef<HTMLButtonElement>(null);
+  const focusRetry = useRef(false);
+  useEffect(() => {
+    if (!focusRetry.current || busy !== null || preview !== null) return;
+    focusRetry.current = false;
+    retryRef.current?.focus();
+  }, [busy, preview]);
   async function review() {
     const current = round.current;
+    const kept = preview !== null;
+    const revision = expectedRevision;
     setBusy("review");
     setError("");
     try {
       const next = await onPreview();
-      if (round.current === current) setPreview(next);
+      if (round.current === current) {
+        setPreview(next);
+        setPreviewRevision(revision);
+      }
     } catch (reason) {
-      if (round.current === current) setError(errorMessage(reason), reason);
+      if (round.current === current) {
+        // A failed second review drops the kept list, so the footer offers
+        // today's "Try again" (plan 11.3, "Second review fails").
+        setPreview(null);
+        setPreviewRevision(null);
+        setError(errorMessage(reason), reason);
+        focusRetry.current = kept;
+      }
     } finally {
       setBusy(null);
     }
@@ -165,7 +225,7 @@ export function ReviewPublishDialog({
     void review();
   }, [open, expectedRevision, disabled, pending]);
   async function publish() {
-    if (!preview || !password || blockers.length) return;
+    if (!preview || stale || !password || blockers.length) return;
     setBusy("publish");
     setPublishError("");
     setPasswordRejected(false);
@@ -214,6 +274,55 @@ export function ReviewPublishDialog({
     : blocked
       ? "Fix the blocked items, then reopen this review."
       : "";
+  // FIT-3: one toggle saves through the queue, then the review runs again by
+  // itself. The control waits while a save or a review holds the draft.
+  const setupSaving = pendingSetup !== null;
+  const setupHeld = disabled || pending || setupSaving;
+  async function changeSetup(
+    departmentId: string,
+    setup: DepartmentSetup | undefined,
+    item: keyof DepartmentSetup,
+    on: boolean,
+  ) {
+    if (!onSetupChange || setupHeld) return;
+    const toggle = {
+      departmentId,
+      setup: { ...departmentSetup({ setup }), [item]: on },
+    };
+    setSetupError("");
+    setPendingSetups((current) => [...current, toggle]);
+    try {
+      const result = await onSetupChange(departmentId, item, on);
+      // A conflict or a failed save closes the review in the page, which
+      // shows its alert (N1 rule 3, B5c). Any other refusal is a hold: the
+      // review stays and says why where it shows its errors (NB-5).
+      if (!result.ok) setSetupError(result.error);
+    } finally {
+      setPendingSetups((current) =>
+        current.filter((entry) => entry !== toggle),
+      );
+    }
+  }
+  const shownDesign: PublishReviewDesign = pendingSetup
+    ? {
+        ...design,
+        departments: design.departments.map((item) =>
+          item.id === pendingSetup.departmentId
+            ? { ...item, setup: pendingSetup.setup }
+            : item,
+        ),
+      }
+    : design;
+  const reviewing = busy === "review" || stale;
+  // Why Publish waits: the setup save, then the review it starts, then the
+  // password (DESIGN.md Sandbox "Dialogs").
+  const publishReason = setupSaving
+    ? "Saving…"
+    : preview && reviewing
+      ? "Preparing your review…"
+      : !password && !(disabled || pending || blocked)
+        ? "Enter your password to publish."
+        : null;
   // Cancel stays available while the review loads; only a publish in flight
   // holds the dialog open.
   const cancel = (
@@ -240,13 +349,13 @@ export function ReviewPublishDialog({
           closeDisabled={busy === "publish"}
           onClose={() => onOpenChange(false)}
         />
-        {error ? (
+        {error || setupError ? (
           <Alert
             role="alert"
             variant="destructive"
-            reference={errorFailure?.reference}
+            reference={error ? errorFailure?.reference : undefined}
           >
-            {error}
+            {error || setupError}
           </Alert>
         ) : null}
         {blocked ? (
@@ -276,7 +385,7 @@ export function ReviewPublishDialog({
             </ul>
           </Alert>
         ) : null}
-        {busy === "review" ? (
+        {busy === "review" && !preview ? (
           <div role="status" className="grid gap-3">
             <p className="text-muted-foreground text-sm">
               Preparing your review…
@@ -297,7 +406,13 @@ export function ReviewPublishDialog({
                 </ul>
               </Alert>
             ) : null}
-            <section>
+            {reviewing ? (
+              // A second review: the list stays, one line says why.
+              <p role="status" className="text-muted-foreground text-sm">
+                Preparing your review…
+              </p>
+            ) : null}
+            <section aria-busy={reviewing || undefined}>
               <h3 data-slot="section-title" className="font-medium">
                 Changes
               </h3>
@@ -305,7 +420,27 @@ export function ReviewPublishDialog({
                 <div className="mt-2">
                   <PublishChangeGroups
                     changes={preview.changes}
-                    design={design}
+                    design={shownDesign}
+                    departmentControl={
+                      onSetupChange
+                        ? (department) => (
+                            <SetupControl
+                              name={department.name}
+                              departmentIndex={department.index}
+                              setup={department.setup}
+                              held={setupHeld}
+                              onToggle={(item, on) =>
+                                void changeSetup(
+                                  department.id,
+                                  department.setup,
+                                  item,
+                                  on,
+                                )
+                              }
+                            />
+                          )
+                        : undefined
+                    }
                   />
                 </div>
               ) : (
@@ -388,16 +523,17 @@ export function ReviewPublishDialog({
               <DialogFooter className="mt-0 flex-row justify-end">
                 {cancel}
                 {/* Waiting only for the password, Publish says so (S26). */}
-                <DisabledReason
-                  reason={
-                    !password && !(disabled || pending || blocked)
-                      ? "Enter your password to publish."
-                      : null
-                  }
-                >
+                <DisabledReason stable reason={publishReason}>
                   <Button
                     className="min-h-11"
-                    disabled={disabled || pending || blocked || !password}
+                    disabled={
+                      disabled ||
+                      pending ||
+                      blocked ||
+                      stale ||
+                      setupSaving ||
+                      !password
+                    }
                     onClick={() => void publish()}
                   >
                     {busy === "publish" ? "Publishing…" : "Publish changes"}
@@ -413,6 +549,7 @@ export function ReviewPublishDialog({
                   reason={disabled ? "Finish the current change first." : null}
                 >
                   <Button
+                    ref={retryRef}
                     className="min-h-11"
                     disabled={disabled}
                     onClick={() => void review()}

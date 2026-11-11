@@ -217,6 +217,7 @@ class PeopleWire:
                 "inactive_people": 1,
                 "as_of": STAMP,
                 "inactive_days": query.inactive_days,
+                "departments_without_manager": [],
             }
             if self.fault == "summary_count":
                 body["admins_without_mfa"] = 4

@@ -87,6 +87,7 @@ import {
 } from "./state/document-session";
 import {
   addedElementIds,
+  refusalClosesReview,
   classifyDesignChange,
   confirmQueuedSave,
   designAddHoldReason,
@@ -114,6 +115,7 @@ import { TriggerLeaveDialog } from "./components/trigger-leave-dialog";
 import { DisabledReason } from "@/components/ui/disabled-reason";
 import { TestWorkspace } from "./components/test-workspace";
 import { ReviewPublishDialog } from "./components/review-publish-dialog";
+import { withSetupItem } from "./domain/department-setup";
 import { SandboxHeaderActions } from "./components/sandbox-header-actions";
 import {
   SandboxHistoryButtons,
@@ -1956,6 +1958,7 @@ function SandboxWorkspace() {
                 }),
             }}
             onNewTrigger={newTriggerFromBuild}
+            publishedVersionId={session?.latestPublishedVersion?.id ?? null}
           />
         ) : null}
         {section === "Triggers" && session ? (
@@ -2147,6 +2150,17 @@ function SandboxWorkspace() {
                 expectedRevision: session.revision,
               })
             }
+            onSetupChange={async (departmentId, item, on) => {
+              // The same change as Build's Setup popover (DQ4).
+              const result = await change((current) =>
+                withSetupItem(current, departmentId, item, on),
+              );
+              // A conflict or a failed save closes the review; the page
+              // alert above Build says what happened (N1 rule 3, B5c).
+              if (refusalClosesReview(result, conflictRef.current !== null))
+                setReviewOpen(false);
+              return result;
+            }}
             onPublish={({ preview, password, note, idempotencyKey }) =>
               publishSandbox({
                 expectedRevision: session.revision,

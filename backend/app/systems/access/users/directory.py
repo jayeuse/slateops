@@ -19,6 +19,7 @@ from app.common.listing import (
 from app.systems.access.identity.eligibility import identity_eligible_clause
 from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
+from app.systems.access.policy.readers import departments_without_manager_statement
 from app.systems.access.users.eligibility import established_user_clause
 from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import Membership, User, UserRole
@@ -300,6 +301,7 @@ def directory_summary(
         ).select_from(User).join(Membership, Membership.user_id == User.id)
         .where(Membership.org_id == org_id)
     ).one()
+    without_manager = db.scalars(departments_without_manager_statement(now=now)).all()
     return UserSummaryResponse(
         admins_without_mfa=counts[0],
         admins_mfa_unknown=counts[1],
@@ -307,4 +309,5 @@ def directory_summary(
         inactive_people=counts[3],
         as_of=now,
         inactive_days=inactive_days,
+        departments_without_manager=list(without_manager),
     )

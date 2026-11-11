@@ -29,6 +29,27 @@ export function getWorkspaceAppearance(signal?: AbortSignal) {
   });
 }
 
+/**
+ * The derived items a department added in the Sandbox starts with (BE-SD6,
+ * SD2). Every item is on unless an administrator changed it in Manage.
+ */
+const departmentSetupDefaultsSchema = z.object({
+  groups: z.boolean(),
+  dashboard: z.boolean(),
+  category: z.boolean(),
+  channel: z.boolean(),
+});
+export type DepartmentSetupDefaults = z.output<
+  typeof departmentSetupDefaultsSchema
+>;
+
+const SETUP_DEFAULT_KEYS = [
+  "groups",
+  "dashboard",
+  "category",
+  "channel",
+] as const satisfies readonly (keyof DepartmentSetupDefaults)[];
+
 const workspaceCommonProfileSchema = z.object({
   id: z.uuid(),
   display_name: z.string().min(1).max(200),
@@ -42,6 +63,10 @@ const workspaceCommonProfileSchema = z.object({
   week_start: z.enum(["monday", "sunday"]),
   business_hours: z.string().max(200),
   theme: organizationThemeSchema,
+  // Required by the contract since BE-SD6; a reply without it shows the
+  // "New departments" group with an "Unavailable" row, and the Sandbox
+  // writes no default.
+  department_setup_defaults: departmentSetupDefaultsSchema.optional(),
   revision: z.number().int().positive(),
 });
 const workspaceFullProfileSchema = workspaceCommonProfileSchema.extend({
@@ -88,6 +113,16 @@ const workspaceSettingsPatchSchema = z
     week_start: z.enum(["monday", "sunday"]).optional(),
     business_hours: z.string().trim().max(200).optional(),
     theme: organizationThemeSchema.optional(),
+    // BE-SD6 merges a subset: only the changed items are sent.
+    department_setup_defaults: z
+      .object({
+        groups: z.boolean().optional(),
+        dashboard: z.boolean().optional(),
+        category: z.boolean().optional(),
+        channel: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .refine((fields) =>
     Object.entries(fields).some(
@@ -157,9 +192,17 @@ export function workspaceCalendarQueryOptions() {
   });
 }
 
-const workspaceLifecycleSchema = z.object({ purge_enabled: z.boolean() });
+const workspaceLifecycleSchema = z.object({
+  purge_enabled: z.boolean(),
+  // The Sandbox's new-department default (FIT-4) rides on this same read.
+  department_setup_defaults: departmentSetupDefaultsSchema.optional(),
+});
 
-/** The server owns permanent-deletion availability; it is not a workspace edit. */
+/**
+ * The server owns permanent-deletion availability; it is not a workspace
+ * edit. The same read carries the saved new-department setup default, so
+ * the Sandbox needs no request of its own for it.
+ */
 export function getWorkspaceLifecycleSettings(signal?: AbortSignal) {
   return apiFetch("/workspace", workspaceLifecycleSchema, {
     cache: "no-store",
@@ -217,7 +260,11 @@ export type WorkspaceSettingsFormFields = {
   contactPhone?: string;
   postalAddress?: string;
 };
-export type WorkspaceSettingsFormDraft = Partial<WorkspaceSettingsFormFields>;
+export type WorkspaceSettingsFormDraft =
+  Partial<WorkspaceSettingsFormFields> & {
+    /** The "New departments" boxes; absent while they equal the saved value. */
+    setupDefaults?: DepartmentSetupDefaults;
+  };
 export type WorkspaceProfileField =
   | "legalName"
   | "description"
@@ -339,8 +386,54 @@ export function workspaceSettingsPatch(
       patch[profileKeys[key]] = normalized;
   }
 
+  const savedDefaults = workspace.department_setup_defaults;
+  if (draft.setupDefaults !== undefined && savedDefaults) {
+    const changed = SETUP_DEFAULT_KEYS.filter(
+      (key) => draft.setupDefaults![key] !== savedDefaults[key],
+    );
+    if (changed.length)
+      patch.department_setup_defaults = Object.fromEntries(
+        changed.map((key) => [key, draft.setupDefaults![key]]),
+      );
+  }
+
   if (Object.keys(patch).length === 1) return null;
   return patch;
+}
+
+/** Each changed field is one unsaved change; each changed box is one too. */
+export function workspacePatchChangeCount(
+  patch: ManageWorkspaceSettingsPatch | null,
+): number {
+  if (!patch) return 0;
+  return Object.entries(patch).reduce(
+    (count, [key, value]) =>
+      key === "revision"
+        ? count
+        : key === "department_setup_defaults" && value
+          ? count + Object.keys(value).length
+          : count + 1,
+    0,
+  );
+}
+
+/** Whether a read shows every value of a patch (a lost response's check). */
+export function workspacePatchApplied(
+  current: ManageWorkspaceProfile,
+  patch: ManageWorkspaceSettingsPatch,
+): boolean {
+  const values = new Map(Object.entries(current));
+  return Object.entries(patch).every(([key, value]) => {
+    if (key === "revision") return true;
+    if (key !== "department_setup_defaults") return values.get(key) === value;
+    const saved = current.department_setup_defaults;
+    return (
+      saved !== undefined &&
+      Object.entries(value ?? {}).every(
+        ([item, on]) => saved[item as keyof DepartmentSetupDefaults] === on,
+      )
+    );
+  });
 }
 
 export function getManageWorkspace(

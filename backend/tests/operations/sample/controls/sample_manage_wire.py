@@ -37,6 +37,9 @@ def _workspace_profile(dataset):
         "theme": "stockroom",
         "invitation_expiry_days": 7,
         "guest_duration_days": 30,
+        "department_setup_defaults": dict.fromkeys(
+            ("groups", "dashboard", "category", "channel"), True
+        ),
         "revision": 3,
         "created_at": "2026-10-01T00:00:00Z",
         "updated_at": "2026-10-01T00:00:00Z",

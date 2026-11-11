@@ -33,8 +33,12 @@ export interface SandboxInspectorProps {
   onConnect?: (moduleId: string, anchor: HTMLElement) => void;
   /** "New trigger" in a module's item menu (TRIG-8); absent until wired. */
   onNewTrigger?: (moduleId: string) => void;
+  /** "Setup…" in a new department's item menu (FIT-1). */
+  onSetup?: (departmentId: string, anchor: HTMLElement) => void;
   /** A tree item took or lost focus: its element's bar shows on the canvas. */
   onFocusItem?: (cellId: string | null) => void;
+  /** An entry or popover of Build's create surface is open or opening. */
+  createOpen?: boolean;
   /** Rows whose add is still saving (the saving mark). */
   savingIds?: ReadonlySet<string>;
   /** The newest added row, tinted until the next add. */
@@ -45,6 +49,8 @@ export interface SandboxInspectorProps {
     closed: boolean;
     canPurge: boolean;
     disabled: boolean;
+    /** An open department with no live binding: Setup applies (FIT-1). */
+    setup?: boolean;
   };
   onPurge?: (target: SandboxInspectorTarget) => SandboxCommand;
   onEditingChange?: (editing: boolean) => void;

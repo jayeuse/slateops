@@ -17,7 +17,7 @@ from app.systems.sandbox.derived.actions import (
     follow_steps,
     publication_counts,
 )
-from app.systems.sandbox.designs.schemas import DesignField, TriggerDocument
+from app.systems.sandbox.designs.schemas import DepartmentSetup, DesignField, TriggerDocument
 from app.systems.sandbox.fields.models import FieldType
 from app.systems.sandbox.fields.validation import field_config
 from app.systems.sandbox.publications.close_rules import _module_has_unmanaged_fields
@@ -312,8 +312,8 @@ def test_closed_structure_names_do_not_block_later_active_names() -> None:
     assert not structure_name_blockers(document)
 
 
-def _outcome(name: str, *, closed: bool = False, created: bool = False, board=None):
-    return DepartmentOutcome("dep-a", name, closed, created, board)
+def _outcome(name: str, *, closed: bool = False, created: bool = False, board=None, setup=None):
+    return DepartmentOutcome("dep-a", name, closed, created, board, setup)
 
 
 def test_sd_c1_c8_derived_changes_create_the_set_only_for_a_new_open_department() -> None:
@@ -368,6 +368,47 @@ def test_sd_c1_counts_name_categories_and_every_derived_kind() -> None:
         "categories": 1,
         "channels": 1,
     }
+
+
+@pytest.mark.parametrize(
+    ("cleared", "kinds", "counts"),
+    [
+        pytest.param(
+            "channel",
+            ["board", "group", "group", "group", "dashboard", "category"],
+            (3, 1, 1, 0),
+            id="sd-c18-channel",
+        ),
+        pytest.param(
+            "category",
+            ["board", "group", "group", "group", "dashboard", "channel"],
+            (3, 1, 0, 1),
+            id="sd14-category",
+        ),
+        pytest.param(
+            "groups",
+            ["board", "dashboard", "category", "channel"],
+            (0, 1, 1, 1),
+            id="all-three-groups",
+        ),
+        pytest.param(
+            "dashboard",
+            ["board", "group", "group", "group", "category", "channel"],
+            (3, 0, 1, 1),
+            id="dashboard",
+        ),
+    ],
+)
+def test_sd_c18_a_cleared_setup_item_is_absent_from_the_changes_and_counts(
+    cleared: str, kinds: list[str], counts: tuple[int, int, int, int]
+) -> None:
+
+    setup = DepartmentSetup.model_validate({cleared: False})
+    changes = derived_changes([_outcome("Sales", created=True, setup=setup)])
+    assert [c.kind for c in changes] == kinds
+    tally = publication_counts(changes)
+    assert (tally.groups, tally.dashboards, tally.categories, tally.channels) == counts
+    assert tally.boards == 1
 
 
 def test_sd_c22_a_150_character_department_name_gives_labels_the_review_accepts() -> None:

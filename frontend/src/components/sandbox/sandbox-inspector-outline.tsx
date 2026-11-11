@@ -56,7 +56,9 @@ type OutlineProps = Pick<
   | "onAddRelationship"
   | "onConnect"
   | "onNewTrigger"
+  | "onSetup"
   | "onFocusItem"
+  | "createOpen"
   | "savingIds"
   | "newestId"
   | "onDuplicate"
@@ -129,6 +131,32 @@ export function revealOutlineRow(
     `[data-outline-id="${CSS.escape(id)}"]`,
   );
   if (row?.getClientRects().length) row.scrollIntoView({ block: "nearest" });
+}
+
+/**
+ * The letter a key types into the tree's type-ahead (the Tree Keys Rule), or
+ * null: only a plain letter on a tree item, and never while an entry or a
+ * popover the tree opened is open or opening, so a name typed into it never
+ * moves focus in the tree (TASK-0050 D-1).
+ */
+export function treeTypeAheadLetter(key: {
+  key: string;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  onTreeItem: boolean;
+  createOpen: boolean;
+}): string | null {
+  if (
+    key.key.length !== 1 ||
+    key.altKey ||
+    key.ctrlKey ||
+    key.metaKey ||
+    !key.onTreeItem ||
+    key.createOpen
+  )
+    return null;
+  return key.key.toLowerCase();
 }
 
 /** The tree key of an "Add module" or "Add field" item. */
@@ -233,9 +261,11 @@ export function SandboxInspectorOutline({
   onAddRelationship,
   onConnect,
   onNewTrigger,
+  onSetup,
   onFocusItem,
   savingIds,
   newestId = null,
+  createOpen = false,
   onDuplicate,
   onToggleLifecycle,
   lifecycleState,
@@ -390,13 +420,15 @@ export function SandboxInspectorOutline({
         beginEdit(key, itemName(key));
         return;
     }
-    if (
-      event.key.length === 1 &&
-      !event.altKey &&
-      !event.ctrlKey &&
-      !event.metaKey
-    ) {
-      const letter = event.key.toLowerCase();
+    const letter = treeTypeAheadLetter({
+      key: event.key,
+      altKey: event.altKey,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      onTreeItem: target === item,
+      createOpen,
+    });
+    if (letter !== null) {
       const match = [...items.slice(index + 1), ...items.slice(0, index)].find(
         (other) =>
           !other.dataset.outlineId?.startsWith("add:") &&
@@ -495,6 +527,19 @@ export function SandboxInspectorOutline({
           // Focus returns to this row while the move to Triggers waits for
           // the save queue; Triggers then focuses its Event.
           kind === "module" && onNewTrigger ? () => onNewTrigger(id) : undefined
+        }
+        onSetup={
+          // The keyboard route to Setup: the popover anchors to this row.
+          kind === "department" && live?.setup && onSetup
+            ? () => {
+                const anchor = outlineRef.current?.querySelector<HTMLElement>(
+                  `[data-outline-id="${CSS.escape(id)}"]`,
+                );
+                if (!anchor) return;
+                menuLeavesFocus.current = true;
+                onSetup(id, anchor);
+              }
+            : undefined
         }
       />
     );

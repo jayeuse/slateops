@@ -6,7 +6,15 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from babel.core import Locale, UnknownLocaleError
 from babel.numbers import is_currency
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from app.common.normalization import normalize_email
 from app.core.config import get_settings
@@ -29,6 +37,32 @@ def _trim_optional(value: Any) -> Any:
     return value
 
 
+class DepartmentSetupDefaults(BaseModel):
+    """The setup items that a department added in the Sandbox starts with (BE-SD6)."""
+
+    groups: bool
+    dashboard: bool
+    category: bool
+    channel: bool
+
+
+class DepartmentSetupDefaultsUpdate(_WorkspaceRequest):
+    """The items to change; an omitted item keeps its saved value."""
+
+    groups: StrictBool | None = None
+    dashboard: StrictBool | None = None
+    category: StrictBool | None = None
+    channel: StrictBool | None = None
+
+    @model_validator(mode="after")
+    def require_items(self) -> "DepartmentSetupDefaultsUpdate":
+        if not self.model_fields_set:
+            raise ValueError("At least one setup item is required")
+        if any(getattr(self, item) is None for item in self.model_fields_set):
+            raise ValueError("A setup item must be true or false")
+        return self
+
+
 class WorkspaceUpdate(_WorkspaceRequest):
     revision: int = Field(ge=1)
     display_name: str | None = Field(default=None, min_length=1, max_length=200)
@@ -47,6 +81,7 @@ class WorkspaceUpdate(_WorkspaceRequest):
     theme: WorkspaceTheme | None = None
     invitation_expiry_days: int | None = Field(default=None, ge=1, le=365)
     guest_duration_days: int | None = Field(default=None, ge=1, le=365)
+    department_setup_defaults: DepartmentSetupDefaultsUpdate | None = None
 
     @field_validator(
         "display_name",
@@ -136,6 +171,7 @@ class WorkspaceUpdate(_WorkspaceRequest):
             "week_start",
             "business_hours",
             "theme",
+            "department_setup_defaults",
         } & self.model_fields_set:
             if getattr(self, field) is None:
                 raise ValueError(f"{field} must not be null")
@@ -159,6 +195,7 @@ class WorkspaceCommonResponse(BaseModel):
     theme: WorkspaceTheme
     invitation_expiry_days: int
     guest_duration_days: int
+    department_setup_defaults: DepartmentSetupDefaults
     revision: int
     created_at: datetime
     updated_at: datetime

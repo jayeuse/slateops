@@ -1,4 +1,4 @@
-import type { FieldConfig, FieldTypeName } from "./model";
+import type { DepartmentSetup, FieldConfig, FieldTypeName } from "./model";
 
 /** The Sandbox document format version that this client reads and writes. */
 export const SANDBOX_DOCUMENT_SCHEMA_VERSION = 4;
@@ -46,6 +46,8 @@ export type SandboxDocumentDepartment = {
   id: string;
   name: string;
   closed: boolean;
+  /** BE-SD5: absent unless set; a document without it keeps its stored form. */
+  setup?: DepartmentSetup;
 };
 export type SandboxDocumentModule = {
   id: string;

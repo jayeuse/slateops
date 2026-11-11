@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   ShieldQuestion,
   UserRound,
+  UserRoundCog,
   UserRoundX,
   UsersRound,
 } from "lucide-react";
@@ -41,6 +42,7 @@ import {
   signInSegmentWords,
   type AttentionItem,
   type DepartmentAccessRow,
+  type NoManagerItem,
   type SignInBar,
   type SignInResult,
   type SignInSegmentId,
@@ -631,10 +633,22 @@ const attentionIcons: Record<AttentionItem["id"], ReactNode> = {
 
 export function NeedsAttention({
   state,
+  onCreateGroup,
 }: {
-  state: BlockState<{ items: AttentionItem[]; clear: string[] }>;
+  state: BlockState<{
+    items: AttentionItem[];
+    /** Departments without a manager; they come last. */
+    departments: NoManagerItem[];
+    clear: string[];
+  }>;
+  /** "Add a manager" when the department has no managers group. */
+  onCreateGroup: () => void;
 }) {
   const [bodyRef, cue] = useScrollCue();
+  const total =
+    state.status === "ready"
+      ? state.data.items.length + state.data.departments.length
+      : 0;
   return (
     <Panel
       id="overview-attention"
@@ -642,11 +656,7 @@ export function NeedsAttention({
       title="Needs attention"
       bodyRef={bodyRef}
       more={cue.more}
-      end={
-        state.status === "ready" && state.data.items.length ? (
-          <span className="tabular-nums">{state.data.items.length}</span>
-        ) : null
-      }
+      end={total ? <span className="tabular-nums">{total}</span> : null}
     >
       {state.status === "error" ? (
         <BlockError
@@ -669,17 +679,39 @@ export function NeedsAttention({
         >
           {state.status === "ready" ? (
             <>
-              {state.data.items.length ? (
+              {total ? (
                 <ul aria-label="Items" className="divide-y">
                   {state.data.items.map((item) => (
-                    <AttentionLine key={item.id} item={item} />
+                    <AttentionLine
+                      key={item.id}
+                      tone={item.tone}
+                      icon={attentionIcons[item.id]}
+                      bold={item.countText}
+                      text={item.text}
+                      detail={item.detail}
+                      verb={item.verb}
+                      action={{ kind: "link", href: item.href }}
+                    />
+                  ))}
+                  {state.data.departments.map((department) => (
+                    <AttentionLine
+                      key={`department:${department.id}`}
+                      tone={department.tone}
+                      icon={<UserRoundCog />}
+                      bold={department.name}
+                      name
+                      text={department.text}
+                      verb={department.verb}
+                      action={department.action}
+                      onCreateGroup={onCreateGroup}
+                    />
                   ))}
                 </ul>
               ) : null}
               <p
                 className={cn(
                   "text-muted-foreground flex items-start gap-2.5 px-4 py-1.5 text-sm",
-                  state.data.items.length && "border-t",
+                  total && "border-t",
                 )}
               >
                 <Check
@@ -701,46 +733,76 @@ export function NeedsAttention({
   );
 }
 
-function AttentionLine({ item }: { item: AttentionItem }) {
+/**
+ * One Needs attention row: a toned icon, a bold part (a count, or a
+ * department name that wraps), the words, and one verb that opens a page
+ * or, for a department with no managers group, the Create group dialog.
+ */
+function AttentionLine({
+  tone,
+  icon,
+  bold,
+  name = false,
+  text,
+  detail,
+  verb,
+  action,
+  onCreateGroup,
+}: {
+  tone: AttentionItem["tone"];
+  icon: ReactNode;
+  bold: string;
+  /** The bold part is a name: it wraps and never truncates. */
+  name?: boolean;
+  text: string;
+  detail?: string;
+  verb: string;
+  action: NoManagerItem["action"];
+  onCreateGroup?: () => void;
+}) {
+  const label = `${verb}: ${bold} ${text}`;
+  const verbClass = "min-h-11 px-3 xl:h-8 xl:min-h-8 xl:px-2.5";
   return (
     <li
-      data-tone={item.tone}
+      data-tone={tone}
       className="grid min-h-14 grid-cols-[1.75rem_minmax(0,1fr)_auto] items-center gap-3 px-4 py-1 text-sm xl:min-h-10"
     >
       <span
         aria-hidden="true"
         className={cn(
           "grid size-7 place-items-center rounded-sm [&_svg]:size-4",
-          item.tone === "warn"
+          tone === "warn"
             ? "bg-[var(--warn-tint)] text-[var(--warn-text)]"
             : "bg-muted text-muted-foreground",
         )}
       >
-        {attentionIcons[item.id]}
+        {icon}
       </span>
       <span className="min-w-0">
-        <span className="block">
-          <b className="font-semibold tabular-nums">{item.countText}</b>{" "}
-          {item.text}
+        <span className={cn("block", name && "break-words")}>
+          <b className={cn("font-semibold", !name && "tabular-nums")}>{bold}</b>{" "}
+          {text}
         </span>
-        {item.detail ? (
-          <span className="text-muted-foreground block text-xs">
-            {item.detail}
-          </span>
+        {detail ? (
+          <span className="text-muted-foreground block text-xs">{detail}</span>
         ) : null}
       </span>
-      <Button
-        asChild
-        variant="ghost"
-        className="min-h-11 px-3 xl:h-8 xl:min-h-8 xl:px-2.5"
-      >
-        <GuardedWorkspaceLink
-          href={item.href as Route}
-          aria-label={`${item.verb}: ${item.countText} ${item.text}`}
+      {action.kind === "create" ? (
+        <Button
+          variant="ghost"
+          className={verbClass}
+          aria-label={label}
+          onClick={onCreateGroup}
         >
-          {item.verb}
-        </GuardedWorkspaceLink>
-      </Button>
+          {verb}
+        </Button>
+      ) : (
+        <Button asChild variant="ghost" className={verbClass}>
+          <GuardedWorkspaceLink href={action.href as Route} aria-label={label}>
+            {verb}
+          </GuardedWorkspaceLink>
+        </Button>
+      )}
     </li>
   );
 }

@@ -167,6 +167,7 @@ export type ItemMenuAction =
   | "duplicate"
   | "connect"
   | "newTrigger"
+  | "setup"
   | "delete";
 export type ItemMenuEntry = {
   action: ItemMenuAction;
@@ -178,7 +179,8 @@ export type ItemMenuEntry = {
 /**
  * The item menu of a department, module, or field: the same in the
  * Structure tree and on the canvas (FIND-6). A module adds "Connect…" and,
- * when Triggers can take it, "New trigger" (TRIG-8).
+ * when Triggers can take it, "New trigger" (TRIG-8); a new open department
+ * adds "Setup…".
  */
 export function itemMenuEntries(
   kind: ItemMenuKind,
@@ -190,6 +192,8 @@ export function itemMenuEntries(
     duplicate: boolean;
     connect: boolean;
     newTrigger: boolean;
+    /** The department has no live binding, so Setup applies. */
+    setup?: boolean;
   },
 ): ItemMenuEntry[] {
   const entry = (
@@ -214,14 +218,19 @@ export function itemMenuEntries(
     ...(kind === "module" && options.newTrigger && !options.closed
       ? [entry("newTrigger", "New trigger")]
       : []),
+    // The keyboard route to a new open department's Setup (FIT-1).
+    ...(kind === "department" && options.setup && !options.closed
+      ? [entry("setup", "Setup…")]
+      : []),
     entry("delete", `Delete ${kind}`, true),
   ];
 }
 
-export type ElementBarAction = "module" | "field" | "connect";
+export type ElementBarAction = "module" | "field" | "connect" | "setup";
 
 /**
- * The controls of an element's bar: a department adds modules; a module
+ * The controls of an element's bar: a department adds modules, and a new open
+ * one also holds Setup (FIT-1); a module
  * adds fields and connects, except a closed one, which Connect leaves out of
  * its targets and so connects to nothing (as its item menu has no
  * "Connect…").
@@ -229,7 +238,76 @@ export type ElementBarAction = "module" | "field" | "connect";
 export function elementBarActions(
   kind: "department" | "module",
   closed: boolean,
+  setup = false,
 ): ElementBarAction[] {
-  if (kind === "department") return ["module"];
+  if (kind === "department")
+    return setup && !closed ? ["module", "setup"] : ["module"];
   return closed ? ["field"] : ["field", "connect"];
+}
+
+/** Where a bar sits: next to its element, above it, or inside under its head. */
+export type BarPlace = "beside" | "above" | "inside";
+export type BarPlacement = { left: number; top: number; place: BarPlace };
+
+/** Space between an element and its bar, in screen pixels. */
+export const BAR_GAP = 6;
+
+/**
+ * A department's bar (screen pixels, the canvas pane's top edge at 0). It
+ * tries three places in order and never covers the head band's name or
+ * module count: in the band after the name; above the frame; then, when the
+ * space above is outside the pane, 6px under the band inside the frame, its
+ * right edge under the count's right edge and never left of the identity
+ * mark (a frame narrower than the bar lets it hang past the right edge).
+ */
+export function departmentBarPlacement(measure: {
+  frameTop: number;
+  bandBottom: number;
+  nameRight: number;
+  identityLeft: number;
+  countLeft: number;
+  countRight: number;
+  width: number;
+  height: number;
+}): BarPlacement {
+  const left = measure.nameRight + 8;
+  if (left + measure.width <= measure.countLeft - 8)
+    return {
+      left,
+      top: (measure.frameTop + measure.bandBottom) / 2 - measure.height / 2,
+      place: "beside",
+    };
+  const above = measure.frameTop - measure.height - BAR_GAP;
+  if (above >= 0) return { left, top: above, place: "above" };
+  return {
+    left: Math.max(measure.identityLeft, measure.countRight - measure.width),
+    top: measure.bandBottom + BAR_GAP,
+    place: "inside",
+  };
+}
+
+/**
+ * A module's bar: under the card, where the next field appears; above the
+ * header when the card bottom is out of view; and 6px under the header,
+ * over the first field rows, when the space above is outside the pane too.
+ * It stays aligned left.
+ */
+export function moduleBarPlacement(measure: {
+  left: number;
+  top: number;
+  headerBottom: number;
+  bottom: number;
+  viewHeight: number;
+  height: number;
+}): BarPlacement {
+  const under = measure.bottom + BAR_GAP;
+  if (under + measure.height <= measure.viewHeight - BAR_GAP)
+    return { left: measure.left, top: under, place: "beside" };
+  const above = measure.top - measure.height - BAR_GAP;
+  if (above >= 0) return { left: measure.left, top: above, place: "above" };
+  return {
+    left: measure.left,
+    top: measure.headerBottom + BAR_GAP,
+    place: "inside",
+  };
 }

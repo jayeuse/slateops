@@ -123,6 +123,23 @@ test("confirmed commands mark only the reads they change as stale", async () => 
   expect(stale()).not.toContainEqual(accessKeys.departments("include"));
 });
 
+// SD-C14: after a manager is added to a group, the Overview reads the
+// departments without a manager again instead of showing the cached list.
+test("a group change marks the user summary stale", async () => {
+  const queries = client();
+  for (const days of [1, 7, 30])
+    queries.setQueryData(accessKeys.userSummaryForDays(days), {});
+
+  await afterAccessGroupChange(queries);
+
+  expect(
+    queries
+      .getQueryCache()
+      .findAll({ queryKey: accessKeys.userSummary() })
+      .map((query) => query.state.isInvalidated),
+  ).toEqual([true, true, true]);
+});
+
 test("a two-step observation marks stale every cached read that shows the person's recorded status", async () => {
   const queries = client();
   const other = {

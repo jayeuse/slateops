@@ -9,6 +9,8 @@ import {
 } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import type { DepartmentSetup } from "../domain/model";
 import type { SandboxPublicationChange } from "../state/api";
 
 type Change = SandboxPublicationChange;
@@ -17,7 +19,13 @@ type Change = SandboxPublicationChange;
  * module, setup changes under their department, and the sidebar note.
  */
 export type PublishReviewDesign = {
-  departments: ReadonlyArray<{ id: string; name: string; closed: boolean }>;
+  departments: ReadonlyArray<{
+    id: string;
+    name: string;
+    closed: boolean;
+    /** The draft setup choice (BE-SD5); absent means every item is on. */
+    setup?: DepartmentSetup;
+  }>;
   modules: ReadonlyArray<{
     id: string;
     departmentId: string;
@@ -410,6 +418,18 @@ function waitsForModule(entry: DepartmentEntry, design: PublishReviewDesign) {
 }
 
 /**
+ * The control at the end of a new department's row (plan 11.3, FIT-3); the
+ * review gives it, and the row decides where it shows.
+ */
+export type DepartmentRowControl = (department: {
+  id: string;
+  name: string;
+  /** The department's position in the draft, for its mark. */
+  index: number;
+  setup: DepartmentSetup | undefined;
+}) => ReactNode;
+
+/**
  * One department row with its setup always open: this list is the only place
  * the owner sees what a publish creates (SD6). A nested row shows its chip
  * only when the chip's word differs from its department's.
@@ -417,15 +437,32 @@ function waitsForModule(entry: DepartmentEntry, design: PublishReviewDesign) {
 function DepartmentChanges({
   entry,
   design,
+  control,
 }: {
   entry: DepartmentEntry;
   design: PublishReviewDesign;
+  control?: DepartmentRowControl;
 }) {
   const showActions = useContext(ShowActions);
   const parentWord = entry.change ? chipWord(entry.change) : "Unchanged";
+  // Setup shows only for a department this publish creates open; a closed
+  // new department gets its Board only (plan 11.3).
+  const draftIndex = design.departments.findIndex(
+    (item) => item.id === entry.id,
+  );
+  const draft = design.departments[draftIndex];
+  const setupControl =
+    control && entry.change?.action === "create" && draft && !draft.closed
+      ? control({
+          id: draft.id,
+          name: draft.name,
+          index: draftIndex,
+          setup: draft.setup,
+        })
+      : null;
   return (
     <>
-      <div className="flex items-start gap-2">
+      <div className="flex flex-wrap items-start gap-x-2">
         {entry.change ? (
           <ChangeRow change={entry.change} />
         ) : (
@@ -438,6 +475,17 @@ function DepartmentChanges({
             <span className="min-w-0 flex-1 wrap-anywhere">{entry.name}</span>
           </>
         )}
+        {setupControl ? (
+          // At the end of the row; under the name on a phone.
+          <span
+            className={cn(
+              "-my-1 shrink-0 max-sm:basis-full sm:ml-auto",
+              showActions && "max-sm:pl-20",
+            )}
+          >
+            {setupControl}
+          </span>
+        ) : null}
       </div>
       {waitsForModule(entry, design) ? (
         <p
@@ -488,9 +536,12 @@ const flatRow = (change: Change) => (
 export function PublishChangeGroups({
   changes,
   design,
+  departmentControl,
 }: {
   changes: readonly Change[];
   design: PublishReviewDesign;
+  /** The Setup control of each new open department (FIT-3). */
+  departmentControl?: DepartmentRowControl;
 }) {
   const groups = groupPublicationChanges(changes, design);
   return (
@@ -505,7 +556,11 @@ export function PublishChangeGroups({
           items={groups.departments}
           itemKey={(entry) => entry.id}
           render={(entry) => (
-            <DepartmentChanges entry={entry} design={design} />
+            <DepartmentChanges
+              entry={entry}
+              design={design}
+              control={departmentControl}
+            />
           )}
         />
         <ChangeGroup

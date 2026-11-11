@@ -1,8 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { ArrowDown, ArrowUp, ChevronDown } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowDown, ArrowUp, ChevronDown, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { Input } from "@/components/ui/input";
+import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { AdvancedSection } from "@/components/ui/advanced-section";
 import { DisabledReason } from "@/components/ui/disabled-reason";
@@ -303,12 +304,12 @@ export function buildField(field: Field, draft: FieldDraft): Field | string {
   } else {
     const rawOptions = optionLabels(draft.options);
     if (new Set(rawOptions).size !== rawOptions.length)
-      return "Select options must be unique.";
-    if (rawOptions.length === 0) return "Add at least one select option.";
+      return "Choices must be unique.";
+    if (rawOptions.length === 0) return "Add at least one choice.";
     if (rawOptions.length > 100)
-      return "Select fields support up to 100 options.";
+      return "A Choice list holds up to 100 choices.";
     if (rawOptions.some((option) => option.length > 100))
-      return "Each select option must be 100 characters or fewer.";
+      return "Each choice must be 100 characters or fewer.";
     const draftOptions = selectOptionsForDraft(field, draft);
     const persistedIds = new Map<string, string>();
     const selectOptions = draftOptions.map((option) => {
@@ -319,7 +320,7 @@ export function buildField(field: Field, draft: FieldDraft): Field | string {
     const requestedDefault = draft.defaultValue.trim();
     const defaultValue = persistedIds.get(requestedDefault) ?? "";
     if (requestedDefault && !defaultValue)
-      return "Default value must match a select option.";
+      return "Default value must match a choice.";
     config = {
       kind: "select",
       defaultValue: defaultValue || null,
@@ -378,6 +379,7 @@ export function FieldSettings({
   onPurge,
   draftId,
   onDraftStateChange,
+  publishedType = null,
 }: {
   field: Field;
   index: number;
@@ -397,6 +399,10 @@ export function FieldSettings({
   onPurge?: () => Promise<SandboxCommandResult<unknown>>;
   draftId: string;
   onDraftStateChange: (id: string, dirty: boolean) => void;
+  /** The type the latest published version gives this field, matched on
+   * (module id, field id); null when none is published or it could not be
+   * read (FAST-5). */
+  publishedType?: FieldTypeName | null;
 }) {
   const [draft, setDraft] = useState(() => draftForField(field));
   const closed = lifecycleClosed ?? field.closed;
@@ -439,10 +445,17 @@ export function FieldSettings({
     setError("");
   };
   // Visible labels drop the field name that the row already shows; each
-  // control's accessible name keeps it ("Status options"), which still
+  // control's accessible name keeps it ("Status choices"), which still
   // contains the visible text (WCAG 2.5.3).
   const prefix = field.name;
   const controlId = (suffix: string) => `sandbox-field-${field.id}-${suffix}`;
+  // A warning, not a refusal: the draft may still change, nothing is saved
+  // until "Save field changes", and the publish blocker stays the final check.
+  const publishedTypeChanged =
+    publishedType !== null && draft.type !== publishedType;
+  const publishedWords = publishedType ? fieldTypeLabel(publishedType) : "";
+  // Keep leaves with its notice, so focus moves to the select it set back.
+  const typeSelect = useRef<HTMLSelectElement>(null);
   const closeReason = isRecordTitle
     ? "This is the module's title field."
     : lifecycleDisabled
@@ -465,8 +478,12 @@ export function FieldSettings({
         <PropertyRow id={controlId("type")} label="Type">
           <NativeSelect
             id={controlId("type")}
+            ref={typeSelect}
             aria-label={`${prefix} field type`}
             className="w-full [&_select]:min-h-10"
+            aria-describedby={
+              publishedTypeChanged ? controlId("published-type") : undefined
+            }
             value={draft.type}
             onChange={(event) =>
               update("type", event.target.value as FieldTypeName)
@@ -479,6 +496,33 @@ export function FieldSettings({
             ))}
           </NativeSelect>
         </PropertyRow>
+        {publishedTypeChanged && publishedType ? (
+          <Alert
+            variant="warning"
+            className="grid grid-cols-[1rem_minmax(0,1fr)] gap-x-2 gap-y-1.5 px-3 py-2.5"
+          >
+            <TriangleAlert
+              aria-hidden="true"
+              className="text-warn-text mt-0.5 size-4"
+            />
+            <p id={controlId("published-type")}>
+              {`Published as ${publishedWords}; publish will refuse this change.`}
+            </p>
+            <div className="col-start-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="min-h-11 px-2 xl:min-h-8"
+                onClick={() => {
+                  update("type", publishedType);
+                  typeSelect.current?.focus();
+                }}
+              >
+                {`Keep ${publishedWords}`}
+              </Button>
+            </div>
+          </Alert>
+        ) : null}
         <PropertyRow id={controlId("required")} label="Required" inline>
           <span className="flex min-h-11 items-center xl:min-h-8">
             {/* A 44px hit layer around the 16px box; the label beside it
@@ -492,10 +536,10 @@ export function FieldSettings({
           </span>
         </PropertyRow>
         {draft.type === "Select" ? (
-          <PropertyRow id={controlId("options")} label="Options">
+          <PropertyRow id={controlId("options")} label="Choices">
             <Input
               id={controlId("options")}
-              aria-label={`${prefix} options`}
+              aria-label={`${prefix} choices`}
               value={draft.options}
               placeholder="Open, Closed"
               onChange={(event) => updateOptions(event.target.value)}

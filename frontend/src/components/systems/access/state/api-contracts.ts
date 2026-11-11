@@ -67,6 +67,8 @@ export const userSummarySchema = z.strictObject({
   inactive_people: z.number().int().nonnegative(),
   as_of: dateTime,
   inactive_days: z.number().int().min(INACTIVE_DAYS_MIN).max(INACTIVE_DAYS_MAX),
+  /** Open departments that no active, non-guest, non-administrator manages. */
+  departments_without_manager: z.array(uuid),
 });
 
 /** `users/schemas.py` InvitationResponse. */

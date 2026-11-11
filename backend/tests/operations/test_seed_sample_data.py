@@ -49,6 +49,9 @@ def _workspace(**changes: object) -> dict[str, object]:
         "locale": "en-US",
         "invitation_expiry_days": 7,
         "guest_duration_days": 30,
+        "department_setup_defaults": dict.fromkeys(
+            ("groups", "dashboard", "category", "channel"), True
+        ),
         "revision": 1,
         **changes,
     }
