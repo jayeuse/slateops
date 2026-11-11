@@ -770,3 +770,48 @@ export async function clickBesideBox(
   if (!box) throw new Error("The control has no box");
   await page.mouse.click(box.x + box.width + offset, box.y + box.height / 2);
 }
+
+/**
+ * The add-next entry that is open now (docs/specs/sandbox-ux-redesign.md,
+ * "The entry"): a popover, or a bottom sheet below 768px.
+ */
+export function createEntry(page: Page, title: string): Locator {
+  return page.getByRole("dialog", { name: title, exact: true });
+}
+
+/**
+ * Adds one element per name in an open entry, each with Enter, then ends the
+ * flow with Escape (FAST-1). The name is empty and focused after each add.
+ */
+export async function addInEntry(entry: Locator, names: readonly string[]) {
+  const name = entry.getByRole("textbox", {
+    name: /^(Department|Module|Field) name$/,
+  });
+  for (const value of names) {
+    await name.fill(value);
+    await name.press("Enter");
+    await expect(name).toHaveValue("");
+    await expect(name).toBeFocused();
+  }
+  await name.press("Escape");
+  await expect(entry).toBeHidden();
+}
+
+/** Adds departments from the canvas toolbar's first control (FIND-1). */
+export async function addDepartmentsFromToolbar(
+  page: Page,
+  names: readonly string[],
+) {
+  await page
+    .getByRole("toolbar", { name: "Canvas view controls" })
+    .getByRole("button", { name: "Add department", exact: true })
+    .click();
+  await addInEntry(createEntry(page, "Add department"), names);
+}
+
+/** A department's or module's element bar on the canvas, by element name. */
+export function elementBar(page: Page, name: string): Locator {
+  return page
+    .getByTestId("sandbox-canvas")
+    .getByRole("group", { name: `${name} actions`, exact: true });
+}

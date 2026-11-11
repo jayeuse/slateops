@@ -6,6 +6,7 @@ import {
   designAddHoldReason,
   idleSaveQueue,
   reduceSaveQueue,
+  refusedDesignUpdate,
   saveQueueActive,
   saveQueueConflictDocument,
   saveQueueNeedsSend,
@@ -25,6 +26,7 @@ import {
   undoSandboxCommand,
 } from "../../../src/components/systems/sandbox/state/controller";
 import type { SandboxDocumentResponse } from "../../../src/components/systems/sandbox/state/api";
+import { SandboxCommandError } from "../../../src/components/systems/sandbox/state/commands";
 import type { SandboxDocumentV4 } from "../../../src/components/systems/sandbox/domain/document";
 import type { Design } from "../../../src/components/systems/sandbox/domain/model";
 import { documentTextField } from "../../helpers/sandbox-fixtures";
@@ -408,4 +410,24 @@ test("a publish, lifecycle action or conflict refuses an add with today's words"
 
   for (const [label, flags, expected] of rows)
     expect(designAddHoldReason(flags), label).toBe(expected);
+});
+
+// A design rule an update checks refuses it with its own reason, even while
+// a hold is on; any other failure under a hold reads as a save in flight,
+// and without a hold it is thrown again (Software Architect N4, TASK-0049).
+test("a refused update keeps its own reason under a hold", () => {
+  const hold = "Wait for the current Sandbox action to finish.";
+  const refusal = new SandboxCommandError(
+    "A relationship between these modules already exists.",
+  );
+  expect(refusedDesignUpdate(refusal, hold)).toBe(
+    "A relationship between these modules already exists.",
+  );
+  expect(refusedDesignUpdate(refusal, null)).toBe(
+    "A relationship between these modules already exists.",
+  );
+  expect(refusedDesignUpdate(new Error("bug"), hold)).toBe(
+    "A Sandbox change is already being saved.",
+  );
+  expect(() => refusedDesignUpdate(new Error("bug"), null)).toThrow("bug");
 });

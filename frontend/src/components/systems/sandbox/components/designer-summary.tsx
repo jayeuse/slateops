@@ -5,7 +5,6 @@ import {
   Check,
   CloudUpload,
   LayoutGrid,
-  Plus,
   TableProperties,
   TriangleAlert,
   ZapOff,
@@ -20,8 +19,9 @@ import type {
 
 // Build with nothing selected (docs/specs/sandbox-relayout.md S12): what
 // needs attention (the page footer holds the counts, S26) in the Access overview grammar (a
-// toned icon, a bold count, the words, one verb), or "All clear", then the
-// quiet ways to add to the design.
+// toned icon, a bold count, the words, one verb), or "All clear". An empty
+// design also offers its template here; departments are added from the
+// canvas toolbar and the Structure tree.
 
 const attentionIcons: Record<BuildAttentionKind, ReactNode> = {
   unpublished: <CloudUpload />,
@@ -37,7 +37,6 @@ export function DesignerSummary({
   pending,
   designIsEmpty,
   onAction,
-  onAddDepartment,
   onStartFromTemplate,
 }: {
   items: readonly BuildAttentionItem[];
@@ -46,7 +45,6 @@ export function DesignerSummary({
   pending: boolean;
   designIsEmpty: boolean;
   onAction: (item: BuildAttentionItem) => void;
-  onAddDepartment: () => void;
   onStartFromTemplate: () => void;
 }) {
   return (
@@ -87,18 +85,8 @@ export function DesignerSummary({
           </p>
         )}
       </section>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="max-xl:min-h-11"
-          disabled={pending}
-          onClick={onAddDepartment}
-        >
-          <Plus aria-hidden="true" />
-          Add department
-        </Button>
-        {designIsEmpty ? (
+      {designIsEmpty ? (
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="ghost"
             size="sm"
@@ -108,8 +96,8 @@ export function DesignerSummary({
           >
             Start from a template
           </Button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -4,15 +4,10 @@ import {
   useEffect,
   useRef,
   useState,
-  type DragEvent,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import {
-  searchSandboxStructure,
-  type SandboxFieldType,
-  type SandboxState,
-} from "@/lib/sandbox/model";
+import { searchSandboxStructure, type SandboxState } from "@/lib/sandbox/model";
 import {
   ChevronDown,
   ChevronRight,
@@ -20,6 +15,7 @@ import {
   ChevronsUpDown,
   LocateFixed,
   Pencil,
+  Plus,
   Search,
   Trash2,
 } from "lucide-react";
@@ -37,14 +33,13 @@ import {
 import {
   ContextMenu,
   ContextMenuContent,
-  ContextMenuGroup,
-  ContextMenuItem,
-  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { cn } from "@/lib/utils";
 import type { SandboxCommandResult } from "@/components/systems/sandbox/state/commands";
 import type { SandboxInspectorProps } from "./sandbox-inspector-types";
 import { SectionTitle } from "./sandbox-inspector-shared";
+import { SandboxItemMenuItems } from "./sandbox-item-menu";
 
 type OutlineProps = Pick<
   SandboxInspectorProps,
@@ -59,6 +54,11 @@ type OutlineProps = Pick<
   | "onSelect"
   | "onEdit"
   | "onAddRelationship"
+  | "onConnect"
+  | "onNewTrigger"
+  | "onFocusItem"
+  | "savingIds"
+  | "newestId"
   | "onDuplicate"
   | "onToggleLifecycle"
   | "lifecycleState"
@@ -144,6 +144,17 @@ function selectedClasses(selected: boolean): string {
     : "text-foreground hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)]";
 }
 
+/** The quiet saving mark at a row end: a small ring in muted ink. */
+export function SavingRing() {
+  return (
+    <span
+      aria-hidden="true"
+      data-slot="saving-mark"
+      className="size-2.5 shrink-0 rounded-full border-[1.5px] border-[var(--rule-strong)] border-t-[var(--ink-muted)]"
+    />
+  );
+}
+
 interface OutlineNameProps {
   id: string;
   value: string;
@@ -220,6 +231,11 @@ export function SandboxInspectorOutline({
   onSelect,
   onEdit,
   onAddRelationship,
+  onConnect,
+  onNewTrigger,
+  onFocusItem,
+  savingIds,
+  newestId = null,
   onDuplicate,
   onToggleLifecycle,
   lifecycleState,
@@ -247,6 +263,9 @@ export function SandboxInspectorOutline({
     () => new Set(),
   );
   const outlineRef = useRef<HTMLDivElement>(null);
+  // An item that moves focus elsewhere (Connect…) keeps the
+  // closing menu from returning focus to its row.
+  const menuLeavesFocus = useRef(false);
   const treeRef = useRef<HTMLUListElement>(null);
   // The tree is one Tab stop (roving tabindex): the item focused last, else
   // the selected item, else the first.
@@ -442,60 +461,42 @@ export function SandboxInspectorOutline({
         state.modules.some((item) => item.id === id && item.closed) ||
         state.fields.some((item) => item.id === id && item.closed));
     return (
-      <>
-        <ContextMenuGroup>
-          <ContextMenuItem
-            className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
-            disabled={pending}
-            onClick={() => beginEdit(id, name)}
-          >
-            <Pencil aria-hidden="true" />
-            Rename {kind}
-          </ContextMenuItem>
-          {onToggleLifecycle ? (
-            <ContextMenuItem
-              className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
-              disabled={
-                pending || Boolean(live?.disabled) || editingId !== null
+      <SandboxItemMenuItems
+        kind={kind}
+        closed={closed}
+        canPurge={Boolean(live?.canPurge)}
+        pending={pending}
+        lifecycleDisabled={Boolean(live?.disabled) || editingId !== null}
+        connectDisabled={state.modules.length < 2}
+        onRename={() => beginEdit(id, name)}
+        onDelete={() => onDeleteSelected({ kind, id })}
+        onToggleLifecycle={
+          onToggleLifecycle
+            ? () => void onToggleLifecycle({ kind, id })
+            : undefined
+        }
+        onPurge={onPurge ? () => void onPurge({ kind, id }) : undefined}
+        onDuplicate={
+          onDuplicate ? () => void onDuplicate({ kind, id }) : undefined
+        }
+        onConnect={
+          kind === "module" && onConnect
+            ? () => {
+                const anchor = outlineRef.current?.querySelector<HTMLElement>(
+                  `[data-outline-id="${CSS.escape(id)}"]`,
+                );
+                if (!anchor) return;
+                menuLeavesFocus.current = true;
+                onConnect(id, anchor);
               }
-              onClick={() => void onToggleLifecycle({ kind, id })}
-            >
-              {closed ? "Reopen" : "Close"} {kind}
-            </ContextMenuItem>
-          ) : null}
-          {live?.canPurge && onPurge ? (
-            <ContextMenuItem
-              className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
-              variant="destructive"
-              disabled={pending || live.disabled || editingId !== null}
-              onClick={() => void onPurge({ kind, id })}
-            >
-              Delete {kind} forever
-            </ContextMenuItem>
-          ) : null}
-          {onDuplicate ? (
-            <ContextMenuItem
-              className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
-              disabled={pending}
-              onClick={() => void onDuplicate({ kind, id })}
-            >
-              Duplicate {kind}
-            </ContextMenuItem>
-          ) : null}
-        </ContextMenuGroup>
-        <ContextMenuSeparator />
-        <ContextMenuGroup>
-          <ContextMenuItem
-            className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
-            variant="destructive"
-            disabled={pending}
-            onClick={() => onDeleteSelected({ kind, id })}
-          >
-            <Trash2 aria-hidden="true" />
-            Delete {kind}
-          </ContextMenuItem>
-        </ContextMenuGroup>
-      </>
+            : undefined
+        }
+        onNewTrigger={
+          // Focus returns to this row while the move to Triggers waits for
+          // the save queue; Triggers then focuses its Event.
+          kind === "module" && onNewTrigger ? () => onNewTrigger(id) : undefined
+        }
+      />
     );
   }
 
@@ -582,17 +583,10 @@ export function SandboxInspectorOutline({
     });
   }
 
-  function dragPayload(
-    event: DragEvent<HTMLElement>,
-    kind: string,
-    type?: SandboxFieldType,
-  ) {
-    event.dataTransfer.setData("application/x-sandbox-kind", kind);
-    event.dataTransfer.setData(`application/x-sandbox-kind-${kind}`, kind);
-    if (type)
-      event.dataTransfer.setData("application/x-sandbox-field-type", type);
-    event.dataTransfer.effectAllowed = "copy";
-  }
+  // The add items read in the action ink on hover and focus, with a plus
+  // (FIND-4); Enter or a click opens the entry anchored to the row.
+  const addItemInk =
+    "text-muted-foreground hover:text-[var(--action-text)] focus-visible:text-[var(--action-text)] [&_svg]:size-3.5 [&_svg]:shrink-0";
 
   function addRow(
     kind: "department" | "module" | "field",
@@ -601,11 +595,6 @@ export function SandboxInspectorOutline({
   ) {
     if (kind !== "department" && parentId) {
       const key = addKey(kind, parentId);
-      const activate = () => {
-        if (pending) return;
-        if (kind === "module") onAddModule(parentId);
-        else onAddField(parentId, "text");
-      };
       return (
         <li role="none">
           <div
@@ -618,13 +607,17 @@ export function SandboxInspectorOutline({
             data-outline-id={key}
             data-kind={kind}
             data-testid={`inspector-outline-add-${kind}`}
-            draggable={!pending}
-            onDragStart={(event) =>
-              dragPayload(event, kind, kind === "field" ? "text" : undefined)
-            }
-            onClick={activate}
-            className="text-muted-foreground hover:text-foreground focus-visible:outline-ring flex min-h-11 w-full cursor-pointer items-center rounded-[var(--radius)] px-2 text-xs outline-hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-solid aria-disabled:cursor-not-allowed aria-disabled:opacity-50 max-xl:pl-5 xl:min-h-9"
+            onClick={(event) => {
+              if (pending) return;
+              if (kind === "module") onAddModule(parentId, event.currentTarget);
+              else onAddField(parentId, event.currentTarget);
+            }}
+            className={cn(
+              "focus-visible:outline-ring flex min-h-11 w-full cursor-pointer items-center gap-1.5 rounded-[var(--radius)] px-2 text-xs outline-hidden hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-solid aria-disabled:cursor-not-allowed aria-disabled:opacity-50 max-xl:pl-5 xl:min-h-9",
+              addItemInk,
+            )}
           >
+            <Plus aria-hidden="true" />
             Add {kind}
           </div>
         </li>
@@ -634,30 +627,18 @@ export function SandboxInspectorOutline({
       <Button
         variant="ghost"
         size="sm"
-        draggable
         data-kind={kind}
-        data-testid={
-          kind === "department"
-            ? "inspector-add-department"
-            : `inspector-outline-add-${kind}`
-        }
-        aria-label={
-          parentName ? `Add ${kind} to ${parentName}` : "Add department"
-        }
-        onDragStart={(event) =>
-          dragPayload(event, kind, kind === "field" ? "text" : undefined)
-        }
-        onClick={() =>
-          kind === "department"
-            ? onAddDepartment()
-            : kind === "module"
-              ? onAddModule(parentId!)
-              : onAddField(parentId!, "text")
-        }
+        data-testid="inspector-add-department"
+        aria-label="Add department"
+        onClick={(event) => onAddDepartment(event.currentTarget)}
         disabled={pending}
-        className="text-muted-foreground hover:text-foreground mt-1 h-11 w-full justify-start px-2 text-xs font-normal xl:h-9"
+        className={cn(
+          "mt-1 h-11 w-full justify-start gap-1.5 px-2 text-xs font-normal xl:h-9",
+          addItemInk,
+        )}
       >
-        Add {kind}
+        <Plus aria-hidden="true" />
+        Add department
       </Button>
     );
   }
@@ -669,6 +650,10 @@ export function SandboxInspectorOutline({
     tree: { level: number; expanded?: boolean; groupId?: string },
   ) {
     const menuId = `${kind}:${item.id}`;
+    // A new row shows a quiet saving mark until its save confirms; the
+    // newest row keeps the flow tint until the next add (FAST-6).
+    const saving = savingIds?.has(item.id) ?? false;
+    const newest = newestId === item.id && !selected;
     return (
       <div className="min-w-0">
         {editingId === item.id ? (
@@ -700,6 +685,7 @@ export function SandboxInspectorOutline({
             open={openContextMenu === menuId}
             onOpenChange={(open) => {
               if (open) {
+                menuLeavesFocus.current = false;
                 onSelect(item.id);
                 setOpenContextMenu(menuId);
               } else {
@@ -724,6 +710,9 @@ export function SandboxInspectorOutline({
                   aria-describedby={
                     item.closed ? `outline-closed-${item.id}` : undefined
                   }
+                  aria-busy={saving || undefined}
+                  data-saving={saving || undefined}
+                  data-newest={newest || undefined}
                   tabIndex={item.id === tabKey ? 0 : -1}
                 />
               }
@@ -744,11 +733,20 @@ export function SandboxInspectorOutline({
                   setOpenContextMenu(menuId);
                 }
               }}
-              className={`focus-visible:outline-ring flex min-h-11 w-full min-w-0 cursor-default items-center gap-1 rounded-[var(--radius)] px-2 text-left text-xs outline-hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-solid xl:min-h-9 ${kind === "department" ? "font-semibold" : ""} ${kind === "field" ? "max-xl:pl-5" : ""} ${selectedClasses(selected)}`}
+              className={cn(
+                "focus-visible:outline-ring flex min-h-11 w-full min-w-0 cursor-default items-center gap-1 rounded-[var(--radius)] px-2 text-left text-xs outline-hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-solid xl:min-h-9",
+                kind === "department" && "font-semibold",
+                kind === "field" && "max-xl:pl-5",
+                selectedClasses(selected),
+                newest &&
+                  "bg-[color-mix(in_oklab,var(--flow)_12%,transparent)]",
+                saving && "text-muted-foreground",
+              )}
             >
               <span className="min-w-0 flex-1 truncate" title={item.name}>
                 {item.name}
               </span>
+              {saving ? <SavingRing /> : null}
               {item.closed ? (
                 <Badge
                   id={`outline-closed-${item.id}`}
@@ -765,9 +763,11 @@ export function SandboxInspectorOutline({
               anchor={contextMenuAnchor ?? undefined}
               aria-label={`Actions for ${kind} ${item.name}`}
               finalFocus={() =>
-                outlineRef.current?.querySelector<HTMLElement>(
-                  `[data-outline-id="${CSS.escape(item.id)}"]`,
-                ) ?? null
+                menuLeavesFocus.current
+                  ? false
+                  : (outlineRef.current?.querySelector<HTMLElement>(
+                      `[data-outline-id="${CSS.escape(item.id)}"]`,
+                    ) ?? null)
               }
             >
               {rowContextMenu(kind, item.id, item.name)}
@@ -979,6 +979,12 @@ export function SandboxInspectorOutline({
                 '[role="treeitem"]',
               )?.dataset.outlineId;
               if (key) setActiveKey(key);
+              // An element row shows its element's bar on the canvas.
+              onFocusItem?.(key && !key.startsWith("add:") ? key : null);
+            }}
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node))
+                onFocusItem?.(null);
             }}
           >
             {state.departments.map(renderDepartment)}
@@ -1024,7 +1030,7 @@ export function SandboxInspectorOutline({
             size="sm"
             data-testid="inspector-add-relationship"
             disabled={pending || state.modules.length < 2}
-            onClick={onAddRelationship}
+            onClick={(event) => onAddRelationship?.(event.currentTarget)}
             className="text-muted-foreground mt-1 min-h-11 w-full justify-start px-2 text-xs font-normal xl:min-h-9"
           >
             Add relationship

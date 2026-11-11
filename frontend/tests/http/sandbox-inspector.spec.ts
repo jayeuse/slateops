@@ -1,9 +1,12 @@
 import { expect, expectNoPageScroll, test, type Page } from "./helpers/test";
 import {
   clickBesideBox,
+  createEntry,
+  elementBar,
   fieldRowTrigger,
   openAuthenticatedSandbox,
 } from "./helpers/sandbox-api";
+import type { Design } from "../../src/components/systems/sandbox/domain/model";
 import {
   configuredSandboxDesign,
   overlappingSandboxDesign,
@@ -590,10 +593,19 @@ test("relationship rows carry their actions and the list shows once", async ({
   await expect(
     inspector.getByText(/Equipment · Many matches$/),
   ).toHaveAttribute("title", "To Equipment · Many matches");
+  // The kind words show in the relationship's settings, where the kind is
+  // chosen; a new relationship starts from Connect with the default kind.
   await inspector
-    .getByRole("button", { name: "Connect modules", exact: true })
+    .getByRole("button", {
+      name: "Actions for relationship Uses equipment, outgoing",
+    })
     .click();
-  const connect = page.getByRole("dialog", { name: "Connect modules" });
+  await page
+    .getByRole("menuitem", {
+      name: "Edit outgoing relationship Uses equipment",
+    })
+    .click();
+  const connect = page.getByRole("dialog", { name: "Relationship settings" });
   const kind = connect.getByLabel("Relationship type");
   await expect(kind.locator("option")).toHaveText([
     "One match each",
@@ -607,7 +619,7 @@ test("relationship rows carry their actions and the list shows once", async ({
   await expect(kind).toHaveValue("Many-to-many");
   await expect(kind).toHaveAccessibleDescription("Items can have many matches");
   await connect
-    .getByRole("button", { name: "Close connect modules", exact: true })
+    .getByRole("button", { name: "Close relationship settings", exact: true })
     .click();
 
   await inspector
@@ -674,6 +686,7 @@ for (const [width, height] of [
       name: "Canvas view controls",
     });
     for (const name of [
+      "Add department",
       "Zoom out",
       "Zoom in",
       "Fit canvas",
@@ -827,4 +840,228 @@ test("Show on a module with no fields brings it into view", async ({
       .getByRole("heading", { name: "Invoices", level: 2 }),
   ).toBeVisible();
   await expect.poll(() => nodeInView(page, "sample-invoices")).toBe(true);
+});
+
+/** Sales with one module, Orders, which has one field (UX-C1 to UX-C5). */
+function salesWithOrders(): Design {
+  return {
+    departments: [{ id: "sales", name: "Sales", closed: false }],
+    modules: [
+      {
+        id: "orders",
+        department: "sales",
+        name: "Orders",
+        closed: false,
+        fields: [
+          {
+            id: "number",
+            name: "Number",
+            type: "Text",
+            required: false,
+            value: "",
+            options: "",
+            closed: false,
+          },
+        ],
+        x: 0,
+        y: 0,
+      },
+    ],
+    relationships: [],
+    rules: [],
+  };
+}
+
+/** Every create control a person can see now (UXD-2 count, bound 1). */
+function createControls(page: Page) {
+  return page
+    .getByRole("button", { name: /^(Add (department|module|field)|Connect )/ })
+    .filter({ visible: true });
+}
+
+// UX-C1 (FIND-1), B2
+test("pointing at Sales shows Add module in its head band, without selecting it", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page, salesWithOrders());
+  const frame = page.locator('[data-sandbox-node="sales"]');
+  const box = await frame.boundingBox();
+  if (!box) throw new Error("The Sales frame has no box");
+  // The head band, clear of the Orders card.
+  await page.mouse.move(box.x + box.width / 2, box.y + 8);
+  const add = elementBar(page, "Sales").getByRole("button", {
+    name: "Add module to Sales",
+  });
+  await expect(add).toBeVisible();
+  await expect(add).toHaveText("Module");
+  const bar = await elementBar(page, "Sales").boundingBox();
+  if (!bar) throw new Error("The Sales bar has no box");
+  // In the head band, after the name: inside the frame, near its top.
+  expect(bar.x).toBeGreaterThan(box.x);
+  expect(bar.y + bar.height / 2).toBeLessThan(box.y + box.height / 2);
+  await expect(
+    page.getByRole("heading", { level: 2, name: "Summary" }),
+  ).toBeVisible();
+});
+
+// UX-C2 (FIND-1, FIND-2), B4; Connect with one module says why it waits.
+test("with Orders selected, its bar sits under the card and names Orders", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page, salesWithOrders(), {
+    path: "/sandbox?module=orders",
+  });
+  const bar = elementBar(page, "Orders");
+  const add = bar.getByRole("button", { name: "Add field to Orders" });
+  const connect = bar.getByRole("button", {
+    name: "Connect Orders to another module",
+  });
+  await expect(add).toHaveText("Field");
+  await expect(connect).toHaveText("Connect");
+  const card = await page.locator('[data-sandbox-node="orders"]').boundingBox();
+  const shown = await bar.boundingBox();
+  if (!card || !shown) throw new Error("The card or its bar has no box");
+  // Under the card, aligned left, where the next field appears.
+  expect(Math.abs(shown.x - card.x)).toBeLessThanOrEqual(1);
+  expect(shown.y).toBeGreaterThanOrEqual(card.y + card.height);
+  expect(shown.y).toBeLessThan(card.y + card.height + 16);
+  await expect(connect).toHaveAttribute("aria-disabled", "true");
+  await expect(connect).toHaveAccessibleDescription(
+    "Add a second module first.",
+  );
+});
+
+// UX-C3 (FIND-4): the Structure tree route, keyboard only.
+test("Enter on Add field in Structure opens the entry at the row and adds the field", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const sandbox = await openAuthenticatedSandbox(page, salesWithOrders(), {
+    path: "/sandbox?module=orders",
+  });
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Structure" })
+    .click();
+  const tree = page.getByRole("tree", { name: "Structure" });
+  const item = (name: string) =>
+    tree.getByRole("treeitem", { name, exact: true });
+  await item("Orders").focus();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect(item("Add field to Orders")).toBeFocused();
+  await page.keyboard.press("Enter");
+  const entry = createEntry(page, "Add field to Orders");
+  const name = entry.getByRole("textbox", { name: "Field name" });
+  await expect(name).toBeFocused();
+  await page.keyboard.type("Status");
+  await page.keyboard.press("Enter");
+  await expect(name).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(item("Add field to Orders")).toBeFocused();
+  await expect(item("Status")).toHaveAttribute("aria-selected", "true");
+  await expect
+    .poll(
+      () =>
+        sandbox
+          .document()
+          .design.modules[0]?.fields.map((field) => field.name) ?? [],
+    )
+    .toEqual(["Number", "Status"]);
+});
+
+// UX-C4 (FIND-5), B10: on a phone the selected department's bar is pinned.
+test("on a phone the pinned bar adds a module to Sales with 44 px targets", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openAuthenticatedSandbox(page, salesWithOrders(), {
+    path: "/sandbox?department=sales",
+  });
+  await page.getByRole("tab", { name: "Canvas" }).click();
+  const bar = elementBar(page, "Sales");
+  await expect(bar).toContainText("Sales");
+  const add = bar.getByRole("button", { name: "Add module to Sales" });
+  const target = await add.boundingBox();
+  expect(target?.height).toBeGreaterThanOrEqual(44);
+  await add.click();
+  const entry = createEntry(page, "Add module to Sales");
+  const name = entry.getByRole("textbox", { name: "Module name" });
+  expect((await name.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  for (const button of ["Done", "Add module"])
+    expect(
+      (await entry.getByRole("button", { name: button }).boundingBox())?.height,
+    ).toBeGreaterThanOrEqual(44);
+  await name.fill("Customers");
+  await name.press("Enter");
+  await expect(name).toHaveValue("");
+});
+
+// UX-C5 (UXD-2): default-visible create controls at 1440, per Build state.
+test("Build shows one Add department plus the selected element's create controls", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page, salesWithOrders());
+  const properties = page.getByRole("complementary", {
+    name: "Design inspector",
+  });
+  // B1, nothing selected: the toolbar's Add department only; the Summary
+  // has no add button.
+  await expect(
+    page.getByRole("heading", { level: 2, name: "Summary" }),
+  ).toBeVisible();
+  await expect(createControls(page)).toHaveText(["Add department"]);
+
+  // B3, Sales selected: + Module on its bar; Properties adds nothing.
+  await page.goto("/sandbox?department=sales");
+  await expect(
+    properties.getByRole("heading", { level: 2, name: "Sales" }),
+  ).toBeVisible();
+  await expect(createControls(page)).toHaveText(["Add department", "Module"]);
+
+  // B4, Orders selected: + Field and Connect on its bar.
+  await page.goto("/sandbox?module=orders");
+  await expect(
+    properties.getByRole("heading", { level: 2, name: "Orders" }),
+  ).toBeVisible();
+  await expect(createControls(page)).toHaveText([
+    "Add department",
+    "Field",
+    "Connect",
+  ]);
+
+  // Field expanded: the bar of its module, nothing more.
+  await fieldRowTrigger(
+    properties.getByLabel("Number field settings"),
+    "Number",
+  ).click();
+  await expect(createControls(page)).toHaveText([
+    "Add department",
+    "Field",
+    "Connect",
+  ]);
+});
+
+// B10, UXD-3 (Product Designer review): the pinned bar never covers the
+// canvas Key; the Key sits above it and still opens.
+test("on a phone the Key stays above the pinned bar and opens", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openAuthenticatedSandbox(page, salesWithOrders(), {
+    path: "/sandbox?module=orders",
+  });
+  await page.getByRole("tab", { name: "Canvas" }).click();
+  const bar = elementBar(page, "Orders");
+  await expect(bar).toBeVisible();
+  const key = page.getByText("Key", { exact: true });
+  const keyBox = await key.boundingBox();
+  const barBox = await bar.boundingBox();
+  if (!keyBox || !barBox) throw new Error("The Key or the bar has no box");
+  expect(keyBox.y + keyBox.height).toBeLessThanOrEqual(barBox.y);
+  await key.click();
+  await expect(page.getByRole("list", { name: "Canvas key" })).toBeVisible();
 });

@@ -235,6 +235,17 @@ async function publishDraft(
   ).toBeVisible();
 }
 
+/** Names one per Enter in the open add-next entry, then Escape ends it. */
+async function addInEntry(page: Page, title: string, name: string) {
+  const entry = page.getByRole("dialog", { name: title, exact: true });
+  const input = entry.getByRole("textbox", { name: /name$/ });
+  await input.fill(name);
+  await input.press("Enter");
+  await expect(input).toHaveValue("");
+  await input.press("Escape");
+  await expect(entry).toBeHidden();
+}
+
 async function addDepartment(page: Page, name: string): Promise<void> {
   await page
     .getByRole("complementary", { name: "Design workbench" })
@@ -248,33 +259,43 @@ async function addDepartment(page: Page, name: string): Promise<void> {
   await structure
     .getByRole("button", { name: "Add department", exact: true })
     .click();
-  await page.getByLabel("Department name", { exact: true }).fill(name);
-  await page
-    .getByRole("button", { name: "Create department", exact: true })
-    .click();
-  // A created item shows in place: Properties opens on it.
+  await addInEntry(page, "Add department", name);
+  // The new item shows in place: its Structure row.
   await expect(
-    page.getByRole("heading", { name, level: 2, exact: true }),
+    structure.getByRole("treeitem", { name, exact: true }),
   ).toBeVisible();
 }
 
 async function addModuleAndField(
   page: Page,
+  departmentName: string,
   moduleName: string,
   fieldName: string,
 ): Promise<void> {
-  await page.getByRole("button", { name: "Add module", exact: true }).click();
-  await page.getByLabel("Module name", { exact: true }).fill(moduleName);
-  await page
-    .getByRole("button", { name: "Create module", exact: true })
+  // The Structure tree's add items open the entry at their row (FIND-4).
+  const structure = page.getByRole("complementary", {
+    name: "Organization structure",
+  });
+  await structure
+    .getByRole("treeitem", {
+      name: `Add module to ${departmentName}`,
+      exact: true,
+    })
     .click();
+  await addInEntry(page, `Add module to ${departmentName}`, moduleName);
   await expect(
-    page.getByRole("heading", { name: moduleName, level: 2, exact: true }),
+    structure.getByRole("treeitem", { name: moduleName, exact: true }),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "Add field", exact: true }).click();
-  await page.getByLabel("Field name", { exact: true }).fill(fieldName);
-  await page.getByRole("button", { name: "Create field", exact: true }).click();
+  await structure
+    .getByRole("treeitem", { name: `Add field to ${moduleName}`, exact: true })
+    .click();
+  await addInEntry(page, `Add field to ${moduleName}`, fieldName);
+  await page
+    .getByRole("complementary", { name: "Design workbench" })
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Properties" })
+    .click();
   await expect(
     page.getByRole("group", {
       name: `${fieldName} field settings`,
@@ -753,7 +774,12 @@ test.describe("Access", () => {
     ).toBeVisible();
     journey.sandboxTouched = true;
     await addDepartment(page, managedDepartment);
-    await addModuleAndField(page, managedModule, `E2E Name ${suffix}`);
+    await addModuleAndField(
+      page,
+      managedDepartment,
+      managedModule,
+      `E2E Name ${suffix}`,
+    );
     await addDepartment(page, unrelatedDepartment);
     await publishDraft(page, runFixture.admin.password, () => {
       journey.sandboxPublished = true;

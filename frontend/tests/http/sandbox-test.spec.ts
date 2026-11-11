@@ -438,12 +438,8 @@ test("a field whose settings allow no value opens Change values and sends nothin
     name: "Example item",
     exact: true,
   });
-  await expect(
-    result.getByText(
-      "Stage needs a value before this runs. Its settings allow none.",
-    ),
-  ).toBeVisible();
-  // The result opens in Change values and takes focus; the field says why.
+  // The result opens in Change values and takes focus; the field says why,
+  // once, under itself (F15, PR1 Product Designer finding).
   await expect(
     result.getByRole("heading", { name: "Example item", exact: true }),
   ).toBeFocused();

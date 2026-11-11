@@ -31,7 +31,9 @@ import type { SandboxTriggerRun } from "../state/api";
 import type { TriggerDraft } from "./use-trigger-draft";
 import {
   defaultTrigger,
+  newTriggerFromBuild,
   replaceAt,
+  TRIGGER_LIMIT,
   triggerStepErrors,
 } from "../domain/trigger-rules";
 import {
@@ -64,6 +66,11 @@ export type TriggerStudioProps = {
   initialSelectedId?: string;
   /** The list's first quick filter, from a link ("Show" on Build's triggers that are off). */
   initialStatus?: TriggerStatusFilter;
+  /**
+   * "New trigger" in a module's item menu in Build (TRIG-8): Triggers opens
+   * with a new trigger on this module. Read once, as Triggers opens.
+   */
+  newTriggerModuleId?: string;
   onRefreshActivity: () => Promise<void>;
 };
 
@@ -106,6 +113,7 @@ export function TriggerStudio({
   activity,
   initialSelectedId,
   initialStatus = "all",
+  newTriggerModuleId,
   onRefreshActivity,
 }: TriggerStudioProps) {
   const { draft, dirty, pending, error } = triggerDraft;
@@ -335,6 +343,46 @@ export function TriggerStudio({
     );
     updateDraft(replaceAt(draft, index, next));
   }
+  /**
+   * Adds a new trigger and opens it. With no module, Module is empty and
+   * focused (T2): nothing is chosen for you. From a module in Build
+   * (TRIG-8), that module is chosen and the event comes next.
+   */
+  function createTrigger(moduleId?: string) {
+    const next = defaultTrigger(design, moduleId);
+    quiet(stepKeys(next).map((step) => `${next.id}/${step}`));
+    setSelectedId(next.id);
+    updateDraft((current) =>
+      current.some((item) => item.id === next.id)
+        ? current
+        : [...current, next],
+    );
+    openDetail();
+    if (!draftModuleId(next)) {
+      focusEmptyPart("trigger");
+      return;
+    }
+    // The When step's only select is its Event; Module is a picker button.
+    requestAnimationFrame(() =>
+      detailBodyRef.current
+        ?.querySelector<HTMLElement>('[data-step-key="trigger"] select')
+        ?.focus(),
+    );
+  }
+  // TRIG-8: the module asked for as Triggers opened, made into a new trigger
+  // once. Kept edits waiting for Restore or Discard lock the editor, so
+  // nothing is added then, as the list's New trigger is disabled.
+  const newTriggerRequest = useRef(newTriggerModuleId);
+  useEffect(() => {
+    const moduleId = newTriggerFromBuild({
+      moduleId: newTriggerRequest.current,
+      keptWaiting: triggerDraft.kept !== null && !dirty,
+      pending,
+      count: draft.length,
+    });
+    newTriggerRequest.current = undefined;
+    if (moduleId !== null) createTrigger(moduleId);
+  }, []);
   // Recent activity is occasional: closed, last in the detail (the
   // Advanced Last Rule).
   const recentActivity = (
@@ -453,21 +501,13 @@ export function TriggerStudio({
                 selectedId={selectedId}
                 unsaved={triggerDraft.unsaved}
                 phone={phone}
-                canCreate={!pending && draft.length < 500}
+                canCreate={!pending && draft.length < TRIGGER_LIMIT}
                 onOpen={(id) => {
                   setSelectedId(id);
                   openDetail();
                 }}
                 incomplete={triggerDraft.incomplete?.ids}
-                onCreate={() => {
-                  // Module empty and focused (T2): nothing is chosen for you.
-                  const next = defaultTrigger(design);
-                  quiet(stepKeys(next).map((step) => `${next.id}/${step}`));
-                  setSelectedId(next.id);
-                  updateDraft([...draft, next]);
-                  openDetail();
-                  focusEmptyPart("trigger");
-                }}
+                onCreate={() => createTrigger()}
               />
             </ResizablePanel>
             {wide && (

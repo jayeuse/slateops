@@ -414,6 +414,30 @@ export function triggerLiteralError(
   return triggerStepErrors(recordTrigger, design).values().next().value ?? null;
 }
 
+/** The most triggers a draft holds; the list's New trigger stops there. */
+export const TRIGGER_LIMIT = 500;
+
+/**
+ * The module of a "New trigger" asked for from Build (TRIG-8), or null when
+ * nothing is added now: kept edits waiting for Restore or Discard lock the
+ * editor, a pending save holds it, and at the limit the list's New trigger
+ * is disabled too.
+ */
+export function newTriggerFromBuild({
+  moduleId,
+  keptWaiting,
+  pending,
+  count,
+}: {
+  moduleId: string | undefined;
+  keptWaiting: boolean;
+  pending: boolean;
+  count: number;
+}): string | null {
+  if (moduleId === undefined || keptWaiting || pending) return null;
+  return count < TRIGGER_LIMIT ? moduleId : null;
+}
+
 /**
  * A new trigger (TRIG-5, UXD-7): no module, field, or action is chosen for
  * the person. From a module's context (TRIG-8) that module is preset.

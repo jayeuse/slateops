@@ -92,50 +92,10 @@ export function designInView(
   return previous ? inside(-MINIMAP_MARGIN) : inside(MINIMAP_MARGIN);
 }
 
-export type SandboxDropKind = "department" | "module" | "field";
-
-const DROP_KINDS: readonly SandboxDropKind[] = [
-  "department",
-  "module",
-  "field",
-];
-
 export const FIELD_TYPES = Object.keys(FIELD_TYPE_META) as SandboxFieldType[];
 
 export function isFieldType(value: string): value is SandboxFieldType {
   return (FIELD_TYPES as readonly string[]).includes(value);
-}
-
-export function isDropKind(value: string): value is SandboxDropKind {
-  return (DROP_KINDS as readonly string[]).includes(value);
-}
-
-export function dragKindFromTransfer(
-  dataTransfer: DataTransfer,
-): SandboxDropKind | null {
-  const directKind = dataTransfer.getData("application/x-sandbox-kind");
-  if (isDropKind(directKind)) return directKind;
-  const transferTypes = new Set(Array.from(dataTransfer.types));
-  for (const kind of DROP_KINDS) {
-    if (
-      transferTypes.has(`application/x-sandbox-kind-${kind}`) ||
-      transferTypes.has(`application/x-sandbox-${kind}`)
-    ) {
-      return kind;
-    }
-  }
-  return null;
-}
-
-/** Snap a canvas point to the canvas unit without changing its origin. */
-export function snapSandboxPosition(
-  position: CanvasPosition,
-  size = SANDBOX_GRID_SIZE,
-): CanvasPosition {
-  return {
-    x: Math.round(position.x / size) * size,
-    y: Math.round(position.y / size) * size,
-  };
 }
 
 // Its own module, so marks outside the canvas need none of this geometry.
@@ -346,52 +306,4 @@ export function departmentAt(
     if (department && boxContains(department.box, point)) return department.id;
   }
   return null;
-}
-
-export interface DropResolution {
-  parentId: string | null;
-  targetId: string | null;
-  error: string | null;
-}
-
-/**
- * Resolve a palette drop against the containment rules. The target id is
- * kept separate from the parent id so a valid drop can highlight the object
- * receiving the new child while the page receives the domain parent.
- */
-export function resolveDrop(
-  boxes: CanvasBoxes,
-  kind: SandboxDropKind,
-  point: CanvasPosition,
-): DropResolution {
-  const sandboxModule = boxes.modules.find((item) =>
-    boxContains(item.box, point),
-  );
-  if (sandboxModule !== undefined) {
-    if (kind === "department")
-      return { parentId: null, targetId: null, error: null };
-    if (kind === "field")
-      return {
-        parentId: sandboxModule.id,
-        targetId: sandboxModule.id,
-        error: null,
-      };
-    return {
-      parentId: sandboxModule.departmentId,
-      targetId: sandboxModule.departmentId,
-      error: null,
-    };
-  }
-  const department = departmentAt(boxes, point);
-  if (department !== null) {
-    if (kind === "module")
-      return { parentId: department, targetId: department, error: null };
-    if (kind === "field")
-      return {
-        parentId: null,
-        targetId: department,
-        error: "Fields can only be added inside a module.",
-      };
-  }
-  return { parentId: null, targetId: null, error: null };
 }

@@ -10,7 +10,6 @@ import {
   MODULE_TABLE,
   moduleTableHeight,
   resizeFrame,
-  resolveDrop,
 } from "../../../src/lib/sandbox/canvas-geometry";
 import {
   canvasBoxes,
@@ -200,29 +199,6 @@ test("a resized frame snaps to the grid but never cuts a module", () => {
   expect(resizeFrame(frame, modules, 1010, 500, true)).toEqual({
     width: 1010,
     height: 500,
-  });
-});
-
-test("palette drops follow the containment rules", () => {
-  const boxes = canvasBoxes(
-    deriveFlowNodes({ state: sample(), previous: [], layout }),
-  );
-  const insideCustomers = { x: 100, y: 130 };
-  const insideSalesOnly = { x: 60, y: 400 };
-  expect(resolveDrop(boxes, "field", insideCustomers)).toEqual({
-    parentId: "customers",
-    targetId: "customers",
-    error: null,
-  });
-  expect(resolveDrop(boxes, "module", insideCustomers).parentId).toBe("sales");
-  expect(resolveDrop(boxes, "module", insideSalesOnly).parentId).toBe("sales");
-  expect(resolveDrop(boxes, "field", insideSalesOnly).error).toBe(
-    "Fields can only be added inside a module.",
-  );
-  expect(resolveDrop(boxes, "department", { x: 2000, y: 2000 })).toEqual({
-    parentId: null,
-    targetId: null,
-    error: null,
   });
 });
 

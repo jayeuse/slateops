@@ -683,7 +683,7 @@ export function changesFrom(
     : ["No structural changes since the last publication."];
 }
 
-/** The stored relationship kinds, in the order the Connect modules select lists them. */
+/** The stored relationship kinds, in the order Relationship settings lists them. */
 export const RELATIONSHIP_KINDS = [
   "One-to-one",
   "One-to-many",
@@ -706,8 +706,9 @@ const RELATIONSHIP_KIND_WORDS: Readonly<
 
 /**
  * The plain words a relationship kind shows (docs/specs/sandbox-relayout.md,
- * Phase 7 G1), and the hint under the Connect modules select. The stored
- * value never changes; an unknown value shows as stored, with no hint.
+ * Phase 7 G1), and the hint under the Relationship type select in
+ * Relationship settings. The stored value never changes; an unknown value
+ * shows as stored, with no hint.
  */
 export function relationshipKind(cardinality: string): {
   label: string;

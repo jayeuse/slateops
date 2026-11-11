@@ -1,6 +1,7 @@
 import type { Design } from "../domain/model";
 import type { SandboxDocumentV4 } from "../domain/document";
 import type { SandboxDocumentResponse } from "./api";
+import { SandboxCommandError } from "./commands";
 import {
   openSandboxDocumentSession,
   proposedSandboxDocument,
@@ -251,13 +252,29 @@ export function saveQueueConflictDocument(
 }
 
 /**
+ * The words for a design update that threw before it changed the draft. A
+ * design rule the update checks refuses it with its own reason, also under a
+ * hold; any other failure under a hold reads as a save in flight, and
+ * without a hold it is thrown again.
+ */
+export function refusedDesignUpdate(
+  error: unknown,
+  holdReason: string | null,
+): string {
+  if (error instanceof SandboxCommandError) return error.message;
+  if (holdReason) return "A Sandbox change is already being saved.";
+  throw error;
+}
+
+/**
  * Why an add cannot be accepted now (rule 6): a publish, a lifecycle action,
  * a conflict, or another Sandbox command holds the draft.
  */
 export function designAddHoldReason(holds: {
   command: boolean;
   publication: boolean;
-  lifecycle: boolean;
+  /** A lifecycle action not yet counted in `command` (the page's lock). */
+  lifecycle?: boolean;
   conflict: boolean;
 }): string | null {
   return holds.command || holds.publication || holds.lifecycle || holds.conflict

@@ -1,6 +1,8 @@
 import { expect, test, type Locator } from "./helpers/test";
 import { mockAccessApi } from "./helpers/access-api";
 import {
+  addDepartmentsFromToolbar,
+  createEntry,
   historyVersionFixture,
   openAuthenticatedSandbox,
   openCheckpointDialog,
@@ -41,9 +43,7 @@ test("the save-state chip shows saving, then saved", async ({ page }) => {
   const chip = page.locator("[data-sandbox-save-state]");
   await expect(chip).toHaveText("Nothing to publish yet · Saved");
 
-  await page.getByRole("button", { name: "Add department" }).click();
-  await page.getByLabel("Department name").fill("Finance");
-  await page.getByRole("button", { name: "Create department" }).click();
+  await addDepartmentsFromToolbar(page, ["Finance"]);
   await expect(chip).toHaveText(/· Saving…$/);
   release();
   await expect(chip).toHaveText(/· Saved$/);
@@ -53,9 +53,15 @@ test("a failed save turns the chip to Not saved", async ({ page }) => {
   await openAuthenticatedSandbox(page, initialDesign, {
     saveFailure: "Sandbox storage is unavailable.",
   });
-  await page.getByRole("button", { name: "Add department" }).click();
-  await page.getByLabel("Department name").fill("Finance");
-  await page.getByRole("button", { name: "Create department" }).click();
+  await page
+    .getByRole("toolbar", { name: "Canvas view controls" })
+    .getByRole("button", { name: "Add department", exact: true })
+    .click();
+  const name = createEntry(page, "Add department").getByRole("textbox", {
+    name: "Department name",
+  });
+  await name.fill("Finance");
+  await name.press("Enter");
   await expect(page.locator("[data-sandbox-save-state]")).toHaveText(
     "Not saved",
   );
@@ -83,9 +89,7 @@ test("Undo and Redo are named icon buttons that say why they cannot act", async 
   await expect(redo).toHaveAttribute("aria-disabled", "true");
   await expect(redo).toHaveAccessibleDescription("Nothing to redo.");
 
-  await page.getByRole("button", { name: "Add department" }).click();
-  await page.getByLabel("Department name").fill("Finance");
-  await page.getByRole("button", { name: "Create department" }).click();
+  await addDepartmentsFromToolbar(page, ["Finance"]);
   await expect(page.locator("[data-sandbox-save-state]")).toHaveText(
     /· Saved$/,
   );

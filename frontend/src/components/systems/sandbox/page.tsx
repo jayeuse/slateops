@@ -92,11 +92,13 @@ import {
   designAddHoldReason,
   idleSaveQueue,
   reduceSaveQueue,
+  refusedDesignUpdate,
   saveQueueActive,
   saveQueueConflictDocument,
   saveQueueHasQueued,
   saveQueueNeedsSend,
   saveQueueRequest,
+  savingElementIds,
   type SandboxSaveQueue,
   type SandboxSaveQueueEvent,
 } from "./state/save-queue";
@@ -765,18 +767,26 @@ function SandboxWorkspace() {
     if (identitySettled && section === "Triggers")
       void refreshTriggerActivity();
   }, [identitySettled, refreshTriggerActivity, section]);
-  // Triggers reads a requested quick filter ("status=off") once, as it
-  // opens; the address then drops it, so the sidebar links that copy the
-  // page's parameters never bring it back. It waits for the draft, so the
-  // list has opened with it first.
+  // Triggers reads a requested quick filter ("status=off") and a new
+  // trigger's module ("new-trigger", TRIG-8) once, as it opens; the address
+  // then drops them, so the sidebar links that copy the page's parameters
+  // never bring them back. It waits for the draft, so Triggers has opened
+  // with them first.
   const requestedStatus = search.get("status");
+  const requestedNewTrigger = search.get("new-trigger");
   const opened = session !== null;
   useEffect(() => {
-    if (section !== "Triggers" || requestedStatus === null || !opened) return;
+    if (
+      section !== "Triggers" ||
+      (requestedStatus === null && requestedNewTrigger === null) ||
+      !opened
+    )
+      return;
     const params = new URLSearchParams(search.toString());
     params.delete("status");
+    params.delete("new-trigger");
     router.replace(`/sandbox?${params.toString()}` as Route, { scroll: false });
-  }, [opened, requestedStatus, router, search, section]);
+  }, [opened, requestedNewTrigger, requestedStatus, router, search, section]);
 
   const navigate = useCallback(
     (
@@ -814,9 +824,10 @@ function SandboxWorkspace() {
         return;
       }
       const params = new URLSearchParams(search.toString());
-      // The Triggers quick filter is a one-time request; only the move that
-      // asks for it carries it.
+      // The Triggers quick filter and a new trigger's module are one-time
+      // requests; only the move that asks for one carries it.
       params.delete("status");
+      params.delete("new-trigger");
       // A trace is a one-time "Show on canvas" request, not part of the
       // view; only a move that asks for it (`adjust`) carries it.
       params.delete("trace");
@@ -839,6 +850,17 @@ function SandboxWorkspace() {
       testPending,
       waitForSaves,
     ],
+  );
+  // TRIG-8: Triggers opens with a new trigger on this module once the save
+  // queue is empty (N1 rule 5); Triggers makes it as it opens, from the saved
+  // design. Stable, so the memoized Structure tree keeps its renders.
+  const newTriggerFromBuild = useCallback(
+    (moduleId: string) =>
+      latest.current?.navigate("Triggers", false, false, (params) => {
+        params.delete("rule");
+        params.set("new-trigger", moduleId);
+      }),
+    [],
   );
   useWorkspaceNavigationGuard(
     useCallback(
@@ -1059,15 +1081,7 @@ function SandboxWorkspace() {
             ? update(current.history.present)
             : update;
       } catch (error) {
-        if (holdReason)
-          return {
-            ok: false,
-            error: "A Sandbox change is already being saved.",
-          };
-        // A design rule the update checks refuses it with its own reason.
-        if (error instanceof SandboxCommandError)
-          return { ok: false, error: error.message };
-        throw error;
+        return { ok: false, error: refusedDesignUpdate(error, holdReason) };
       }
       const kind = classifyDesignChange(current.history.present, nextDesign);
       if (holdReason)
@@ -1919,6 +1933,13 @@ function SandboxWorkspace() {
             onLifecycle={requestLifecycle}
             phoneHistory={historyButtons}
             onDraftStateChange={setDesignerDraftDirty}
+            savingIds={savingElementIds(saveQueue)}
+            // `commandBusy` already counts a lifecycle request.
+            addHoldReason={designAddHoldReason({
+              command: commandBusy,
+              publication: publicationPending,
+              conflict: conflict !== null,
+            })}
             attention={{
               unpublished: status.publishable,
               review: {
@@ -1934,6 +1955,7 @@ function SandboxWorkspace() {
                   params.set("status", "off");
                 }),
             }}
+            onNewTrigger={newTriggerFromBuild}
           />
         ) : null}
         {section === "Triggers" && session ? (
@@ -1945,6 +1967,7 @@ function SandboxWorkspace() {
               activity={triggerActivity}
               initialSelectedId={search.get("rule") ?? undefined}
               initialStatus={triggerStatusFromSearch(search.get("status"))}
+              newTriggerModuleId={search.get("new-trigger") ?? undefined}
               onRefreshActivity={refreshTriggerActivity}
             />
           </div>

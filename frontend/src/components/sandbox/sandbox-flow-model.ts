@@ -50,7 +50,8 @@ export interface ModuleNodeData extends Record<string, unknown> {
   selected: boolean;
   /** The selected field when it belongs to this module. */
   selectedFieldId: string | null;
-  feedback: CanvasFeedback;
+  /** A module is moved, never dropped into. */
+  feedback: "moving" | null;
 }
 
 export type DepartmentFlowNode = Node<DepartmentNodeData, "department">;
@@ -256,8 +257,6 @@ export interface DeriveNodesInput {
   previous: readonly SandboxFlowNode[];
   /** An owner layout to apply now (a new prop), else undefined. */
   layout?: SandboxCanvasLayout;
-  /** Absolute positions queued for nodes that do not exist yet. */
-  pending?: ReadonlyMap<string, CanvasPosition>;
   movingNodeId?: string | null;
   dropTargetId?: string | null;
 }
@@ -272,7 +271,6 @@ export function deriveFlowNodes({
   state,
   previous,
   layout,
-  pending,
   movingNodeId = null,
   dropTargetId = null,
 }: DeriveNodesInput): SandboxFlowNode[] {
@@ -305,7 +303,7 @@ export function deriveFlowNodes({
     const frame: CanvasBox = known
       ? { x: known.x, y: known.y, width: known.width, height: known.height }
       : {
-          ...(pending?.get(department.id) ?? departmentPosition(index)),
+          ...departmentPosition(index),
           ...departmentSize(heights),
         };
     frames.set(department.id, frame);
@@ -319,7 +317,6 @@ export function deriveFlowNodes({
       const at =
         layout?.[sandboxModule.id] ??
         shown.get(sandboxModule.id) ??
-        pending?.get(sandboxModule.id) ??
         modulePosition(frame, moduleIndex, heights);
       boxes.push({
         id: sandboxModule.id,
@@ -342,7 +339,8 @@ export function deriveFlowNodes({
             selectedField?.moduleId === sandboxModule.id
               ? selectedField.id
               : null,
-          feedback: feedbackOf(sandboxModule.id),
+          // Only a department frame receives a drop (a module moved in).
+          feedback: movingNodeId === sandboxModule.id ? "moving" : null,
         },
       });
     }
