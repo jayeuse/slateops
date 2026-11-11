@@ -20,6 +20,32 @@ from operations.sample.phases.actions import (
 )
 
 
+def reporter_queue_hides(response: httpx.Response, conversation_id: str) -> bool:
+    """The reporter never sees the report on a conversation they do not moderate.
+
+    A reporter who moderates nothing is refused. A department manager moderates the department's
+    channels (D44), and every published department has a derived channel (setup spec R2), so
+    their queue opens, scoped to those channels, and never lists the owned room's report.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    if not isinstance(body, dict):
+        return False
+    if response.status_code == 403:
+        detail = body.get("detail")
+        return isinstance(detail, dict) and detail.get("code") == "comms_capability_denied"
+    items, page = body.get("items"), body.get("pagination")
+    return (
+        response.status_code == 200
+        and isinstance(items, list)
+        and isinstance(page, dict)
+        and page.get("has_more") is False
+        and all(row.get("conversation_id") != conversation_id for row in items)
+    )
+
+
 def plan_moderation_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     if dataset.organization.phases is None:
         return ()
@@ -89,7 +115,12 @@ def execute_moderation_control(
           and revisions["items"][0]["body"] == source["body"], "retained_revision")
     check(call("POST", path + "/reports", "report", 204, actor=member,
                json_body={"reason": "Owned report review"}).content == b"", "report_ack")
-    call("GET", "/api/comms/reports", "reporter_refused", 403, actor=member)
+    if on_substep is not None:
+        on_substep("reporter_queue")
+    queue = context.clients[member].request(
+        "GET", "/api/comms/reports", params={"limit": 100, "offset": 0}
+    )
+    check(reporter_queue_hides(queue, created["id"]), "reporter_queue_hides_report")
     offset = 0
     found: list[dict[str, Any]] = []
     while not found:
