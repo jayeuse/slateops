@@ -169,13 +169,15 @@ function RailStep({
 function StepNote({
   id,
   notes,
+  className,
 }: {
   id: string;
   notes: ReadonlyArray<string | null | undefined>;
+  className?: string;
 }) {
   const shown = notes.filter((note): note is string => Boolean(note));
   return shown.length ? (
-    <p id={id} className="text-warn-text text-xs">
+    <p id={id} className={cn("text-warn-text text-xs", className)}>
       {shown.join(" ")}
     </p>
   ) : null;
@@ -360,7 +362,8 @@ function FieldPicker({
 /**
  * The operator choice (TRIG-3, TRIG-4): only the operators that fit the
  * field. A saved operator that does not fit stays selected, listed last as
- * "saved · does not fit", until the person picks another.
+ * "saved", until the person picks another; the line under the row says
+ * why it does not fit.
  */
 function OperatorSelect({
   id,
@@ -414,7 +417,7 @@ function OperatorSelect({
       ))}
       {fits ? null : (
         <NativeSelectOption value={value} className="text-muted-foreground">
-          {`${operatorWords[value]} · saved · does not fit`}
+          {`${operatorWords[value]} · saved`}
         </NativeSelectOption>
       )}
     </NativeSelect>
@@ -844,8 +847,20 @@ function WhenSettings({
   const fitsEvent =
     watched !== undefined &&
     (trigger.kind !== "threshold-crossed" || thresholdFieldFits(watched));
-  const notes = [gap?.reason, note];
-  const describedBy = notes.some(Boolean) ? noteId : undefined;
+  // The module's and the watched field's reasons sit directly under their
+  // control; the threshold value's reason and Save's notes stay last.
+  const moduleNoteId = `${noteId}-module`;
+  const fieldNoteId = `${noteId}-field`;
+  const atControl = gap?.part === "module" || gap?.part === "field";
+  const notes = [atControl ? undefined : gap?.reason, note];
+  const describedBy =
+    [
+      gap?.part === "module" ? moduleNoteId : null,
+      gap?.part === "field" ? fieldNoteId : null,
+      notes.some(Boolean) ? noteId : null,
+    ]
+      .filter(Boolean)
+      .join(" ") || undefined;
   return (
     <div
       role="group"
@@ -864,11 +879,18 @@ function WhenSettings({
           placeholder="Choose a module"
           searchPlaceholder="Find a module"
           missing={gap?.part === "module"}
-          describedBy={gap?.part === "module" ? noteId : undefined}
+          describedBy={gap?.part === "module" ? moduleNoteId : undefined}
           onChange={(next) =>
             onChange(changeTriggerModule(recordTrigger, next))
           }
         />
+        {gap?.part === "module" ? (
+          <StepNote
+            id={moduleNoteId}
+            notes={[gap.reason]}
+            className="@min-[24rem]/detail:col-start-2"
+          />
+        ) : null}
       </SettingRow>
       <SettingRow id={eventId} label="Event">
         <NativeSelect
@@ -968,7 +990,7 @@ function WhenSettings({
             fields={eventFields}
             value={fitsEvent ? trigger.fieldId : ""}
             missing={gap?.part === "field"}
-            describedBy={gap?.part === "field" ? noteId : undefined}
+            describedBy={gap?.part === "field" ? fieldNoteId : undefined}
             onChange={(next) => {
               const nextField = eventFields.find((item) => item.id === next);
               onChange({
@@ -984,6 +1006,13 @@ function WhenSettings({
               });
             }}
           />
+          {gap?.part === "field" ? (
+            <StepNote
+              id={fieldNoteId}
+              notes={[gap.reason]}
+              className="@min-[24rem]/detail:col-start-2"
+            />
+          ) : null}
         </SettingRow>
       ) : null}
       {sandboxModule && trigger.kind === "threshold-crossed" ? (
@@ -1264,7 +1293,15 @@ function Actions({
             className="grid min-w-0 gap-1"
           >
             <div className={inlineRow}>
-              <div className={cn("min-w-0", firstCell)}>
+              <div className={cn("flex min-w-0 items-center gap-2", firstCell)}>
+                {/* Two-line rows read "Set [field]" then "to [value]"; one
+                    line from 44rem uses the "set to" word between them. */}
+                <span
+                  aria-hidden="true"
+                  className="text-muted-foreground w-5 shrink-0 text-sm @min-[44rem]/detail:hidden"
+                >
+                  Set
+                </span>
                 <FieldPicker
                   label="Set field target"
                   fields={fields}
@@ -1288,8 +1325,13 @@ function Actions({
               >
                 set to
               </span>
-              {/* Narrower, the hidden "set to" frees the second line. */}
-              <div className="col-start-1 row-start-2 min-w-0 @min-[24rem]/detail:col-span-2 @min-[44rem]/detail:col-span-1 @min-[44rem]/detail:col-start-3 @min-[44rem]/detail:row-start-1">
+              <div className="col-start-1 row-start-2 flex min-w-0 items-center gap-2 @min-[24rem]/detail:col-span-2 @min-[44rem]/detail:col-span-1 @min-[44rem]/detail:col-start-3 @min-[44rem]/detail:row-start-1">
+                <span
+                  aria-hidden="true"
+                  className="text-muted-foreground w-5 shrink-0 text-sm @min-[44rem]/detail:hidden"
+                >
+                  to
+                </span>
                 <ValueEditor
                   layout="inline"
                   design={design}

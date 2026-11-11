@@ -196,6 +196,9 @@ export function TriggerList({
       >
         {rows.map((recordTrigger) => {
           const name = triggerDisplayName(recordTrigger);
+          const marked =
+            unsaved.has(recordTrigger.id) ||
+            Boolean(incomplete?.has(recordTrigger.id));
           return (
             <Button
               key={recordTrigger.id}
@@ -209,31 +212,37 @@ export function TriggerList({
                 // Hover and open tints come from the look's ink, so both read
                 // in every look, light and dark; the open row is the tint
                 // only (the One Selection Rule, S26).
-                "border-border grid h-auto min-h-11 w-full min-w-0 grid-cols-[3rem_minmax(0,1fr)_auto] items-center justify-normal gap-2.5 rounded-none border-b px-3 py-0 text-left font-normal whitespace-nowrap max-sm:min-h-13 xl:h-10 xl:min-h-10",
+                "border-border grid h-auto min-h-11 w-full min-w-0 grid-cols-[3rem_minmax(8rem,1fr)_auto] items-center justify-normal gap-2.5 rounded-none border-b px-3 py-0 text-left font-normal whitespace-nowrap max-sm:min-h-13 xl:h-10 xl:min-h-10",
                 "hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-[current=true]:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]",
               )}
               onClick={() => onOpen(recordTrigger.id)}
             >
               <TriggerStatusMark enabled={recordTrigger.enabled} />
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="truncate font-medium" title={name}>
+              <span className="flex min-w-32 items-center gap-2">
+                {/* The name never drops below 8rem: badges give way first
+                    (the full name stays its text and tooltip). */}
+                <span className="min-w-32 truncate font-medium" title={name}>
                   {name}
                 </span>
                 {/* Which triggers Save will write (the Build field-row
                     pattern). */}
-                {unsaved.has(recordTrigger.id) ? (
-                  <Badge variant="warning" className="shrink-0">
-                    Unsaved
-                  </Badge>
-                ) : null}
-                {incomplete?.has(recordTrigger.id) ? (
-                  <Badge variant="warning" className="shrink-0">
-                    Incomplete
-                  </Badge>
+                {marked ? (
+                  <span className="flex min-w-0 items-center gap-1 overflow-hidden">
+                    {unsaved.has(recordTrigger.id) ? (
+                      <Badge variant="warning" className="shrink-0">
+                        Unsaved
+                      </Badge>
+                    ) : null}
+                    {incomplete?.has(recordTrigger.id) ? (
+                      <Badge variant="warning" className="shrink-0">
+                        Incomplete
+                      </Badge>
+                    ) : null}
+                  </span>
                 ) : null}
               </span>
-              {/* From 1280 to 1439px the event shows as its icon only; the
-                  word stays its name and tooltip. */}
+              {/* With a badge, and from 1280 to 1439px, the event shows as
+                  its icon only; the word stays its name and tooltip. */}
               <span
                 title={triggerEventLabel(recordTrigger)}
                 className="text-muted-foreground inline-flex items-center gap-1.5 text-sm"
@@ -242,7 +251,9 @@ export function TriggerList({
                   kind={recordTrigger.trigger.kind}
                   className="size-3.5 shrink-0"
                 />
-                <span className="xl:max-[1439px]:sr-only">
+                <span
+                  className={marked ? "sr-only" : "xl:max-[1439px]:sr-only"}
+                >
                   {triggerEventLabel(recordTrigger)}
                 </span>
               </span>

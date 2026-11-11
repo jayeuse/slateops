@@ -486,6 +486,49 @@ test(
 );
 
 test(
+  "a row's name stays at least 8rem wide beside the Unsaved and Incomplete badges",
+  { tag: "@UX-C18" },
+  async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openTriggers(page);
+    await page
+      .getByRole("button", { name: "New trigger", exact: true })
+      .click();
+    await page.getByRole("button", { name: "Save triggers" }).click();
+    const row = page
+      .getByRole("navigation", { name: "Trigger list" })
+      .getByRole("button", { name: /New trigger/ });
+    await expect(row.getByText("Incomplete", { exact: true })).toBeVisible();
+    await expect(row.getByText("Unsaved", { exact: true })).toBeVisible();
+    const name = row.getByText("New trigger", { exact: true });
+    expect((await name.boundingBox())!.width).toBeGreaterThanOrEqual(128);
+  },
+);
+
+test(
+  "on a phone, picker options are 44px tall",
+  { tag: "@UX-C15" },
+  async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const sandbox = await openAuthenticatedSandbox(page);
+    await page.goto("/sandbox?section=triggers");
+    await page
+      .getByRole("navigation", { name: "Trigger list" })
+      .getByRole("button", { name: sandbox.document().triggers[0]!.name })
+      .click();
+    await page
+      .getByRole("combobox", { name: "Condition 1 field", exact: true })
+      .click();
+    // The picker's own list: closed native selects on the page (Event,
+    // operator) hold options of their own.
+    const options = page.getByRole("listbox").getByRole("option");
+    await expect(options).toHaveCount(4);
+    for (const option of await options.all())
+      expect((await option.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  },
+);
+
+test(
   "on a phone the module's fields open as a sheet one action away",
   { tag: "@UX-C14" },
   async ({ page }) => {

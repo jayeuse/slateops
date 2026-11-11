@@ -746,6 +746,9 @@ textarea {
   body:has([data-sandbox-page])
     [data-sandbox-portal]
     :is([role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]),
+  /* Picker options (Triggers module and field pickers) render in a popup
+     portal on <body>, outside #main-content and the page. */
+  body:has([data-sandbox-page]) [role="option"],
   [data-sandbox-page] label:has(input:is([type="checkbox"], [type="radio"])),
   body:has([data-sandbox-page])
     [role="dialog"]
