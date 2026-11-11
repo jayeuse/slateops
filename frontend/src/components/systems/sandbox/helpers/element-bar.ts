@@ -204,7 +204,9 @@ export function itemMenuEntries(
       : []),
     ...(options.canPurge ? [entry("purge", `Delete ${kind} forever`)] : []),
     ...(options.duplicate ? [entry("duplicate", `Duplicate ${kind}`)] : []),
-    ...(kind === "module" && options.connect
+    // Connect leaves closed modules out of its targets (publish skips their
+    // relationships), so a closed module has no Connect… either.
+    ...(kind === "module" && options.connect && !options.closed
       ? [entry("connect", "Connect…")]
       : []),
     // Triggers offers only open modules (`moduleChoiceGroups`), so a closed

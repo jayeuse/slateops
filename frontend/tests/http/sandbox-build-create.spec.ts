@@ -533,3 +533,59 @@ test("right-click on empty canvas leaves the browser's own menu", async ({
   ).toBeVisible();
   expect(await cancelled()).toEqual([false, true]);
 });
+
+test.describe("touch on a phone canvas", () => {
+  test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
+
+  // FIND-6 (B11): a long press opens the item menu; a tap still selects and
+  // a touch drag still moves the card.
+  test("a long press on a module opens its item menu, a tap selects it, and a drag moves it", async ({
+    page,
+  }) => {
+    await openAuthenticatedSandbox(page, salesAndFinance());
+    const cdp = await page.context().newCDPSession(page);
+    const touch = (
+      type: "touchStart" | "touchMove" | "touchEnd",
+      x: number,
+      y: number,
+    ) =>
+      cdp.send("Input.dispatchTouchEvent", {
+        type,
+        touchPoints: type === "touchEnd" ? [] : [{ x, y }],
+      });
+    const orders = canvasNode(page, "orders");
+    await expect(orders).toBeVisible();
+    const header = async () => {
+      const box = await orders.boundingBox();
+      if (!box) throw new Error("The Orders card has no box");
+      return { x: box.x + box.width / 2, y: box.y + 6 };
+    };
+    const menu = page.getByRole("menu", { name: "Actions for module Orders" });
+
+    const tap = await header();
+    await touch("touchStart", tap.x, tap.y);
+    await touch("touchEnd", tap.x, tap.y);
+    await expect(elementBar(page, "Orders")).toBeVisible();
+    await expect(page.getByRole("menu")).toHaveCount(0);
+
+    const press = await header();
+    await touch("touchStart", press.x, press.y);
+    await expect(menu).toBeVisible();
+    await touch("touchEnd", press.x, press.y);
+    await expect(
+      menu.getByRole("menuitem", { name: "Connect…" }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeHidden();
+
+    const start = await header();
+    await touch("touchStart", start.x, start.y);
+    for (const step of [10, 25, 40, 60])
+      await touch("touchMove", start.x + step, start.y + step);
+    await touch("touchEnd", start.x + 60, start.y + 60);
+    await expect
+      .poll(async () => (await header()).x)
+      .toBeGreaterThan(start.x + 20);
+    await expect(page.getByRole("menu")).toHaveCount(0);
+  });
+});

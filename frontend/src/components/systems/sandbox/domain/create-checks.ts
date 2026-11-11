@@ -9,6 +9,7 @@ import {
 } from "@/lib/sandbox/canvas-geometry";
 import { buildField } from "../components/designer-field-settings";
 import type { Design, FieldTypeName } from "./model";
+import { clashReason, relationshipNamesInUse } from "./relationship-name";
 import { SANDBOX_LIMITS } from "./validation-types";
 
 /**
@@ -93,6 +94,49 @@ function nameReason(name: string): string | null {
   return trimmed.length > SANDBOX_LIMITS.nameCharacters
     ? `Use ${SANDBOX_LIMITS.nameCharacters} characters or fewer.`
     : null;
+}
+
+const sameName = (left: string, right: string) =>
+  left.trim().toLowerCase() === right.trim().toLowerCase();
+
+/**
+ * A name publish would refuse as a duplicate, in the scope publish checks
+ * (`publications/preflight.py`): open departments across the design, open
+ * modules of the same department, and a module's open fields with its
+ * outgoing relationships to open modules. The browser compares without
+ * case, stricter than publish, as Connect does.
+ */
+function duplicateNameReason(
+  design: Design,
+  kind: CreateKind,
+  parentId: string | null,
+  name: string,
+): string | null {
+  if (kind === "department") {
+    const taken = design.departments.find(
+      (item) => !item.closed && sameName(item.name, name),
+    );
+    return taken ? `A department named ${taken.name} already exists.` : null;
+  }
+  if (kind === "module") {
+    const department = design.departments.find((item) => item.id === parentId);
+    const taken = design.modules.find(
+      (item) =>
+        item.department === parentId &&
+        !item.closed &&
+        sameName(item.name, name),
+    );
+    return taken && department
+      ? `${department.name} already has a module named ${taken.name}.`
+      : null;
+  }
+  const parent = design.modules.find((item) => item.id === parentId);
+  if (!parent || !parentId) return null;
+  return clashReason(
+    name,
+    relationshipNamesInUse(design, parentId),
+    parent.name,
+  );
 }
 
 function insideCanvas(box: CanvasBox): boolean {
@@ -307,7 +351,9 @@ export function addElement(
 ): CreateAdd {
   const limit = createLimitReason(design, kind);
   if (limit) return { ok: false, reason: limit };
-  const name = nameReason(draft.name);
+  const name =
+    nameReason(draft.name) ??
+    duplicateNameReason(design, kind, parentId, draft.name);
   if (name) return { ok: false, reason: name };
   if (kind === "department") return addDepartment(design, id, draft.name);
   if (kind === "module")

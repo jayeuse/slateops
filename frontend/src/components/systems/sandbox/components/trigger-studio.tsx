@@ -31,7 +31,9 @@ import type { SandboxTriggerRun } from "../state/api";
 import type { TriggerDraft } from "./use-trigger-draft";
 import {
   defaultTrigger,
+  newTriggerFromBuild,
   replaceAt,
+  TRIGGER_LIMIT,
   triggerStepErrors,
 } from "../domain/trigger-rules";
 import {
@@ -372,17 +374,14 @@ export function TriggerStudio({
   // nothing is added then, as the list's New trigger is disabled.
   const newTriggerRequest = useRef(newTriggerModuleId);
   useEffect(() => {
-    const moduleId = newTriggerRequest.current;
+    const moduleId = newTriggerFromBuild({
+      moduleId: newTriggerRequest.current,
+      keptWaiting: triggerDraft.kept !== null && !dirty,
+      pending,
+      count: draft.length,
+    });
     newTriggerRequest.current = undefined;
-    const lockedByKept = triggerDraft.kept !== null && !dirty;
-    if (
-      moduleId === undefined ||
-      lockedByKept ||
-      pending ||
-      draft.length >= 500
-    )
-      return;
-    createTrigger(moduleId);
+    if (moduleId !== null) createTrigger(moduleId);
   }, []);
   // Recent activity is occasional: closed, last in the detail (the
   // Advanced Last Rule).
@@ -502,7 +501,7 @@ export function TriggerStudio({
                 selectedId={selectedId}
                 unsaved={triggerDraft.unsaved}
                 phone={phone}
-                canCreate={!pending && draft.length < 500}
+                canCreate={!pending && draft.length < TRIGGER_LIMIT}
                 onOpen={(id) => {
                   setSelectedId(id);
                   openDetail();

@@ -340,3 +340,107 @@ test("at a document limit the add is disabled with the limit as its reason", () 
     addElement(withCounts(1, 500, 1), "module", "new", "d0", draft("More")),
   ).toEqual({ ok: false, reason: "This design has 500 modules, the limit." });
 });
+
+// N2 (TASK-0049 QA D-2): a name that publish would refuse as a duplicate is
+// refused in place, compared without case (stricter than publish), in the
+// scope publish uses: open departments across the design, open modules of
+// the same department, and a module's open fields with its outgoing
+// relationships to open modules.
+test("a name already in use in its scope is refused, comparing without case", () => {
+  const before = salesDesign();
+  const design: Design = {
+    ...before,
+    departments: [
+      ...before.departments,
+      { id: "finance", name: "Finance", closed: false },
+      { id: "archive", name: "Archive", closed: true },
+    ],
+    modules: [
+      ...before.modules,
+      {
+        id: "customers",
+        department: "sales",
+        name: "Customers",
+        closed: false,
+        fields: [],
+        x: 0,
+        y: 0,
+      },
+      {
+        id: "old",
+        department: "sales",
+        name: "Old orders",
+        closed: true,
+        fields: [],
+        x: 0,
+        y: 0,
+      },
+    ],
+    relationships: [
+      {
+        id: "orders-customers",
+        name: "Buyer",
+        source: "orders",
+        target: "customers",
+        cardinality: "One-to-many",
+        fieldMappings: [],
+      },
+    ],
+  };
+  const refused: Array<
+    [string, Parameters<typeof addElement>[1], string | null, string, string]
+  > = [
+    [
+      "a department",
+      "department",
+      null,
+      " sales ",
+      "A department named Sales already exists.",
+    ],
+    [
+      "a module in its department",
+      "module",
+      "sales",
+      "ORDERS",
+      "Sales already has a module named Orders.",
+    ],
+    [
+      "a field in its module",
+      "field",
+      "orders",
+      "order NUMBER",
+      "Orders already has a field named Order number.",
+    ],
+    [
+      "a field named as an outgoing relationship",
+      "field",
+      "orders",
+      "buyer",
+      "Orders already has a relationship named Buyer.",
+    ],
+  ];
+  for (const [name, kind, parentId, value, reason] of refused)
+    expect(
+      addElement(design, kind, "new", parentId, draft(value)),
+      name,
+    ).toEqual({ ok: false, reason });
+  // Outside the scope, or held by a closed element: accepted.
+  const accepted: Array<
+    [string, Parameters<typeof addElement>[1], string | null, string]
+  > = [
+    ["a closed department's name", "department", null, "Archive"],
+    ["a module name used in another department", "module", "finance", "Orders"],
+    ["a closed module's name", "module", "sales", "Old orders"],
+    [
+      "a field name used in another module",
+      "field",
+      "customers",
+      "Order number",
+    ],
+  ];
+  for (const [name, kind, parentId, value] of accepted)
+    expect(
+      addElement(design, kind, "new", parentId, draft(value)).ok,
+      name,
+    ).toBe(true);
+});

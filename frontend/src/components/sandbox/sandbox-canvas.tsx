@@ -231,6 +231,10 @@ interface CanvasEditor extends CanvasEditRequest {
 // The inline editor is a fixed 28px control centred on the text it edits.
 const CANVAS_EDITOR_HEIGHT = 28;
 const CANVAS_EDITOR_MIN_WIDTH = 160;
+/** A touch held this long opens the item menu, as the menu trigger does. */
+const LONG_PRESS_MS = 500;
+/** A touch that moves farther than this is a pan or a drag, not a press. */
+const LONG_PRESS_SLOP = 10;
 /** One zoom step, added to or taken from the current zoom. */
 const ZOOM_STEP = 0.1;
 
@@ -1205,6 +1209,23 @@ function SandboxFlowCanvas({
     null,
   );
   const menuCandidateRef = useRef<SandboxDesignTarget | null>(null);
+  // A long press opens the menu too. React Flow's node drag stops a
+  // touchstart at the node, so the menu trigger's own long press never sees
+  // it; this one starts in the capture phase, before the node.
+  const [menuAnchor, setMenuAnchor] = useState<{
+    getBoundingClientRect: () => DOMRect;
+  } | null>(null);
+  const longPressRef = useRef<{
+    timer: ReturnType<typeof setTimeout>;
+    x: number;
+    y: number;
+    opened: boolean;
+  } | null>(null);
+  function endLongPress(): void {
+    if (longPressRef.current) clearTimeout(longPressRef.current.timer);
+    longPressRef.current = null;
+  }
+  useEffect(() => endLongPress, []);
   // Rename from the menu opens the name editor once the menu has returned
   // focus to the canvas.
   const menuLeavesFocus = useRef(false);
@@ -1373,6 +1394,7 @@ function SandboxFlowCanvas({
         onOpenChange={(open) => {
           if (!open) {
             setMenuTarget(null);
+            setMenuAnchor(null);
             return;
           }
           // Empty canvas and lines have no item menu.
@@ -1406,11 +1428,51 @@ function SandboxFlowCanvas({
             if (target === null) event.stopPropagation();
           }}
           onTouchStartCapture={(event) => {
-            const touch = event.touches[0];
-            menuCandidateRef.current = touch
-              ? targetAt(event.target, touch.clientX, touch.clientY)
-              : null;
+            endLongPress();
+            const touch = event.touches.length === 1 ? event.touches[0] : null;
+            const target =
+              touch && itemMenu
+                ? targetAt(event.target, touch.clientX, touch.clientY)
+                : null;
+            menuCandidateRef.current = target;
+            if (!touch || target === null) return;
+            const { clientX: x, clientY: y } = touch;
+            const press = {
+              x,
+              y,
+              opened: false,
+              timer: setTimeout(() => {
+                press.opened = true;
+                menuLeavesFocus.current = false;
+                callbacksRef.current.onSelect(target.id);
+                setMenuAnchor({
+                  getBoundingClientRect: () =>
+                    DOMRect.fromRect({ x, y, width: 10, height: 10 }),
+                });
+                setMenuTarget(target);
+              }, LONG_PRESS_MS),
+            };
+            longPressRef.current = press;
           }}
+          onTouchMoveCapture={(event) => {
+            const press = longPressRef.current;
+            const touch = event.touches[0];
+            if (
+              press &&
+              !press.opened &&
+              touch &&
+              Math.hypot(touch.clientX - press.x, touch.clientY - press.y) >
+                LONG_PRESS_SLOP
+            )
+              endLongPress();
+          }}
+          onTouchEndCapture={(event) => {
+            // The lift after a long press is not a tap: no click selects or
+            // closes the menu that just opened.
+            if (longPressRef.current?.opened) event.preventDefault();
+            endLongPress();
+          }}
+          onTouchCancelCapture={endLongPress}
         >
           <SandboxCanvasActionsProvider value={actions}>
             <ReactFlow<SandboxFlowNode, RelationshipFlowEdge>
@@ -1452,6 +1514,7 @@ function SandboxFlowCanvas({
           <ContextMenuContent
             data-sandbox-portal
             className="slim-ui"
+            anchor={menuAnchor ?? undefined}
             finalFocus={() => !menuLeavesFocus.current}
             aria-label={`Actions for ${menuTarget.kind} ${
               (menuTarget.kind === "department"

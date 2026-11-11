@@ -18,6 +18,8 @@ import {
   addTriggerAction,
   addTriggerCondition,
   defaultTrigger,
+  newTriggerFromBuild,
+  TRIGGER_LIMIT,
 } from "../../../src/components/systems/sandbox/domain/trigger-rules";
 import { triggerSentence } from "../../../src/components/systems/sandbox/components/trigger-sentence";
 import { structureRegionModel } from "../../../src/components/systems/sandbox/components/trigger-structure-region";
@@ -572,3 +574,26 @@ test(
     );
   },
 );
+
+// TRIG-8 (T8-C1): "New trigger" from Build adds nothing while kept edits wait
+// for Restore or Discard, while a save is pending, or at the trigger limit,
+// as the list's New trigger is then unavailable.
+test("New trigger from Build adds a trigger on its module only when the list could", () => {
+  const ask = {
+    moduleId: "orders" as string | undefined,
+    keptWaiting: false,
+    pending: false,
+    count: 3,
+  };
+  const rows: Array<[string, Partial<typeof ask>, string | null]> = [
+    ["a request with room", {}, "orders"],
+    ["no request", { moduleId: undefined }, null],
+    ["kept edits wait for Restore or Discard", { keptWaiting: true }, null],
+    ["a save is pending", { pending: true }, null],
+    ["one below the limit", { count: TRIGGER_LIMIT - 1 }, "orders"],
+    ["at the limit", { count: TRIGGER_LIMIT }, null],
+  ];
+  expect(TRIGGER_LIMIT).toBe(500);
+  for (const [name, patch, result] of rows)
+    expect(newTriggerFromBuild({ ...ask, ...patch }), name).toBe(result);
+});

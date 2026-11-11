@@ -190,7 +190,8 @@ test("the item menu holds the tree items, and a module adds Connect and New trig
     "Delete module",
   ]);
   // T8-C1: a closed module takes no new trigger; Triggers offers only open
-  // modules, so the item is hidden.
+  // modules, so the item is hidden. Connect leaves closed modules out of its
+  // targets, and a closed module connects to nothing either (QA D-3).
   expect(
     labels(
       itemMenuEntries("module", {
@@ -204,7 +205,6 @@ test("the item menu holds the tree items, and a module adds Connect and New trig
     "Reopen module",
     "Delete module forever",
     "Duplicate module",
-    "Connect…",
     "Delete module",
   ]);
   expect(labels(itemMenuEntries("field", base))).toEqual([
