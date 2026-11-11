@@ -81,11 +81,25 @@ import {
   openSandboxDocumentSession,
   proposedSandboxDocument,
   reapplySandboxDocument,
-  synchronizeSandboxHistoryRules,
   syncSandboxDocumentMetadata,
   updateSandboxDocumentSession,
   type SandboxDocumentSession,
 } from "./state/document-session";
+import {
+  addedElementIds,
+  classifyDesignChange,
+  confirmQueuedSave,
+  designAddHoldReason,
+  idleSaveQueue,
+  reduceSaveQueue,
+  saveQueueActive,
+  saveQueueConflictDocument,
+  saveQueueHasQueued,
+  saveQueueNeedsSend,
+  saveQueueRequest,
+  type SandboxSaveQueue,
+  type SandboxSaveQueueEvent,
+} from "./state/save-queue";
 import { VersionsWorkspace } from "./components/versions-workspace";
 import { DISCARD_CHECKPOINT } from "./domain/version-history";
 import { TriggerStudio } from "./components/trigger-studio";
@@ -142,6 +156,25 @@ type Conflict = {
   proposedDocument: SandboxDocumentV4;
   reason: "conflict" | "save-failed";
 };
+/**
+ * The page's latest actions, for a request that waited for the save queue
+ * to empty and must then run with the state of that moment.
+ */
+type LatestSandboxActions = {
+  navigate: (
+    target: string,
+    replace?: boolean,
+    bypassPending?: boolean,
+    adjust?: (params: URLSearchParams) => void,
+  ) => void;
+  change: (update: DesignUpdate) => Promise<SandboxCommandResult<Design>>;
+  requestLifecycle: (
+    binding: SandboxLifecycleBinding,
+    operation: SandboxLifecycleOperation,
+  ) => Promise<SandboxCommandResult<Design>>;
+  reloadLiveState: () => Promise<void>;
+};
+const SANDBOX_ACTION_HOLD = "Wait for the current Sandbox action to finish.";
 
 export function sectionFromSearch(
   requestedSection: string | null,
@@ -171,11 +204,14 @@ function sectionHref(
     ([, label]) => label === section,
   )?.[0];
   const params = new URLSearchParams(current);
-  // A trace is a one-time "Show on canvas" request, not part of the view.
-  params.delete("trace");
-  params.delete("run");
   params.set("section", slug ?? "build");
   return `/sandbox?${params.toString()}`;
+}
+
+/** Makes `params` hold exactly `next`. */
+function replaceParams(params: URLSearchParams, next: URLSearchParams) {
+  for (const key of [...params.keys()]) params.delete(key);
+  next.forEach((value, key) => params.append(key, value));
 }
 
 function commandFailure(error: unknown): SandboxCommandFailure {
@@ -364,6 +400,13 @@ function SandboxWorkspace() {
   const search = useSearchParams();
   const router = useRouter();
   const [session, setSession] = useState<SandboxDocumentSession | null>(null);
+  // The session as of now, for callbacks that read it after an await. Every
+  // session change goes through commitSession, so it never lags the state.
+  const sessionRef = useRef<SandboxDocumentSession | null>(null);
+  const commitSession = useCallback((next: SandboxDocumentSession) => {
+    sessionRef.current = next;
+    setSession(next);
+  }, []);
   const queryClient = useQueryClient();
   const workspace = useQuery(workspaceLifecycleQueryOptions());
   const purgeEnabled = workspace.isSuccess && workspace.data.purge_enabled;
@@ -419,13 +462,35 @@ function SandboxWorkspace() {
     ),
     enabled: session !== null && !historyAccess.denied,
   });
-  // A design save in flight, for the header's save-state chip.
-  const [saving, setSaving] = useState(false);
   const [feedbackErrorFailure, setFeedbackError] = useErrorText();
   const feedbackError = feedbackErrorFailure?.message ?? "";
   // Bumped by each successful Publish; the look's title signature plays once.
   const [publishCount, setPublishCount] = useState(0);
   const [conflict, setConflict] = useState<Conflict | null>(null);
+  const conflictRef = useRef<Conflict | null>(null);
+  const holdConflict = useCallback((next: Conflict | null) => {
+    conflictRef.current = next;
+    setConflict(next);
+  }, []);
+  // The Build save queue (N1): one design save in flight, and the adds,
+  // Undo, and Redo accepted behind it. A non-empty queue holds every action
+  // that reads the saved draft; those wait for it to empty.
+  const saveQueueRef = useRef<SandboxSaveQueue>(idleSaveQueue);
+  const [saveQueue, setSaveQueue] = useState<SandboxSaveQueue>(idleSaveQueue);
+  const savesPending = saveQueueActive(saveQueue);
+  const updateSaveQueue = useCallback((event: SandboxSaveQueueEvent) => {
+    saveQueueRef.current = reduceSaveQueue(saveQueueRef.current, event);
+    setSaveQueue(saveQueueRef.current);
+  }, []);
+  const saveWaiters = useRef<Array<(drained: boolean) => void>>([]);
+  /** Resolves once the queue is empty; false when it ended in a conflict. */
+  const waitForSaves = useCallback((): Promise<boolean> => {
+    if (!saveQueueActive(saveQueueRef.current)) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      saveWaiters.current.push(resolve);
+    });
+  }, []);
+  const latest = useRef<LatestSandboxActions | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [checkpointOpen, setCheckpointOpen] = useState(false);
@@ -538,15 +603,19 @@ function SandboxWorkspace() {
     }
   }, []);
   const syncVersionMetadata = useCallback(async () => {
+    // Queued adds are not in the stored draft yet; the sync waits for them.
+    await waitForSaves();
     const response = await loadSandboxDocument();
-    setSession((current) =>
+    const current = sessionRef.current;
+    commitSession(
       current
         ? syncSandboxDocumentMetadata(current, response)
         : openSandboxDocumentSession(response),
     );
     await refreshVersions();
-  }, [refreshVersions]);
+  }, [commitSession, refreshVersions, waitForSaves]);
   const refreshCapacity = useCallback(async () => {
+    await waitForSaves();
     const nextKey = versionsRefreshKey + 1;
     const [response] = await Promise.all([
       loadSandboxDocument(),
@@ -562,17 +631,19 @@ function SandboxWorkspace() {
         { throwOnError: true },
       ),
     ]);
-    setSession((current) =>
+    const current = sessionRef.current;
+    commitSession(
       current
         ? syncSandboxDocumentMetadata(current, response)
         : openSandboxDocumentSession(response),
     );
     setVersionsRefreshKey(nextKey);
-  }, [queryClient, versionsRefreshKey]);
+  }, [commitSession, queryClient, versionsRefreshKey, waitForSaves]);
   const retryCapacity = useCallback(async () => {
     if (
       commandPending.current ||
       lifecycleLock.current ||
+      saveQueueActive(saveQueueRef.current) ||
       testPending ||
       publicationPending
     )
@@ -598,6 +669,7 @@ function SandboxWorkspace() {
     if (
       commandPending.current ||
       lifecycleLock.current ||
+      saveQueueActive(saveQueueRef.current) ||
       commandBusy ||
       designerDraftDirty ||
       triggerDraft.dirty ||
@@ -662,7 +734,7 @@ function SandboxWorkspace() {
         loadSandboxDocument(),
         listSandboxTests({ limit: 50 }),
       ]);
-      setSession(openSandboxDocumentSession(document));
+      commitSession(openSandboxDocumentSession(document));
       setVersionsRefreshKey((value) => value + 1);
       setTestRuns(testPage.items);
       setTestTotal(testPage.total);
@@ -672,7 +744,7 @@ function SandboxWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [queryClient]);
+  }, [commitSession, queryClient]);
   // The first reads wait for the identity, so an account it shows is not
   // an administrator sends none (S25); a failed identity read still loads.
   const viewer = useQuery(authMeOptions());
@@ -732,10 +804,23 @@ function SandboxWorkspace() {
         })
       )
         return;
+      // A section move waits for queued saves, then happens (N1 rule 5).
+      // `bypassPending` skips only the checks above, never this wait.
+      if (saveQueueActive(saveQueueRef.current)) {
+        void waitForSaves().then((drained) => {
+          if (drained)
+            latest.current?.navigate(target, replace, bypassPending, adjust);
+        });
+        return;
+      }
       const params = new URLSearchParams(search.toString());
       // The Triggers quick filter is a one-time request; only the move that
       // asks for it carries it.
       params.delete("status");
+      // A trace is a one-time "Show on canvas" request, not part of the
+      // view; only a move that asks for it (`adjust`) carries it.
+      params.delete("trace");
+      params.delete("run");
       adjust?.(params);
       const href = sectionHref(next, params);
       if (replace) router.replace(href as Route, { scroll: false });
@@ -752,6 +837,7 @@ function SandboxWorkspace() {
       search,
       section,
       testPending,
+      waitForSaves,
     ],
   );
   useWorkspaceNavigationGuard(
@@ -775,6 +861,15 @@ function SandboxWorkspace() {
                 target.searchParams.get("rule"),
               )
             : null;
+        if (saveQueueActive(saveQueueRef.current)) {
+          // Leaving the page with queued saves is held, as any save is
+          // (N1 rule 7); a section move waits for them, then happens.
+          if (to !== null)
+            void waitForSaves().then((drained) => {
+              if (drained) resume();
+            });
+          return false;
+        }
         if (!triggerDraft.dirty || !triggerEditsHoldMove(section, to))
           return true;
         // Only unsaved triggers hold the page: ask Save, Discard, or Stay.
@@ -790,13 +885,14 @@ function SandboxWorkspace() {
         designerDraftDirty,
         publicationPending,
         testPending,
+        waitForSaves,
       ],
     ),
   );
   useEffect(() => {
     if (
       !sandboxWorkInProgress({
-        commandBusy,
+        commandBusy: commandBusy || savesPending,
         publicationPending,
         testPending,
         conflict: conflict !== null,
@@ -819,127 +915,226 @@ function SandboxWorkspace() {
     commandBusy,
     designerDraftDirty,
     publicationPending,
+    savesPending,
     testPending,
   ]);
 
+  /**
+   * Sends the design save the queue holds: the local design merged onto the
+   * last confirmed document, at its revision (N1 rule 2), or `document` when
+   * a caller gives the whole document. One request at a time; changes
+   * accepted meanwhile leave together in the next one. The result is this
+   * request's own.
+   */
+  const sendQueuedSave = useCallback(async function send(
+    document?: SandboxDocumentV4,
+  ): Promise<SandboxCommandResult<Design>> {
+    const local = sessionRef.current;
+    if (!local) return sandboxStillLoading();
+    const request = document
+      ? { expectedRevision: local.revision, document }
+      : saveQueueRequest(local);
+    updateSaveQueue({ type: "send" });
+    try {
+      const response = await replaceSandboxDocument(request);
+      const confirmed = confirmQueuedSave(
+        sessionRef.current ?? local,
+        response,
+        saveQueueHasQueued(saveQueueRef.current),
+      );
+      commitSession(confirmed);
+      updateSaveQueue({ type: "confirm" });
+      holdConflict(null);
+      setFeedbackError("");
+      return { ok: true, value: confirmed.projected };
+    } catch (error) {
+      // The conflict keeps the local design of this moment, queued changes
+      // included (N1 rule 3); nothing more is sent.
+      const proposedDocument = saveQueueConflictDocument(
+        sessionRef.current ?? local,
+        request.document,
+        saveQueueHasQueued(saveQueueRef.current),
+      );
+      updateSaveQueue({ type: "fail" });
+      if (error instanceof ApiError && error.status === 409) {
+        holdConflict({ proposedDocument, reason: "conflict" });
+        setFeedbackError(
+          "Reload the shared draft, then reapply your edits.",
+          error,
+        );
+      } else {
+        holdConflict({ proposedDocument, reason: "save-failed" });
+        setFeedbackError(
+          "Your change was not saved. Reapply it to try again.",
+          error,
+        );
+      }
+      return commandFailure(error);
+    } finally {
+      if (saveQueueNeedsSend(saveQueueRef.current)) void send();
+    }
+  }, []);
+  /** Accepts a local change into the queue, and sends it when nothing is in flight. */
+  const acceptQueuedChange = useCallback(
+    (next: SandboxDocumentSession, addedIds: readonly string[]) => {
+      commitSession(next);
+      updateSaveQueue({ type: "accept", ids: addedIds });
+      if (saveQueueNeedsSend(saveQueueRef.current)) void sendQueuedSave();
+    },
+    [commitSession, sendQueuedSave, updateSaveQueue],
+  );
+  /**
+   * Saves a whole session: a Build edit, the trigger save, discard, and
+   * reapply. It holds the page like any other command, and runs only with an
+   * empty queue.
+   */
   const persist = useCallback(
     async (
       next: SandboxDocumentSession,
       document = proposedSandboxDocument(next),
     ): Promise<SandboxCommandResult<Design>> => {
-      if (commandPending.current || lifecycleLock.current)
-        return {
-          ok: false,
-          error: "Wait for the current Sandbox action to finish.",
-        };
+      if (
+        commandPending.current ||
+        lifecycleLock.current ||
+        saveQueueActive(saveQueueRef.current)
+      )
+        return { ok: false, error: SANDBOX_ACTION_HOLD };
       commandPending.current = true;
-      setSession(next);
       setPending(true);
-      setSaving(true);
       try {
-        const response = await replaceSandboxDocument({
-          expectedRevision: next.revision,
-          document,
-        });
-        const confirmed = openSandboxDocumentSession(response);
-        setSession({
-          ...confirmed,
-          history: synchronizeSandboxHistoryRules(
-            next.history,
-            confirmed.projected,
-          ),
-        });
-        setConflict(null);
-        setFeedbackError("");
-        return { ok: true, value: confirmed.projected };
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 409) {
-          setConflict({ proposedDocument: document, reason: "conflict" });
-          setFeedbackError(
-            "Reload the shared draft, then reapply your edits.",
-            error,
-          );
-        } else {
-          setConflict({ proposedDocument: document, reason: "save-failed" });
-          setFeedbackError(
-            "Your change was not saved. Reapply it to try again.",
-            error,
-          );
-        }
-        return commandFailure(error);
+        commitSession(next);
+        updateSaveQueue({ type: "accept", ids: [] });
+        return await sendQueuedSave(document);
       } finally {
         commandPending.current = false;
         setPending(false);
-        setSaving(false);
       }
     },
-    [],
+    [commitSession, sendQueuedSave, updateSaveQueue],
   );
   const saveDocument = useCallback(
     async (document: SandboxDocumentV4) => {
-      if (!session) throw new Error("Sandbox is still loading.");
-      const result = await persist({ ...session, document }, document);
+      if (!sessionRef.current) throw new Error("Sandbox is still loading.");
+      // The trigger save waits for queued saves, then runs (D-Q2). A drain
+      // that ended in a conflict stops it: the conflict keeps the adds.
+      if (!(await waitForSaves()))
+        throw new SandboxCommandError(SANDBOX_ACTION_HOLD);
+      const current = sessionRef.current;
+      const result = await persist({ ...current, document }, document);
       // Keeps the refused request's reference for the trigger save (D1.6).
       if (!result.ok)
         throw new SandboxCommandError(result.error, result.reference);
     },
-    [persist, session],
+    [persist, waitForSaves],
   );
   useEffect(() => {
-    saveTriggersRef.current = (triggers) =>
-      session
-        ? saveDocument({ ...session.document, triggers })
-        : Promise.reject(new Error("Sandbox is still loading."));
+    // The triggers go onto the stored draft as it is once queued saves end.
+    saveTriggersRef.current = async (triggers) => {
+      if (!(await waitForSaves()))
+        throw new SandboxCommandError(SANDBOX_ACTION_HOLD);
+      const current = sessionRef.current;
+      if (!current) throw new Error("Sandbox is still loading.");
+      await saveDocument({ ...current.document, triggers });
+    };
   });
 
+  /**
+   * A Build add is accepted at once and joins the save queue (N1 rule 1).
+   * Any other edit waits for the queue to empty, then saves as before.
+   */
   const change = useCallback(
     async (update: DesignUpdate): Promise<SandboxCommandResult<Design>> => {
-      if (!session) return sandboxStillLoading();
-      if (
-        commandBusy ||
-        commandPending.current ||
-        lifecycleLock.current ||
-        conflict
-      )
-        return {
-          ok: false,
-          error: "A Sandbox change is already being saved.",
-        };
+      const current = sessionRef.current;
+      if (!current) return sandboxStillLoading();
+      const holdReason = designAddHoldReason({
+        command: commandBusy || commandPending.current,
+        publication: publicationPending,
+        lifecycle: lifecycleLock.current,
+        conflict: conflict !== null || conflictRef.current !== null,
+      });
       let nextDesign: Design;
       try {
         nextDesign =
           typeof update === "function"
-            ? update(session.history.present)
+            ? update(current.history.present)
             : update;
       } catch (error) {
+        if (holdReason)
+          return {
+            ok: false,
+            error: "A Sandbox change is already being saved.",
+          };
         // A design rule the update checks refuses it with its own reason.
         if (error instanceof SandboxCommandError)
           return { ok: false, error: error.message };
         throw error;
       }
-      if (
-        nextDesign === session.history.present ||
-        JSON.stringify(nextDesign) === JSON.stringify(session.history.present)
-      )
-        return { ok: true, value: session.history.present };
-      return persist(updateSandboxDocumentSession(session, nextDesign));
+      const kind = classifyDesignChange(current.history.present, nextDesign);
+      if (holdReason)
+        return {
+          ok: false,
+          error:
+            kind.kind === "add"
+              ? holdReason
+              : "A Sandbox change is already being saved.",
+        };
+      if (kind.kind === "none")
+        return { ok: true, value: current.history.present };
+      const next = updateSandboxDocumentSession(current, nextDesign);
+      if (kind.kind === "add") {
+        acceptQueuedChange(next, kind.ids);
+        return { ok: true, value: next.history.present };
+      }
+      if (saveQueueActive(saveQueueRef.current)) {
+        if (!(await waitForSaves()))
+          return { ok: false, error: SANDBOX_ACTION_HOLD };
+        return latest.current
+          ? latest.current.change(update)
+          : sandboxStillLoading();
+      }
+      // An edit saves as before the queue: it holds the page, Build
+      // included, until its own save ends.
+      return persist(next);
     },
-    [commandBusy, conflict, persist, session],
+    [
+      acceptQueuedChange,
+      commandBusy,
+      conflict,
+      persist,
+      publicationPending,
+      waitForSaves,
+    ],
   );
-  const undo = useCallback(async () => {
-    if (!session || commandBusy || conflict) return;
-    return persist({
-      ...session,
-      history: undoSandboxCommand(session.history),
-    });
-  }, [commandBusy, conflict, persist, session]);
-  const redo = useCallback(async () => {
-    if (!session || commandBusy || conflict) return;
-    return persist({
-      ...session,
-      history: redoSandboxCommand(session.history),
-    });
-  }, [commandBusy, conflict, persist, session]);
+  /** Undo and Redo join the save queue, so they work while adds save (N1 rule 4). */
+  const moveHistory = useCallback(
+    (step: typeof undoSandboxCommand) => {
+      const current = sessionRef.current;
+      if (
+        !current ||
+        commandBusy ||
+        commandPending.current ||
+        lifecycleLock.current ||
+        conflict ||
+        conflictRef.current
+      )
+        return;
+      const history = step(current.history);
+      if (history === current.history) return;
+      acceptQueuedChange(
+        { ...current, history },
+        addedElementIds(current.history.present, history.present),
+      );
+    },
+    [acceptQueuedChange, commandBusy, conflict],
+  );
+  const undo = useCallback(
+    () => moveHistory(undoSandboxCommand),
+    [moveHistory],
+  );
+  const redo = useCallback(
+    () => moveHistory(redoSandboxCommand),
+    [moveHistory],
+  );
 
   async function reloadLiveState() {
     if (
@@ -952,6 +1147,11 @@ function SandboxWorkspace() {
       triggerDraft.pending
     )
       return;
+    // The reload replaces the session, so it waits for queued saves.
+    if (saveQueueActive(saveQueueRef.current)) {
+      if (await waitForSaves()) await latest.current?.reloadLiveState();
+      return;
+    }
     commandPending.current = true;
     setPending(true);
     try {
@@ -964,7 +1164,7 @@ function SandboxWorkspace() {
         sandboxKeys.bindingsRevision(document.revision),
         bindings,
       );
-      setSession(openSandboxDocumentSession(document));
+      commitSession(openSandboxDocumentSession(document));
       setFeedbackError("");
       setLifecycleRecovery(false);
       lifecycleLock.current = false;
@@ -985,6 +1185,12 @@ function SandboxWorkspace() {
   ): Promise<SandboxCommandResult<Design>> {
     if (operation === "purge" && !purgeEnabled)
       return { ok: false, error: "Delete forever is unavailable." };
+    // A lifecycle action reads the saved draft, so it waits for queued saves.
+    if (saveQueueActive(saveQueueRef.current)) {
+      if (!(await waitForSaves()) || !latest.current)
+        return { ok: false, error: SANDBOX_ACTION_HOLD };
+      return latest.current.requestLifecycle(binding, operation);
+    }
     if (
       !session ||
       !bindingsReady ||
@@ -1034,7 +1240,7 @@ function SandboxWorkspace() {
           sandboxKeys.bindingsRevision(document.revision),
           bindings,
         );
-        setSession(openSandboxDocumentSession(document));
+        commitSession(openSandboxDocumentSession(document));
         setFeedbackError("");
         reportDone(lifecycleDoneNotice(result));
         lifecycleLock.current = false;
@@ -1103,6 +1309,11 @@ function SandboxWorkspace() {
     },
     [change],
   );
+  /** The session once queued saves end; null when they ended in a conflict. */
+  const savedSession = useCallback(
+    async () => ((await waitForSaves()) ? sessionRef.current : null),
+    [waitForSaves],
+  );
   const checkpoint = useCallback(
     async (
       label: string,
@@ -1111,8 +1322,10 @@ function SandboxWorkspace() {
       if (!session) return sandboxStillLoading();
       setPending(true);
       try {
+        const saved = await savedSession();
+        if (!saved) return { ok: false, error: SANDBOX_ACTION_HOLD };
         const version = await createSandboxVersion({
-          expectedRevision: session.revision,
+          expectedRevision: saved.revision,
           kind: "checkpoint",
           label,
           ...(note ? { note } : {}),
@@ -1126,7 +1339,7 @@ function SandboxWorkspace() {
         setPending(false);
       }
     },
-    [session, syncVersionMetadata],
+    [savedSession, session, syncVersionMetadata],
   );
   const importFile = useCallback(
     async (
@@ -1135,11 +1348,13 @@ function SandboxWorkspace() {
       if (!session) return sandboxStillLoading();
       setPending(true);
       try {
+        const saved = await savedSession();
+        if (!saved) return { ok: false, error: SANDBOX_ACTION_HOLD };
         const response = await importSandboxBundle({
-          expectedRevision: session.revision,
+          expectedRevision: saved.revision,
           bundle,
         });
-        setSession(openSandboxDocumentSession(response));
+        commitSession(openSandboxDocumentSession(response));
         await refreshVersions();
         navigate("Build", false, true);
         reportDone("Draft imported");
@@ -1150,7 +1365,7 @@ function SandboxWorkspace() {
         setPending(false);
       }
     },
-    [navigate, refreshVersions, session],
+    [commitSession, navigate, refreshVersions, savedSession, session],
   );
   const applyTemplate = useCallback(
     async (
@@ -1159,11 +1374,13 @@ function SandboxWorkspace() {
       if (!session) return sandboxStillLoading();
       setPending(true);
       try {
+        const saved = await savedSession();
+        if (!saved) return { ok: false, error: SANDBOX_ACTION_HOLD };
         const response = await importSandboxBundle({
-          expectedRevision: session.revision,
+          expectedRevision: saved.revision,
           bundle: template.createDocument(),
         });
-        setSession(openSandboxDocumentSession(response));
+        commitSession(openSandboxDocumentSession(response));
         await refreshVersions();
         navigate("Build", false, true);
         reportDone(`${template.name} template applied`);
@@ -1174,14 +1391,16 @@ function SandboxWorkspace() {
         setPending(false);
       }
     },
-    [navigate, refreshVersions, session],
+    [commitSession, navigate, refreshVersions, savedSession, session],
   );
   const discardDraftChanges = useCallback(async () => {
     if (!session) return sandboxStillLoading();
     setPending(true);
     try {
+      const saved = await savedSession();
+      if (!saved) return { ok: false as const, error: SANDBOX_ACTION_HOLD };
       await createSandboxVersion({
-        expectedRevision: session.revision,
+        expectedRevision: saved.revision,
         kind: "checkpoint",
         // History folds this checkpoint as an automatic save (S9).
         ...DISCARD_CHECKPOINT,
@@ -1195,7 +1414,7 @@ function SandboxWorkspace() {
           versionId: published.id,
           expectedRevision: refreshed.revision,
         });
-        setSession(openSandboxDocumentSession(restored));
+        commitSession(openSandboxDocumentSession(restored));
         await refreshVersions();
         reportDone("Draft reset to the last publish");
         return { ok: true as const, value: restored.document };
@@ -1221,7 +1440,14 @@ function SandboxWorkspace() {
     } finally {
       setPending(false);
     }
-  }, [persist, refreshVersions, session, syncVersionMetadata]);
+  }, [
+    commitSession,
+    persist,
+    refreshVersions,
+    savedSession,
+    session,
+    syncVersionMetadata,
+  ]);
 
   function selectIssue(issue: SandboxValidationIssue) {
     if (
@@ -1279,16 +1505,24 @@ function SandboxWorkspace() {
       new URLSearchParams(search.toString()),
     );
     if (destination.kind === "section") return navigate(destination.section);
-    router.replace(`/sandbox?${destination.params.toString()}`, {
-      scroll: false,
-    });
+    // Through navigate, so the move waits for queued saves; it skips the
+    // other checks, as the direct move did.
+    navigate(
+      sectionFromSearch(
+        destination.params.get("section"),
+        destination.params.get("rule"),
+      ),
+      true,
+      true,
+      (params) => replaceParams(params, destination.params),
+    );
   }
   const reloadConflict = useCallback(async () => {
     setPending(true);
     try {
       const response = await loadSandboxDocument();
-      setSession(openSandboxDocumentSession(response));
-      setConflict(null);
+      commitSession(openSandboxDocumentSession(response));
+      holdConflict(null);
       setFeedbackError("");
       reportDone("Shared draft reloaded");
     } catch (error) {
@@ -1296,7 +1530,7 @@ function SandboxWorkspace() {
     } finally {
       setPending(false);
     }
-  }, []);
+  }, [commitSession, holdConflict]);
   const reapplyConflict = useCallback(async () => {
     if (!conflict) return;
     setPending(true);
@@ -1314,6 +1548,18 @@ function SandboxWorkspace() {
       setPending(false);
     }
   }, [conflict, persist]);
+  // A request that waited for the save queue runs the page's latest action.
+  useEffect(() => {
+    latest.current = { navigate, change, requestLifecycle, reloadLiveState };
+  });
+  // Runs the requests that waited, once the queue is empty. It follows the
+  // effect above, so each one runs with this render's state.
+  useEffect(() => {
+    if (saveQueueActive(saveQueueRef.current) || !saveWaiters.current.length)
+      return;
+    const drained = conflictRef.current === null;
+    for (const resolve of saveWaiters.current.splice(0)) resolve(drained);
+  });
 
   if (loadDenied && !session) return <SandboxUnavailable />;
   if (loadError && !session)
@@ -1358,6 +1604,7 @@ function SandboxWorkspace() {
     pending:
       loading ||
       pending ||
+      savesPending ||
       lifecycleRequest !== null ||
       lifecycleRecovery ||
       publicationPending ||
@@ -1371,8 +1618,9 @@ function SandboxWorkspace() {
   };
   // Why Review & Publish cannot open, when it cannot: the header button
   // and the Build summary's Review row say the same thing.
-  const reviewReason =
-    loading || commandBusy || testPending || triggerDraft.pending
+  const reviewReason = savesPending
+    ? "Saving…"
+    : loading || commandBusy || testPending || triggerDraft.pending
       ? null
       : triggerDraft.dirty
         ? "Save trigger changes first."
@@ -1386,6 +1634,7 @@ function SandboxWorkspace() {
   const reviewDisabled =
     loading ||
     commandBusy ||
+    savesPending ||
     testPending ||
     !status.publishable ||
     triggerDraft.dirty ||
@@ -1412,7 +1661,13 @@ function SandboxWorkspace() {
   return (
     <section
       data-sandbox-page
-      aria-busy={commandBusy || publicationPending || testPending || undefined}
+      aria-busy={
+        commandBusy ||
+        savesPending ||
+        publicationPending ||
+        testPending ||
+        undefined
+      }
       className="flex flex-col gap-5 xl:min-h-0 xl:flex-1"
     >
       {conflict ? (
@@ -1468,25 +1723,29 @@ function SandboxWorkspace() {
                 ? "Live state and the shared draft changed. Reload before changing this item."
                 : "Live state could not be loaded. Retry before changing this item."}
           </span>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={
-              pending ||
-              Boolean(conflict) ||
-              designerDraftDirty ||
-              triggerDraft.dirty ||
-              triggerDraft.pending
-            }
-            onClick={() => {
-              if (bindingMismatch || lifecycleRecovery) void reloadLiveState();
-              else void bindingsQuery.refetch();
-            }}
-          >
-            {bindingMismatch || lifecycleRecovery
-              ? "Reload live state"
-              : "Retry live state"}
-          </Button>
+          <DisabledReason stable reason={savesPending ? "Saving…" : null}>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={
+                pending ||
+                savesPending ||
+                Boolean(conflict) ||
+                designerDraftDirty ||
+                triggerDraft.dirty ||
+                triggerDraft.pending
+              }
+              onClick={() => {
+                if (bindingMismatch || lifecycleRecovery)
+                  void reloadLiveState();
+                else void bindingsQuery.refetch();
+              }}
+            >
+              {bindingMismatch || lifecycleRecovery
+                ? "Reload live state"
+                : "Retry live state"}
+            </Button>
+          </DisabledReason>
         </Alert>
       ) : null}
       <SandboxPageHeader
@@ -1504,7 +1763,7 @@ function SandboxWorkspace() {
                 text: conflict
                   ? "Not saved"
                   : `${status.label} · ${
-                      saving
+                      savesPending
                         ? "Saving…"
                         : triggerDraft.changes > 0
                           ? `${triggerDraft.changes} unsaved trigger ${
@@ -1515,7 +1774,7 @@ function SandboxWorkspace() {
                 short: conflict
                   ? "Not saved"
                   : `${status.short} · ${
-                      saving
+                      savesPending
                         ? "Saving…"
                         : triggerDraft.changes > 0
                           ? `${triggerDraft.changes} unsaved`
@@ -1534,6 +1793,7 @@ function SandboxWorkspace() {
           <SandboxHeaderActions
             versionsRefreshKey={versionsRefreshKey}
             versionCapacity={versionCapacity}
+            saving={savesPending}
             pending={
               loading ||
               commandBusy ||
@@ -1635,10 +1895,10 @@ function SandboxWorkspace() {
             traceSteps={traceSteps}
             onBackToTest={() => {
               // Return to the same result: keep the run, drop the trace.
-              const params = new URLSearchParams(search.toString());
-              params.delete("trace");
-              params.set("section", "test");
-              router.push(`/sandbox?${params.toString()}`, { scroll: false });
+              const run = search.get("run");
+              navigate("Test", false, true, (params) => {
+                if (run) params.set("run", run);
+              });
             }}
             design={design}
             change={change}
@@ -1653,6 +1913,7 @@ function SandboxWorkspace() {
               testPending ||
               Boolean(conflict)
             }
+            saving={savesPending}
             bindings={bindingsReady ? bindingsQuery.data!.items : null}
             purgeEnabled={purgeEnabled}
             onLifecycle={requestLifecycle}
@@ -1696,8 +1957,12 @@ function SandboxWorkspace() {
               runs={testRuns}
               total={testTotal}
               onRun={async (input) => {
+                // A run reads the saved draft, so it waits for queued saves;
+                // a drain that ended in a conflict stops it.
+                const saved = await savedSession();
+                if (!saved) throw new SandboxCommandError(SANDBOX_ACTION_HOLD);
                 const run = await createSandboxTest({
-                  expectedRevision: session.revision,
+                  expectedRevision: saved.revision,
                   ...input,
                 });
                 setTestRuns((current) => [
@@ -1722,7 +1987,7 @@ function SandboxWorkspace() {
               }
               bindings={bindingsReady ? bindingsQuery.data!.items : null}
               waitReason={
-                saving || triggerDraft.pending
+                savesPending || triggerDraft.pending
                   ? "Saving…"
                   : triggerDraft.dirty
                     ? "Save trigger changes first."
@@ -1737,15 +2002,14 @@ function SandboxWorkspace() {
               onPendingChange={setTestPending}
               draftRevision={session.revision}
               initialRunId={search.get("run")}
-              onShowOnCanvas={(run) => {
-                const params = new URLSearchParams(search.toString());
-                for (const key of ["inspect", "module", "department", "rule"])
-                  params.delete(key);
-                params.set("trace", run.input.moduleId);
-                params.set("run", run.id);
-                params.set("section", "build");
-                router.push(`/sandbox?${params.toString()}`, { scroll: false });
-              }}
+              onShowOnCanvas={(run) =>
+                navigate("Build", false, true, (params) => {
+                  for (const key of ["inspect", "module", "department", "rule"])
+                    params.delete(key);
+                  params.set("trace", run.input.moduleId);
+                  params.set("run", run.id);
+                })
+              }
             />
           </div>
         ) : null}
@@ -1789,7 +2053,7 @@ function SandboxWorkspace() {
                     versionId: id,
                     expectedRevision: session.revision,
                   });
-                  setSession(openSandboxDocumentSession(response));
+                  commitSession(openSandboxDocumentSession(response));
                   await refreshVersions();
                   return { ok: true as const, value: response };
                 } catch (error) {
@@ -1816,7 +2080,7 @@ function SandboxWorkspace() {
               }}
               notifyError={reportError}
               notifyDone={reportDone}
-              pending={commandBusy}
+              pending={commandBusy || savesPending}
               onSaveCheckpoint={() => setCheckpointOpen(true)}
               canCheckpoint={
                 design.departments.length > 0 || design.modules.length > 0
@@ -1841,6 +2105,7 @@ function SandboxWorkspace() {
             design={session.document.design}
             disabled={
               commandBusy ||
+              savesPending ||
               Boolean(conflict) ||
               triggerDraft.dirty ||
               triggerDraft.pending

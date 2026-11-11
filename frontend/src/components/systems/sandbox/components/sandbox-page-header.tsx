@@ -173,7 +173,7 @@ export function SandboxPageHeader({
         {history ? (
           <div className="flex gap-2 max-md:hidden">{history}</div>
         ) : null}
-        <DisabledReason reason={review.reason}>
+        <DisabledReason stable reason={review.reason}>
           <Button
             className="min-h-11 max-md:px-3"
             disabled={review.disabled}

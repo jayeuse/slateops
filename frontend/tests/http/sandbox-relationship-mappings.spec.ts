@@ -36,6 +36,7 @@ import {
   configuredSandboxDesign,
   sandboxDocumentFromDesign,
 } from "../helpers/sandbox-fixtures";
+import type { SandboxDocumentV4 } from "../../src/components/systems/sandbox/domain/document";
 
 /**
  * A relationship row's action in the module's Properties: it sits in the
@@ -2235,6 +2236,76 @@ test("a trigger issue opens the trigger it identifies", async ({ page }) => {
   );
 });
 
+/**
+ * Holds each `PUT /api/sandbox/document` until the journey answers it, with
+ * the next revision or a 409 (N1 save queue). Requests are kept in order.
+ */
+async function holdDocumentSaves(
+  page: Page,
+  sandbox: Awaited<ReturnType<typeof openAuthenticatedSandbox>>,
+) {
+  type SaveBody = { expectedRevision: number; document: SandboxDocumentV4 };
+  const saves: Array<{
+    body: SaveBody;
+    answer: (outcome: "confirm" | "conflict") => void;
+  }> = [];
+  let revision = 1;
+  await page.route("**/api/sandbox/document", async (route) => {
+    if (route.request().method() !== "PUT") return route.fallback();
+    const body = route.request().postDataJSON() as SaveBody;
+    const outcome = await new Promise<"confirm" | "conflict">((answer) =>
+      saves.push({ body, answer }),
+    );
+    if (outcome === "conflict")
+      return route.fulfill({
+        status: 409,
+        headers: answeredHeaders,
+        json: { detail: { code: "stale_revision", message: "Changed" } },
+      });
+    sandbox.confirmLiveDocument(body.document);
+    revision += 1;
+    return route.fulfill({
+      json: {
+        document: body.document,
+        revision,
+        contentHash: "b".repeat(64),
+        byteCount: JSON.stringify(body.document).length,
+        issues: [],
+        latestPublishedVersion: null,
+        publishedHash: null,
+        hasUnpublishedChanges: true,
+      },
+    });
+  });
+  return {
+    count: () => saves.length,
+    body: (index: number) => saves[index]!.body,
+    answer: (index: number, outcome: "confirm" | "conflict") =>
+      saves[index]!.answer(outcome),
+  };
+}
+
+/** The Summary's "Add department": only while nothing is selected. */
+async function addFirstDepartment(page: Page, name: string) {
+  await page.getByRole("button", { name: "Add department" }).click();
+  await page.getByLabel("Department name").fill(name);
+  await page.getByRole("button", { name: "Create department" }).click();
+}
+
+/** The Structure's "Add department": in reach whatever is selected. */
+async function addDepartmentFromStructure(page: Page, name: string) {
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Structure" })
+    .click();
+  await page
+    .getByRole("complementary", { name: "Organization structure" })
+    .getByRole("button", { name: "Add department" })
+    .click();
+  await page.getByLabel("Department name").fill(name);
+  await page.getByRole("button", { name: "Create department" }).click();
+}
+
 test("designer commands are ignored while a design save is pending", async ({
   page,
 }) => {
@@ -2260,6 +2331,328 @@ test("designer commands are ignored while a design save is pending", async ({
   } finally {
     releaseSave();
   }
+});
+
+// Q-4 (plan criterion)
+test("an Undo of an add during its pending save is queued and sent after it", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const sandbox = await openAuthenticatedSandbox(page, initialDesign);
+  const saves = await holdDocumentSaves(page, sandbox);
+
+  await addFirstDepartment(page, "Finance");
+  await expect.poll(saves.count).toBe(1);
+  const undo = page.getByRole("button", { name: "Undo", exact: true });
+  await expect(undo).toBeEnabled();
+  await undo.click();
+  // One request at a time: the Undo waits in the queue.
+  await settleReact(page);
+  expect(saves.count()).toBe(1);
+
+  saves.answer(0, "confirm");
+  await expect.poll(saves.count).toBe(2);
+  expect(saves.body(1).expectedRevision).toBe(2);
+  expect(saves.body(1).document.design.departments).toEqual([]);
+  saves.answer(1, "confirm");
+  await expect(page.locator("[data-sandbox-save-state]")).toHaveText(
+    /· Saved$/,
+  );
+});
+
+// Q-1, Q-2, Q-5, Q-7 (plan criteria)
+test("Build adds during a pending save join the next one; other actions wait", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const sandbox = await openAuthenticatedSandbox(page, initialDesign);
+  const saves = await holdDocumentSaves(page, sandbox);
+  const chip = page.locator("[data-sandbox-save-state]");
+
+  await addFirstDepartment(page, "Finance");
+  await expect.poll(saves.count).toBe(1);
+  // Q-1: the second add is accepted at once while the first save is held.
+  await addDepartmentFromStructure(page, "Legal");
+  await expect(page.getByText("Legal", { exact: true }).first()).toBeVisible();
+  await expect(
+    page.getByText("A Sandbox change is already being saved."),
+  ).toHaveCount(0);
+  await expect(chip).toHaveText(/· Saving…$/);
+  await expect(
+    page.getByRole("button", { name: "Undo", exact: true }),
+  ).toBeEnabled();
+  // Q-5: Review & Publish and a section move wait for the queue.
+  await expect(
+    page.getByRole("button", { name: "Review & Publish" }),
+  ).toHaveAccessibleDescription("Saving…");
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
+  // Q-7: leaving the page with queued adds is guarded.
+  await expect.poll(() => exitGuarded(page)).toBe(true);
+  expect(saves.count()).toBe(1);
+
+  saves.answer(0, "confirm");
+  // Q-2: one request at a time, and the queued add leaves in the next one
+  // on the confirmed revision.
+  await expect.poll(saves.count).toBe(2);
+  expect(saves.body(1).expectedRevision).toBe(2);
+  expect(
+    saves.body(1).document.design.departments.map((item) => item.name),
+  ).toEqual(["Finance", "Legal"]);
+  await expect(page).not.toHaveURL(/section=triggers/);
+
+  saves.answer(1, "confirm");
+  await expect(page).toHaveURL(/section=triggers/);
+  await expect(chip).toHaveText(/· Saved$/);
+  expect(saves.count()).toBe(2);
+});
+
+// Q-3 (plan criterion)
+test("a refused save keeps the add queued behind it in the conflict draft", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const sandbox = await openAuthenticatedSandbox(page, initialDesign);
+  const saves = await holdDocumentSaves(page, sandbox);
+
+  await addFirstDepartment(page, "Finance");
+  await expect.poll(saves.count).toBe(1);
+  await addDepartmentFromStructure(page, "Legal");
+  await expect(page.getByText("Legal", { exact: true }).first()).toBeVisible();
+
+  saves.answer(0, "conflict");
+  await expect(
+    page.getByText(
+      "Not saved: someone else changed this draft. Your edits are still here.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Reload the shared draft, then reapply your edits."),
+  ).toBeVisible();
+  await expect(page.getByText("Legal", { exact: true }).first()).toBeVisible();
+  await settleReact(page);
+  expect(saves.count()).toBe(1);
+
+  // Reapply sends both adds; neither was dropped.
+  await page.getByRole("button", { name: "Reapply my draft" }).click();
+  await expect.poll(saves.count).toBe(2);
+  expect(
+    saves.body(1).document.design.departments.map((item) => item.name),
+  ).toEqual(["Finance", "Legal"]);
+  saves.answer(1, "confirm");
+  await expect(
+    page.getByRole("button", { name: "Reapply my draft" }),
+  ).toHaveCount(0);
+});
+
+// B-1 (Software Architect review finding; Q-3)
+test("a trigger save that waited for a refused queue is not sent and keeps the queued add", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const sandbox = await openAuthenticatedSandbox(page, configuredSandboxDesign);
+  const saves = await holdDocumentSaves(page, sandbox);
+  // Triggers, then Build: Back returns to Triggers later.
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
+  await expect(page.getByLabel("Trigger name")).toBeVisible();
+  await page.getByRole("link", { name: "Build", exact: true }).click();
+  await addDepartmentFromStructure(page, "Legal");
+  await expect.poll(saves.count).toBe(1);
+
+  // Back reaches Triggers while the add's save is held.
+  await page.goBack();
+  const name = page.getByLabel("Trigger name");
+  await name.fill("Renamed alert");
+  await page.getByRole("button", { name: "Save triggers" }).click();
+  saves.answer(0, "conflict");
+
+  await expect(
+    page.getByText(
+      "Not saved: someone else changed this draft. Your edits are still here.",
+    ),
+  ).toBeVisible();
+  await settleReact(page);
+  expect(saves.count()).toBe(1);
+  // The conflict still holds the add: Reapply sends it.
+  await page.getByRole("button", { name: "Reapply my draft" }).click();
+  await expect.poll(saves.count).toBe(2);
+  expect(
+    saves.body(1).document.design.departments.map((item) => item.name),
+  ).toContain("Legal");
+});
+
+// B-2 (Software Architect review finding; Q-5)
+test("an issue link waits for queued saves, then opens its trigger", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const design = structuredClone(configuredSandboxDesign);
+  const first = design.rules[0];
+  if (!first) throw new Error("configured trigger is unavailable");
+  design.rules.push({
+    ...structuredClone(first),
+    id: "sample-follow-up",
+    name: "Follow-up request alert",
+  });
+  const sandbox = await openAuthenticatedSandbox(page, design, {
+    issues: [
+      {
+        code: "trigger.invalid",
+        message: "Review the follow-up trigger",
+        targetId: "sample-follow-up",
+      },
+    ],
+  });
+  const saves = await holdDocumentSaves(page, sandbox);
+  await addDepartmentFromStructure(page, "Legal");
+  await expect.poll(saves.count).toBe(1);
+
+  await page.getByRole("button", { name: /needs? attention$/ }).click();
+  await page
+    .getByRole("dialog", { name: "Needs attention" })
+    .getByRole("listitem")
+    .filter({ hasText: "Review the follow-up trigger" })
+    .getByRole("button", { name: "Open trigger", exact: true })
+    .click();
+  await settleReact(page);
+  await expect(page).not.toHaveURL(/section=triggers/);
+
+  saves.answer(0, "confirm");
+  await expect(page).toHaveURL(/rule=sample-follow-up/);
+  await expect(page.getByLabel("Trigger name")).toHaveValue(
+    "Follow-up request alert",
+  );
+});
+
+// NB-5 (Software Architect review; D-Q1, Q-5)
+test("a Build edit made while adds save waits, then saves after them", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const sandbox = await openAuthenticatedSandbox(page, configuredSandboxDesign);
+  const saves = await holdDocumentSaves(page, sandbox);
+  await addDepartmentFromStructure(page, "Legal");
+  await expect.poll(saves.count).toBe(1);
+
+  await page
+    .getByRole("toolbar", { name: "Canvas view controls" })
+    .getByRole("button", { name: "Auto-arrange" })
+    .click();
+  await settleReact(page);
+  expect(saves.count()).toBe(1);
+  await expect(
+    page.getByText("A Sandbox change is already being saved."),
+  ).toHaveCount(0);
+
+  saves.answer(0, "confirm");
+  await expect.poll(saves.count).toBe(2);
+  expect(saves.body(1).expectedRevision).toBe(2);
+  expect(saves.body(1).document.design.layout).not.toEqual(
+    saves.body(0).document.design.layout,
+  );
+  saves.answer(1, "confirm");
+  await expect(page.getByText("Canvas automatically arranged.")).toBeVisible();
+});
+
+// C5 to C10 (Product Designer review rows; Q-5)
+test("controls that wait for the save queue say Saving…", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const closedOperations = liveBinding(
+    "department",
+    "sample-operations",
+    "00000000-0000-4000-8000-000000000571",
+    { deleted: true },
+  );
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    {
+      bindingFailure: 503,
+      bindings: [closedOperations],
+    },
+  );
+  const saves = await holdDocumentSaves(page, sandbox);
+  await addDepartmentFromStructure(page, "Legal");
+  await expect.poll(saves.count).toBe(1);
+
+  // C10: the new department's lifecycle waits with the queue's reason.
+  const close = page
+    .getByRole("group", { name: "Department lifecycle" })
+    .getByRole("button", { name: "Close department" });
+  await expect(close).toHaveAttribute("aria-disabled", "true");
+  await expect(close).toHaveAccessibleDescription("Saving…");
+
+  // C5: the checkpoint primary stays in place and says why.
+  const dialog = await openCheckpointDialog(page);
+  const save = dialog.getByRole("button", { name: "Save checkpoint" });
+  await expect(save).toHaveAttribute("aria-disabled", "true");
+  await expect(save).toHaveAccessibleDescription("Saving…");
+  await page.keyboard.press("Escape");
+
+  // C7: the template primary says why; the queue never locks Cancel.
+  await page.getByRole("button", { name: "More Sandbox actions" }).click();
+  await page.getByRole("menuitem", { name: "Start from a template" }).click();
+  const templates = page.getByRole("dialog", {
+    name: "Organization templates",
+  });
+  await expect(
+    templates.getByRole("button", { name: /^Use / }),
+  ).toHaveAccessibleDescription("Saving…");
+  await expect(templates.getByRole("button", { name: "Cancel" })).toBeEnabled();
+  await templates.getByRole("button", { name: "Cancel" }).click();
+  await expect(templates).toHaveCount(0);
+
+  // C6: the backup controls say why.
+  const backup = await openImportExport(page);
+  await expect(
+    backup.getByRole("button", { name: "Load a backup", exact: true }),
+  ).toHaveAccessibleDescription("Saving…");
+  await page.keyboard.press("Escape");
+
+  // C8: the discard primary says why.
+  await page.getByRole("button", { name: "More Sandbox actions" }).click();
+  await page.getByRole("menuitem", { name: "Discard draft changes" }).click();
+  await expect(
+    page
+      .getByRole("dialog", { name: "Discard draft changes?" })
+      .getByRole("button", { name: "Discard draft" }),
+  ).toHaveAccessibleDescription("Saving…");
+  await page.keyboard.press("Escape");
+
+  // C9: the live-state retry says why.
+  await expect(
+    page.getByRole("button", { name: "Retry live state" }),
+  ).toHaveAccessibleDescription("Saving…");
+
+  sandbox.confirmBindings([closedOperations]);
+  saves.answer(0, "confirm");
+  await expect(page.locator("[data-sandbox-save-state]")).toHaveText(
+    /· Saved$/,
+  );
+  await expect(close).not.toHaveAccessibleDescription("Saving…");
+
+  // C10: "Delete … forever" says why too. An Undo queues one more save.
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Structure" })
+    .click();
+  await page
+    .getByRole("tree", { name: "Structure" })
+    .getByRole("treeitem", { name: "Operations", exact: true })
+    .click();
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Properties" })
+    .click();
+  const purge = page
+    .getByRole("group", { name: "Department lifecycle" })
+    .getByRole("button", { name: "Delete department forever" });
+  await expect(purge).toBeEnabled();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect.poll(saves.count).toBe(2);
+  await expect(purge).toHaveAttribute("aria-disabled", "true");
+  await expect(purge).toHaveAccessibleDescription("Saving…");
+  saves.answer(1, "confirm");
+  await expect(purge).toBeEnabled();
 });
 
 test("Build undo preserves a trigger that was saved afterward", async ({
