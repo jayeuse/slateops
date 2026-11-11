@@ -1,6 +1,6 @@
 # Self-hosted Supabase migration
 
-Status: Implementation in progress. A guarded production Compose restore/recovery rehearsal has passed using Linux containers on macOS Docker Desktop. Native Linux host boot/reboot and Windows acceptance, the canonical pre-push gate, and final review remain pending; this is not general production approval.
+Status: Implementation in progress. A guarded production Compose restore/recovery rehearsal has passed using Linux containers on macOS Docker Desktop. Native Linux host boot/reboot and Windows acceptance, the release check, and final review remain pending; this is not general production approval.
 
 Source baseline: `26413df79efc8f223415c9c23305d1a0afb4a7e3`.
 
@@ -179,7 +179,7 @@ Inspect existing coverage first. Reuse it where it proves retained behavior; int
 
 Adapt `backend/tests/postgres_runtime.py` and `fullstack_runner.py` to runner-owned Supabase rather than weakening ownership guards. Update real Auth fixtures, SMTP capture and Storage fixtures. Keep retained targeted HTTP/isolated tests, frontend static checks/build, and backend 90% overall and changed-line coverage gates. Run each applicable full suite at its owning gate; repair narrowly and reuse valid passing evidence.
 
-Final integration command remains `python3 scripts/prepush.py --base <recorded-base>`, after updating its change classification and provisioning to the new stack. Retain E2E command, working directory, revision, prerequisites, result and trace/report paths. Windows evidence must come from a Windows host; a Linux container on the current workstation is not Windows acceptance.
+Final integration evidence is CI on the pull request plus the release check in the root `AGENTS.md`: from `backend/`, `uv run python -m tests.smoke_runner`, then `uv run python -m tests.fullstack_runner --acceptance-only`. Retain E2E command, working directory, revision, prerequisites, result and trace/report paths. Windows evidence must come from a Windows host; a Linux container on the current workstation is not Windows acceptance.
 
 Implementation evidence is recorded in `.agent-runtime/supabase-implementation.md`. Provider checks do not establish complete application or operating-system acceptance; each outstanding criterion must be resolved independently.
 

@@ -242,7 +242,8 @@ These terms describe how the team fills an installation with realistic organizat
 
 | Term | Also appears as | Meaning |
 | --- | --- | --- |
-| Pre-push gate | `scripts/prepush.py --base <ref>` | The full local check set, selected from the changed paths. It runs only on request or when CI is unavailable; CI runs the same checks on every pull request. |
+| CI gate | `backend-verify`, `frontend-verify` | The full check set that CI runs on every pull request, selected from the changed paths by `scripts/ci_scope.py`. |
+| Release check | `tests.smoke_runner`, `tests.fullstack_runner --acceptance-only` | The release smoke suite and the full-stack browser journeys. Run them from `backend/` at a major update, one at a time; CI does not run them. |
 | Focused test | — | A small test run for the changed files and their direct callers, used while work continues. |
 | Disposable stack | Compose project `slateops-e2e-*` | A temporary Supabase stack that the test runner creates and removes. It is not the development stack. |
 | Development stack | Compose project `slateops-supabase-local-*` | The one owned Supabase stack for daily development in a checkout. Keep it and its volumes. |

@@ -18,9 +18,8 @@ stack-free unit and disposable integration coverage. Separate runner modes inclu
 `--acceptance-only`, and `--browser-only`. From `backend/`, `uv run
 python -m tests.fullstack_runner --acceptance-only` exercises the isolated provider,
 FastAPI, Caddy gateway, and browser flow under `ENVIRONMENT=test`; that is
-local gateway evidence, not public TLS or customer-host acceptance. The root
-[`prepush.py`](../../scripts/prepush.py) plan and [backend
-workflow](../../.github/workflows/backend.yml) retain Ruff, mypy, backup contract tests,
+local gateway evidence, not public TLS or customer-host acceptance. The [backend
+workflow](../../.github/workflows/backend.yml) retains Ruff, mypy, backup contract tests,
 tooling tests, and backend coverage as separate checks. Backend coverage must be at
 least 90% overall and at least 90% on changed executable lines, with coverage for the
 complete application source inventory. Do not lower thresholds or omit source files to
@@ -41,7 +40,7 @@ nor an individual shard applies the coverage thresholds. The `coverage-gate` job
 combines the three unit parts and all ten shards, sums their test counts, and applies
 the 90% overall and changed-line gates to the complete report. A missing or duplicate
 unit part or shard, a skipped test, or evidence from a different source tree fails
-the gate. The local gate runs the unit lane as one part. The commands and combine
+the gate. A local coverage run keeps the unit lane as one part. The commands and combine
 guards live in [`backend_coverage.py`](../../backend/tests/backend_coverage.py).
 `pytest-split` balances the integration shards with
 `backend/tests/.test_durations` and the unit parts with
@@ -49,8 +48,9 @@ guards live in [`backend_coverage.py`](../../backend/tests/backend_coverage.py).
 `backend-coverage` artifact (`test-durations.json` and `unit-durations.json`); commit
 them again when the median test times of the shards or parts, over 3 full runs, spread more than 20%. Locally, a shard uses the last combined run's durations
 (`backend/test-results/coverage/test-durations.json`) when they are newer than the
-committed file, so new tests stop falling back to the average. Local `prepush.py`
-runs [`tests.parallel_coverage`](../../backend/tests/parallel_coverage.py): first
+committed file, so new tests stop falling back to the average. Locally,
+[`tests.parallel_coverage`](../../backend/tests/parallel_coverage.py) (`uv run python -m
+tests.parallel_coverage` from `backend/`) runs: first
 the stack-free unit lane with six workers, then three integration-only shards on
 their own disposable stacks at the same time, then the same combine step and gates. Each
 shard writes to its own folder under `backend/test-results/coverage-shards/`. Each test
@@ -73,19 +73,14 @@ measured resource failure. The runner's lower-concurrency controls retain the
 same coverage gates.
 
 The committed Auth/Storage reset acceptance has its own mandatory
-`--reset-acceptance-only` invocation in both gates. Local `prepush.py` runs it after
-ordinary backend coverage; CI runs it as a separate job. This is provider-reset
-acceptance, not the full-stack/browser `--acceptance-only` mode. Local pre-push
-must use `python3 scripts/prepush.py --base <base-ref> --serial`: frontend and
-backend resource lanes run one after another, while each lane keeps its own
-parallelism. Never start another heavy suite or build beside an active lane.
-When selected, the server image builds after the frontend tests in the frontend
-lane. Run the gate only right before a push, not after each edit or handoff.
-Ctrl-C, SIGTERM, or SIGHUP stops every
-running lane so its runner tears down its stacks; `tests.parallel_coverage` passes the
-stop to each shard once and waits for its teardown (bounded, then killed). A lane that
-breaks, or a planned step that never ran, fails the gate.
-This mode creates a new disposable stack and selects one fixed, noninteractive
+`--reset-acceptance-only` invocation. CI runs it as the separate `reset-acceptance`
+job. This is provider-reset acceptance, not the full-stack/browser `--acceptance-only`
+mode. Never run a backend suite beside a frontend suite or build, and never start
+another heavy suite beside an active one; each suite keeps its own parallelism.
+Ctrl-C, SIGTERM, or SIGHUP stops a runner so it tears down its stacks;
+`tests.parallel_coverage` passes the stop to each shard once and waits for its
+teardown (bounded, then killed).
+The reset mode creates a new disposable stack and selects one fixed, noninteractive
 acceptance target. The target is outside ordinary pytest filename discovery because
 the reset CLI commits installation-wide cleanup. Public batch target validation and
 the application's coverage thresholds remain unchanged; a missing, empty, skipped,
@@ -132,18 +127,18 @@ have their own artifact paths; the `verify` job preserves one required check
 (`frontend-verify`; the backend workflow has `backend-verify`). The `measure` job
 runs the Comms timeline measurement alone and writes its numbers to the job
 summary; `frontend-verify` does not need it, because a shared runner cannot hold
-the 300 ms limit. The pre-push gate keeps that limit blocking.
+the 300 ms limit. `npm test` on a free machine keeps that limit blocking.
 [`package.json`](../../frontend/package.json) declares `check` (formatting, lint,
 types, contrast), `build`, `test`, and `verify` (`check` → `build` → `test`), plus
 the existing section/affected/full selectors for scoped work. Full verification
-belongs to the pre-push gate, not routine edits.
+runs in CI on the pull request, not after routine edits.
 
 FastAPI HTTP coverage remains the proof for application static-site delivery,
 API/static path separation and response security headers. Mocked HTTP browser
 journeys do not establish live API authorization or provider behavior. The unified
 server-image build verifies packaging, not deployment or production operation.
-The canonical change-selected local gate is `python3 scripts/prepush.py --base
-<base-ref> --serial` from the repository root. CI configuration declares checks;
+CI on the pull request is the change-selected full gate
+([`ci_scope.py`](../../scripts/ci_scope.py) selects its checks). CI configuration declares checks;
 it is not evidence of current-tip local/CI parity, hosted execution or deployment.
 
 The backend runner may build the static frontend for integrated journeys. Browser
@@ -189,14 +184,18 @@ if it misses the target, diagnose the actual ORM/driver path before repair and
 reverification. Preserve audit/confirmation controls and the timing assertion.
 Restore every runtime actually stopped and report any restoration failure.
 
+## Release check
+
+The release check is the release smoke suite plus the full-stack browser journeys. CI
+does not run them. Run them at a major update, one at a time, under the root test policy:
+
+1. From `backend/`, run `uv run python -m tests.smoke_runner`.
+2. When it ends, run `uv run python -m tests.fullstack_runner --acceptance-only` from `backend/`.
+
 ## Release smoke suite
 
 The release smoke suite runs one main path per screen against seeded Harbor data. It
-belongs to the release gate, not to every push. Run it before a release:
-
-1. From the repository root, run `python3 scripts/prepush.py --base <base-ref> --serial --release`.
-   The `--release` flag adds the `release-smoke` step after the backend stacks.
-2. To run only the smoke suite, run `uv run python -m tests.smoke_runner` from `backend/`.
+belongs to the release check, not to every push.
 
 The runner creates a new disposable stack and builds the static export. FastAPI serves
 the export behind the Caddy gateway, as in production; `next dev` is not used. The runner
