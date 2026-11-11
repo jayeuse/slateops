@@ -6,8 +6,10 @@ import {
   elementBarOwner,
   elementBarOwners,
   idlePointerRest,
+  departmentBarPlacement,
   elementBarActions,
   itemMenuEntries,
+  moduleBarPlacement,
   reducePointerRest,
   savingMarkIds,
   type PointerRest,
@@ -260,4 +262,76 @@ test("a new open department's bar and item menu add Setup, and no other element'
     labels(itemMenuEntries("department", { ...base, closed: true })),
   ).not.toContain("Setup…");
   expect(labels(itemMenuEntries("module", base))).not.toContain("Setup…");
+});
+
+// FIND-1 (Product Designer rule, TASK-0050): each bar tries three places in
+// order: next to its element, above it, then inside just under its head.
+// Screen pixels, with the canvas pane's top edge at 0.
+test("a department bar sits after the name, else above the frame, else 6 px under the head band", () => {
+  const frame = {
+    frameTop: 100,
+    bandBottom: 140,
+    nameRight: 90,
+    identityLeft: 40,
+    countLeft: 300,
+    countRight: 350,
+    width: 120,
+    height: 34,
+  };
+  // Room after the name, clear of the count by 8 px.
+  expect(departmentBarPlacement(frame)).toEqual({
+    left: 98,
+    top: 103,
+    place: "beside",
+  });
+  // A wider bar would reach the count: above the frame.
+  expect(departmentBarPlacement({ ...frame, width: 200 })).toEqual({
+    left: 98,
+    top: 60,
+    place: "above",
+  });
+  // Above is outside the pane: inside, its right edge under the count's.
+  expect(
+    departmentBarPlacement({
+      ...frame,
+      frameTop: 24,
+      bandBottom: 64,
+      width: 200,
+    }),
+  ).toEqual({ left: 150, top: 70, place: "inside" });
+  // Never left of the identity mark, even when it overhangs the frame.
+  expect(
+    departmentBarPlacement({
+      ...frame,
+      frameTop: 24,
+      bandBottom: 64,
+      width: 400,
+    }),
+  ).toEqual({ left: 40, top: 70, place: "inside" });
+});
+
+test("a module bar sits under the card, else above the header, else 6 px under the header", () => {
+  const card = {
+    left: 50,
+    top: 100,
+    headerBottom: 134,
+    bottom: 220,
+    viewHeight: 600,
+    height: 34,
+  };
+  expect(moduleBarPlacement(card)).toEqual({
+    left: 50,
+    top: 226,
+    place: "beside",
+  });
+  // The card bottom is out of view: above the header.
+  expect(moduleBarPlacement({ ...card, viewHeight: 240 })).toEqual({
+    left: 50,
+    top: 60,
+    place: "above",
+  });
+  // Above is outside the pane too: inside, over the first field rows.
+  expect(
+    moduleBarPlacement({ ...card, top: 20, headerBottom: 54, viewHeight: 240 }),
+  ).toEqual({ left: 50, top: 60, place: "inside" });
 });

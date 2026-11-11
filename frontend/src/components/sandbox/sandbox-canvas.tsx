@@ -53,6 +53,7 @@ import {
 import type { SandboxCommandResult } from "@/components/systems/sandbox/state/commands";
 import type { SandboxDesignTarget } from "@/components/systems/sandbox/domain/model";
 import {
+  BAR_GAP,
   elementBarOwner,
   elementBarOwners,
   idlePointerRest,
@@ -472,6 +473,22 @@ function SandboxFlowCanvas({
     edgesRef.current = next;
     setEdges(next);
   }, [state]);
+
+  /**
+   * The top inset of a focused department: the measured height of an
+   * element bar plus a 6px gap and a 6px margin, at least the usual 24px.
+   * Before any bar shows, the bar's height at this width (28px controls
+   * from 1280px, 44px below, in a 3px frame).
+   */
+  function departmentFocusInset(): number {
+    const shown =
+      containerRef.current?.parentElement?.querySelector<HTMLElement>(
+        "[data-element-bar]:not([data-pinned])",
+      )?.offsetHeight;
+    const height =
+      shown || (window.matchMedia("(min-width: 1280px)").matches ? 34 : 50);
+    return Math.max(24, height + 2 * BAR_GAP);
+  }
 
   function viewSize(): { width: number; height: number } {
     const container = containerRef.current;
@@ -975,6 +992,11 @@ function SandboxFlowCanvas({
         }
         const modulesOf = (departmentId: string) =>
           current.filter((node) => node.parentId === departmentId);
+        // A focused department leaves room above its frame for its element
+        // bar (bar height, 6px gap, 6px margin), so a bar too wide for the
+        // head band sits above it, inside the pane (TASK-0050 D-2).
+        const departmentTop =
+          focus?.type === "department" ? departmentFocusInset() : null;
         if (box.width + 48 <= view.width) {
           // Keep a focused module in view: when it sits below the fold,
           // lift the department so the module's top is 72px down.
@@ -983,7 +1005,7 @@ function SandboxFlowCanvas({
             moduleBox &&
             moduleBox.y + moduleBox.height - box.y + 24 > view.height
               ? 72 - moduleBox.y
-              : 24 - box.y;
+              : (departmentTop ?? 24) - box.y;
           viewAt(24 - box.x, dy, 1);
           return;
         }
@@ -1007,7 +1029,11 @@ function SandboxFlowCanvas({
         // table still fits beside it.
         const left =
           target.x + target.width - box.x + 32 <= view.width ? box.x : target.x;
-        viewAt(16 - left, 16 - top, 1);
+        viewAt(
+          16 - left,
+          (top === box.y && departmentTop !== null ? departmentTop : 16) - top,
+          1,
+        );
       },
       fit,
       reveal: (nodeId) => {

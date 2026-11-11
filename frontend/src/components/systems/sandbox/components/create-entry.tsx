@@ -3,6 +3,7 @@
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -238,6 +239,12 @@ function CreateEntryBody({
   const adding = useRef(false);
   // Focus asked for by a type click; the Choices input mounts first.
   const pendingFocus = useRef<"name" | "choices" | null>(null);
+  // The name has focus in the commit that opens the entry, before the next
+  // key: a person who presses Enter and types at once loses no letter to
+  // the control that opened it (TASK-0050 D-1).
+  useLayoutEffect(() => {
+    focus("name");
+  }, []);
   useEffect(() => {
     const target = pendingFocus.current;
     if (!target) return;

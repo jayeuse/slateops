@@ -37,6 +37,8 @@ export interface SandboxInspectorProps {
   onSetup?: (departmentId: string, anchor: HTMLElement) => void;
   /** A tree item took or lost focus: its element's bar shows on the canvas. */
   onFocusItem?: (cellId: string | null) => void;
+  /** An entry or popover of Build's create surface is open or opening. */
+  createOpen?: boolean;
   /** Rows whose add is still saving (the saving mark). */
   savingIds?: ReadonlySet<string>;
   /** The newest added row, tinted until the next add. */

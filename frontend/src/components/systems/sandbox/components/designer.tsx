@@ -1730,6 +1730,7 @@ export function Designer({
         lifecycleState={outlineLifecycleState}
         pending={outlinePending}
         savingIds={create.savingMarks}
+        createOpen={create.createOpen}
         newestId={create.newestShown}
         onNewTrigger={onNewTrigger}
         {...outlineHandlers}

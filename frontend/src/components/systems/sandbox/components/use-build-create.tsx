@@ -580,6 +580,12 @@ export function useBuildCreate({
   return {
     /** The toolbar's Add department opened the open entry. */
     toolbarEntryOpen: entry?.toolbar === true,
+    /** An entry, Connect, Setup, or the template dialog is open. */
+    createOpen:
+      entry !== null ||
+      connect !== null ||
+      setup !== null ||
+      templateFrom !== null,
     openEntry,
     openConnect,
     connectFromCanvas,

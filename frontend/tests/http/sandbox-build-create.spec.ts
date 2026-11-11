@@ -237,6 +237,9 @@ test("the reference structure can be built from the keyboard alone", async ({
   await keys.press("Enter");
   await typeNames(["Sales"]);
   await expect(addDepartment).toBeFocused();
+  // The tree draws new rows from a deferred copy of the design: each key
+  // waits for the rows it moves through to exist.
+  await expect(item("Sales")).toBeVisible();
   // Back into the tree, on Sales, then down to its Add module item.
   await keys.press("Shift+Tab");
   await expect(item("Sales")).toBeFocused();
@@ -246,15 +249,18 @@ test("the reference structure can be built from the keyboard alone", async ({
   await typeNames(["Orders", "Customers"]);
   await expect(item("Add module to Sales")).toBeFocused();
 
+  await expect(item("Add field to Customers")).toBeVisible();
   await keys.press("ArrowUp");
   await expect(item("Add field to Customers")).toBeFocused();
   await keys.press("Enter");
   await typeNames(["Name", "Email", "Phone"]);
   await expect(item("Add field to Customers")).toBeFocused();
+  await expect(item("Phone")).toBeVisible();
   for (let step = 0; step < 5; step += 1) await keys.press("ArrowUp");
   await expect(item("Add field to Orders")).toBeFocused();
   await keys.press("Enter");
   await typeNames(["Number", "Status", "Total"]);
+  await expect(item("Total")).toBeVisible();
   for (let step = 0; step < 4; step += 1) await keys.press("ArrowUp");
   await expect(item("Orders")).toBeFocused();
 
@@ -262,6 +268,12 @@ test("the reference structure can be built from the keyboard alone", async ({
   await keys.press("Shift+F10");
   const menu = page.getByRole("menu", { name: "Actions for module Orders" });
   await expect(menu).toBeVisible();
+  // The menu takes focus a frame after it opens: keys wait for it.
+  await expect
+    .poll(() =>
+      menu.evaluate((popup) => popup.contains(document.activeElement)),
+    )
+    .toBe(true);
   await keys.press("End");
   await keys.press("ArrowUp");
   await keys.press("ArrowUp");
@@ -730,4 +742,135 @@ test("on a phone Add from a template is one scroller with its close button and A
     "Close add from a template",
     dialog.getByRole("button", { name: "Add department" }),
   );
+});
+
+/** A new, empty Sales whose Setup has one item cleared: a wide bar. */
+function newSales(): Design {
+  return {
+    departments: [
+      {
+        id: "sales",
+        name: "Sales",
+        closed: false,
+        setup: {
+          groups: true,
+          dashboard: true,
+          category: true,
+          channel: false,
+        },
+      },
+    ],
+    modules: [],
+    relationships: [],
+    rules: [],
+  };
+}
+
+type Box = { x: number; y: number; width: number; height: number };
+
+async function boxOf(locator: Locator): Promise<Box> {
+  const found = await locator.boundingBox();
+  if (!found) throw new Error("No box");
+  return found;
+}
+
+function apart(a: Box, b: Box): boolean {
+  return (
+    a.x + a.width <= b.x ||
+    b.x + b.width <= a.x ||
+    a.y + a.height <= b.y ||
+    b.y + b.height <= a.y
+  );
+}
+
+// FIND-1 (TASK-0050 D-2): a focused department leaves room above its frame,
+// so a bar too wide for the head band sits above it, inside the pane.
+test("a focused department's wide bar sits above its frame, inside the pane", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page, newSales(), {
+    path: "/sandbox?department=sales",
+  });
+  const bar = elementBar(page, "Sales");
+  await expect(bar.getByRole("button", { name: /^Setup/ })).toContainText(
+    "1 cleared",
+  );
+  const shown = await boxOf(bar);
+  const frame = await boxOf(canvasNode(page, "sales"));
+  const pane = await boxOf(
+    page.getByRole("region", { name: "Organization canvas" }),
+  );
+  expect(shown.y + shown.height).toBeLessThanOrEqual(frame.y);
+  expect(shown.y).toBeGreaterThanOrEqual(pane.y);
+  await bar.getByRole("button", { name: "Add module to Sales" }).click();
+  await expect(createEntry(page, "Add module to Sales")).toBeVisible();
+});
+
+// FIND-1 (Product Designer rule, TASK-0050): panned to the top of the pane,
+// a department has no room above its frame, and a new department's bar
+// (Module and Setup) reaches the module count, so it sits 6 px under the head
+// band, inside the frame, clear of the name and the count, and works.
+test("a department panned to the top keeps its bar under the head band, inside the frame", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page, newSales(), {
+    path: "/sandbox?department=sales",
+  });
+  const bar = elementBar(page, "Sales");
+  await expect(bar.getByRole("button", { name: /^Setup/ })).toContainText(
+    "1 cleared",
+  );
+  const frame = canvasNode(page, "sales");
+  const pane = await boxOf(
+    page.getByRole("region", { name: "Organization canvas" }),
+  );
+  // A wheel pans the canvas by half its delta: bring the frame to 12 px.
+  const before = await boxOf(frame);
+  await page.mouse.move(pane.x + pane.width - 40, pane.y + pane.height - 120);
+  await page.mouse.wheel(0, 2 * (before.y - pane.y - 12));
+  await expect
+    .poll(async () => Math.round((await boxOf(frame)).y - pane.y))
+    .toBeLessThanOrEqual(14);
+  const shown = await boxOf(bar);
+  const head = await boxOf(frame);
+  const name = await boxOf(
+    frame.locator('[data-sandbox-part="department-name"]'),
+  );
+  const count = await boxOf(
+    frame.locator('[data-sandbox-part="module-count"]'),
+  );
+  // Inside the frame, under the 40 px head band, clear of the name and count.
+  expect(shown.y).toBeGreaterThanOrEqual(head.y + 40);
+  expect(shown.y + shown.height).toBeLessThanOrEqual(head.y + head.height);
+  expect(apart(shown, name)).toBe(true);
+  expect(apart(shown, count)).toBe(true);
+  await bar.getByRole("button", { name: "Add module to Sales" }).click();
+  await expect(createEntry(page, "Add module to Sales")).toBeVisible();
+});
+
+// FIND-4, TASK-0050 D-1: Enter on a Structure add item and typing at once
+// puts every letter in the entry; none reaches the tree's type-ahead.
+test("typing right after Enter on a Structure add item keeps every letter in the entry", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page, salesAndFinance());
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Structure" })
+    .click();
+  const add = page.getByRole("treeitem", {
+    name: "Add module to Sales",
+    exact: true,
+  });
+  await add.focus();
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Returns");
+  const name = createEntry(page, "Add module to Sales").getByRole("textbox", {
+    name: "Module name",
+  });
+  await expect(name).toHaveValue("Returns");
+  await expect(name).toBeFocused();
 });
