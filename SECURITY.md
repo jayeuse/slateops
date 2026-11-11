@@ -83,7 +83,6 @@ Examples of in-scope problems: a login or session bypass; access to a module or 
 | Infrastructure that the operator changes or runs: host, Docker, network, TLS certificates | The operator owns these. A flaw in the shipped default configuration is in scope. |
 | Problems in Supabase, PostgreSQL, or another upstream project | Report them to that project. |
 | Scanner output, missing headers, or best-practice advice without a shown effect | Show the effect on Slate Operations. |
-| Unsigned Slate Operations Manager builds from CI | They are development artifacts, not supported installers. |
 | Server operation on Windows or macOS | These are not supported server targets yet. |
 | Older commits, forks, and modified code | Only `main` is supported. |
 | Denial of service by volume | Report it only if one small request causes large damage. |
