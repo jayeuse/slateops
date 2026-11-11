@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, ChevronDown, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
@@ -454,6 +454,8 @@ export function FieldSettings({
   const publishedTypeChanged =
     publishedType !== null && draft.type !== publishedType;
   const publishedWords = publishedType ? fieldTypeLabel(publishedType) : "";
+  // Keep leaves with its notice, so focus moves to the select it set back.
+  const typeSelect = useRef<HTMLSelectElement>(null);
   const closeReason = isRecordTitle
     ? "This is the module's title field."
     : lifecycleDisabled
@@ -476,6 +478,7 @@ export function FieldSettings({
         <PropertyRow id={controlId("type")} label="Type">
           <NativeSelect
             id={controlId("type")}
+            ref={typeSelect}
             aria-label={`${prefix} field type`}
             className="w-full [&_select]:min-h-10"
             aria-describedby={
@@ -510,7 +513,10 @@ export function FieldSettings({
                 size="sm"
                 variant="ghost"
                 className="min-h-11 px-2 xl:min-h-8"
-                onClick={() => update("type", publishedType)}
+                onClick={() => {
+                  update("type", publishedType);
+                  typeSelect.current?.focus();
+                }}
               >
                 {`Keep ${publishedWords}`}
               </Button>

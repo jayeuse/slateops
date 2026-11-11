@@ -215,6 +215,9 @@ test("changing a published field's type warns at once and Keep sets it back with
   await field.getByRole("button", { name: "Keep Number", exact: true }).click();
   await expect(type).toHaveValue("Number");
   await expect(notice).toBeHidden();
+  // Keep leaves with its notice; focus moves to the Type select it set back,
+  // never to the page body (QA hands-on D-2).
+  await expect(type).toBeFocused();
   await expect(
     field.getByRole("button", { name: "Save field changes" }),
   ).toBeHidden();
