@@ -440,7 +440,7 @@ A fill is used only when the value is valid for its field and for every linked t
 
 The browser copies no order, priority, or chain of other triggers.
 
-**Result (TEST-5).** Under the event block that ran: head "Example item", the chip "Test only · live data unchanged", and "Show on canvas". Left, "Values used" with "Change values"; right, "What happened": each trigger that ran, with each field change "Status Open → Review"; each that did not run, with the reason in words ("Paid is unchecked; it needs Checked.", "It is off."); each that needs attention; each linked module and the value it carries. Footer: "Run 13 of 50 kept" and "Run again".
+**Result (TEST-5).** Under the event block that ran: head "Example item", the chip "Test only · live data unchanged", and "Show on canvas". Left, "Values used" with "Change values"; right, "What happened": each trigger that ran, with each field change "Status Open → Review"; each that did not run, with the reason in words ("Paid is Unchecked; it needs Checked.", "It is off."); each that needs attention; each linked module and the value it carries. Footer: "Run 13 of 50 kept" and "Run again".
 
 **Result of Try this trigger.** It appears under the trigger's own event block, in the same card, with three differences: the head reads "Example item · Flag large orders only"; each value that the trigger's conditions set carries a "Set for this trigger" mark ("Amount 100"); and "What happened" ends with one line, "Other triggers on Orders did not run in this test." A condition that kept its example value reads under the trigger as "Conditions not met" with the reason ("Amount is compared with Total; values kept."). "Run again" repeats the same single-trigger run.
 

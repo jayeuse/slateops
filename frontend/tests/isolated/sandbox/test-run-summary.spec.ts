@@ -4,7 +4,9 @@ import {
   defaultTestTrigger,
   describeTrigger,
   summarizeTestRun,
+  everyEventLimitReason,
   testTraceSteps,
+  unmetConditionReason,
   whatHappened,
 } from "../../../src/components/systems/sandbox/domain/test-run-summary";
 import type {
@@ -14,6 +16,7 @@ import type {
 import type { SandboxTestRun } from "../../../src/components/systems/sandbox/state/api";
 import {
   condition as sectionCondition,
+  field,
   literal,
   ordersDesign,
   trigger as sectionTrigger,
@@ -410,7 +413,7 @@ test(
         triggerId: "assign",
         name: "Assign paid orders",
         status: "Conditions not met",
-        reason: "Paid is unchecked; it needs Checked.",
+        reason: "Paid is Unchecked; it needs Checked.",
       },
       {
         kind: "not-run",
@@ -477,3 +480,38 @@ test("a trigger that runs again later in a chain reads as one line", () => {
     },
   ]);
 });
+
+test("a reason keeps each value's own case, as Values used shows it", () => {
+  const design = ordersDesign([
+    field("title", "Title", { kind: "text", defaultValue: "" }),
+  ]);
+  const orders = design.modules[0];
+  const needsReview = sectionTrigger(
+    "needs-review",
+    "Needs review",
+    { kind: "record-created", moduleId: "orders" },
+    { conditions: [sectionCondition("c1", "status", "=", literal("review"))] },
+  );
+  expect(unmetConditionReason(needsReview, orders, { status: "open" })).toBe(
+    "Status is Open; it needs Review.",
+  );
+  const titled = sectionTrigger(
+    "titled",
+    "Titled",
+    { kind: "record-created", moduleId: "orders" },
+    { conditions: [sectionCondition("c2", "title", "=", literal("Rush"))] },
+  );
+  expect(unmetConditionReason(titled, orders, { title: "Example title" })).toBe(
+    "Title is Example title; it needs Rush.",
+  );
+});
+
+for (const row of [
+  { needed: 1, left: 0, reason: "Needs 1 run; 0 left. Clear results first." },
+  { needed: 3, left: 1, reason: "Needs 3 runs; 1 left. Clear results first." },
+  { needed: 2, left: 2, reason: null },
+]) {
+  test(`Try every event with ${row.needed} needed and ${row.left} left reads ${String(row.reason)}`, () => {
+    expect(everyEventLimitReason(row.needed, row.left)).toBe(row.reason);
+  });
+}

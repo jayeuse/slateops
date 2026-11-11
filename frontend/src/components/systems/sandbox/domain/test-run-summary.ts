@@ -262,9 +262,10 @@ export function fieldValueText(
 
 /**
  * Why a trigger's conditions were not met by the values a run used: the
- * first condition that fails, in words ("Paid is unchecked; it needs
- * Checked."). Null when the values meet every condition, so the run's own
- * outcome stands without a guessed reason.
+ * first condition that fails, in words, each value in its own case as
+ * Values used shows it ("Paid is Unchecked; it needs Checked."). Null when
+ * the values meet every condition, so the run's own outcome stands without
+ * a guessed reason.
  */
 export function unmetConditionReason(
   recordTrigger: SandboxTrigger,
@@ -299,7 +300,7 @@ export function unmetConditionReason(
         ? `the value of ${sandboxModule?.fields.find((item) => item.id === source.fieldId)?.name ?? "another field"}`
         : fieldValueText(field, expected);
     reasons.push(
-      `${field?.name ?? "A field"} is ${fieldValueText(field, actual).toLocaleLowerCase()}; it needs ${neededWords[condition.operator]}${needed}.`,
+      `${field?.name ?? "A field"} is ${fieldValueText(field, actual)}; it needs ${neededWords[condition.operator]}${needed}.`,
     );
     if (operator === "all") return reasons[0];
   }
@@ -467,6 +468,19 @@ export function whatHappened({
     leftOut,
     linked: run.result.routes,
   };
+}
+
+/**
+ * Why "Try every event" cannot start (E11): it needs more runs than the
+ * store has left. Null when the runs fit.
+ */
+export function everyEventLimitReason(
+  needed: number,
+  left: number,
+): string | null {
+  return needed > left
+    ? `Needs ${needed} ${needed === 1 ? "run" : "runs"}; ${left} left. Clear results first.`
+    : null;
 }
 
 /** "trigger", "changed", or both ("trigger changed"). */

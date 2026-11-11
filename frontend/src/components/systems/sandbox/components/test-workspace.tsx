@@ -33,6 +33,7 @@ import {
 } from "../domain/test-reading";
 import {
   eventDescription,
+  everyEventLimitReason,
   fieldValueText,
   moduleName,
 } from "../domain/test-run-summary";
@@ -214,10 +215,7 @@ export function TestWorkspace({
   const tryBlocks =
     reading?.blocks.filter((block) => block.triggers.length) ?? [];
   const everyReason =
-    waitReason ??
-    (tryBlocks.length > left
-      ? `Needs ${tryBlocks.length} runs; ${left} left. Clear results first.`
-      : null);
+    waitReason ?? everyEventLimitReason(tryBlocks.length, left);
 
   useEffect(() => {
     const element = workspaceRef.current;
