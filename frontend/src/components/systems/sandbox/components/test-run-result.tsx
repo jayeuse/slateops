@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/disabled-reason";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
+import { cn } from "@/lib/utils";
 import type {
   SandboxDocumentDesign,
   SandboxDocumentField,
@@ -214,7 +215,11 @@ export function TestResultCard(props: TestResultCardProps) {
               <Button
                 variant="ghost"
                 size="sm"
-                className="text-primary min-h-11 xl:min-h-8"
+                // Action ink only while it can act (as Try this trigger).
+                className={cn(
+                  "min-h-11 xl:min-h-8",
+                  !running && "text-primary",
+                )}
                 disabled={running}
                 onClick={props.onEdit}
               >
@@ -258,16 +263,9 @@ export function TestResultCard(props: TestResultCardProps) {
           <h6 className="text-muted-foreground text-xs font-semibold">
             What happened
           </h6>
-          {!run ? (
-            <ul className="grid gap-1">
-              {props.needed.map((item) => (
-                <li key={item.fieldId} className="text-warn-text">
-                  {item.name} needs a value before this runs. Its settings allow
-                  none.
-                </li>
-              ))}
-            </ul>
-          ) : (
+          {/* Before the first request (E4) the field that waits says why
+              under itself, in Values used; nothing has happened yet. */}
+          {run ? (
             <ul className="grid gap-3">
               {happened?.lines.map((line) => (
                 <Happened key={`${line.triggerId}:${line.kind}`} line={line} />
@@ -334,7 +332,7 @@ export function TestResultCard(props: TestResultCardProps) {
                 </li>
               ) : null}
             </ul>
-          )}
+          ) : null}
         </section>
       </div>
       <footer className="border-border flex flex-wrap items-center gap-3 border-t px-4 py-2.5">

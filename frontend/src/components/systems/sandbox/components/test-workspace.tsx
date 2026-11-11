@@ -218,6 +218,7 @@ export function TestWorkspace({
   const full = count >= STORE_LIMIT;
   const left = STORE_LIMIT - count;
   const busy = running !== null || every !== null || clearing;
+  const clearDisabled = busy || (!runs.length && !count);
   const tryReason = waitReason ?? (full ? "Clear results first." : null);
   const tryBlocks =
     reading?.blocks.filter((block) => block.triggers.length) ?? [];
@@ -602,8 +603,12 @@ export function TestWorkspace({
         <Button
           variant="ghost"
           size="sm"
-          className="text-primary min-h-11 xl:min-h-8"
-          disabled={busy || (!runs.length && !count)}
+          // Action ink only while it can act (as Try this trigger).
+          className={cn(
+            "min-h-11 xl:min-h-8",
+            !clearDisabled && "text-primary",
+          )}
+          disabled={clearDisabled}
           pending={clearing}
           pendingLabel="Clearing results…"
           onClick={() => void clear()}
@@ -701,7 +706,10 @@ export function TestWorkspace({
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="text-primary min-h-11 xl:min-h-8"
+                    className={cn(
+                      "min-h-11 xl:min-h-8",
+                      !review.disabled && "text-primary",
+                    )}
                     disabled={review.disabled && !review.reason}
                     onClick={review.open}
                   >

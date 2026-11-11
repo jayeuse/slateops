@@ -65,7 +65,12 @@ function TriggerRow({
           <Button
             variant="ghost"
             size="sm"
-            className="text-primary min-h-11 justify-self-start xl:min-h-8"
+            // Action ink only while it can run: disabled, it fades in the
+            // plain ink, as "Try it" does (Button's 50% disabled look).
+            className={cn(
+              "min-h-11 justify-self-start xl:min-h-8",
+              !(disabledReason || busy || running) && "text-primary",
+            )}
             disabled={busy && !running}
             pending={running}
             pendingLabel="Running…"
