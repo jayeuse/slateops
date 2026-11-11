@@ -1569,6 +1569,11 @@ export function Designer({
   // The toolbar's Add department anchors the department entry, also when the
   // empty design's "Add your first department" opens it.
   const addDepartmentRef = useRef<HTMLButtonElement>(null);
+  // The last loaded bindings: kept while bindings reload after a save, for
+  // the Structure outline and the bar's Setup.
+  const [outlineBindings, setOutlineBindings] = useState(bindings);
+  if (bindings !== null && bindings !== outlineBindings)
+    setOutlineBindings(bindings);
   const create = useBuildCreate({
     design,
     projected,
@@ -1581,8 +1586,14 @@ export function Designer({
     canvasFrameRef,
     setSelected,
     showProperties: () => setWorkbenchTab("Inspector"),
+    // A save moves the draft to a new revision whose bindings load again;
+    // meanwhile the last loaded ones keep Setup on the bar, so the control
+    // the popover returns focus to is not removed (QA D-1).
     setupOffered: (departmentId: string) =>
-      lifecycleState({ kind: "department", id: departmentId }).setup,
+      lifecycleState(
+        { kind: "department", id: departmentId },
+        { ...currentLifecycleInputs, bindings: outlineBindings },
+      ).setup,
     setupHeld: pending || saving,
     notifyError,
   });
@@ -1640,9 +1651,6 @@ export function Designer({
   const outlineDesign = useDeferredValue(design);
   const outlinePending = useDelayedFlag(pending, 300);
   const outlineDraftDirty = useDeferredValue(localDraftDirty);
-  const [outlineBindings, setOutlineBindings] = useState(bindings);
-  if (bindings !== null && bindings !== outlineBindings)
-    setOutlineBindings(bindings);
   const outlineStateJson = useMemo(
     () => JSON.stringify(projectDesign(outlineDesign, selected)),
     [outlineDesign, selected],

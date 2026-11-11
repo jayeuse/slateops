@@ -167,6 +167,36 @@ test("a new department's bar holds Setup; one toggle saves once and Undo restore
   await expect(barControls(page)).toHaveText(["Add department", "Module"]);
 });
 
+// QA D-1 (TASK-0050 hands-on): after a toggle saves, Escape returns focus
+// to the bar's Setup control, which the save must not remount.
+test("after a Setup toggle from the bar, Escape returns focus to Setup", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const sandbox = await openAuthenticatedSandbox(page, salesAndFinance(), {
+    bindings: published,
+    path: "/sandbox?department=sales",
+  });
+  const bar = elementBar(page, "Sales");
+  await bar
+    .getByRole("button", { name: "Setup for Sales", exact: true })
+    .click();
+  const popover = page.getByRole("dialog", { name: "Setup for Sales" });
+  await popover.getByRole("checkbox", { name: "Dashboard" }).click();
+  await expect
+    .poll(() => savedSalesSetup(sandbox.document())?.dashboard)
+    .toBe(false);
+  await expect(
+    bar.getByRole("button", { name: "Setup for Sales: 1 item cleared" }),
+  ).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(popover).toBeHidden();
+  await expect(
+    bar.getByRole("button", { name: "Setup for Sales: 1 item cleared" }),
+  ).toBeFocused();
+});
+
 // UX-C29 keyboard route: "Setup…" in the Structure tree's item menu.
 test("Setup… in a new department's tree menu opens Setup, and Escape returns to the row", async ({
   page,
