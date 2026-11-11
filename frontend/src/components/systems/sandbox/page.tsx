@@ -1956,6 +1956,7 @@ function SandboxWorkspace() {
                 }),
             }}
             onNewTrigger={newTriggerFromBuild}
+            publishedVersionId={session?.latestPublishedVersion?.id ?? null}
           />
         ) : null}
         {section === "Triggers" && session ? (

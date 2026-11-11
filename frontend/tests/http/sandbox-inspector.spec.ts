@@ -10,6 +10,7 @@ import type { Design } from "../../src/components/systems/sandbox/domain/model";
 import {
   configuredSandboxDesign,
   overlappingSandboxDesign,
+  sandboxDocumentFromDesign,
 } from "../helpers/sandbox-fixtures";
 
 // The Advanced Last Rule (DESIGN.md): Properties shows the essentials, keeps
@@ -172,6 +173,53 @@ test("collapsing a field row keeps its unsaved edit and says so", async ({
   await expect.poll(sandbox.documentWrites).toBe(1);
   await expect(header).toHaveAccessibleName("Priority Long text");
   await expect(field.getByText("Unsaved", { exact: true })).toBeHidden();
+});
+
+// UX-C11 (FAST-5): a type change on a published field warns at once, before
+// any save or publish attempt, with the choice to keep the published type.
+test("changing a published field's type warns at once and Keep sets it back without saving", async ({
+  page,
+}) => {
+  const design = structuredClone(configuredSandboxDesign);
+  const priority = design.modules[0]?.fields.find(
+    (item) => item.name === "Priority",
+  );
+  if (!priority) throw new Error("Service requests needs its Priority field");
+  priority.type = "Number";
+  const sandbox = await openAuthenticatedSandbox(page, design, {
+    path: "/sandbox?module=sample-requests",
+    latestPublished: {
+      sequence: 3,
+      document: sandboxDocumentFromDesign(design),
+    },
+  });
+  const field = page.getByRole("group", {
+    name: "Priority field settings",
+    exact: true,
+  });
+  await fieldRowTrigger(field, "Priority").click();
+  const type = field.getByLabel("Priority field type", { exact: true });
+  await expect(type).toHaveValue("Number");
+  await expect(field.getByText(/^Published as/)).toBeHidden();
+
+  await type.selectOption("Text");
+  const notice = field.getByText(
+    "Published as Number; publish will refuse this change.",
+    { exact: true },
+  );
+  await expect(notice).toBeVisible();
+  await expect(type).toHaveAccessibleDescription(
+    "Published as Number; publish will refuse this change.",
+  );
+
+  await field.getByRole("button", { name: "Keep Number", exact: true }).click();
+  await expect(type).toHaveValue("Number");
+  await expect(notice).toBeHidden();
+  await expect(
+    field.getByRole("button", { name: "Save field changes" }),
+  ).toBeHidden();
+  expect(sandbox.documentWrites()).toBe(0);
+  expect(sandbox.publishedReads()).toBe(1);
 });
 
 // On desktop, pages fill the viewport and never scroll; their panels do

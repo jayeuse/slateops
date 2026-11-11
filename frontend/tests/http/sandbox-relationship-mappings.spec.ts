@@ -3815,7 +3815,7 @@ test("editing select choices preserves IDs, even when a label matches the defaul
   ).click();
   const settings = page.getByLabel("Status field settings");
   await settings
-    .getByLabel("Status options")
+    .getByLabel("Status choices")
     .fill(`${idShapedLabel}, Open, In progress, Complete`);
   await settings.getByRole("button", { name: "Save field changes" }).click();
   await expect.poll(sandbox.documentWrites).toBe(1);
@@ -3838,7 +3838,7 @@ test("editing select choices preserves IDs, even when a label matches the defaul
   expect(inserted.defaultValue).toBe(openId);
 
   await settings
-    .getByLabel("Status options")
+    .getByLabel("Status choices")
     .fill(`Complete, ${idShapedLabel}, Open, In progress`);
   await settings.getByRole("button", { name: "Save field changes" }).click();
   await expect.poll(sandbox.documentWrites).toBe(2);
@@ -3851,7 +3851,7 @@ test("editing select choices preserves IDs, even when a label matches the defaul
   ]);
 
   await settings
-    .getByLabel("Status options")
+    .getByLabel("Status choices")
     .fill(`Complete, ${idShapedLabel}, Active, In progress`);
   await settings.getByRole("button", { name: "Save field changes" }).click();
   await expect.poll(sandbox.documentWrites).toBe(3);
@@ -3863,11 +3863,11 @@ test("editing select choices preserves IDs, even when a label matches the defaul
   expect(after.defaultValue).toBe(openId);
 
   await settings
-    .getByLabel("Status options")
+    .getByLabel("Status choices")
     .fill(`Complete, ${idShapedLabel}, In progress`);
   await settings.getByRole("button", { name: "Save field changes" }).click();
   await expect(
-    settings.getByText("Default value must match a select option."),
+    settings.getByText("Default value must match a choice."),
   ).toBeVisible();
   expect(sandbox.documentWrites()).toBe(3);
   await settings.getByLabel("Status default value").selectOption("");
@@ -3875,7 +3875,7 @@ test("editing select choices preserves IDs, even when a label matches the defaul
   await expect.poll(sandbox.documentWrites).toBe(4);
   expect(readStatusField().defaultValue).toBeNull();
 
-  const optionsInput = settings.getByLabel("Status options");
+  const optionsInput = settings.getByLabel("Status choices");
   const defaultInput = settings.getByLabel("Status default value");
   await optionsInput.fill(
     `Complete, ${idShapedLabel}, In progress, Draft choice`,
@@ -3935,7 +3935,7 @@ test("removing an unsaved selected choice requires an explicit new default", asy
     "Status",
   ).click();
   const settings = page.getByLabel("Status field settings");
-  const optionsInput = settings.getByLabel("Status options");
+  const optionsInput = settings.getByLabel("Status choices");
   await optionsInput.fill("Temporary, Open, In progress, Complete");
   await settings
     .getByLabel("Status default value")
@@ -3943,7 +3943,7 @@ test("removing an unsaved selected choice requires an explicit new default", asy
   await optionsInput.fill("Open, In progress, Complete");
   await settings.getByRole("button", { name: "Save field changes" }).click();
   await expect(
-    settings.getByText("Default value must match a select option."),
+    settings.getByText("Default value must match a choice."),
   ).toBeVisible();
   expect(sandbox.documentWrites()).toBe(0);
   await settings

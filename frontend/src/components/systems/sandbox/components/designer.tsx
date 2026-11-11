@@ -142,6 +142,7 @@ import {
   type SandboxCommandResult,
 } from "../state/commands";
 import { EmptyCanvasPanel } from "./empty-canvas-panel";
+import { useLatestPublishedVersion } from "../state/use-latest-published-version";
 import {
   SANDBOX_WORKBENCH_MAX_WIDTH,
   SANDBOX_WORKBENCH_MIN_WIDTH,
@@ -350,6 +351,7 @@ export function Designer({
   savingIds,
   addHoldReason,
   onNewTrigger,
+  publishedVersionId = null,
 }: {
   initialSelected: string;
   /** A link asked for one item, so narrow screens open on its Properties. */
@@ -407,9 +409,13 @@ export function Designer({
   addHoldReason: string | null;
   /** "New trigger" in a module's item menu (TRIG-8); absent until wired. */
   onNewTrigger?: (moduleId: string) => void;
+  /** The latest published version, whose field types the field settings
+   * warn against (FAST-5); null when nothing is published. */
+  publishedVersionId?: string | null;
 }) {
   const { keyboardShortcuts, disabled: preferencesDisabled } =
     useUserPreferences();
+  const publishedTypeOf = useLatestPublishedVersion(publishedVersionId);
   const shortcutsEnabled = keyboardShortcuts === true && !preferencesDisabled;
   const [viewPreferences, setViewPreferences] =
     useState<SandboxViewPreferences>(loadSandboxViewPreferences);
@@ -1919,6 +1925,9 @@ export function Designer({
                           index={i}
                           count={selectedModule.fields.length}
                           titleFieldId={selectedModule.titleFieldId ?? null}
+                          publishedType={
+                            publishedTypeOf?.(selectedModule.id, f.id) ?? null
+                          }
                           onSave={(nextField) =>
                             change((previous) => {
                               const currentModule = previous.modules.find(

@@ -9,6 +9,10 @@ export const sandboxKeys = {
   ) => ["sandbox", "versions", options, refreshKey] as const,
   version: (id: string, refreshKey: number) =>
     ["sandbox", "version", id, refreshKey] as const,
+  /** Build's read of the latest published version (FAST-5); outside
+   * History's `["sandbox", "version"]` prefix. */
+  publishedVersion: (id: string) =>
+    ["sandbox", "published-version", id] as const,
   bindings: ["sandbox", "bindings"] as const,
   bindingsRevision: (revision: number) =>
     ["sandbox", "bindings", revision] as const,

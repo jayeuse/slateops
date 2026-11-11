@@ -23,7 +23,7 @@ for (const row of [
   },
   {
     type: "Select",
-    shown: ["Status default value", "Status options"],
+    shown: ["Status default value", "Status choices"],
     hidden: ["Status maximum length"],
   },
   {
@@ -64,6 +64,73 @@ for (const row of [
     });
     for (const text of row.shown) expect(markup).toContain(text);
     for (const text of row.hidden) expect(markup).not.toContain(text);
+  });
+}
+
+/** Amount's settings, saved as `type`, beside the type it was published as. */
+function amountSettings(
+  type: string,
+  publishedType: "Number" | "Integer" | "Text" | null,
+) {
+  return staticMarkup(FieldSettings, {
+    field: {
+      id: "sample-field-Amount",
+      name: "Amount",
+      type,
+      required: false,
+      value: "",
+      options: "",
+      closed: false,
+    },
+    index: 0,
+    count: 1,
+    onSave: async () => ({ ok: true, value: undefined }),
+    onMove: async () => ({ ok: true, value: undefined }),
+    onLifecycle: async () => ({ ok: true, value: undefined }),
+    titleFieldId: null,
+    draftId: "field-settings-published-type",
+    onDraftStateChange: () => {},
+    publishedType,
+  });
+}
+
+// UX-C11: a type that differs from the published type warns under the select,
+// with the choice to keep the published type, in the type's screen words.
+for (const row of [
+  {
+    name: "Number",
+    publishedType: "Number" as const,
+    notice: "Published as Number; publish will refuse this change.",
+    keep: "Keep Number",
+  },
+  {
+    name: "Integer",
+    publishedType: "Integer" as const,
+    notice: "Published as Whole number; publish will refuse this change.",
+    keep: "Keep Whole number",
+  },
+]) {
+  test(`a Text field published as ${row.name} warns under its type with ${row.keep}`, () => {
+    const markup = amountSettings("Text", row.publishedType);
+    expect(markup).toContain(row.notice);
+    expect(markup).toContain(`>${row.keep}</button>`);
+    expect(markup.indexOf(row.notice)).toBeGreaterThan(
+      markup.indexOf("Amount field type"),
+    );
+    expect(markup.indexOf(row.notice)).toBeLessThan(markup.indexOf("Required"));
+  });
+}
+
+// UX-C11: no notice when the type matches, or when nothing is published with
+// this (module id, field id) pair.
+for (const row of [
+  { name: "the type it was published as", publishedType: "Text" as const },
+  { name: "no published type", publishedType: null },
+]) {
+  test(`a field with ${row.name} shows no published type notice`, () => {
+    const markup = amountSettings("Text", row.publishedType);
+    expect(markup).not.toContain("Published as");
+    expect(markup).not.toContain("Keep ");
   });
 }
 
