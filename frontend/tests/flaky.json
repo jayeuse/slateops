@@ -1,4 +1,12 @@
 {
   "$comment": "Tests that may pass only on their CI retry (docs/plans/ci-stability.md D1). Each entry: test ('<file> › <describe…> › <title>' as the CI flaky summary prints it), owner, added and expires (ISO dates, at most 14 days apart), and reason. Fix the cause and remove the entry before it expires.",
-  "tests": []
+  "tests": [
+    {
+      "test": "http/boards-route-cutover.spec.ts › Boards workspace regional activity › Board activity formats the workspace timestamp and keeps its zone in the tooltip",
+      "owner": "Claude (found on PR #100)",
+      "added": "2026-11-11",
+      "expires": "2026-11-25",
+      "reason": "First CI attempt did not find the 'Board activity' list in the board dialog within 5 s; the retry passed. The PR changes no Boards source file and not this spec. Find the race and remove this entry."
+    }
+  ]
 }
