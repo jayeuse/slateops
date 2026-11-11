@@ -102,6 +102,7 @@ import {
   type WidgetKind,
 } from "../domain/dashboard-grid";
 import { canManageOpenView } from "../domain/manage-access";
+import { dashboardSetup } from "../domain/dashboard-setup";
 import { parseOpenViewUrl, serializeOpenViewUrl } from "../domain/model";
 import {
   DashboardChartBuilder,
@@ -527,7 +528,9 @@ export default function ServerBackedDashboards() {
   function applyPreset(preset: Preset) {
     setPresetChoice(null);
     if (!edit) {
-      startEdit(null, presetSpaces(preset));
+      // From the set-up state: an empty home is filled (PATCH with its
+      // revision); with no dashboard, the save creates the home.
+      startEdit(setup === "fill" ? shown : null, presetSpaces(preset));
       return;
     }
     setIssues(new Map());
@@ -625,7 +628,15 @@ export default function ServerBackedDashboards() {
       ].join(" · ")
     : null;
   const listLoaded = !resource.loading && !resource.error;
-  const noDashboard = listLoaded && !shown && !edit && !dashboardId;
+  const setup = dashboardSetup({
+    listLoaded,
+    editing: Boolean(edit),
+    dashboardRequested: Boolean(dashboardId),
+    shown,
+    homeId: resource.home?.id ?? null,
+    canManage,
+  });
+  const noDashboard = setup === "create";
   // After the last active dashboard is archived, its managers restore it
   // from the setup state, which has no dashboard menu.
   const archivedList = useQuery({
@@ -911,14 +922,17 @@ export default function ServerBackedDashboards() {
             Dashboards appear here once you can read a department.
           </p>
         </section>
-      ) : noDashboard && effectiveDepartmentId ? (
+      ) : (noDashboard && effectiveDepartmentId) || setup === "fill" ? (
         <EmptyDashboard
           departmentName={departmentName}
           canManage={canManage}
           wide={wide}
           onPreset={(preset) => applyPreset(preset)}
-          onEmpty={() => startEdit(null)}
-          onArchived={hasArchived ? () => setArchivedOpen(true) : undefined}
+          // An empty home is already empty: "Edit layout" starts from it.
+          onEmpty={setup === "fill" ? undefined : () => startEdit(null)}
+          onArchived={
+            noDashboard && hasArchived ? () => setArchivedOpen(true) : undefined
+          }
         />
       ) : shown || edit ? (
         <DashboardLayout
@@ -1183,13 +1197,17 @@ function DashboardMenu(props: {
   );
 }
 
-/** BD3: a department with no dashboard teaches with its presets. */
+/**
+ * BD3: a department with no dashboard, or an empty home, teaches with its
+ * presets.
+ */
 function EmptyDashboard(props: {
   departmentName: string;
   canManage: boolean;
   wide: boolean;
   onPreset: (preset: Preset) => void;
-  onEmpty: () => void;
+  /** "Start empty"; absent for an empty home, which is already empty. */
+  onEmpty?: () => void;
   /** Offered to managers when the department has archived dashboards. */
   onArchived?: () => void;
 }) {
@@ -1239,19 +1257,21 @@ function EmptyDashboard(props: {
               <span className="font-medium">{preset.label}</span>
             </button>
           ))}
-          <button
-            type="button"
-            onClick={props.onEmpty}
-            className="bg-card focus-visible:ring-ring flex flex-col gap-2 rounded-lg border border-dashed p-3 text-left hover:border-(--ink-muted) focus-visible:ring-2 focus-visible:outline-none"
-          >
-            <span
-              aria-hidden="true"
-              className="bg-muted/30 grid aspect-[4/3] place-items-center rounded-md"
+          {props.onEmpty ? (
+            <button
+              type="button"
+              onClick={props.onEmpty}
+              className="bg-card focus-visible:ring-ring flex flex-col gap-2 rounded-lg border border-dashed p-3 text-left hover:border-(--ink-muted) focus-visible:ring-2 focus-visible:outline-none"
             >
-              <Plus className="text-muted-foreground size-5" />
-            </span>
-            <span className="font-medium">Start empty</span>
-          </button>
+              <span
+                aria-hidden="true"
+                className="bg-muted/30 grid aspect-[4/3] place-items-center rounded-md"
+              >
+                <Plus className="text-muted-foreground size-5" />
+              </span>
+              <span className="font-medium">Start empty</span>
+            </button>
+          ) : null}
         </div>
       ) : (
         <p className="text-muted-foreground text-sm">
