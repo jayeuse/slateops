@@ -21,6 +21,7 @@ from sqlalchemy.pool import NullPool
 from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_account_user, get_current_membership
+from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User, UserRole
@@ -34,7 +35,7 @@ from tests.boards.support import board_group, project_board
 from tests.conftest import alembic_heads, guarded_create_engine, membership_of
 from tests.database_pool import dispose_process_engines
 from tests.operations.migration_support import guarded_migration_environment, run_alembic
-from tests.organization_scope_support import scoped_override
+from tests.organization_scope_support import bind_test_organization, scoped_override
 from tests.rbac.support import (
     _client,
     add_department,
@@ -88,6 +89,27 @@ def _insert(db: Session, **values: Any) -> UUID:
     return identity
 
 
+def _insert_organization(db: Session, display_name: str) -> UUID:
+    """Raw SQL: the current model maps `organizations` columns that this older schema lacks."""
+    identity = uuid7()
+    db.connection().execute(
+        text(
+            "INSERT INTO public.organizations (id, slug, display_name, timezone, locale) "
+            "VALUES (:id, :slug, :name, 'UTC', 'en-US')"
+        ),
+        {"id": identity, "slug": f"test-{identity}", "name": display_name},
+    )
+    return identity
+
+
+def _old_schema_organization(db: Session) -> None:
+    """`create_organization` without its ORM load; the RBAC builders read only the id."""
+    identity = _insert_organization(db, "Test organization")
+    scope_session(db, identity)
+    bind_test_organization(identity)
+    db.info["rbac_organization"] = WorkspaceProfile(id=identity)
+
+
 def _seed(owner: Engine) -> _World:
     """Rows in three months and past the created months, for every filter that a reader has."""
 
@@ -95,6 +117,7 @@ def _seed(owner: Engine) -> _World:
         db.info[AUDIT_CONTEXT_KEY] = AuditContext(
             request_id=uuid7(), request_method="POST", request_path="/api/test/reader-matrix"
         )
+        _old_schema_organization(db)
         org = organization(db)
         admin = add_user(db, role=UserRole.ADMIN)
         manager, member = add_user(db), add_user(db)
@@ -112,13 +135,7 @@ def _seed(owner: Engine) -> _World:
         stage = add_stage(db, board)
         card: BoardCard = add_objective(db, board, stage, "Reader matrix", 1)
 
-        other = uuid7()
-        db.connection().execute(
-            WorkspaceProfile.__table__.insert().values(
-                id=other, slug=f"other-{other}", display_name="Other", timezone="UTC",
-                locale="en-US",
-            )
-        )
+        other = _insert_organization(db, "Other")
         request_id = uuid7()
         months = tuple(_month(step) for step in (-2, -1, 0, 5))
         rows = []
