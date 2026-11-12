@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ShieldCheck } from "lucide-react";
+import { Plus, ShieldCheck } from "lucide-react";
 
 import { DepartmentMark } from "@/components/sandbox/department-mark";
 import { Alert } from "@/components/ui/alert";
@@ -11,15 +11,19 @@ import { Button } from "@/components/ui/button";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
 
-import { userAccessOptions } from "../adapters/access-queries";
+import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
+
+import { authMeOptions, userAccessOptions } from "../adapters/access-queries";
+import { canAddAccess } from "../helpers/add-access";
 import { presentAccess, type AccessRow } from "../helpers/people";
 import {
   useAccessCatalog,
   catalogDepartments,
   catalogModules,
 } from "../hooks/use-access-catalog";
-import type { AccessUser } from "../state/api";
+import type { AccessUser, AccessUserAccess } from "../state/api";
 import { AccessLevelBadge } from "./access-level-badge";
+import { AddAccessForm } from "./add-access-form";
 import { useDepartmentOrder } from "./people-row-parts";
 import { ErrorReference } from "@/components/ui/error-reference";
 import { apiErrorReference } from "@/lib/api-errors";
@@ -83,9 +87,74 @@ function AccessEntry({
   );
 }
 
+/**
+ * "Add access" under the list (DR-10.2): the outline button opens the inline
+ * form in the tab; after a success or Cancel, focus returns to the button
+ * and the status line says what was added.
+ */
+function AddAccess({
+  person,
+  access,
+}: {
+  person: AccessUser;
+  access: AccessUserAccess;
+}) {
+  const [open, setOpen] = useState(false);
+  const [status, setStatus] = useState("");
+  const opener = useRef<HTMLButtonElement>(null);
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (open || !refocus.current) return;
+    refocus.current = false;
+    opener.current?.focus();
+  }, [open]);
+  function close(next = "") {
+    setStatus(next);
+    refocus.current = true;
+    setOpen(false);
+  }
+  return (
+    <div className="space-y-2">
+      {open ? (
+        <AddAccessForm
+          person={person}
+          access={access}
+          onAdded={(next) => close(next)}
+          onCancel={() => close()}
+        />
+      ) : (
+        <Button
+          ref={opener}
+          type="button"
+          variant="outline"
+          className="min-h-11 w-full sm:w-auto"
+          onClick={() => {
+            setStatus("");
+            setOpen(true);
+          }}
+        >
+          <Plus aria-hidden="true" />
+          Add access
+        </Button>
+      )}
+      <p role="status" className="text-muted-foreground text-sm">
+        {status}
+      </p>
+    </div>
+  );
+}
+
 export function PersonAccess({ person }: { person: AccessUser }) {
   const [now] = useState(() => Date.now());
   const position = useDepartmentOrder();
+  // The Access page already read the signed-in identity; this only reads
+  // that cached answer, never a second request.
+  const viewer = useQuery({ ...authMeOptions(), enabled: false });
+  const signedInId = useVerifiedWorkspaceUserId();
+  const addable = canAddAccess(
+    viewer.data?.id === signedInId ? viewer.data : null,
+    person,
+  );
   // The route refuses deleted people: they have no access to explain.
   const access = useQuery({
     ...userAccessOptions(person.id),
@@ -180,7 +249,7 @@ export function PersonAccess({ person }: { person: AccessUser }) {
           ) : view?.kind === "entries" ? (
             <div className="space-y-3">
               {view.inactive ? <InactiveNote admin={false} /> : null}
-              {view.guestCapped ? (
+              {view.guestCapped || (addable && person.role === "guest") ? (
                 <Alert role="status">
                   Guests can only read. Where a group gives more, this person
                   still gets Read.
@@ -197,9 +266,16 @@ export function PersonAccess({ person }: { person: AccessUser }) {
                 </ul>
               ) : view.inactive ? null : (
                 <p className="text-muted-foreground rounded-lg border p-4 text-sm">
-                  No access yet. Add them to a group in Details.
+                  No access yet.
                 </p>
               )}
+              {addable && access.data ? (
+                <AddAccess
+                  key={person.id}
+                  person={person}
+                  access={access.data}
+                />
+              ) : null}
             </div>
           ) : null}
         </LoadingRegion>

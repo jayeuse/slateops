@@ -54,6 +54,7 @@ import {
 import { inviteDraftJournal, type InviteDraft } from "../state/form-drafts";
 import { SponsorSearchSelect } from "./person-search-select";
 import { useAccessCatalog, catalogGroups } from "../hooks/use-access-catalog";
+import { groupAccessLine } from "../helpers/add-access";
 import { Input } from "@/components/ui/input";
 import { ActionError } from "./editor-conflicts";
 import { DiscardChangesDialog, SelectField, TextField } from "./people-fields";
@@ -425,10 +426,17 @@ export function InvitePersonDialog({
                   <ul className="grid gap-1 rounded-lg border p-2 sm:max-h-56 sm:grid-cols-2 sm:overflow-y-auto">
                     {groups.map((group) => {
                       const checked = form.group_ids.includes(group.id);
+                      // The name stays the checkbox's name; what the group
+                      // gives is its description (DR-10.1).
+                      const nameId = `${id}-group-${group.id}`;
+                      const lineId = `${nameId}-gives`;
                       return (
                         <li key={group.id} className="min-w-0">
-                          <label className="hover:bg-muted flex min-h-11 cursor-pointer items-center gap-3 rounded-md px-2 text-sm">
+                          <label className="hover:bg-muted flex min-h-11 cursor-pointer items-start gap-3 rounded-md px-2 py-1.5 text-sm">
                             <Checkbox
+                              className="mt-0.5"
+                              aria-labelledby={nameId}
+                              aria-describedby={lineId}
                               checked={checked}
                               onCheckedChange={(next) =>
                                 update({
@@ -440,8 +448,16 @@ export function InvitePersonDialog({
                                 })
                               }
                             />
-                            <span className="min-w-0 truncate">
-                              {group.name}
+                            <span className="min-w-0 flex-1">
+                              <span id={nameId} className="block truncate">
+                                {group.name}
+                              </span>
+                              <span
+                                id={lineId}
+                                className="text-muted-foreground block text-xs break-words"
+                              >
+                                {groupAccessLine(group.access, form.role)}
+                              </span>
                             </span>
                           </label>
                         </li>
