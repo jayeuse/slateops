@@ -805,7 +805,7 @@ test("Search ignores old replies, hides denial and recovers with explicit retry"
   oldSearch.release();
   await expect(page.getByText("old result", { exact: true })).toHaveCount(0);
   denied = false;
-  await records.getByRole("button", { name: "Retry", exact: true }).click();
+  await records.getByRole("button", { name: "Try again", exact: true }).click();
   await expect(
     records.getByRole("link", { name: /fresh result/ }),
   ).toBeVisible();

@@ -77,6 +77,27 @@ for (const row of destinations)
     expect(searchDestination(row.item)).toBe(row.href);
   });
 
+test("FX-S3-3 a file name with & # and markup stays one search value with no fragment", () => {
+  const name = "a&search=x#y<b>.pdf";
+  const href = searchDestination(
+    hit({
+      kind: "file",
+      title: name,
+      module_id: null,
+      department_id: ids.department,
+    }),
+  );
+  const url = new URL(href ?? "", "http://x");
+  expect(url.pathname).toBe("/platform");
+  expect([...url.searchParams.keys()]).toEqual([
+    "section",
+    "department",
+    "search",
+  ]);
+  expect(url.searchParams.getAll("search")).toEqual([name]);
+  expect(url.hash).toBe("");
+});
+
 type PageRow = {
   name: string;
   kind?: PlatformSearchKind;

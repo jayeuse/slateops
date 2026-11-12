@@ -51,10 +51,12 @@ import {
   PANEL_LIMIT,
   PANEL_SCOPE,
   activeOrder,
+  addressWordsScope,
   groupHeading,
   messageRows,
   moveActive,
   platformRows,
+  rememberAddressWords,
   showAllHref,
   type PanelGroupKind,
   type PanelRow,
@@ -262,18 +264,32 @@ function PanelBody({
   const rows = new Map(
     groups.flatMap((group) => shown(group).map((row) => [row.id, row])),
   );
+  // The words this person sends to the Search page or Files belong to this
+  // account and organization (FX-SR-8).
+  const wordsScope = addressWordsScope(userId, organizationId);
   function open(row: PanelRow) {
     const href = row.href;
     if (!href) return;
+    const fileSearch = new URL(href, window.location.origin).searchParams;
+    if (fileSearch.get("section") === "files" && fileSearch.get("search"))
+      rememberAddressWords(
+        "search",
+        wordsScope,
+        row.title.trim().slice(0, 100),
+      );
     onPick();
     const go = () => router.push(href);
     if (requestNavigation(href, go)) go();
   }
   const listIds = PANEL_GROUPS.map((group) => `${id}-${group.kind}`);
-  const shownLists = listIds.filter((_, index) => shown(groups[index]).length);
+  const shownLists = listIds.filter((_, index) =>
+    shown(groups[index]).some((row) => row.href !== null),
+  );
   return (
     <>
-      <div className="flex h-14 shrink-0 items-center gap-2.5 border-b pr-1.5 pl-4 md:h-13">
+      {/* The field's focus shows as a 2 px line along the bottom of the row,
+          inside the panel, so the panel edge never cuts it (DR-4.2). */}
+      <div className="has-[input:focus]:after:bg-ring relative flex h-14 shrink-0 items-center gap-2.5 border-b pr-1.5 pl-4 after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 md:h-13">
         <SearchIcon
           aria-hidden="true"
           className="text-muted-foreground size-4 shrink-0"
@@ -324,7 +340,7 @@ function PanelBody({
       </p>
       {nothingMatches ? (
         <div className="px-4 pt-4.5 pb-5.5 text-sm">
-          <p>Nothing matches &quot;{settled}&quot;.</p>
+          <p>Nothing matches &ldquo;{settled}&rdquo;.</p>
           <p className="text-muted-foreground mt-1">
             Check the spelling, or try fewer words.
           </p>
@@ -342,6 +358,7 @@ function PanelBody({
               page={group.page}
               active={active}
               onOpen={open}
+              onActivate={setChosen}
             />
           ))}
         </div>
@@ -351,10 +368,13 @@ function PanelBody({
           <GuardedWorkspaceLink
             href={showAllHref(text)}
             // As a picked row: the panel closes, then the guard runs.
-            onClick={onPick}
+            onClick={() => {
+              rememberAddressWords("q", wordsScope, text);
+              onPick();
+            }}
             className="text-primary focus-visible:outline-ring inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-md px-2 text-sm font-medium hover:underline focus-visible:outline-2 md:w-auto md:justify-start xl:min-h-8"
           >
-            Show all results for &quot;{text}&quot;
+            Show all results for &ldquo;{text}&rdquo;
             <ArrowRight aria-hidden="true" className="size-4" />
           </GuardedWorkspaceLink>
         </div>
@@ -372,6 +392,7 @@ function PanelGroup({
   page,
   active,
   onOpen,
+  onActivate,
 }: {
   listId: string;
   title: string;
@@ -381,6 +402,7 @@ function PanelGroup({
   page: GroupPage | undefined;
   active: string | null;
   onOpen: (row: PanelRow) => void;
+  onActivate: (id: string) => void;
 }) {
   const headingId = `${listId}-heading`;
   const waiting = enabled && !page && !read.isError;
@@ -443,57 +465,76 @@ function PanelGroup({
       </section>
     ) : null;
   if (!page.rows.length) return null;
+  // A row that cannot open is not an option, so the arrows skip it (DR-4.6).
+  const options = page.rows.filter((row) => row.href !== null);
+  const plain = page.rows.filter((row) => row.href === null);
+  const text = (row: PanelRow) => (
+    <>
+      <Icon
+        aria-hidden="true"
+        className="text-muted-foreground mt-0.5 size-4 shrink-0"
+      />
+      <div className="min-w-0 flex-1">
+        <div className={cn("truncate", row.href && "font-medium")} dir="auto">
+          {row.excerpt
+            ? row.excerpt.map((part, index) =>
+                part.marked ? (
+                  <mark
+                    key={index}
+                    className="bg-action-tint rounded-sm px-px text-inherit"
+                  >
+                    {part.text}
+                  </mark>
+                ) : (
+                  <span key={index}>{part.text}</span>
+                ),
+              )
+            : row.title}
+        </div>
+        <div className="text-muted-foreground truncate text-xs">
+          {row.context}
+        </div>
+      </div>
+    </>
+  );
   return (
     <section aria-labelledby={headingId} className={GROUP_CLASS}>
       {heading(groupHeading(title, page.total, page.capped))}
-      <div role="listbox" id={listId} aria-labelledby={headingId}>
-        {page.rows.map((row) => (
-          <div
-            key={row.id}
-            id={row.id}
-            role="option"
-            aria-selected={row.id === active}
-            aria-disabled={row.href ? undefined : true}
-            onClick={() => onOpen(row)}
-            className={cn(
-              "flex min-h-11 items-start gap-2.5 px-4 py-2 text-sm",
-              row.href
-                ? "cursor-pointer hover:bg-(--surface-hover)"
-                : "text-muted-foreground",
-              row.id === active && "bg-accent",
-            )}
-          >
-            <Icon
-              aria-hidden="true"
-              className="text-muted-foreground mt-0.5 size-4 shrink-0"
-            />
-            <div className="min-w-0 flex-1">
-              <div
-                className={cn("truncate", row.href && "font-medium")}
-                dir="auto"
-              >
-                {row.excerpt
-                  ? row.excerpt.map((part, index) =>
-                      part.marked ? (
-                        <mark
-                          key={index}
-                          className="bg-action-tint rounded-sm px-px text-inherit"
-                        >
-                          {part.text}
-                        </mark>
-                      ) : (
-                        <span key={index}>{part.text}</span>
-                      ),
-                    )
-                  : row.title}
-              </div>
-              <div className="text-muted-foreground truncate text-xs">
-                {row.context}
-              </div>
+      {options.length ? (
+        <div role="listbox" id={listId} aria-labelledby={headingId}>
+          {options.map((row) => (
+            <div
+              key={row.id}
+              id={row.id}
+              role="option"
+              aria-selected={row.id === active}
+              onClick={() => onOpen(row)}
+              // The pointer moves the active row: one highlighted row.
+              onPointerMove={() => {
+                if (row.id !== active) onActivate(row.id);
+              }}
+              className={cn(
+                "flex min-h-11 cursor-pointer items-start gap-2.5 px-4 py-2 text-sm",
+                row.id === active && "bg-accent",
+              )}
+            >
+              {text(row)}
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      ) : null}
+      {plain.length ? (
+        <ul>
+          {plain.map((row) => (
+            <li
+              key={row.id}
+              className="text-muted-foreground flex min-h-11 items-start gap-2.5 px-4 py-2 text-sm"
+            >
+              {text(row)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </section>
   );
 }

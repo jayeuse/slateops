@@ -118,3 +118,99 @@ export function moveActive(
 export function showAllHref(text: string): Route {
   return `/platform?section=search&q=${encodeURIComponent(text)}` as Route;
 }
+
+// FX-SR-8: the search words in the address (`q` on the Search page, `search`
+// in Files) belong to the account and organization that wrote or filled
+// them. The tab remembers that scope, also across a reload, so a page opened
+// for another account or organization drops the words instead of filling its
+// field with them.
+const ADDRESS_WORDS_KEY = "slateops-search-address-words";
+type AddressWordsName = "q" | "search";
+type AddressWords = Partial<
+  Record<AddressWordsName, { scope: string; value: string }>
+>;
+
+function readAddressWords(): AddressWords {
+  try {
+    const parsed: unknown = JSON.parse(
+      window.sessionStorage.getItem(ADDRESS_WORDS_KEY) ?? "{}",
+    );
+    if (typeof parsed !== "object" || parsed === null) return {};
+    const words: AddressWords = {};
+    for (const name of ["q", "search"] as const) {
+      const entry: unknown = (parsed as Record<string, unknown>)[name];
+      if (
+        typeof entry === "object" &&
+        entry !== null &&
+        typeof (entry as { scope?: unknown }).scope === "string" &&
+        typeof (entry as { value?: unknown }).value === "string"
+      )
+        words[name] = entry as { scope: string; value: string };
+    }
+    return words;
+  } catch {
+    return {};
+  }
+}
+
+/** The scope of the search words: the verified account and organization. */
+export function addressWordsScope(
+  userId: string | null,
+  organizationId: string | null,
+): string {
+  return `${userId ?? ""}:${organizationId ?? ""}`;
+}
+
+/** Records that `scope` wrote or filled these words. */
+export function rememberAddressWords(
+  name: AddressWordsName,
+  scope: string,
+  value: string,
+): void {
+  try {
+    window.sessionStorage.setItem(
+      ADDRESS_WORDS_KEY,
+      JSON.stringify({ ...readAddressWords(), [name]: { scope, value } }),
+    );
+  } catch {
+    // Without storage the words stay unowned, as on a first visit.
+  }
+}
+
+/** Whether another account or organization wrote or filled these words. */
+export function addressWordsOfAnotherScope(
+  name: AddressWordsName,
+  scope: string,
+  value: string,
+): boolean {
+  if (typeof window === "undefined") return false;
+  const owner = readAddressWords()[name];
+  return owner !== undefined && owner.value === value && owner.scope !== scope;
+}
+
+/**
+ * Writes the settled words to the current Search page or Files address in
+ * place (FX-SR-7, DR-4.8): the native history replace, which Next.js syncs
+ * with `useSearchParams`, so no navigation starts. When a navigation has
+ * already left the page, nothing is written, so it is never undone.
+ */
+export function replaceAddressWords(
+  section: "search" | "files",
+  name: AddressWordsName,
+  value: string,
+): void {
+  const url = new URL(window.location.href);
+  const current = url.searchParams.get("section");
+  if (
+    url.pathname !== "/platform" ||
+    (section === "search"
+      ? current !== null && current !== "search"
+      : current !== "files") ||
+    (url.searchParams.get(name) ?? "") === value
+  )
+    return;
+  if (value) url.searchParams.set(name, value);
+  else url.searchParams.delete(name);
+  const query = url.searchParams.toString();
+  window.history.replaceState(null, "", `/platform${query ? `?${query}` : ""}`);
+}

@@ -69,6 +69,16 @@ import {
   trackLibraryRead,
 } from "../adapters/platform-queries";
 import { useErrorText } from "@/lib/use-error-text";
+import {
+  useAdmittedWorkspaceScope,
+  useVerifiedWorkspaceUserId,
+} from "../../shared/runtime/workspace-identity";
+import {
+  addressWordsOfAnotherScope,
+  addressWordsScope,
+  rememberAddressWords,
+  replaceAddressWords,
+} from "../helpers/search-panel";
 
 const ACCESS_ENTITIES = new Set([
   "departments",
@@ -136,6 +146,12 @@ export default function Files() {
   // A picked file search result opens Files with its name in `search`; the
   // library of that department searches by it once (DR-4.7 N-3).
   const addressSearch = searchParams.get("search");
+  const verifiedUserId = useVerifiedWorkspaceUserId();
+  const admittedScope = useAdmittedWorkspaceScope();
+  const wordsScope = addressWordsScope(
+    verifiedUserId,
+    admittedScope?.org_id ?? null,
+  );
   const [seenAddressSearch, setSeenAddressSearch] = useState<string | null>(
     null,
   );
@@ -143,12 +159,37 @@ export default function Files() {
     department: string | null;
     search: string;
   } | null>(null);
+  // The last `search` this page wrote itself (FX-SR-7): it is never a seed,
+  // so it never fills the box again over later typing (the seed loop guard).
+  const [writtenSearch, setWrittenSearch] = useState<string | null>(null);
   if (addressSearch !== seenAddressSearch) {
     setSeenAddressSearch(addressSearch);
-    const text = addressSearch?.trim().slice(0, 100);
-    setSeed(text ? { department: requested, search: text } : null);
+    if (addressSearch !== writtenSearch) {
+      const text = addressSearch?.trim().slice(0, 100);
+      // Words that another account or organization wrote or filled are
+      // never a seed; the library's empty search then removes them
+      // (FX-SR-8).
+      setSeed(
+        text && !addressWordsOfAnotherScope("search", wordsScope, text)
+          ? { department: requested, search: text }
+          : null,
+      );
+    }
   }
-  const clearSeed = useCallback(() => setSeed(null), []);
+  const clearSeed = useCallback(() => setSeed(null), [setSeed]);
+  // The library's settled search goes back to the address with replace, so a
+  // reload shows the words on screen; an empty search removes it (DR-4.8).
+  // The written value is remembered first, so it never becomes a seed.
+  const writeAddressSearch = useCallback(
+    (text: string) => {
+      // The words on screen belong to this account and organization.
+      if (text) rememberAddressWords("search", wordsScope, text);
+      if ((searchParams.get("search") ?? "") === text) return;
+      setWrittenSearch(text || null);
+      replaceAddressWords("files", "search", text);
+    },
+    [searchParams, wordsScope, setWrittenSearch],
+  );
   const defaultId =
     requested === null && identity.data?.role !== "admin"
       ? identity.data?.access.find(
@@ -315,6 +356,7 @@ export default function Files() {
                   : ""
               }
               onInitialSearchUsed={clearSeed}
+              onSearchSettled={writeAddressSearch}
             />
           ) : requested !== null ? (
             <Alert variant="destructive">
@@ -336,12 +378,15 @@ function LibraryContents({
   level,
   initialSearch,
   onInitialSearchUsed,
+  onSearchSettled,
 }: {
   department: AccessDepartment;
   level: AccessLevel;
   /** A file name from the address; it fills the search once. */
   initialSearch: string;
   onInitialSearchUsed: () => void;
+  /** Writes the settled search to the address. */
+  onSearchSettled: (search: string) => void;
 }) {
   const client = useQueryClient();
   const inputId = useId();
@@ -360,6 +405,9 @@ function LibraryContents({
   useEffect(() => {
     if (initialSearch) onInitialSearchUsed();
   }, [initialSearch, onInitialSearchUsed]);
+  useEffect(() => {
+    onSearchSettled(settled);
+  }, [settled, onSearchSettled]);
   const [sort, setSort] = useState<SortChoice>("newest");
   const [deleted, setDeleted] = useState<"exclude" | "only">("exclude");
   const sorting = SORTS[sort];

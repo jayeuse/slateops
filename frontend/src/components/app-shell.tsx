@@ -958,7 +958,7 @@ function AppHeaderActions({
       if (
         !isSearchWorkspaceKey(event) ||
         window.location.pathname.startsWith("/comms") ||
-        document.querySelector('[role="dialog"]')
+        document.querySelector('[role="dialog"], [role="alertdialog"]')
       )
         return;
       event.preventDefault();

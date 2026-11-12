@@ -16,7 +16,10 @@ import { PersonCardPopover } from "@/components/person-card";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { requestSessionRecheck } from "@/lib/auth-api";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
-import { useAdmittedWorkspaceScope } from "@/components/systems/shared/runtime/workspace-identity";
+import {
+  useAdmittedWorkspaceScope,
+  useVerifiedWorkspaceUserId,
+} from "@/components/systems/shared/runtime/workspace-identity";
 import { search as searchMessages } from "@/components/systems/comms/adapters/search-api";
 import type { SearchHit } from "@/components/systems/comms/contract/types";
 import { formatWorkspaceDate } from "@/lib/date-time-display";
@@ -28,14 +31,17 @@ import {
   type PlatformSearchItem,
   type SearchKind,
 } from "../adapters/platform-search-api";
-import { excerptParts } from "../helpers/search-panel";
 import {
-  isSearchAdmissionError,
-  searchFailureMessage,
-} from "../helpers/search-failure";
+  addressWordsOfAnotherScope,
+  addressWordsScope,
+  excerptParts,
+  rememberAddressWords,
+  replaceAddressWords,
+} from "../helpers/search-panel";
+import { isSearchAdmissionError } from "../helpers/search-failure";
 import { ErrorReference } from "@/components/ui/error-reference";
 import { apiErrorReference } from "@/lib/api-errors";
-import { listTotalText } from "@/lib/list-pagination";
+import { listCountText } from "@/lib/list-pagination";
 
 type SearchProps = {
   query: string;
@@ -102,14 +108,46 @@ export default function Search({ query, onQueryChange }: SearchProps) {
   const search = query.trim();
   // "Show all results" opens this page with the panel's words in `q`; they
   // fill the field once per address, so later typing is never replaced.
-  const addressQuery = useSearchParams().get("q");
-  const seeded = useRef<string | null>(null);
+  const searchParams = useSearchParams();
+  const addressQuery = searchParams.get("q");
+  // Messages are bound to the admitted account and organization; with no
+  // organization there is no Messages card, as in the panel.
+  const scope = useAdmittedWorkspaceScope();
+  const wordsScope = addressWordsScope(
+    useVerifiedWorkspaceUserId(),
+    scope?.org_id ?? null,
+  );
+  // Words that another account or organization wrote or filled are dropped,
+  // never shown or read (FX-SR-8).
+  const [foreign] = useState(
+    () =>
+      addressQuery !== null &&
+      addressWordsOfAnotherScope("q", wordsScope, addressQuery),
+  );
+  const seeded = useRef<string | null>(foreign ? addressQuery : null);
+  // The last `q` this page wrote itself (FX-SR-7): it never fills the field.
+  const written = useRef<string | null>(null);
   useEffect(() => {
-    if (addressQuery === null || seeded.current === addressQuery) return;
+    if (foreign && addressQuery !== null && addressQuery === seeded.current) {
+      written.current = null;
+      replaceAddressWords("search", "q", "");
+      return;
+    }
+    if (
+      addressQuery === null ||
+      seeded.current === addressQuery ||
+      written.current === addressQuery
+    )
+      return;
     seeded.current = addressQuery;
+    rememberAddressWords("q", wordsScope, addressQuery);
     onQueryChange(addressQuery.slice(0, 100));
-  }, [addressQuery, onQueryChange]);
-  const [settled, setSettled] = useState(search);
+  }, [addressQuery, foreign, onQueryChange, wordsScope]);
+  // An address with `q` starts settled on its words, so clearing the field
+  // before they settle still changes the settled words (and removes `q`).
+  const [settled, setSettled] = useState(() =>
+    foreign ? "" : search || (addressQuery ?? "").slice(0, 100).trim(),
+  );
   const [pages, setPages] = useState<{
     search: string;
     offsets: Partial<Record<CardKind, number>>;
@@ -118,6 +156,20 @@ export default function Search({ query, onQueryChange }: SearchProps) {
     const timer = window.setTimeout(() => setSettled(search), 250);
     return () => window.clearTimeout(timer);
   }, [search]);
+  // The settled words go back to `q` with replace, so a reload shows the
+  // words on screen; an empty field removes `q` (DR-4.8). Only a change of
+  // the settled words writes, so the first frame (before the seed) never
+  // removes the address's words; and the written value is remembered, so it
+  // never fills the field again over later typing (the seed loop guard).
+  const lastSettled = useRef(settled);
+  useEffect(() => {
+    if (settled === lastSettled.current) return;
+    lastSettled.current = settled;
+    if ((searchParams.get("q") ?? "") === settled) return;
+    written.current = settled || null;
+    if (settled) rememberAddressWords("q", wordsScope, settled);
+    replaceAddressWords("search", "q", settled);
+  }, [settled, searchParams, wordsScope]);
   const offsets = pages.search === search ? pages.offsets : {};
   const settledOffset = (kind: CardKind) =>
     pages.search === settled ? (pages.offsets[kind] ?? 0) : 0;
@@ -126,9 +178,6 @@ export default function Search({ query, onQueryChange }: SearchProps) {
       platformSearchOptions(settled, kind, settledOffset(kind)),
     ),
   });
-  // Messages are bound to the admitted account and organization; with no
-  // organization there is no Messages card, as in the panel.
-  const scope = useAdmittedWorkspaceScope();
   const messageRead = useQuery(
     messageSearchOptions(scope, settled, settledOffset("message")),
   );
@@ -208,13 +257,13 @@ export default function Search({ query, onQueryChange }: SearchProps) {
                 ) : read.isError || admissionDenied ? (
                   <div className="space-y-3">
                     <p role="alert" className="text-destructive text-sm">
-                      {searchFailureMessage(read.error, admissionDenied)}
+                      {TITLES[kind]} could not be searched.
                     </p>
                     <Action
                       onClick={() => void read.refetch()}
                       disabled={read.isFetching}
                     >
-                      Retry
+                      Try again
                     </Action>
                     <ErrorReference
                       id={
@@ -294,11 +343,13 @@ export default function Search({ query, onQueryChange }: SearchProps) {
                       })}
                     </ul>
                     <p className="text-muted-foreground text-xs">
-                      {listTotalText(
+                      {listCountText(
                         data.pagination.total,
                         data.pagination.total_is_capped,
+                        "result",
+                        "results",
                       )}{" "}
-                      results · showing {data.rows.length}
+                      · showing {data.rows.length}
                     </p>
                     {data.pagination.total > PAGE_SIZE ? (
                       <PaginationControls

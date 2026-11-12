@@ -311,7 +311,9 @@ test("an API request sharing a pending activity probe still refreshes a live ses
   await expect(
     page.getByText("Concurrent protected search result", { exact: true }),
   ).toBeVisible();
-  await expect(page).toHaveURL(/\/platform\?section=search$/);
+  await expect(page).toHaveURL(
+    "/platform?section=search&q=Concurrent+protected+search",
+  );
   expect(state.renewedUsers).toEqual([userA]);
 });
 
