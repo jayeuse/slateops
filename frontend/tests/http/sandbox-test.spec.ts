@@ -231,7 +231,7 @@ test(
       .click();
 
     await expect(
-      reading.getByRole("heading", { name: "When an item is added" }),
+      reading.getByRole("heading", { name: "When a record is added" }),
     ).toBeVisible();
     await expect(reading.getByText("if Amount is at least 100")).toBeVisible();
     await expect(reading.getByText("if Status is Open")).toBeVisible();
@@ -254,7 +254,7 @@ test(
       .click();
 
     const result = reading.getByRole("region", {
-      name: "Example item · Flag large orders only",
+      name: "Example record · Flag large orders only",
     });
     await expect(result).toBeVisible();
     expect(requests).toHaveLength(1);
@@ -284,11 +284,11 @@ test(
   async ({ page }) => {
     const { requests, reading } = await openTest(page);
     await reading
-      .getByRole("button", { name: "Try it: When an item is added" })
+      .getByRole("button", { name: "Try it: When a record is added" })
       .click();
 
     const result = reading.getByRole("region", {
-      name: "Example item",
+      name: "Example record",
       exact: true,
     });
     await expect(result).toBeVisible();
@@ -342,14 +342,14 @@ test(
     ).toBeEnabled();
 
     await reading
-      .getByRole("button", { name: "Try it: When an item is added" })
+      .getByRole("button", { name: "Try it: When a record is added" })
       .click();
     await expect(
-      reading.getByRole("region", { name: "Example item", exact: true }),
+      reading.getByRole("region", { name: "Example record", exact: true }),
     ).toBeVisible();
     await expect(modules.getByText("Results 50 of 50")).toBeVisible();
     const tryIt = reading.getByRole("button", {
-      name: "Try it: When an item is added",
+      name: "Try it: When a record is added",
     });
     await expect(tryIt).toHaveAttribute("aria-disabled", "true");
     await expect(tryIt).toHaveAccessibleDescription("Clear results first.");
@@ -377,7 +377,7 @@ test("a refused run for a full store shows the limit, and a changed draft says t
       : route.fallback(),
   );
   await reading
-    .getByRole("button", { name: "Try it: When an item is added" })
+    .getByRole("button", { name: "Try it: When a record is added" })
     .click();
   await expect(
     page.getByRole("region", { name: "Modules" }).getByText("Results 50 of 50"),
@@ -387,7 +387,7 @@ test("a refused run for a full store shows the limit, and a changed draft says t
     .getByRole("button", { name: "Clear results" })
     .click();
   await reading
-    .getByRole("button", { name: "Try it: When an item is added" })
+    .getByRole("button", { name: "Try it: When a record is added" })
     .click();
   // One alert in the page content (Next's route announcer sits outside
   // main); the answered request's reference follows the page's own words.
@@ -432,16 +432,16 @@ test("a field whose settings allow no value opens Change values and sends nothin
   });
   const { requests, reading } = await openTest(page, { design });
   await reading
-    .getByRole("button", { name: "Try it: When an item is added" })
+    .getByRole("button", { name: "Try it: When a record is added" })
     .click();
   const result = reading.getByRole("region", {
-    name: "Example item",
+    name: "Example record",
     exact: true,
   });
   // The result opens in Change values and takes focus; the field says why,
   // once, under itself (F15, PR1 Product Designer finding).
   await expect(
-    result.getByRole("heading", { name: "Example item", exact: true }),
+    result.getByRole("heading", { name: "Example record", exact: true }),
   ).toBeFocused();
   await expect(result.getByLabel("Amount")).toBeVisible();
   await expect(result.getByLabel("Stage")).toHaveAttribute(
@@ -474,7 +474,7 @@ test("on a phone, Test is the list, then the reading with a way back, and Try ta
   const reading = page.getByRole("region", { name: "Reading", exact: true });
   await expect(modules).toBeHidden();
   const tryIt = reading.getByRole("button", {
-    name: "Try it: When an item is added",
+    name: "Try it: When a record is added",
   });
   const box = await tryIt.boundingBox();
   expect(box?.height).toBeGreaterThanOrEqual(44);
@@ -487,13 +487,13 @@ test("no result shows before Try it; a run shows the Test-only chip, and its tim
 }) => {
   const { reading } = await openTest(page);
   await expect(
-    reading.getByRole("region", { name: /^Example item/ }),
+    reading.getByRole("region", { name: /^Example record/ }),
   ).toHaveCount(0);
   await reading
-    .getByRole("button", { name: "Try it: When an item is added" })
+    .getByRole("button", { name: "Try it: When a record is added" })
     .click();
   const result = reading.getByRole("region", {
-    name: "Example item",
+    name: "Example record",
     exact: true,
   });
   await expect(
@@ -528,11 +528,11 @@ test("on a phone, Try it and Try this trigger show their result in the reading a
   await modules.getByRole("button", { name: /^Orders/ }).click();
   const reading = page.getByRole("region", { name: "Reading", exact: true });
   await reading
-    .getByRole("button", { name: "Try it: When an item is added" })
+    .getByRole("button", { name: "Try it: When a record is added" })
     .click();
   // The result heading takes focus, so the result is read first.
   await expect(
-    reading.getByRole("heading", { name: "Example item", exact: true }),
+    reading.getByRole("heading", { name: "Example record", exact: true }),
   ).toBeFocused();
   await expect(modules).toBeHidden();
   await reading
@@ -542,7 +542,7 @@ test("on a phone, Try it and Try this trigger show their result in the reading a
     .click();
   await expect(
     reading.getByRole("heading", {
-      name: "Example item · Flag large orders only",
+      name: "Example record · Flag large orders only",
     }),
   ).toBeFocused();
 });
@@ -648,7 +648,7 @@ test("no field shows an error before a run, and a run's field issue reads in Wha
     reading.getByText("Enter a value for this required field."),
   ).toHaveCount(0);
   await reading
-    .getByRole("button", { name: "Try it: When an item is added" })
+    .getByRole("button", { name: "Try it: When a record is added" })
     .click();
   await expect(
     reading
@@ -672,10 +672,10 @@ test("changed values and their Edited marks stay when another module is chosen a
   });
   const { reading } = await openTest(page, { design });
   await reading
-    .getByRole("button", { name: "Try it: When an item is added" })
+    .getByRole("button", { name: "Try it: When a record is added" })
     .click();
   const result = reading.getByRole("region", {
-    name: "Example item",
+    name: "Example record",
     exact: true,
   });
   await result.getByRole("button", { name: "Change values" }).click();
@@ -698,11 +698,11 @@ test("from 640 to 1279 px every Test control keeps a 44 px target", async ({
   await page.setViewportSize({ width: 1024, height: 768 });
   const { reading } = await openTest(page);
   const tryIt = reading.getByRole("button", {
-    name: "Try it: When an item is added",
+    name: "Try it: When a record is added",
   });
   await tryIt.click();
   const result = reading.getByRole("region", {
-    name: "Example item",
+    name: "Example record",
     exact: true,
   });
   await expect(result).toBeVisible();

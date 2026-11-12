@@ -219,7 +219,7 @@ function blockTitle(
 ): string {
   switch (event.kind) {
     case "record-created":
-      return "When an item is added";
+      return "When a record is added";
     case "field-changed":
       return `When ${fieldOf(sandboxModule, event.fieldId)?.name ?? "a field"} changes`;
     case "threshold-crossed": {
@@ -287,7 +287,7 @@ export function moduleReading(
   const fields = openFields(sandboxModule);
   const own = moduleTriggers(triggers, moduleId);
 
-  // "When an item is added" always shows; other events show when a trigger
+  // "When a record is added" always shows; other events show when a trigger
   // listens to them.
   const blocks = new Map<string, ReadingBlock>();
   const added: ReadingEvent = { kind: "record-created" };

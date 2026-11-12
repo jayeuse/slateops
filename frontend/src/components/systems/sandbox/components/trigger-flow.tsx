@@ -35,7 +35,7 @@ export function triggerStatusWord(enabled: boolean): "On" | "Off" {
 }
 export function triggerEventLabel(recordTrigger: SandboxTrigger): string {
   return {
-    "record-created": "Item added",
+    "record-created": "Record added",
     "field-changed": "Field changed",
     "threshold-crossed": "Threshold crossed",
     schedule: "Schedule",

@@ -2182,7 +2182,7 @@ test("running and clearing tests protect browser exits until each request settle
   await page.getByRole("link", { name: "Test", exact: true }).click();
 
   await page
-    .getByRole("button", { name: "Try it: When an item is added" })
+    .getByRole("button", { name: "Try it: When a record is added" })
     .click();
   await expect.poll(() => runStarted).toBe(true);
   await expect.poll(() => exitGuarded(page)).toBe(true);
@@ -2199,7 +2199,7 @@ test("running and clearing tests protect browser exits until each request settle
   await page.keyboard.press("Escape");
   releaseRun();
   const result = page.getByRole("region", {
-    name: "Example item",
+    name: "Example record",
     exact: true,
   });
   await expect(result).toBeVisible();
@@ -4091,10 +4091,10 @@ test("Sandbox Test treats User values as simulated UUIDs without live eligibilit
   await page.getByRole("link", { name: "Test", exact: true }).click();
   const reading = page.getByRole("region", { name: "Reading", exact: true });
   await reading
-    .getByRole("button", { name: "Try it: When an item is added" })
+    .getByRole("button", { name: "Try it: When a record is added" })
     .click();
   const result = reading.getByRole("region", {
-    name: "Example item",
+    name: "Example record",
     exact: true,
   });
   // The example is the signed-in administrator, not a looked-up person.
@@ -4158,10 +4158,10 @@ test("Sandbox Test sends every changed value, including fields far down the list
   await page.getByRole("link", { name: "Test", exact: true }).click();
   const reading = page.getByRole("region", { name: "Reading", exact: true });
   await reading
-    .getByRole("button", { name: "Try it: When an item is added" })
+    .getByRole("button", { name: "Try it: When a record is added" })
     .click();
   const result = reading.getByRole("region", {
-    name: "Example item",
+    name: "Example record",
     exact: true,
   });
   const happened = result.getByRole("region", { name: "What happened" });
@@ -4297,7 +4297,7 @@ test("Sandbox Test results show the saved inputs, the changed fields, and no cha
   const recent = page.getByRole("list", { name: "Recent results" });
   const reading = page.getByRole("region", { name: "Reading", exact: true });
   const result = reading.getByRole("region", {
-    name: "Example item",
+    name: "Example record",
     exact: true,
   });
   const values = result.getByRole("region", { name: "Values used" });
@@ -5100,7 +5100,7 @@ test("a Test result from an older draft says so and can show its module on the c
     .getByRole("button")
     .click();
   const outcome = page.getByRole("region", {
-    name: "Example item",
+    name: "Example record",
     exact: true,
   });
   await expect(
@@ -5166,7 +5166,7 @@ test("a Test run plays out on the canvas in three still steps", async ({
     .getByRole("button")
     .click();
   await page
-    .getByRole("region", { name: "Example item", exact: true })
+    .getByRole("region", { name: "Example record", exact: true })
     .getByRole("button", { name: "Show on canvas" })
     .click();
 

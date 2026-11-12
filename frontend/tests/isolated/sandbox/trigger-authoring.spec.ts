@@ -141,7 +141,7 @@ const fieldsOf = (moduleId: string) =>
 const fieldOf = (moduleId: string, fieldId: string) =>
   fieldsOf(moduleId).find((item) => item.id === fieldId)!;
 
-/** "When an item is added to Orders, if Amount is at least 100, set Status to Review." */
+/** "When a record is added to Orders, if Amount is at least 100, set Status to Review." */
 function largeOrders(): SandboxTrigger {
   return {
     id: "large-orders",
@@ -421,26 +421,26 @@ test(
 );
 
 test(
-  "the whole trigger reads as one sentence that follows each edit",
+  "UF-C9.1 the whole trigger reads as one sentence that follows each edit",
   { tag: "@UX-C20" },
   () => {
     const recordTrigger = largeOrders();
     expect(sentenceText(recordTrigger)).toBe(
-      "When an item is added to Orders, if Amount is at least 100, set Status to Review.",
+      "When a record is added to Orders, if Amount is at least 100, set Status to Review.",
     );
     recordTrigger.conditionGroup.conditions[0]!.value = {
       kind: "literal",
       value: 2500,
     };
     expect(sentenceText(recordTrigger)).toBe(
-      "When an item is added to Orders, if Amount is at least 2,500, set Status to Review.",
+      "When a record is added to Orders, if Amount is at least 2,500, set Status to Review.",
     );
     // A removed action reads as missing, never as a default.
     expect(sentenceText({ ...recordTrigger, actions: [] })).toBe(
-      "When an item is added to Orders, if Amount is at least 2,500, [no action yet].",
+      "When a record is added to Orders, if Amount is at least 2,500, [no action yet].",
     );
     expect(sentenceText(defaultTrigger(design))).toBe(
-      "When an item is added to [a module], [no action yet].",
+      "When a record is added to [a module], [no action yet].",
     );
     expect(
       sentenceText({
@@ -516,7 +516,7 @@ test(
     // Trigger A moved from Orders to Customers: its condition and action
     // still point at Orders' Amount and Status (a Choice list).
     expect(sentenceText(changeTriggerModule(largeOrders(), "customers"))).toBe(
-      "When an item is added to Customers, if [a field], set [a field].",
+      "When a record is added to Customers, if [a field], set [a field].",
     );
     // A new condition and a new action have no field yet.
     const fresh = addTriggerAction(
@@ -524,7 +524,7 @@ test(
       design,
     );
     expect(sentenceText(fresh)).toBe(
-      "When an item is added to Orders, if [a field], set [a field].",
+      "When a record is added to Orders, if [a field], set [a field].",
     );
     // A threshold with no fitting field shows no stale limit either.
     expect(

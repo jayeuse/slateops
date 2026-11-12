@@ -1710,7 +1710,7 @@ test.describe("Sandbox", () => {
     // The run's result shows under its event; reading alone sent no run.
     await expect(
       reading
-        .getByRole("region", { name: "Example item", exact: true })
+        .getByRole("region", { name: "Example record", exact: true })
         .getByText("Test only · live data unchanged"),
     ).toBeVisible();
     const afterRecords = await page.request.get(recordsUrl);

@@ -183,7 +183,7 @@ test("an empty required field reports one issue, not two", () => {
 test("a trigger reads as the event that runs it", () => {
   expect(
     describeTrigger({ kind: "record-created", moduleId: "orders" }, design),
-  ).toBe("Runs when an item is added to Orders.");
+  ).toBe("Runs when a record is added to Orders.");
   expect(
     describeTrigger(
       { kind: "field-changed", moduleId: "orders", fieldId: "total" },

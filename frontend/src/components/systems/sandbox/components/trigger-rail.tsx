@@ -908,7 +908,7 @@ function WhenSettings({
           }
         >
           <NativeSelectOption value="record-created">
-            Item added
+            Record added
           </NativeSelectOption>
           <NativeSelectOption value="field-changed">
             Field changed

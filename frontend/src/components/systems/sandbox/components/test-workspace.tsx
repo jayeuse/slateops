@@ -751,8 +751,8 @@ export function TestWorkspace({
                       run={run ?? null}
                       title={
                         result.only
-                          ? `Example item · ${result.only.name} only`
-                          : "Example item"
+                          ? `Example record · ${result.only.name} only`
+                          : "Example record"
                       }
                       fields={fields}
                       values={result.values}

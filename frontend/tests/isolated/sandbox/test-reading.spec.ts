@@ -101,7 +101,7 @@ function linkedOrders() {
 }
 
 test(
-  "the reading lists each event with the triggers that listen and the fields they set",
+  "UF-C9.1 the reading lists each event with the triggers that listen and the fields they set",
   { tag: "@UX-C22" },
   () => {
     const reading = moduleReading(linkedOrders(), triggers, "orders");
@@ -119,7 +119,7 @@ test(
       })),
     ).toEqual([
       {
-        title: "When an item is added",
+        title: "When a record is added",
         triggers: [
           ["Flag large orders", "on", "if Amount is at least 100", "Status"],
           ["Hold unpaid orders", "Off", "always", "Status"],
@@ -167,7 +167,7 @@ test("a module with no trigger reads one event block with no listener", () => {
   expect(reading?.facts).toBe("Sales");
   expect(
     reading?.blocks.map((block) => [block.title, block.triggers.length]),
-  ).toEqual([["When an item is added", 0]]);
+  ).toEqual([["When a record is added", 0]]);
 });
 
 test(

@@ -62,12 +62,12 @@ test(
     expect(savedRow).not.toMatch(/>(Unsaved|Incomplete)</);
     // The event word is for assistive technology only, on every row.
     for (const row of rows)
-      expect(row).toContain('<span class="sr-only">Item added</span>');
+      expect(row).toContain('<span class="sr-only">Record added</span>');
     // The accessible name reads status, name, event, then the badge.
     expect(freshRow).toContain(
-      'aria-label="On, New trigger, Item added, Incomplete"',
+      'aria-label="On, New trigger, Record added, Incomplete"',
     );
-    expect(savedRow).toContain(`aria-label="On, ${saved.name}, Item added"`);
+    expect(savedRow).toContain(`aria-label="On, ${saved.name}, Record added"`);
   },
 );
 
