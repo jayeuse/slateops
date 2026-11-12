@@ -494,3 +494,163 @@ test("UF-C4.1 on a phone the panel fills the screen with 44 px rows and Close at
   await expect(panel(page)).toBeHidden();
   await expect(searchButton(page)).toBeFocused();
 });
+
+// UF-C4.5 and DR-4.8: the Search page shows all results. "Show all results"
+// opens it with the typed words in `q`; it seeds its field once and has a
+// card for each of the six kinds.
+const card = (page: Page, name: string) =>
+  page.getByRole("region", { name: `${name} search results`, exact: true });
+const pageField = (page: Page) =>
+  page
+    .getByRole("main")
+    .getByRole("searchbox", { name: "Search workspace", exact: true });
+
+test("UF-C4.5 a picked record opens its record, and Show all results opens the Search page with the words and their results", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installSearch(page);
+  await openStart(page);
+  await searchButton(page).click();
+  await field(page).fill("harbor");
+  await panel(page)
+    .getByRole("option", { name: /Harbor record 2/ })
+    .click();
+  await expect(panel(page)).toBeHidden();
+  await expect(page).toHaveURL(
+    `/openview?section=views&module=${MODULE}&record=${id("50", 2)}`,
+  );
+
+  await openStart(page);
+  await searchButton(page).click();
+  await field(page).fill("harbor");
+  await panel(page)
+    .getByRole("link", { name: 'Show all results for "harbor"', exact: true })
+    .click();
+  await expect(page).toHaveURL("/platform?section=search&q=harbor");
+  await expect(pageField(page)).toHaveValue("harbor");
+  await expect(
+    card(page, "Records").getByRole("link", { name: /Harbor record 1/ }),
+  ).toBeVisible();
+});
+
+test("UF-C4.5 the Search page seeds its field from q once, and an address without q opens empty", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const reads = await installSearch(page);
+  await page.goto("/platform?section=search&q=harbor");
+  await expect(pageField(page)).toHaveValue("harbor");
+  await expect(
+    card(page, "Files").getByRole("link", { name: /harbor-rate-card/ }),
+  ).toBeVisible();
+  expect(
+    reads.every(
+      (url) =>
+        (url.searchParams.get("search") ?? url.searchParams.get("q")) ===
+        "harbor",
+    ),
+  ).toBe(true);
+  // Editing the words does not bring the address's words back.
+  await pageField(page).fill("harbor rates");
+  await expect(
+    card(page, "Records").getByRole("link", { name: /Harbor record 1/ }),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      reads.some((url) => url.searchParams.get("search") === "harbor rates"),
+    )
+    .toBe(true);
+  await expect(pageField(page)).toHaveValue("harbor rates");
+
+  const before = reads.length;
+  await page.goto("/platform?section=search");
+  await expect(pageField(page)).toHaveValue("");
+  await expect(card(page, "Records")).toContainText(
+    "Enter a search to find records.",
+  );
+  await expect(card(page, "Messages")).toContainText(
+    "Enter a search to find messages.",
+  );
+  expect(reads).toHaveLength(before);
+});
+
+test("UF-C4.5 Messages and Files cards list their rows with totals, open their pages, and each fails alone", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  let messagesFail = true;
+  const reads = await installSearch(page, (kind) =>
+    kind === "message" && messagesFail
+      ? { status: 500, body: { detail: "Private database detail" } }
+      : harbor(kind),
+  );
+  await page.goto("/platform?section=search&q=harbor");
+  const files = card(page, "Files");
+  await expect(
+    files.getByRole("link", { name: /harbor-rate-card-2026\.pdf/ }),
+  ).toHaveAttribute(
+    "href",
+    `/platform?section=files&department=${DEPARTMENT}&search=harbor-rate-card-2026.pdf`,
+  );
+  await expect(files).toContainText("1 results · showing 1");
+  const messages = card(page, "Messages");
+  await expect(messages.getByRole("alert")).toContainText(
+    "Search could not be completed.",
+  );
+  await expect(messages).toContainText(answeredReference);
+  await expect(messages).not.toContainText("Private database detail");
+  await expect(
+    card(page, "Records").getByRole("link", { name: /Harbor record 1/ }),
+  ).toBeVisible();
+  messagesFail = false;
+  await messages.getByRole("button", { name: "Retry", exact: true }).click();
+  const message = messages.getByRole("link", { name: /Harbor delivery/ });
+  await expect(message).toHaveAttribute(
+    "href",
+    `/comms?conversation=${CONVERSATION}&message=${MESSAGE}`,
+  );
+  await expect(message.locator("mark")).toHaveText("Harbor");
+  await expect(messages).toContainText("sales-desk · Ana Cruz");
+  expect(
+    reads.some(
+      (url) =>
+        url.pathname === "/api/comms/search" &&
+        url.searchParams.get("q") === "harbor" &&
+        url.searchParams.get("limit") === "10",
+    ),
+  ).toBe(true);
+  await expect(pageField(page)).toHaveAttribute(
+    "placeholder",
+    "Search records, people, posts, events, messages, and files…",
+  );
+});
+
+test("UF-C4.5 with no organization in the session the Search page shows five cards and no Messages card", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  // A session that names no organization leaves the workspace scope empty,
+  // so messages cannot be bound to one: the card does not show (P3-F2
+  // decision 2b, the panel's rule for its Messages group).
+  await page.route("**/api/auth/session", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        user_id: defaultSignedInIdentity.id,
+        default_organization_blocked: null,
+        setup_required: false,
+      },
+    }),
+  );
+  await installSearch(page);
+  await page.goto("/platform?section=search&q=harbor");
+  await expect(
+    card(page, "Files").getByRole("link", { name: /harbor-rate-card/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: /search results$/ }),
+  ).toHaveCount(5);
+  await expect(card(page, "Messages")).toHaveCount(0);
+  await expect(page.getByText("Searching messages…")).toHaveCount(0);
+});

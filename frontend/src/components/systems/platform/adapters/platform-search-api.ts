@@ -4,11 +4,16 @@ import { z } from "zod";
 import { apiFetch, apiContractError } from "@/lib/api";
 import { pageEndsWithinTotal, wirePageCounts } from "@/lib/list-pagination";
 
-export const SEARCH_KINDS = ["record", "person", "post", "event"] as const;
+/** Every kind `/api/search` reads. */
+export const SEARCH_KINDS = [
+  "record",
+  "person",
+  "post",
+  "event",
+  "file",
+] as const;
 export type SearchKind = (typeof SEARCH_KINDS)[number];
-/** Every kind `/api/search` reads; the Search page's cards are SEARCH_KINDS. */
-const ITEM_KINDS = [...SEARCH_KINDS, "file"] as const;
-export type PlatformSearchKind = (typeof ITEM_KINDS)[number];
+export type PlatformSearchKind = SearchKind;
 // The one destination id each kind carries: module, Board, or department.
 const DESTINATION_ID: Record<PlatformSearchKind, number | null> = {
   record: 0,
@@ -19,7 +24,7 @@ const DESTINATION_ID: Record<PlatformSearchKind, number | null> = {
 };
 const itemSchema = z
   .object({
-    kind: z.enum(ITEM_KINDS),
+    kind: z.enum(SEARCH_KINDS),
     id: z.uuid(),
     title: z.string(),
     context_label: z.string(),

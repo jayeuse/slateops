@@ -133,6 +133,22 @@ export default function Files() {
     [401, 403, 404].includes(identity.error.status);
   const identityReady = identity.data !== undefined && !identityRefused;
   const requested = searchParams.get("department");
+  // A picked file search result opens Files with its name in `search`; the
+  // library of that department searches by it once (DR-4.7 N-3).
+  const addressSearch = searchParams.get("search");
+  const [seenAddressSearch, setSeenAddressSearch] = useState<string | null>(
+    null,
+  );
+  const [seed, setSeed] = useState<{
+    department: string | null;
+    search: string;
+  } | null>(null);
+  if (addressSearch !== seenAddressSearch) {
+    setSeenAddressSearch(addressSearch);
+    const text = addressSearch?.trim().slice(0, 100);
+    setSeed(text ? { department: requested, search: text } : null);
+  }
+  const clearSeed = useCallback(() => setSeed(null), []);
   const defaultId =
     requested === null && identity.data?.role !== "admin"
       ? identity.data?.access.find(
@@ -292,6 +308,13 @@ export default function Files() {
               key={department.id}
               department={department}
               level={level}
+              initialSearch={
+                seed &&
+                (seed.department === null || seed.department === department.id)
+                  ? seed.search
+                  : ""
+              }
+              onInitialSearchUsed={clearSeed}
             />
           ) : requested !== null ? (
             <Alert variant="destructive">
@@ -311,15 +334,32 @@ export default function Files() {
 function LibraryContents({
   department,
   level,
+  initialSearch,
+  onInitialSearchUsed,
 }: {
   department: AccessDepartment;
   level: AccessLevel;
+  /** A file name from the address; it fills the search once. */
+  initialSearch: string;
+  onInitialSearchUsed: () => void;
 }) {
   const client = useQueryClient();
   const inputId = useId();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialSearch);
   const search = query.trim();
-  const [settled, setSettled] = useState("");
+  const [settled, setSettled] = useState(initialSearch);
+  // A later pick while this library is open fills the search again.
+  const [seenInitialSearch, setSeenInitialSearch] = useState(initialSearch);
+  if (initialSearch !== seenInitialSearch) {
+    setSeenInitialSearch(initialSearch);
+    if (initialSearch) {
+      setQuery(initialSearch);
+      setSettled(initialSearch);
+    }
+  }
+  useEffect(() => {
+    if (initialSearch) onInitialSearchUsed();
+  }, [initialSearch, onInitialSearchUsed]);
   const [sort, setSort] = useState<SortChoice>("newest");
   const [deleted, setDeleted] = useState<"exclude" | "only">("exclude");
   const sorting = SORTS[sort];

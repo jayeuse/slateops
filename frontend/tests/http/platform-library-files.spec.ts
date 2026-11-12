@@ -2226,3 +2226,45 @@ test("department option search preserves an active upload producer", async ({
     gate.release();
   }
 });
+
+// docs/specs/ux-friction-pass.md DR-4.7 (N-3): a picked file search result
+// opens Files with its name in the address, and Files searches by it once.
+test("UF-C4.5 Files opened with a file name in its address searches by it once, and without one opens as today", async ({
+  page,
+}) => {
+  const fixture = await installLibrary(page);
+  await page.goto(
+    `/platform?section=files&department=${LIBRARY_DEPARTMENT}&search=Safety%20guide.pdf`,
+  );
+  const search = page.getByRole("searchbox", { name: "Search files by name" });
+  await expect(search).toHaveValue("Safety guide.pdf");
+  await expect(
+    page
+      .getByRole("button", { name: "Download Safety guide.pdf", exact: true })
+      .first(),
+  ).toBeVisible();
+  // Every read searches by the name: no unfiltered read comes first.
+  expect([
+    ...new Set(
+      fixture.listReads
+        .filter((read) => read.department === LIBRARY_DEPARTMENT)
+        .map((read) => read.parameters.get("search")),
+    ),
+  ]).toEqual(["Safety guide.pdf"]);
+  // The name belongs to that one arrival: another department, and the way
+  // back, start with an empty search.
+  await chooseLibraryDepartment(page, "Operations");
+  await expect(
+    page.getByRole("button", {
+      name: "Download Operations guide.pdf",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(search).toHaveValue("");
+  await chooseLibraryDepartment(page, "Maintenance");
+  await expect(search).toHaveValue("");
+
+  await openLibrary(page);
+  await expect(search).toHaveValue("");
+  expect(fixture.listReads.at(-1)?.parameters.get("search") ?? "").toBe("");
+});
