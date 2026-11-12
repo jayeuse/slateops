@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type {
   OpenViewDataSourceField,
@@ -41,6 +41,11 @@ type SavedViewFilterControlsProps = {
   ) => void;
   onRemoveFilter: (index: number) => void;
   onAddFilter: () => void;
+  /** Rows that a refused Save view named (DR-3.5), by row key. */
+  refusedRowKeys?: ReadonlySet<string>;
+  /** Move focus to the first refused row's missing control once. */
+  focusRefusedRow?: boolean;
+  onRefusedRowFocused?: () => void;
 };
 
 const UNSAFE_INTEGER_FILTER_ERROR =
@@ -72,8 +77,39 @@ export function SavedViewFilterControls({
   onUpdateFilter,
   onRemoveFilter,
   onAddFilter,
+  refusedRowKeys,
+  focusRefusedRow = false,
+  onRefusedRowFocused,
 }: SavedViewFilterControlsProps) {
   const [userSearch, setUserSearch] = useState("");
+  // DR-3.3: Add filter moves focus to the new row's Field select.
+  const focusAddedRow = useRef(false);
+  useEffect(() => {
+    if (!focusAddedRow.current) return;
+    focusAddedRow.current = false;
+    document
+      .getElementById(`openview-filter-field-${filters.length - 1}`)
+      ?.focus();
+  }, [filters.length]);
+  const isRefused = (filter: SavedFilter, index: number) =>
+    !isFilterReady(filter) &&
+    Boolean(refusedRowKeys?.has(rowKeyFor(filter, index)));
+  // DR-3.5: a refused save moves focus to the first refused row's missing
+  // control: the Field select, or the value (a list's first choice).
+  useEffect(() => {
+    if (!focusRefusedRow) return;
+    const index = filters.findIndex(isRefused);
+    if (index >= 0) {
+      const target = !filters[index]?.fieldId
+        ? document.getElementById(`openview-filter-field-${index}`)
+        : (document.getElementById(`openview-filter-value-${index}`) ??
+          document.querySelector<HTMLElement>(
+            `[id^="openview-filter-value-${index}-"]:not([id$="-label"])`,
+          ));
+      target?.focus();
+    }
+    onRefusedRowFocused?.();
+  });
   const hasValuedUserFilter = filters.some(
     (filter) =>
       filter.expectedType === "user" && !EMPTY_OPERATORS.has(filter.operator),
@@ -457,9 +493,18 @@ export function SavedViewFilterControls({
             >
               Remove
             </Button>
-            {!isFilterReady(filter) ? (
-              <p className="text-destructive col-span-full text-sm">
-                Complete this condition or remove it before saving.
+            {isRefused(filter, index) ? (
+              <p
+                role="alert"
+                className="text-destructive col-span-full text-sm"
+              >
+                Choose a value or remove this condition.
+              </p>
+            ) : !isFilterReady(filter) ? (
+              <p className="text-muted-foreground col-span-full text-sm">
+                {filter.fieldId
+                  ? "Not applied yet: choose a value."
+                  : "Not applied yet: choose a field."}
               </p>
             ) : null}
             {!field ? (
@@ -476,7 +521,10 @@ export function SavedViewFilterControls({
         variant="outline"
         className="min-h-11 self-start"
         disabled={fields.length === 0 || filters.length >= 10}
-        onClick={onAddFilter}
+        onClick={() => {
+          focusAddedRow.current = true;
+          onAddFilter();
+        }}
       >
         Add filter
       </Button>

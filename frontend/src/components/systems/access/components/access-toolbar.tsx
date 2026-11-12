@@ -109,6 +109,12 @@ type AccessToolbarProps<T extends string> = ToolbarSearch &
     actions?: ReactNode;
     /** The Filters rows (`FilterRow`, `FilterSelect`). */
     children: ReactNode;
+    /**
+     * Opens the Filters popover from the view (a refused save shows its
+     * error there). Without it, the toolbar owns the open state.
+     */
+    filtersOpen?: boolean;
+    onFiltersOpenChange?: (open: boolean) => void;
   };
 
 const WIDE_QUERY = "(min-width: 48rem)";
@@ -321,9 +327,16 @@ export function AccessToolbar<T extends string>({
   quickFiltersScroll = false,
   actions,
   children,
+  filtersOpen,
+  onFiltersOpenChange,
 }: AccessToolbarProps<T>) {
   const id = useId();
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = filtersOpen ?? ownOpen;
+  const setOpen = (next: boolean) => {
+    if (filtersOpen === undefined) setOwnOpen(next);
+    onFiltersOpenChange?.(next);
+  };
   const wide = useWideScreen();
   const desktop = useDesktopScreen();
   // Below xl implies below md: the phone layout of the search stays.

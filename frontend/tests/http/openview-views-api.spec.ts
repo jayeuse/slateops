@@ -1864,10 +1864,10 @@ test("membership View filters select choices by label and submit stable IDs", as
   ]);
 });
 
-test("switching scalar and membership View filters clears incompatible values", async ({
+test("UF-C3.3: switching scalar and membership View filters clears incompatible values", async ({
   page,
 }) => {
-  await installViewsApi(page);
+  const api = await installViewsApi(page);
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
   await addFilterForField(page, statusFieldId);
 
@@ -1883,18 +1883,23 @@ test("switching scalar and membership View filters clears incompatible values", 
     membership.getByRole("checkbox", { name: "In service" }),
   ).not.toBeChecked();
   await expect(
-    page.getByText("Complete this condition or remove it before saving."),
+    page.getByText("Not applied yet: choose a value."),
   ).toBeVisible();
   await membership.getByRole("checkbox", { name: "In service" }).check();
   await membership.getByRole("checkbox", { name: "Inspection due" }).check();
   await operator.selectOption("eq");
   await expect(value).toHaveValue("");
-  await expect(
-    page.getByRole("button", { name: "Save view", exact: true }),
-  ).toBeDisabled();
+  // UF-C3.3: Save view refuses the unfinished row without a view write.
   await expect(
     page.getByRole("button", { name: "Save as new view" }),
-  ).toBeDisabled();
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
+  await expect(
+    page.getByText("Choose a value or remove this condition."),
+  ).toBeVisible();
+  expect(api.requests.filter((request) => !request.startsWith("GET "))).toEqual(
+    [],
+  );
 });
 
 test("changing a Views filter field with the keyboard retains focus", async ({
@@ -1914,7 +1919,7 @@ test("changing a Views filter field with the keyboard retains focus", async ({
   await expect(field).toBeFocused();
 });
 
-test("clearing a number View filter stays blank instead of querying zero", async ({
+test("UF-C3.1 UF-C3.3: clearing a number View filter stays blank instead of querying zero", async ({
   page,
 }) => {
   const api = await installViewsApi(page);
@@ -1939,16 +1944,19 @@ test("clearing a number View filter stays blank instead of querying zero", async
   await value.fill("");
   await expect(value).toHaveValue("");
   await expect(
-    filtersRegion.getByText(
-      "Complete this condition or remove it before saving.",
-    ),
+    filtersRegion.getByText("Not applied yet: choose a value."),
   ).toBeVisible();
+  // UF-C3.3: Save as new view refuses the unfinished row without a write.
   await expect(
     page.getByRole("button", { name: "Save view", exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Save as new view" }).click();
   await expect(
-    page.getByRole("button", { name: "Save as new view" }),
-  ).toBeDisabled();
+    filtersRegion.getByText("Choose a value or remove this condition."),
+  ).toBeVisible();
+  expect(api.requests.filter((request) => !request.startsWith("GET "))).toEqual(
+    [],
+  );
   expect(
     api.recordQueryRequests
       .slice(requestCountBeforeClear)
@@ -1999,6 +2007,161 @@ test("unsafe integer View filters fail locally without sending a rounded value",
   await expect(
     page.getByRole("button", { name: "Save view", exact: true }),
   ).toBeDisabled();
+});
+
+test("UF-C3.1 UF-C3.2: an added filter row applies only when complete; the list, quick filter, and Export stay", async ({
+  page,
+}) => {
+  const api = await installViewsApi(page, {
+    disableInitialSearch: true,
+    viewerRole: "member",
+  });
+  const countRequests: { definition: { filters: unknown[] } }[] = [];
+  await page.route("**/api/records/aggregate-query", async (route) => {
+    const body = route.request().postDataJSON() as {
+      definition: { filters: unknown[] };
+      limit: number;
+      offset: number;
+    };
+    countRequests.push(body);
+    await route.fulfill({
+      json: {
+        items: [
+          {
+            key: inServiceChoiceId,
+            label: "In service",
+            value: "29",
+            record_count: 29,
+          },
+        ],
+        pagination: {
+          limit: body.limit,
+          offset: body.offset,
+          count: 1,
+          total: 1,
+          has_more: false,
+          total_is_capped: false,
+        },
+      },
+    });
+  });
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  const strip = page.getByRole("group", { name: "Status" });
+  await expect(strip.getByRole("button", { name: /^All\s*29$/ })).toBeVisible();
+  await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
+  const recordReadsBefore = api.recordQueryRequests.length;
+  const countReadsBefore = countRequests.length;
+
+  const filtersRegion = await openFilters(page);
+  await filtersRegion.getByRole("button", { name: "Add filter" }).click();
+  await expect(
+    filtersRegion.getByRole("combobox", { name: "Field", exact: true }),
+  ).toBeFocused();
+  await expect(
+    filtersRegion.getByText("Not applied yet: choose a value.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  // No early error, no banner, no chip: the list keeps its last result.
+  // (The page's route announcer is an empty alert.)
+  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("group", { name: "Active filters" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
+  await expect(strip.getByRole("button", { name: /^All\s*29$/ })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Export", exact: true }),
+  ).toBeEnabled();
+  expect(api.recordQueryRequests).toHaveLength(recordReadsBefore);
+  expect(countRequests).toHaveLength(countReadsBefore);
+
+  await filtersRegion
+    .getByRole("textbox", { name: "Value", exact: true })
+    .fill("pump");
+  await expect(
+    page.getByRole("group", { name: "Active filters" }),
+  ).toContainText("Equipment name: is pump");
+  await expect(
+    filtersRegion.getByText("Not applied yet: choose a value."),
+  ).toHaveCount(0);
+  await expect
+    .poll(() =>
+      api.recordQueryRequests.some(({ definition }) =>
+        definition.filters.some(
+          (filter) =>
+            filter.field_id === nameFieldId && filter.value === "pump",
+        ),
+      ),
+    )
+    .toBe(true);
+  // No read ever carried the unfinished condition.
+  expect(
+    api.recordQueryRequests.some(({ definition }) =>
+      definition.filters.some((filter) => filter.value === ""),
+    ),
+  ).toBe(false);
+});
+
+for (const viewport of [
+  { name: "popover", width: 1440, height: 900 },
+  { name: "bottom sheet", width: 390, height: 844 },
+] as const) {
+  test(`UF-C3.3: Save view with an unfinished row sends nothing and names the row in the Filters ${viewport.name}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    const api = await installViewsApi(page);
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    await addFilterForField(page, statusFieldId);
+    await page.keyboard.press("Escape");
+    const filtersRegion = page.getByRole("dialog", { name: "Filters" });
+    await expect(filtersRegion).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Save view", exact: true }).click();
+
+    await expect(filtersRegion).toBeVisible();
+    await expect(
+      filtersRegion.getByText("Choose a value or remove this condition.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      filtersRegion.getByText("Not applied yet: choose a value."),
+    ).toHaveCount(0);
+    await expect(
+      filtersRegion.getByRole("combobox", { name: "Value", exact: true }),
+    ).toBeFocused();
+    expect(
+      api.requests.filter((request) => !request.startsWith("GET ")),
+    ).toEqual([]);
+  });
+}
+
+test("UF-C3.4: an unsafe number keeps its error under the field and the list keeps its last result", async ({
+  page,
+}) => {
+  const api = await installViewsApi(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
+  await addFilterForField(page, integerFieldId);
+  const filtersRegion = await openFilters(page);
+  const recordReadsBefore = api.recordQueryRequests.length;
+
+  await filtersRegion.getByLabel("Value").fill("9007199254740993");
+
+  await expect(
+    filtersRegion.getByText(
+      "Enter a whole number from -9007199254740991 to 9007199254740991.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
+  expect(api.recordQueryRequests).toHaveLength(recordReadsBefore);
 });
 
 test("server-backed Views preserve edits through save, conflict, archive, restore, and module default changes", async ({
@@ -5970,7 +6133,7 @@ test.describe("export journeys", () => {
       expect(request).not.toHaveProperty(key);
   });
 
-  test("an incomplete filter disables export without a request", async ({
+  test("UF-C3.1: an incomplete filter keeps Export enabled and out of the request", async ({
     page,
   }) => {
     const api = await installS16Export(page);
@@ -5985,9 +6148,14 @@ test.describe("export journeys", () => {
     await page.goto(
       `/openview?section=views&module=${moduleId}&view=${viewId}`,
     );
-    await expect(
-      page.getByRole("button", { name: "Export", exact: true }),
-    ).toBeDisabled();
-    expect(api.requests).toEqual([]);
+    const dialog = await openS16Export(page);
+    await s16DownloadedBytes(page, () =>
+      dialog.getByRole("button", { name: "Download", exact: true }).click(),
+    );
+    expect(api.requests).toHaveLength(1);
+    expect(api.requests[0]).toMatchObject({
+      view_id: viewId,
+      definition: { filters: [] },
+    });
   });
 });

@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { OpenViewQueryDefinition } from "../../../src/components/systems/openview/adapters/views-api";
 import { serializeOpenViewQueryDefinition } from "../../../src/components/systems/openview/adapters/views-serialization";
 import {
+  appliedDefinition,
   filterValueForType,
   hasUnsafeIntegerFilter,
   isFilterReady,
@@ -82,3 +83,37 @@ for (const current of [
     if ("ready" in current) expect(isFilterReady(filter)).toBe(current.ready);
   });
 }
+
+// UF-C3.1, UF-C3.4: a read sends only applied conditions. A row without a
+// value, an empty choice list, or an unsafe integer stays in the draft only.
+test("UF-C3.1 UF-C3.4: a View read keeps only complete conditions without an unsafe integer", () => {
+  const complete: Filter = equalsFilter("text", "Pump");
+  const noValueNeeded: Filter = {
+    fieldId,
+    expectedType: "text",
+    operator: "empty",
+    value: null,
+  };
+  const choices: Filter = {
+    fieldId,
+    expectedType: "select",
+    operator: "in",
+    value: ["00000000-0000-4000-8000-000000000401"],
+  };
+  const definition = emptyQuery({
+    filters: [
+      complete,
+      equalsFilter("text", ""),
+      noValueNeeded,
+      { ...choices, value: [] },
+      choices,
+      equalsFilter("int", "9007199254740993"),
+      equalsFilter("int", 12),
+    ],
+  });
+
+  expect(appliedDefinition(definition)).toEqual({
+    ...definition,
+    filters: [complete, noValueNeeded, choices, equalsFilter("int", 12)],
+  });
+});

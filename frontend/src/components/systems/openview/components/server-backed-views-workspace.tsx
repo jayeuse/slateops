@@ -109,12 +109,14 @@ import {
 import { serializeOpenViewUrl } from "../domain/model";
 import { canManageOpenView, openViewLevel } from "../domain/manage-access";
 import {
+  appliedDefinition,
   changedSavedViewFields,
   draftForView,
   duplicateViewName,
   emptyDefinition,
   emptyPresentation,
   hasUnsafeIntegerFilter,
+  isFilterApplied,
   isFilterReady,
   normalizeFilterValues,
   OPERATOR_LABELS,
@@ -428,6 +430,13 @@ export default function ServerBackedViewsWorkspace({
     kind: "columns" | "layout";
     open: boolean;
   }>({ kind: "columns", open: false });
+  // DR-3.5: a refused save opens Filters and names its unfinished rows.
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [refusedFilterRows, setRefusedFilterRows] = useState<{
+    draftKey: string;
+    keys: ReadonlySet<string>;
+    focus: boolean;
+  } | null>(null);
   const [saveName, setSaveName] = useState("");
   // Save as new view creates a view even while a saved one is selected.
   const [saveAsNew, setSaveAsNew] = useState(false);
@@ -784,10 +793,19 @@ export default function ServerBackedViewsWorkspace({
     () => normalizeFilterValues(draft.definition),
     [draft.definition],
   );
+  // DR-3.1: reads, counts, and Export use only applied conditions. Keyed by
+  // content, so adding or editing an unfinished row reads nothing again.
+  const appliedDraftKey = JSON.stringify(
+    appliedDefinition(normalizedDraftDefinition),
+  );
+  const appliedDraftDefinition = useMemo(
+    () => appliedDefinition(normalizedDraftDefinition),
+    [appliedDraftKey],
+  );
   const inspectionKey = JSON.stringify({
     moduleId,
     draftKey,
-    definition: normalizedDraftDefinition,
+    definition: appliedDraftDefinition,
     groupByFieldId: draft.presentation.groupByFieldId,
     selectedGroup: generalSelectedGroup,
   });
@@ -800,9 +818,9 @@ export default function ServerBackedViewsWorkspace({
     };
   }, [inspectionKey]);
   const requestDefinition = useMemo<OpenViewQueryDefinition>(() => {
-    if (!isUuid(requestedRecord)) return normalizedDraftDefinition;
+    if (!isUuid(requestedRecord)) return appliedDraftDefinition;
     return {
-      ...normalizedDraftDefinition,
+      ...appliedDraftDefinition,
       filters: [],
       search: requestedRecord,
       searchFields: [],
@@ -810,16 +828,7 @@ export default function ServerBackedViewsWorkspace({
     };
     // The compiler cannot prove the stability of search-param values; this
     // memoization keeps record reads anchored to the actual address value.
-  }, [normalizedDraftDefinition, requestedRecord]);
-  const draftHasUnsafeIntegerFilter = draft.definition.filters.some(
-    hasUnsafeIntegerFilter,
-  );
-  const unsafeIntegerRequestFilter = requestDefinition.filters.some(
-    hasUnsafeIntegerFilter,
-  );
-  const incompleteRequestFilter = requestDefinition.filters.some(
-    (filter) => !isFilterReady(filter),
-  );
+  }, [appliedDraftDefinition, requestedRecord]);
   const presentationLayout = draft.presentation.layout;
   const queryFieldIds = new Set(
     draft.definition.columns.map(({ fieldId }) => fieldId),
@@ -831,8 +840,11 @@ export default function ServerBackedViewsWorkspace({
   const groupByFieldId = groupByField?.id;
   const groupByFieldType = groupByField?.type;
   const incompleteFilters = draft.definition.filters.some(
-    (filter) => !isFilterReady(filter) || hasUnsafeIntegerFilter(filter),
+    (filter) => !isFilterApplied(filter),
   );
+  // An unsafe number keeps its error under the field and blocks a save; an
+  // unfinished row is named when a save is pressed (DR-3.5, DR-3.6).
+  const unsafeFilters = draft.definition.filters.some(hasUnsafeIntegerFilter);
   const generalGroupedView = Boolean(
     moduleId && groupByField && !isUuid(requestedRecord),
   );
@@ -840,7 +852,7 @@ export default function ServerBackedViewsWorkspace({
     generalGroupedView && moduleId && groupByFieldId && groupByFieldType
       ? JSON.stringify({
           moduleId,
-          definition: normalizedDraftDefinition,
+          definition: appliedDraftDefinition,
           groupByFieldId,
           groupByFieldType,
           groupOffset: generalGroupOffset,
@@ -866,11 +878,6 @@ export default function ServerBackedViewsWorkspace({
   );
 
   useEffect(() => {
-    if (unsafeIntegerRequestFilter || incompleteRequestFilter) {
-      recordRequest.current += 1;
-      setRecordPage(null);
-      return;
-    }
     if (generalGroupedView) {
       recordRequest.current += 1;
       setRecordPage(null);
@@ -963,7 +970,6 @@ export default function ServerBackedViewsWorkspace({
   }, [
     currentWorkspace,
     generalGroupedView,
-    incompleteRequestFilter,
     moduleId,
     presentationLayout,
     queryKey,
@@ -973,7 +979,6 @@ export default function ServerBackedViewsWorkspace({
     recordPageSize,
     requestDefinition,
     requestedRecord,
-    unsafeIntegerRequestFilter,
   ]);
 
   useEffect(() => {
@@ -982,8 +987,7 @@ export default function ServerBackedViewsWorkspace({
       !moduleId ||
       !currentWorkspace ||
       !groupByFieldId ||
-      !groupByFieldType ||
-      incompleteFilters
+      !groupByFieldType
     ) {
       generalGroupRequest.current += 1;
       setGeneralGroupSnapshot(null);
@@ -998,7 +1002,7 @@ export default function ServerBackedViewsWorkspace({
     });
     void queryOpenViewGroupedRecords({
       moduleId,
-      definition: normalizedDraftDefinition,
+      definition: appliedDraftDefinition,
       groupBy: {
         fieldId: groupByFieldId,
         expectedType: groupByFieldType,
@@ -1039,17 +1043,14 @@ export default function ServerBackedViewsWorkspace({
     generalSelectedGroup,
     groupByFieldId,
     groupByFieldType,
-    incompleteFilters,
     moduleId,
-    normalizedDraftDefinition,
+    appliedDraftDefinition,
     recordPageSize,
     recordOffset,
     recordInvalidation,
   ]);
 
   const ordinaryRecordPage =
-    !unsafeIntegerRequestFilter &&
-    !incompleteRequestFilter &&
     recordPage &&
     recordPage.moduleId === moduleId &&
     recordPage.queryKey === queryKey
@@ -1191,7 +1192,6 @@ export default function ServerBackedViewsWorkspace({
     identity.data.id === verifiedUserId &&
     recordLevel &&
     !invalidLink &&
-    !incompleteFilters &&
     !fieldMetadataError &&
     !selectedFields.error &&
     !selectedFields.pending &&
@@ -1326,7 +1326,7 @@ export default function ServerBackedViewsWorkspace({
         rows: [...sourcePage.rows],
         offset: sourcePage.offset,
         total: sourcePage.total,
-        definition: normalizedDraftDefinition,
+        definition: appliedDraftDefinition,
         source: pageContext?.source ?? {
           kind: "records",
           limit: currentRecordPage?.limit ?? recordPageSize,
@@ -1713,8 +1713,8 @@ export default function ServerBackedViewsWorkspace({
     moduleId: moduleId ?? "",
     fieldId: quickField?.id ?? "",
     definition: {
-      ...normalizedDraftDefinition,
-      filters: normalizedDraftDefinition.filters.filter(
+      ...appliedDraftDefinition,
+      filters: appliedDraftDefinition.filters.filter(
         (filter) => !isQuickFilter(filter),
       ),
     },
@@ -1753,8 +1753,9 @@ export default function ServerBackedViewsWorkspace({
     });
   };
   const filterChips: FilterChip[] = [
+    // DR-3.4: an unfinished condition gets no chip until it applies.
     ...draft.definition.filters.flatMap((filter, index) =>
-      quickFilterShown && isQuickFilter(filter)
+      !isFilterApplied(filter) || (quickFilterShown && isQuickFilter(filter))
         ? []
         : [
             {
@@ -2027,8 +2028,23 @@ export default function ServerBackedViewsWorkspace({
     }
   };
 
+  // DR-3.5: Save view with an unfinished row sends nothing; Filters opens
+  // with the error under each unfinished row, and focus goes to the first.
+  const refuseUnfinishedSave = () => {
+    const keys = new Set(
+      draft.definition.filters.flatMap((filter, index) =>
+        isFilterReady(filter) ? [] : [filterRowKeyFor(filter, index)],
+      ),
+    );
+    if (keys.size === 0) return false;
+    setRefusedFilterRows({ draftKey, keys, focus: true });
+    setFiltersOpen(true);
+    return true;
+  };
+
   const saveChanges = () => {
     if (!activeSaved || !canEditSaved || saveConflict) return;
+    if (refuseUnfinishedSave()) return;
     void saveView("update", activeSaved.name);
   };
 
@@ -2037,6 +2053,7 @@ export default function ServerBackedViewsWorkspace({
       setSaveOpen(true);
       return;
     }
+    if (asNew && refuseUnfinishedSave()) return;
     setSaveError("");
     setSaveAsNew(Boolean(asNew));
     setSaveName(asNew ? "" : (saveTarget?.name ?? ""));
@@ -2415,8 +2432,6 @@ export default function ServerBackedViewsWorkspace({
     moduleId &&
     currentWorkspace &&
     currentWorkspace.fields.length > 0 &&
-    !unsafeIntegerRequestFilter &&
-    !incompleteRequestFilter &&
     (!recordPage ||
       recordPage.moduleId !== moduleId ||
       recordPage.queryKey !== queryKey),
@@ -2478,7 +2493,7 @@ export default function ServerBackedViewsWorkspace({
     .filter(Boolean)
     .join(" · ");
   const savePending =
-    Boolean(pendingAction) || incompleteFilters || Boolean(saveConflict);
+    Boolean(pendingAction) || unsafeFilters || Boolean(saveConflict);
   // OD5: one primary. With unsaved changes a manager saves the view;
   // otherwise a writer adds a record.
   const saving = dirty && canManageViews;
@@ -2488,7 +2503,7 @@ export default function ServerBackedViewsWorkspace({
     ? null
     : saveConflict
       ? "Resolve the conflict in the save dialog first."
-      : incompleteFilters
+      : unsafeFilters
         ? "Complete or remove the unfinished filter first."
         : null;
   const openExport = () => {
@@ -2497,7 +2512,7 @@ export default function ServerBackedViewsWorkspace({
       key: exportContextKey,
       moduleId,
       viewId: activeSaved?.id ?? null,
-      definition: normalizedDraftDefinition,
+      definition: appliedDraftDefinition,
       fields: tableFields,
     });
   };
@@ -2631,7 +2646,7 @@ export default function ServerBackedViewsWorkspace({
                 {activeSaved ? (
                   <DropdownMenuItem
                     className="min-h-11 xl:min-h-8"
-                    disabled={savePending}
+                    disabled={savePending || incompleteFilters}
                     onClick={() => void duplicateActiveView()}
                   >
                     Duplicate view
@@ -3062,6 +3077,8 @@ export default function ServerBackedViewsWorkspace({
                     sortDisabled={Boolean(pendingAction)}
                     filtersDisabled={Boolean(pendingAction)}
                     chips={filterChips}
+                    filtersOpen={filtersOpen}
+                    onFiltersOpenChange={setFiltersOpen}
                     onClearFilters={() =>
                       updateDefinition((current) => ({
                         ...current,
@@ -3124,6 +3141,22 @@ export default function ServerBackedViewsWorkspace({
                       onUpdateFilter={updateFilter}
                       onRemoveFilter={removeFilter}
                       onAddFilter={addFilter}
+                      refusedRowKeys={
+                        refusedFilterRows?.draftKey === draftKey
+                          ? refusedFilterRows.keys
+                          : undefined
+                      }
+                      focusRefusedRow={
+                        refusedFilterRows?.draftKey === draftKey &&
+                        refusedFilterRows.focus
+                      }
+                      onRefusedRowFocused={() =>
+                        setRefusedFilterRows((current) =>
+                          current?.focus
+                            ? { ...current, focus: false }
+                            : current,
+                        )
+                      }
                     />
                     <FilterSelect
                       id="openview-deleted-records"
@@ -3142,7 +3175,7 @@ export default function ServerBackedViewsWorkspace({
                   </AccessToolbar>
 
                   <div className="access-fill min-w-0">
-                    {generalGroupedView && !incompleteFilters ? (
+                    {generalGroupedView ? (
                       <LiveGroupedResults
                         fieldName={groupByField?.name ?? ""}
                         range={groupRange}
@@ -3181,13 +3214,7 @@ export default function ServerBackedViewsWorkspace({
                       />
                     ) : null}
 
-                    {incompleteFilters ? (
-                      <Alert role="alert" variant="warning">
-                        {draftHasUnsafeIntegerFilter
-                          ? "Correct the number condition in Filters before loading matching records."
-                          : "Complete the condition in Filters before loading matching records."}
-                      </Alert>
-                    ) : generalGroupedView && generalGroupError ? (
+                    {generalGroupedView && generalGroupError ? (
                       <Alert role="alert" variant="destructive">
                         Grouped results are unavailable. Use the retry action
                         above.

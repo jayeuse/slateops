@@ -245,3 +245,24 @@ export function isFilterReady(
     filter.value !== null && filter.value !== undefined && filter.value !== ""
   );
 }
+
+/**
+ * A condition is applied when it is complete and holds no unsafe integer.
+ * Only applied conditions reach a records read, a count, or an export; the
+ * others stay in the draft until they are finished (DR-3.1).
+ */
+export function isFilterApplied(
+  filter: OpenViewQueryDefinition["filters"][number],
+): boolean {
+  return isFilterReady(filter) && !hasUnsafeIntegerFilter(filter);
+}
+
+/** The definition with only its applied conditions (DR-3.1). */
+export function appliedDefinition(
+  definition: OpenViewQueryDefinition,
+): OpenViewQueryDefinition {
+  return {
+    ...definition,
+    filters: definition.filters.filter(isFilterApplied),
+  };
+}
