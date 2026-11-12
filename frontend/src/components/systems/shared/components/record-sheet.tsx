@@ -4,7 +4,7 @@ import {
   RecordPersonCard,
 } from "@/components/systems/openview/components/live-record-cards";
 
-import type { ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import type { OpenViewGroupSelector } from "@/components/systems/openview/adapters/analytics-api";
 import type {
   OpenViewDataSourceField,
@@ -15,6 +15,7 @@ import type {
 import type { OpenViewDataSource } from "@/components/systems/openview/adapters/views-api";
 import { openViewRecordFieldValue } from "@/components/systems/openview/domain/record-display";
 import { RecordDetailsControls } from "@/components/systems/openview/components/record-details-controls";
+import type { RecordInPlaceStatus } from "@/components/systems/openview/domain/record-inplace-change";
 import { RecordHistoryPanel } from "@/components/systems/openview/components/record-history-panel";
 import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
 import { RecordFilesPanel } from "@/components/systems/openview/components/record-files-panel";
@@ -72,6 +73,14 @@ export type RecordControls = {
   managesHistory: boolean;
   onChanged: (message: string) => void;
   onEditingChange: (editing: boolean) => void;
+  /**
+   * Choice list, Checkbox, Date, and Date and time values change in place on
+   * Details, and Edit on any tab opens Details (item 2). Only the OpenView
+   * sheet opts in; with none, Details reads as plain values and Edit stays
+   * as it was (DR-2.12). `onStatus` gives the record header its
+   * status: "Saving…", the change with Undo, or a refusal (DR-2.5 to DR-2.8).
+   */
+  inPlace?: { onStatus: (status: RecordInPlaceStatus | null) => void };
 };
 
 type LiveRecordInspectorProps = {
@@ -146,40 +155,67 @@ export function LiveRecordInspector({
   controls,
   leadingTab,
 }: LiveRecordInspectorProps) {
-  const details = record ? (
-    fields.length > 0 ? (
-      <dl className="divide-y">
-        {fields.map((field) => (
-          <div
-            key={field.id}
-            className="grid min-w-0 gap-1 py-2.5 sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-center sm:gap-4"
-          >
-            <dt className="text-muted-foreground text-sm">{field.name}</dt>
-            <dd className="min-w-0 text-sm wrap-anywhere">
-              {/* One date format and people in ink, as in the table (OD6). */}
-              <RecordPersonCard row={record} field={field} inline>
-                {formatOpenViewFieldValue(
-                  openViewRecordFieldValue(record, field),
-                  field.type,
-                  region,
-                )}
-              </RecordPersonCard>
-            </dd>
-          </div>
-        ))}
-      </dl>
-    ) : (
-      <Empty className="py-6">
-        <EmptyHeader>
-          <EmptyTitle>No readable fields in this view</EmptyTitle>
-          <EmptyDescription>
-            This view does not include any active fields to show for this
-            record.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    )
-  ) : null;
+  const rowPrefix = useId();
+  const firstTab = leadingTab?.value ?? "details";
+  const [tab, setTab] = useState<string>(firstTab);
+  // The tabs show only with a record; when they come back they start on the
+  // first tab, as they did when they mounted again.
+  const tabsShown = Boolean(record && controls);
+  const [hadTabs, setHadTabs] = useState(tabsShown);
+  if (hadTabs !== tabsShown) {
+    setHadTabs(tabsShown);
+    if (!tabsShown) setTab(firstTab);
+  }
+  // A History tab that went away shows Details instead.
+  const shownTab =
+    tab === "history" && !controls?.canReadHistory ? "details" : tab;
+  // `valueFor` gives a row its in-place control, or null for a plain value.
+  const detailsRows = (
+    valueFor?: (field: OpenViewDataSourceField, labelId: string) => ReactNode,
+  ) =>
+    record ? (
+      fields.length > 0 ? (
+        <dl className="divide-y">
+          {fields.map((field) => {
+            const labelId = `${rowPrefix}-${field.id}-label`;
+            const control = valueFor?.(field, labelId);
+            return (
+              <div
+                key={field.id}
+                className="grid min-w-0 gap-1 py-2.5 sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-center sm:gap-4"
+              >
+                <dt id={labelId} className="text-muted-foreground text-sm">
+                  {field.name}
+                </dt>
+                <dd className="min-w-0 text-sm wrap-anywhere">
+                  {control ?? (
+                    // One date format and people in ink, as in the table (OD6).
+                    <RecordPersonCard row={record} field={field} inline>
+                      {formatOpenViewFieldValue(
+                        openViewRecordFieldValue(record, field),
+                        field.type,
+                        region,
+                      )}
+                    </RecordPersonCard>
+                  )}
+                </dd>
+              </div>
+            );
+          })}
+        </dl>
+      ) : (
+        <Empty className="py-6">
+          <EmptyHeader>
+            <EmptyTitle>No readable fields in this view</EmptyTitle>
+            <EmptyDescription>
+              This view does not include any active fields to show for this
+              record.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      )
+    ) : null;
+  const details = detailsRows();
 
   const status = (
     <>
@@ -205,7 +241,8 @@ export function LiveRecordInspector({
       {record ? (
         controls ? (
           <Tabs
-            defaultValue={leadingTab?.value ?? "details"}
+            value={shownTab}
+            onValueChange={(value) => setTab(String(value))}
             className="min-h-0 flex-1 gap-0"
           >
             <div className="shrink-0 border-b px-5 py-3">
@@ -268,6 +305,21 @@ export function LiveRecordInspector({
                 onEditingChange={controls.onEditingChange}
                 actionsSlot={actionsSlot}
                 menuItems={menuItems}
+                // DR-2.12: only the OpenView sheet, which opts in, moves an
+                // Edit to Details; the Boards card sheet keeps its own form.
+                onShowDetails={
+                  controls.inPlace ? () => setTab("details") : undefined
+                }
+                inPlace={
+                  controls.inPlace
+                    ? {
+                        region,
+                        detailsActive: shownTab === "details",
+                        onStatus: controls.inPlace.onStatus,
+                        renderDetails: detailsRows,
+                      }
+                    : undefined
+                }
               >
                 {details}
               </RecordDetailsControls>

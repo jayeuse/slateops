@@ -68,6 +68,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
+import { ErrorReference } from "@/components/ui/error-reference";
+import type { RecordInPlaceStatus } from "../domain/record-inplace-change";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Button } from "@/components/ui/button";
 import {
@@ -109,12 +111,14 @@ import {
 import { serializeOpenViewUrl } from "../domain/model";
 import { canManageOpenView, openViewLevel } from "../domain/manage-access";
 import {
+  appliedDefinition,
   changedSavedViewFields,
   draftForView,
   duplicateViewName,
   emptyDefinition,
   emptyPresentation,
   hasUnsafeIntegerFilter,
+  isFilterApplied,
   isFilterReady,
   normalizeFilterValues,
   OPERATOR_LABELS,
@@ -137,6 +141,7 @@ import {
   type RecordInspectionPage,
 } from "@/components/systems/shared/components/record-sheet";
 import { LiveRecordResults } from "./live-record-results";
+import { useCreatedRecord } from "../hooks/use-created-record";
 import { RecordCreateDialog } from "./record-create-dialog";
 import { ModulePageSwitch } from "./module-page-switch";
 import {
@@ -392,6 +397,9 @@ export default function ServerBackedViewsWorkspace({
   const [createRecordOpen, setCreateRecordOpen] = useState(false);
   // An open edit form keeps the record dialog from closing by accident.
   const [recordEditing, setRecordEditing] = useState(false);
+  // The record header's in-place status and Undo (item 2, DR-2.5 to DR-2.8).
+  const [recordInPlaceStatus, setRecordInPlaceStatus] =
+    useState<RecordInPlaceStatus | null>(null);
   const [recordPage, setRecordPage] = useState<RecordPageState | null>(null);
   const [recordPageSize, setRecordPageSize] = useState(
     DEFAULT_RECORD_PAGE_SIZE,
@@ -428,6 +436,13 @@ export default function ServerBackedViewsWorkspace({
     kind: "columns" | "layout";
     open: boolean;
   }>({ kind: "columns", open: false });
+  // DR-3.5: a refused save opens Filters and names its unfinished rows.
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [refusedFilterRows, setRefusedFilterRows] = useState<{
+    draftKey: string;
+    keys: ReadonlySet<string>;
+    focus: boolean;
+  } | null>(null);
   const [saveName, setSaveName] = useState("");
   // Save as new view creates a view even while a saved one is selected.
   const [saveAsNew, setSaveAsNew] = useState(false);
@@ -784,10 +799,19 @@ export default function ServerBackedViewsWorkspace({
     () => normalizeFilterValues(draft.definition),
     [draft.definition],
   );
+  // DR-3.1: reads, counts, and Export use only applied conditions. Keyed by
+  // content, so adding or editing an unfinished row reads nothing again.
+  const appliedDraftKey = JSON.stringify(
+    appliedDefinition(normalizedDraftDefinition),
+  );
+  const appliedDraftDefinition = useMemo(
+    () => appliedDefinition(normalizedDraftDefinition),
+    [appliedDraftKey],
+  );
   const inspectionKey = JSON.stringify({
     moduleId,
     draftKey,
-    definition: normalizedDraftDefinition,
+    definition: appliedDraftDefinition,
     groupByFieldId: draft.presentation.groupByFieldId,
     selectedGroup: generalSelectedGroup,
   });
@@ -800,9 +824,9 @@ export default function ServerBackedViewsWorkspace({
     };
   }, [inspectionKey]);
   const requestDefinition = useMemo<OpenViewQueryDefinition>(() => {
-    if (!isUuid(requestedRecord)) return normalizedDraftDefinition;
+    if (!isUuid(requestedRecord)) return appliedDraftDefinition;
     return {
-      ...normalizedDraftDefinition,
+      ...appliedDraftDefinition,
       filters: [],
       search: requestedRecord,
       searchFields: [],
@@ -810,16 +834,7 @@ export default function ServerBackedViewsWorkspace({
     };
     // The compiler cannot prove the stability of search-param values; this
     // memoization keeps record reads anchored to the actual address value.
-  }, [normalizedDraftDefinition, requestedRecord]);
-  const draftHasUnsafeIntegerFilter = draft.definition.filters.some(
-    hasUnsafeIntegerFilter,
-  );
-  const unsafeIntegerRequestFilter = requestDefinition.filters.some(
-    hasUnsafeIntegerFilter,
-  );
-  const incompleteRequestFilter = requestDefinition.filters.some(
-    (filter) => !isFilterReady(filter),
-  );
+  }, [appliedDraftDefinition, requestedRecord]);
   const presentationLayout = draft.presentation.layout;
   const queryFieldIds = new Set(
     draft.definition.columns.map(({ fieldId }) => fieldId),
@@ -831,8 +846,11 @@ export default function ServerBackedViewsWorkspace({
   const groupByFieldId = groupByField?.id;
   const groupByFieldType = groupByField?.type;
   const incompleteFilters = draft.definition.filters.some(
-    (filter) => !isFilterReady(filter) || hasUnsafeIntegerFilter(filter),
+    (filter) => !isFilterApplied(filter),
   );
+  // An unsafe number keeps its error under the field and blocks a save; an
+  // unfinished row is named when a save is pressed (DR-3.5, DR-3.6).
+  const unsafeFilters = draft.definition.filters.some(hasUnsafeIntegerFilter);
   const generalGroupedView = Boolean(
     moduleId && groupByField && !isUuid(requestedRecord),
   );
@@ -840,7 +858,7 @@ export default function ServerBackedViewsWorkspace({
     generalGroupedView && moduleId && groupByFieldId && groupByFieldType
       ? JSON.stringify({
           moduleId,
-          definition: normalizedDraftDefinition,
+          definition: appliedDraftDefinition,
           groupByFieldId,
           groupByFieldType,
           groupOffset: generalGroupOffset,
@@ -866,11 +884,6 @@ export default function ServerBackedViewsWorkspace({
   );
 
   useEffect(() => {
-    if (unsafeIntegerRequestFilter || incompleteRequestFilter) {
-      recordRequest.current += 1;
-      setRecordPage(null);
-      return;
-    }
     if (generalGroupedView) {
       recordRequest.current += 1;
       setRecordPage(null);
@@ -963,7 +976,6 @@ export default function ServerBackedViewsWorkspace({
   }, [
     currentWorkspace,
     generalGroupedView,
-    incompleteRequestFilter,
     moduleId,
     presentationLayout,
     queryKey,
@@ -973,7 +985,6 @@ export default function ServerBackedViewsWorkspace({
     recordPageSize,
     requestDefinition,
     requestedRecord,
-    unsafeIntegerRequestFilter,
   ]);
 
   useEffect(() => {
@@ -982,8 +993,7 @@ export default function ServerBackedViewsWorkspace({
       !moduleId ||
       !currentWorkspace ||
       !groupByFieldId ||
-      !groupByFieldType ||
-      incompleteFilters
+      !groupByFieldType
     ) {
       generalGroupRequest.current += 1;
       setGeneralGroupSnapshot(null);
@@ -998,7 +1008,7 @@ export default function ServerBackedViewsWorkspace({
     });
     void queryOpenViewGroupedRecords({
       moduleId,
-      definition: normalizedDraftDefinition,
+      definition: appliedDraftDefinition,
       groupBy: {
         fieldId: groupByFieldId,
         expectedType: groupByFieldType,
@@ -1039,17 +1049,30 @@ export default function ServerBackedViewsWorkspace({
     generalSelectedGroup,
     groupByFieldId,
     groupByFieldType,
-    incompleteFilters,
     moduleId,
-    normalizedDraftDefinition,
+    appliedDraftDefinition,
     recordPageSize,
     recordOffset,
     recordInvalidation,
   ]);
 
+  // Item 6: the record this page just created. Its list (DR-6.6) is the
+  // applied conditions, sort, search, page, and view.
+  const createdRecord = useCreatedRecord({
+    listKey: JSON.stringify({
+      draftKey,
+      definition: appliedDraftDefinition,
+      offset: recordOffset,
+      limit: recordPageSize,
+    }),
+    moduleId,
+    definition: appliedDraftDefinition,
+    groupedView: generalGroupedView,
+    sheetRecordId: isUuid(requestedRecord) ? requestedRecord : null,
+    invalidation: recordInvalidation,
+  });
+
   const ordinaryRecordPage =
-    !unsafeIntegerRequestFilter &&
-    !incompleteRequestFilter &&
     recordPage &&
     recordPage.moduleId === moduleId &&
     recordPage.queryKey === queryKey
@@ -1191,7 +1214,6 @@ export default function ServerBackedViewsWorkspace({
     identity.data.id === verifiedUserId &&
     recordLevel &&
     !invalidLink &&
-    !incompleteFilters &&
     !fieldMetadataError &&
     !selectedFields.error &&
     !selectedFields.pending &&
@@ -1311,7 +1333,9 @@ export default function ServerBackedViewsWorkspace({
   const openRecordFromResults = (
     recordId: string,
     pageContext?: RecordInspectionPage,
+    fromList = true,
   ) => {
+    if (fromList) createdRecord.openedFromList(recordId);
     const sourcePage = pageContext ?? currentRecordPage;
     if (
       moduleId &&
@@ -1326,7 +1350,7 @@ export default function ServerBackedViewsWorkspace({
         rows: [...sourcePage.rows],
         offset: sourcePage.offset,
         total: sourcePage.total,
-        definition: normalizedDraftDefinition,
+        definition: appliedDraftDefinition,
         source: pageContext?.source ?? {
           kind: "records",
           limit: currentRecordPage?.limit ?? recordPageSize,
@@ -1478,8 +1502,14 @@ export default function ServerBackedViewsWorkspace({
       });
       startNavigation(() => router.push(href, { scroll: false }));
     };
-    if (dirty) setPendingNavigation({ href, resume, discardDraft: true });
-    else resume();
+    // DR-1.3: only a view manager is asked; for anyone else the draft goes
+    // at once, and its address entry keeps it for Back.
+    if (dirty && canManageViews)
+      setPendingNavigation({ href, resume, discardDraft: true });
+    else {
+      if (dirty) setDraftState(null);
+      resume();
+    }
   };
 
   useEffect(() => {
@@ -1597,15 +1627,30 @@ export default function ServerBackedViewsWorkspace({
         new URL(href, window.location.origin).href === window.location.href
       )
         return true;
+      // DR-1.3: someone who cannot save a view leaves at once, as "Discard
+      // and continue" does: the draft goes inside the navigation, so the
+      // address entry keeps it for Back.
+      if (!canManageViews) {
+        setDraftState(null);
+        startNavigation(resume);
+        return false;
+      }
       setPendingNavigation({ href, resume, discardDraft: true });
       return false;
     },
-    [dirty, pendingAction, setPendingNavigation],
+    [
+      canManageViews,
+      dirty,
+      pendingAction,
+      setDraftState,
+      setPendingNavigation,
+      startNavigation,
+    ],
   );
   useWorkspaceNavigationGuard(navigationGuard);
 
   const confirmDraftDiscard = (resume: () => void) => {
-    if (!dirtyRef.current) {
+    if (!dirtyRef.current || !canManageViews) {
       resume();
       return;
     }
@@ -1713,8 +1758,8 @@ export default function ServerBackedViewsWorkspace({
     moduleId: moduleId ?? "",
     fieldId: quickField?.id ?? "",
     definition: {
-      ...normalizedDraftDefinition,
-      filters: normalizedDraftDefinition.filters.filter(
+      ...appliedDraftDefinition,
+      filters: appliedDraftDefinition.filters.filter(
         (filter) => !isQuickFilter(filter),
       ),
     },
@@ -1753,8 +1798,9 @@ export default function ServerBackedViewsWorkspace({
     });
   };
   const filterChips: FilterChip[] = [
+    // DR-3.4: an unfinished condition gets no chip until it applies.
     ...draft.definition.filters.flatMap((filter, index) =>
-      quickFilterShown && isQuickFilter(filter)
+      !isFilterApplied(filter) || (quickFilterShown && isQuickFilter(filter))
         ? []
         : [
             {
@@ -2027,8 +2073,23 @@ export default function ServerBackedViewsWorkspace({
     }
   };
 
+  // DR-3.5: Save view with an unfinished row sends nothing; Filters opens
+  // with the error under each unfinished row, and focus goes to the first.
+  const refuseUnfinishedSave = () => {
+    const keys = new Set(
+      draft.definition.filters.flatMap((filter, index) =>
+        isFilterReady(filter) ? [] : [filterRowKeyFor(filter, index)],
+      ),
+    );
+    if (keys.size === 0) return false;
+    setRefusedFilterRows({ draftKey, keys, focus: true });
+    setFiltersOpen(true);
+    return true;
+  };
+
   const saveChanges = () => {
     if (!activeSaved || !canEditSaved || saveConflict) return;
+    if (refuseUnfinishedSave()) return;
     void saveView("update", activeSaved.name);
   };
 
@@ -2037,6 +2098,7 @@ export default function ServerBackedViewsWorkspace({
       setSaveOpen(true);
       return;
     }
+    if (asNew && refuseUnfinishedSave()) return;
     setSaveError("");
     setSaveAsNew(Boolean(asNew));
     setSaveName(asNew ? "" : (saveTarget?.name ?? ""));
@@ -2415,8 +2477,6 @@ export default function ServerBackedViewsWorkspace({
     moduleId &&
     currentWorkspace &&
     currentWorkspace.fields.length > 0 &&
-    !unsafeIntegerRequestFilter &&
-    !incompleteRequestFilter &&
     (!recordPage ||
       recordPage.moduleId !== moduleId ||
       recordPage.queryKey !== queryKey),
@@ -2478,7 +2538,7 @@ export default function ServerBackedViewsWorkspace({
     .filter(Boolean)
     .join(" · ");
   const savePending =
-    Boolean(pendingAction) || incompleteFilters || Boolean(saveConflict);
+    Boolean(pendingAction) || unsafeFilters || Boolean(saveConflict);
   // OD5: one primary. With unsaved changes a manager saves the view;
   // otherwise a writer adds a record.
   const saving = dirty && canManageViews;
@@ -2488,7 +2548,7 @@ export default function ServerBackedViewsWorkspace({
     ? null
     : saveConflict
       ? "Resolve the conflict in the save dialog first."
-      : incompleteFilters
+      : unsafeFilters
         ? "Complete or remove the unfinished filter first."
         : null;
   const openExport = () => {
@@ -2497,7 +2557,7 @@ export default function ServerBackedViewsWorkspace({
       key: exportContextKey,
       moduleId,
       viewId: activeSaved?.id ?? null,
-      definition: normalizedDraftDefinition,
+      definition: appliedDraftDefinition,
       fields: tableFields,
     });
   };
@@ -2631,7 +2691,7 @@ export default function ServerBackedViewsWorkspace({
                 {activeSaved ? (
                   <DropdownMenuItem
                     className="min-h-11 xl:min-h-8"
-                    disabled={savePending}
+                    disabled={savePending || incompleteFilters}
                     onClick={() => void duplicateActiveView()}
                   >
                     Duplicate view
@@ -2688,7 +2748,10 @@ export default function ServerBackedViewsWorkspace({
               Boolean(currentWorkspace?.fieldsHasMore) ||
               metadataLoadingMore
             }
-            onClick={() => setCreateRecordOpen(true)}
+            onClick={() => {
+              createdRecord.end();
+              setCreateRecordOpen(true);
+            }}
           >
             <Plus aria-hidden="true" />
             New record
@@ -2742,6 +2805,11 @@ export default function ServerBackedViewsWorkspace({
         reportCount={reportCount}
       />
     ) : null;
+  // Item 6: its status holds the meta text's place while it is active, even
+  // while a page status ("Refreshing records…") shows over it for a moment.
+  const createdStatusActive = Boolean(createdRecord.status) && !reportsActive;
+  // Its "Open record" shows with its words, not over a page status.
+  const createdOpenShown = createdRecord.openable && !reportsActive && !status;
   const isAdmin =
     identity.data?.role === "admin" && identity.data.id === verifiedUserId;
   return (
@@ -2751,11 +2819,57 @@ export default function ServerBackedViewsWorkspace({
           title={moduleName ?? "Records"}
           description={
             <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              {meta ? <span>{meta}</span> : null}
-              {dirty && !reportsActive ? (
-                <Badge variant="outline">Unsaved changes</Badge>
+              {/* DR-6.1: an item 6 status takes the meta text's place at
+                every width. The meta keeps its box, invisible and out of the
+                accessibility tree, so the line and the toolbar never move;
+                the status layer sits over it. The Records tab keeps the
+                count and the breadcrumb the department. */}
+              <span className="relative">
+                {meta ? (
+                  <span className={cn(createdStatusActive && "invisible")}>
+                    {meta}
+                  </span>
+                ) : null}
+                <span className="absolute top-0 left-0 flex items-center gap-x-2 whitespace-nowrap">
+                  <span role="status">
+                    {createdStatusActive ? status || createdRecord.status : ""}
+                  </span>
+                  {createdOpenShown ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      // Sized to the line (h-auto leaves the slim 32px rule;
+                      // min-h-0! the phone 44px floor); the hit area still
+                      // reaches 44px, and 32px from 1280px.
+                      className="text-action-text relative h-auto min-h-0! shrink-0 px-1.5 py-0 leading-6 whitespace-nowrap underline-offset-4 after:absolute after:inset-x-0 after:-inset-y-2.5 after:content-[''] hover:bg-transparent hover:underline xl:after:-inset-y-1"
+                      onClick={() =>
+                        createdRecord.id &&
+                        openRecordFromResults(
+                          createdRecord.id,
+                          undefined,
+                          false,
+                        )
+                      }
+                    >
+                      Open record
+                    </Button>
+                  ) : null}
+                </span>
+              </span>
+              {/* DR-1.2: only a view manager can save, so only they see it.
+                It yields with the meta text while an item 6 status shows
+                (kept in place, invisible); Save view still shows the change. */}
+              {dirty && canManageViews && !reportsActive ? (
+                <Badge
+                  variant="outline"
+                  className={cn(createdStatusActive && "invisible")}
+                >
+                  Unsaved changes
+                </Badge>
               ) : null}
-              <span role="status">{reportsActive ? "" : status}</span>
+              <span role="status">
+                {reportsActive || createdStatusActive ? "" : status}
+              </span>
             </span>
           }
           actions={
@@ -3062,6 +3176,8 @@ export default function ServerBackedViewsWorkspace({
                     sortDisabled={Boolean(pendingAction)}
                     filtersDisabled={Boolean(pendingAction)}
                     chips={filterChips}
+                    filtersOpen={filtersOpen}
+                    onFiltersOpenChange={setFiltersOpen}
                     onClearFilters={() =>
                       updateDefinition((current) => ({
                         ...current,
@@ -3124,6 +3240,22 @@ export default function ServerBackedViewsWorkspace({
                       onUpdateFilter={updateFilter}
                       onRemoveFilter={removeFilter}
                       onAddFilter={addFilter}
+                      refusedRowKeys={
+                        refusedFilterRows?.draftKey === draftKey
+                          ? refusedFilterRows.keys
+                          : undefined
+                      }
+                      focusRefusedRow={
+                        refusedFilterRows?.draftKey === draftKey &&
+                        refusedFilterRows.focus
+                      }
+                      onRefusedRowFocused={() =>
+                        setRefusedFilterRows((current) =>
+                          current?.focus
+                            ? { ...current, focus: false }
+                            : current,
+                        )
+                      }
                     />
                     <FilterSelect
                       id="openview-deleted-records"
@@ -3142,7 +3274,7 @@ export default function ServerBackedViewsWorkspace({
                   </AccessToolbar>
 
                   <div className="access-fill min-w-0">
-                    {generalGroupedView && !incompleteFilters ? (
+                    {generalGroupedView ? (
                       <LiveGroupedResults
                         fieldName={groupByField?.name ?? ""}
                         range={groupRange}
@@ -3181,13 +3313,7 @@ export default function ServerBackedViewsWorkspace({
                       />
                     ) : null}
 
-                    {incompleteFilters ? (
-                      <Alert role="alert" variant="warning">
-                        {draftHasUnsafeIntegerFilter
-                          ? "Correct the number condition in Filters before loading matching records."
-                          : "Complete the condition in Filters before loading matching records."}
-                      </Alert>
-                    ) : generalGroupedView && generalGroupError ? (
+                    {generalGroupedView && generalGroupError ? (
                       <Alert role="alert" variant="destructive">
                         Grouped results are unavailable. Use the retry action
                         above.
@@ -3267,6 +3393,7 @@ export default function ServerBackedViewsWorkspace({
                         presentation={draft.presentation}
                         pending={Boolean(pendingAction)}
                         pageSize={currentRecordPage?.limit ?? recordPageSize}
+                        newRecord={createdRecord.pinned}
                         onOpenRecord={openRecordFromResults}
                         onPageIndexChange={(pageIndex) => {
                           if (rowPageLoading || pendingAction) return;
@@ -3413,9 +3540,12 @@ export default function ServerBackedViewsWorkspace({
                       <SheetTitle className="sr-only">
                         Record details
                       </SheetTitle>
-                      <header className="flex shrink-0 items-start gap-3 border-b p-5 pr-3">
+                      {/* DR-12.1: below 640px the actions row shows first and
+                        the title takes the full width; the DOM keeps the title
+                        first for screen readers. */}
+                      <header className="flex shrink-0 items-start gap-3 border-b p-5 pr-3 max-sm:flex-col-reverse max-sm:items-stretch max-sm:gap-2 max-sm:pt-3">
                         <div className="min-w-0 flex-1">
-                          <h2 className="text-lg leading-tight font-semibold wrap-anywhere">
+                          <h2 className="text-lg leading-tight font-semibold wrap-anywhere max-sm:line-clamp-2">
                             {linkedRecord
                               ? recordTitle(
                                   linkedRecord,
@@ -3445,10 +3575,42 @@ export default function ServerBackedViewsWorkspace({
                               ) : canWriteRecords ? null : (
                                 <Badge variant="secondary">Read-only</Badge>
                               )}
+                              {/* A value changed in place (DR-2.4 to
+                                DR-2.8): its status, then its Undo. */}
+                              {/* Mounted while the sheet shows a record and
+                                empty at rest, so a screen reader announces
+                                each new status; empty, it has no size. */}
+                              <span
+                                role="status"
+                                className={
+                                  recordInPlaceStatus?.kind === "failed"
+                                    ? "text-destructive"
+                                    : "text-foreground"
+                                }
+                              >
+                                {recordInPlaceStatus?.message}
+                                {recordInPlaceStatus?.kind === "failed" ? (
+                                  <ErrorReference
+                                    id={recordInPlaceStatus.reference}
+                                    className="mt-0"
+                                  />
+                                ) : null}
+                              </span>
+                              {recordInPlaceStatus?.kind === "saved" &&
+                              recordInPlaceStatus.undo ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  className="text-action-text min-h-11 px-1.5 underline-offset-4 hover:bg-transparent hover:underline xl:h-8 xl:min-h-8"
+                                  onClick={recordInPlaceStatus.undo}
+                                >
+                                  Undo
+                                </Button>
+                              ) : null}
                             </p>
                           ) : null}
                         </div>
-                        <div className="flex shrink-0 items-center gap-1">
+                        <div className="flex shrink-0 items-center gap-1 max-sm:justify-end">
                           {linkedRecord &&
                           activeInspectionContext &&
                           !recordEditing ? (
@@ -3537,6 +3699,7 @@ export default function ServerBackedViewsWorkspace({
                                   setRecordChanges((value) => value + 1);
                                 },
                                 onEditingChange: setRecordEditing,
+                                inPlace: { onStatus: setRecordInPlaceStatus },
                               }
                             : undefined
                         }
@@ -3569,7 +3732,8 @@ export default function ServerBackedViewsWorkspace({
                       onOpenChange={setCreateRecordOpen}
                       onCreated={(created) => {
                         setCreateRecordOpen(false);
-                        setNotice("Record created.");
+                        // DR-6.1: a status in the meta line, not a banner.
+                        createdRecord.start(created.id);
                         setRecordChanges((value) => value + 1);
                         setInspectionContext(null);
                         setRoute({ record: created.id });

@@ -1,8 +1,11 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useId,
+  useMemo,
+  useReducer,
   useRef,
   useState,
   type FormEvent,
@@ -39,10 +42,28 @@ import {
   encodeRecordForm,
   initialFormValues,
   serverFieldMessage,
+  toFormValue,
   type RecordFormErrors,
+  type RecordFormValue,
   type RecordFormValues,
 } from "../domain/record-form";
+import {
+  canStartInPlace,
+  inPlaceChangeMessage,
+  inPlaceCommit,
+  inPlaceFailure,
+  inPlaceMode,
+  inPlacePatchData,
+  inPlaceReducer,
+  inPlaceStatus,
+  initialInPlaceState,
+  seenRecord,
+  type RecordInPlaceStatus,
+} from "../domain/record-inplace-change";
+import { formatOpenViewFieldValue } from "./live-record-cards";
 import { RecordFormFields } from "./record-form-fields";
+import { RecordInPlaceField } from "./record-inplace-field";
+import type { WorkspaceRegion } from "@/lib/date-time";
 import { Alert } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -72,6 +93,19 @@ type Editing = {
   stale: boolean;
 };
 
+/** The OpenView sheet's opt-in to change values in place (item 2, DR-2.12). */
+export type RecordInPlaceOptions = {
+  region: WorkspaceRegion | undefined;
+  /** The Details tab is the open tab; leaving it ends the Undo offer. */
+  detailsActive: boolean;
+  /** The record header's status: "Saving…", the change with Undo, a refusal. */
+  onStatus: (status: RecordInPlaceStatus | null) => void;
+  /** The Details rows, with the in-place control of a row where one fits. */
+  renderDetails: (
+    valueFor: (field: OpenViewDataSourceField, labelId: string) => ReactNode,
+  ) => ReactNode;
+};
+
 type RecordDetailsControlsProps = {
   record: OpenViewRecord;
   moduleId: string;
@@ -90,6 +124,10 @@ type RecordDetailsControlsProps = {
   actionsSlot: HTMLElement | null;
   /** Items the record menu always holds (Copy link). */
   menuItems: ReactNode;
+  /** Shows the Details tab, where the Edit form opens (DR-2.1). */
+  onShowDetails?: () => void;
+  /** Values change in place on Details; off unless the sheet opts in. */
+  inPlace?: RecordInPlaceOptions;
 };
 
 /** Focuses after React renders the next state. */
@@ -126,6 +164,8 @@ export function RecordDetailsControls({
   onEditingChange,
   actionsSlot,
   menuItems,
+  onShowDetails,
+  inPlace,
 }: RecordDetailsControlsProps) {
   const [editing, setEditing] = useState<Editing | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -164,6 +204,7 @@ export function RecordDetailsControls({
   const [pending, setPending] = useState<
     | "open"
     | "save"
+    | "in-place"
     | "delete"
     | "restore"
     | "reload"
@@ -188,8 +229,76 @@ export function RecordDetailsControls({
     setPurgeReviewAgain(false);
   }, [canPurge]);
 
+  // In place (DR-2.2 to DR-2.13): one session per record; a ref lock stops
+  // the Enter and blur of one date from committing twice in one tick.
+  const [inPlaceState, dispatchInPlace] = useReducer(
+    inPlaceReducer,
+    initialInPlaceState,
+  );
+  // Each settled commit starts a new draft in the controls.
+  const [inPlaceSettled, setInPlaceSettled] = useState(0);
+  const inPlaceLock = useRef(false);
+  // Locked in-place controls dim only when the wait runs past 300 ms (G2).
+  const [lockLong, setLockLong] = useState(false);
+  useEffect(() => {
+    if (!busy) return;
+    const timer = window.setTimeout(() => setLockLong(true), 300);
+    return () => window.clearTimeout(timer);
+  }, [busy]);
+  if (!busy && lockLong) setLockLong(false);
+  const undoRef = useRef<() => void>(() => undefined);
+  const undo = useCallback(() => undoRef.current(), []);
+  // Leaving the Details tab ends the Undo offer (DR-2.6).
+  const detailsActive = inPlace?.detailsActive ?? true;
+  const [wasDetailsActive, setWasDetailsActive] = useState(detailsActive);
+  if (wasDetailsActive !== detailsActive) {
+    setWasDetailsActive(detailsActive);
+    if (!detailsActive) dispatchInPlace({ type: "clear-status" });
+  }
+  // A commit, the header's Undo included, needs the complete catalog and a
+  // writable record; otherwise a PATCH would drop values (DR-2.13).
+  const commitsOpen =
+    canWrite &&
+    !record.isDeleted &&
+    editing === null &&
+    !fieldsHasMore &&
+    !fieldsLoadingMore;
+  const statusData = inPlaceStatus(inPlaceState, commitsOpen);
+  const statusKind = statusData?.kind ?? null;
+  const statusMessage = statusData?.message ?? "";
+  const statusReference =
+    statusData?.kind === "failed" ? statusData.reference : undefined;
+  const statusUndo = statusData?.kind === "saved" && statusData.canUndo;
+  // One object per status, so the page's state changes only when it does.
+  const headerStatus = useMemo<RecordInPlaceStatus | null>(() => {
+    if (statusKind === null) return null;
+    if (statusKind === "saving")
+      return { kind: "saving", message: statusMessage };
+    if (statusKind === "failed")
+      return {
+        kind: "failed",
+        message: statusMessage,
+        reference: statusReference,
+      };
+    return {
+      kind: "saved",
+      message: statusMessage,
+      undo: statusUndo ? undo : null,
+    };
+  }, [statusKind, statusMessage, statusReference, statusUndo, undo]);
+  const onInPlaceStatus = inPlace?.onStatus;
+  useEffect(() => {
+    onInPlaceStatus?.(headerStatus);
+  }, [headerStatus, onInPlaceStatus]);
+  useEffect(() => () => onInPlaceStatus?.(null), [onInPlaceStatus]);
+
   const startEditing = async (reload = false) => {
     if (fieldsHasMore || fieldsLoadingMore) return;
+    if (!reload) {
+      // DR-2.1: the form opens on Details, whichever tab is open.
+      onShowDetails?.();
+      dispatchInPlace({ type: "clear-status" });
+    }
     setPending(reload ? "reload" : "open");
     setError("");
     try {
@@ -269,6 +378,86 @@ export function RecordDetailsControls({
       setPending(null);
     }
   };
+
+  const inPlaceControlId = (fieldId: string) => `${id}-in-place-${fieldId}`;
+
+  const commitInPlace = async (
+    field: OpenViewDataSourceField,
+    value: unknown,
+    isUndo: boolean,
+  ) => {
+    if (
+      !commitsOpen ||
+      busy ||
+      inPlaceLock.current ||
+      !canStartInPlace(inPlaceState)
+    )
+      return;
+    inPlaceLock.current = true;
+    // Undo removes its own button: focus goes to the field it changes back,
+    // before the button leaves, so it never falls back to the sheet.
+    if (isUndo)
+      document
+        .querySelector<HTMLElement>(
+          `[data-in-place-field="${field.id}"] [aria-labelledby]`,
+        )
+        ?.focus();
+    const seen = seenRecord(record, inPlaceState.latest);
+    dispatchInPlace({ type: "start", fieldId: field.id, value, undo: isUndo });
+    setPending("in-place");
+    setError("");
+    try {
+      // A list row holds only the view's columns; a PATCH replaces every
+      // active value, so it starts from the complete stored record (DR-2.4).
+      // Its If-Match stays the revision behind the value on screen.
+      const source =
+        seen === inPlaceState.latest
+          ? seen
+          : await getOpenViewRecord(record.id);
+      const saved = await updateOpenViewRecord({
+        recordId: record.id,
+        revision: seen.updatedAt,
+        data: inPlacePatchData(fields, source.data, field.id, value),
+      });
+      dispatchInPlace({
+        type: "saved",
+        record: saved,
+        message: inPlaceChangeMessage(
+          field,
+          value,
+          formatOpenViewFieldValue(value, field.type, inPlace?.region),
+          isUndo,
+        ),
+        undo: isUndo
+          ? null
+          : { fieldId: field.id, previous: source.data[field.id] ?? null },
+      });
+      // The list row and the header's Updated date read the record again.
+      onChanged("");
+    } catch (caught) {
+      const failure = inPlaceFailure(caught, field.id);
+      let reread: OpenViewRecord | null = null;
+      if (failure.kind === "conflict") {
+        // DR-2.7: nothing is overwritten; the control shows the stored value.
+        reread = await getOpenViewRecord(record.id).catch(() => null);
+        onChanged("");
+      }
+      dispatchInPlace({ type: "refused", failure, record: reread });
+    } finally {
+      inPlaceLock.current = false;
+      setPending(null);
+      setInPlaceSettled((count) => count + 1);
+    }
+  };
+
+  // The header's Undo keeps one identity; it runs the latest commit rules.
+  useEffect(() => {
+    undoRef.current = () => {
+      const change = inPlaceState.undo;
+      const field = change && fields.find((item) => item.id === change.fieldId);
+      if (change && field) void commitInPlace(field, change.previous, true);
+    };
+  });
 
   const remove = async () => {
     setPending("delete");
@@ -373,6 +562,64 @@ export function RecordDetailsControls({
   };
 
   const editable = canWrite && !record.isDeleted;
+
+  const inPlaceValue = (
+    shownField: OpenViewDataSourceField,
+    labelId: string,
+  ): ReactNode => {
+    // The catalog field carries the options and the required rule.
+    const field = fields.find((item) => item.id === shownField.id);
+    const mode = inPlaceMode(field, {
+      canWrite,
+      isDeleted: record.isDeleted,
+      editing: editing !== null,
+      fieldsComplete: !fieldsHasMore && !fieldsLoadingMore,
+    });
+    if (!field || mode === "plain") return null;
+    const value = toFormValue(
+      field,
+      seenRecord(record, inPlaceState.latest).data[field.id],
+    );
+    const saving: RecordFormValue | null =
+      inPlaceState.saving?.fieldId === field.id
+        ? toFormValue(field, inPlaceState.saving.value)
+        : null;
+    return (
+      <RecordInPlaceField
+        key={field.id}
+        id={inPlaceControlId(field.id)}
+        moduleId={moduleId}
+        field={field}
+        labelId={labelId}
+        value={value}
+        saving={saving}
+        disabled={mode === "waiting"}
+        // While a commit runs, every control here waits without losing
+        // focus (DR-2.4, DR-2.13).
+        locked={busy}
+        dimmed={busy && lockLong}
+        settled={inPlaceSettled}
+        error={
+          inPlaceState.fieldError?.fieldId === field.id
+            ? inPlaceState.fieldError
+            : null
+        }
+        onCommit={(input, complete) => {
+          const commit = inPlaceCommit(
+            field,
+            seenRecord(record, inPlaceState.latest).data[field.id],
+            input,
+            complete,
+          );
+          if (commit.kind === "commit")
+            void commitInPlace(field, commit.value, false);
+          // A value that cannot be saved puts back the stored value.
+          else if (commit.kind === "revert")
+            setInPlaceSettled((count) => count + 1);
+        }}
+      />
+    );
+  };
   const metadataGuard =
     editable && fieldsHasMore ? (
       <Alert
@@ -668,7 +915,7 @@ export function RecordDetailsControls({
               )}
             </div>
           ) : null}
-          {children}
+          {inPlace ? inPlace.renderDetails(inPlaceValue) : children}
         </>
       )}
       <AlertDialog

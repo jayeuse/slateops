@@ -1864,10 +1864,10 @@ test("membership View filters select choices by label and submit stable IDs", as
   ]);
 });
 
-test("switching scalar and membership View filters clears incompatible values", async ({
+test("UF-C3.3: switching scalar and membership View filters clears incompatible values", async ({
   page,
 }) => {
-  await installViewsApi(page);
+  const api = await installViewsApi(page);
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
   await addFilterForField(page, statusFieldId);
 
@@ -1883,18 +1883,23 @@ test("switching scalar and membership View filters clears incompatible values", 
     membership.getByRole("checkbox", { name: "In service" }),
   ).not.toBeChecked();
   await expect(
-    page.getByText("Complete this condition or remove it before saving."),
+    page.getByText("Not applied yet: choose a value."),
   ).toBeVisible();
   await membership.getByRole("checkbox", { name: "In service" }).check();
   await membership.getByRole("checkbox", { name: "Inspection due" }).check();
   await operator.selectOption("eq");
   await expect(value).toHaveValue("");
-  await expect(
-    page.getByRole("button", { name: "Save view", exact: true }),
-  ).toBeDisabled();
+  // UF-C3.3: Save view refuses the unfinished row without a view write.
   await expect(
     page.getByRole("button", { name: "Save as new view" }),
-  ).toBeDisabled();
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
+  await expect(
+    page.getByText("Choose a value or remove this condition."),
+  ).toBeVisible();
+  expect(api.requests.filter((request) => !request.startsWith("GET "))).toEqual(
+    [],
+  );
 });
 
 test("changing a Views filter field with the keyboard retains focus", async ({
@@ -1914,7 +1919,7 @@ test("changing a Views filter field with the keyboard retains focus", async ({
   await expect(field).toBeFocused();
 });
 
-test("clearing a number View filter stays blank instead of querying zero", async ({
+test("UF-C3.1 UF-C3.3: clearing a number View filter stays blank instead of querying zero", async ({
   page,
 }) => {
   const api = await installViewsApi(page);
@@ -1939,16 +1944,19 @@ test("clearing a number View filter stays blank instead of querying zero", async
   await value.fill("");
   await expect(value).toHaveValue("");
   await expect(
-    filtersRegion.getByText(
-      "Complete this condition or remove it before saving.",
-    ),
+    filtersRegion.getByText("Not applied yet: choose a value."),
   ).toBeVisible();
+  // UF-C3.3: Save as new view refuses the unfinished row without a write.
   await expect(
     page.getByRole("button", { name: "Save view", exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Save as new view" }).click();
   await expect(
-    page.getByRole("button", { name: "Save as new view" }),
-  ).toBeDisabled();
+    filtersRegion.getByText("Choose a value or remove this condition."),
+  ).toBeVisible();
+  expect(api.requests.filter((request) => !request.startsWith("GET "))).toEqual(
+    [],
+  );
   expect(
     api.recordQueryRequests
       .slice(requestCountBeforeClear)
@@ -1999,6 +2007,161 @@ test("unsafe integer View filters fail locally without sending a rounded value",
   await expect(
     page.getByRole("button", { name: "Save view", exact: true }),
   ).toBeDisabled();
+});
+
+test("UF-C3.1 UF-C3.2: an added filter row applies only when complete; the list, quick filter, and Export stay", async ({
+  page,
+}) => {
+  const api = await installViewsApi(page, {
+    disableInitialSearch: true,
+    viewerRole: "member",
+  });
+  const countRequests: { definition: { filters: unknown[] } }[] = [];
+  await page.route("**/api/records/aggregate-query", async (route) => {
+    const body = route.request().postDataJSON() as {
+      definition: { filters: unknown[] };
+      limit: number;
+      offset: number;
+    };
+    countRequests.push(body);
+    await route.fulfill({
+      json: {
+        items: [
+          {
+            key: inServiceChoiceId,
+            label: "In service",
+            value: "29",
+            record_count: 29,
+          },
+        ],
+        pagination: {
+          limit: body.limit,
+          offset: body.offset,
+          count: 1,
+          total: 1,
+          has_more: false,
+          total_is_capped: false,
+        },
+      },
+    });
+  });
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  const strip = page.getByRole("group", { name: "Status" });
+  await expect(strip.getByRole("button", { name: /^All\s*29$/ })).toBeVisible();
+  await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
+  const recordReadsBefore = api.recordQueryRequests.length;
+  const countReadsBefore = countRequests.length;
+
+  const filtersRegion = await openFilters(page);
+  await filtersRegion.getByRole("button", { name: "Add filter" }).click();
+  await expect(
+    filtersRegion.getByRole("combobox", { name: "Field", exact: true }),
+  ).toBeFocused();
+  await expect(
+    filtersRegion.getByText("Not applied yet: choose a value.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  // No early error, no banner, no chip: the list keeps its last result.
+  // (The page's route announcer is an empty alert.)
+  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("group", { name: "Active filters" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
+  await expect(strip.getByRole("button", { name: /^All\s*29$/ })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Export", exact: true }),
+  ).toBeEnabled();
+  expect(api.recordQueryRequests).toHaveLength(recordReadsBefore);
+  expect(countRequests).toHaveLength(countReadsBefore);
+
+  await filtersRegion
+    .getByRole("textbox", { name: "Value", exact: true })
+    .fill("pump");
+  await expect(
+    page.getByRole("group", { name: "Active filters" }),
+  ).toContainText("Equipment name: is pump");
+  await expect(
+    filtersRegion.getByText("Not applied yet: choose a value."),
+  ).toHaveCount(0);
+  await expect
+    .poll(() =>
+      api.recordQueryRequests.some(({ definition }) =>
+        definition.filters.some(
+          (filter) =>
+            filter.field_id === nameFieldId && filter.value === "pump",
+        ),
+      ),
+    )
+    .toBe(true);
+  // No read ever carried the unfinished condition.
+  expect(
+    api.recordQueryRequests.some(({ definition }) =>
+      definition.filters.some((filter) => filter.value === ""),
+    ),
+  ).toBe(false);
+});
+
+for (const viewport of [
+  { name: "popover", width: 1440, height: 900 },
+  { name: "bottom sheet", width: 390, height: 844 },
+] as const) {
+  test(`UF-C3.3: Save view with an unfinished row sends nothing and names the row in the Filters ${viewport.name}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    const api = await installViewsApi(page);
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    await addFilterForField(page, statusFieldId);
+    await page.keyboard.press("Escape");
+    const filtersRegion = page.getByRole("dialog", { name: "Filters" });
+    await expect(filtersRegion).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Save view", exact: true }).click();
+
+    await expect(filtersRegion).toBeVisible();
+    await expect(
+      filtersRegion.getByText("Choose a value or remove this condition.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      filtersRegion.getByText("Not applied yet: choose a value."),
+    ).toHaveCount(0);
+    await expect(
+      filtersRegion.getByRole("combobox", { name: "Value", exact: true }),
+    ).toBeFocused();
+    expect(
+      api.requests.filter((request) => !request.startsWith("GET ")),
+    ).toEqual([]);
+  });
+}
+
+test("UF-C3.4: an unsafe number keeps its error under the field and the list keeps its last result", async ({
+  page,
+}) => {
+  const api = await installViewsApi(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
+  await addFilterForField(page, integerFieldId);
+  const filtersRegion = await openFilters(page);
+  const recordReadsBefore = api.recordQueryRequests.length;
+
+  await filtersRegion.getByLabel("Value").fill("9007199254740993");
+
+  await expect(
+    filtersRegion.getByText(
+      "Enter a whole number from -9007199254740991 to 9007199254740991.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
+  expect(api.recordQueryRequests).toHaveLength(recordReadsBefore);
 });
 
 test("server-backed Views preserve edits through save, conflict, archive, restore, and module default changes", async ({
@@ -2424,7 +2587,270 @@ test("temporary View changes live in the address, survive reload, and are never 
   });
 });
 
-test("a reader keeps temporary View filters in the address without save controls", async ({
+const otherDepartmentId = "00000000-0000-4000-8000-000000000101";
+type ViewerAccess = {
+  department_id: string;
+  module_id: string | null;
+  level: "read" | "write" | "manage";
+};
+// Item 1: who may save a view on the open module decides the mark and the
+// leave question. Each case is one account's identity and access.
+const viewers = {
+  writer: {
+    role: "member",
+    access: [
+      { department_id: departmentId, module_id: moduleId, level: "write" },
+    ],
+  },
+  reader: {
+    role: "member",
+    access: [{ department_id: departmentId, module_id: null, level: "read" }],
+  },
+  guest: {
+    role: "guest",
+    access: [{ department_id: departmentId, module_id: null, level: "read" }],
+  },
+  "department manager": {
+    role: "member",
+    access: [{ department_id: departmentId, module_id: null, level: "manage" }],
+  },
+  "manager of another department who writes here": {
+    role: "member",
+    access: [
+      { department_id: otherDepartmentId, module_id: null, level: "manage" },
+      { department_id: departmentId, module_id: moduleId, level: "write" },
+    ],
+  },
+  "department manager who only reads this module": {
+    role: "member",
+    access: [
+      { department_id: departmentId, module_id: null, level: "manage" },
+      { department_id: departmentId, module_id: moduleId, level: "read" },
+    ],
+  },
+} satisfies Record<
+  string,
+  { role: "member" | "guest"; access: ViewerAccess[] }
+>;
+
+async function viewAs(page: Page, viewer: keyof typeof viewers) {
+  const { role, access } = viewers[viewer];
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: authMeBody({
+        id: userId,
+        role,
+        default_organization_blocked: null,
+        access,
+      }),
+    }),
+  );
+}
+
+/** The quick filter strip's counts: "All 29 · In service 29". */
+async function routeQuickFilterCounts(page: Page) {
+  await page.route("**/api/records/aggregate-query", async (route) => {
+    const body = route.request().postDataJSON() as {
+      limit: number;
+      offset: number;
+    };
+    await route.fulfill({
+      json: {
+        items: [
+          {
+            key: inServiceChoiceId,
+            label: "In service",
+            value: "29",
+            record_count: 29,
+          },
+        ],
+        pagination: {
+          limit: body.limit,
+          offset: body.offset,
+          count: 1,
+          total: 1,
+          has_more: false,
+          total_is_capped: false,
+        },
+      },
+    });
+  });
+}
+
+/**
+ * Opens the module page as `viewer` (the mock's administrator without one)
+ * and clicks the quick chip "In service".
+ */
+async function chooseQuickChipAs(page: Page, viewer?: keyof typeof viewers) {
+  const api = await installViewsApi(page, { disableInitialSearch: true });
+  if (viewer) await viewAs(page, viewer);
+  await routeQuickFilterCounts(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  const strip = page.getByRole("group", { name: "Status" });
+  await strip.getByRole("button", { name: /^In service\s*29$/ }).click();
+  await expect(
+    strip.getByRole("button", { name: /^In service/ }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page).toHaveURL(/[?&]changes=/);
+  return { api, strip };
+}
+
+const viewWrites = (requests: readonly string[]) =>
+  requests.filter((request) => !request.startsWith("GET "));
+
+for (const viewer of ["writer", "reader", "guest"] as const) {
+  test(`UF-C1.1: a ${viewer} filters with a quick chip and leaves with no unsaved mark and no question`, async ({
+    page,
+  }) => {
+    const { api } = await chooseQuickChipAs(page, viewer);
+    await expect
+      .poll(() =>
+        api.recordQueryRequests.some(({ definition }) =>
+          definition.filters.some(
+            (filter) =>
+              filter.field_id === statusFieldId &&
+              filter.value === inServiceChoiceId,
+          ),
+        ),
+      )
+      .toBe(true);
+    await expect(
+      page.getByText("Unsaved changes", { exact: true }),
+    ).toHaveCount(0);
+
+    await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+
+    await expect(page).toHaveURL(/section=dashboards/);
+    await expect(
+      page.getByRole("alertdialog", { name: "Discard unsaved view changes?" }),
+    ).toHaveCount(0);
+    expect(viewWrites(api.requests)).toEqual([]);
+  });
+}
+
+test("UF-C1.2: after leaving, browser Back brings a writer's quick chip back with Copy link and Reset changes", async ({
+  page,
+}) => {
+  const { api } = await chooseQuickChipAs(page, "writer");
+  await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+  await expect(page).toHaveURL(/section=dashboards/);
+
+  await page.goBack();
+
+  await expect(page).toHaveURL(new RegExp(`module=${moduleId}.*[?&]changes=`));
+  await expect(
+    page
+      .getByRole("group", { name: "Status" })
+      .getByRole("button", { name: /^In service/ }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "More view actions" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Copy link", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", { name: "Reset changes", exact: true }),
+  ).toBeVisible();
+  expect(viewWrites(api.requests)).toEqual([]);
+});
+
+for (const viewer of ["department manager", undefined] as const) {
+  test(`UF-C1.3: a ${viewer ?? "administrator"} keeps the unsaved mark, Save view, and the leave question`, async ({
+    page,
+  }) => {
+    await chooseQuickChipAs(page, viewer);
+
+    await expect(
+      page.getByText("Unsaved changes", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Save view", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+    await expect(
+      page.getByRole("alertdialog", { name: "Discard unsaved view changes?" }),
+    ).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`module=${moduleId}`));
+  });
+}
+
+for (const viewer of [
+  "manager of another department who writes here",
+  "department manager who only reads this module",
+] as const) {
+  test(`UF-C1.4: a ${viewer} filters and leaves like a writer`, async ({
+    page,
+  }) => {
+    const { api } = await chooseQuickChipAs(page, viewer);
+    await expect(
+      page.getByText("Unsaved changes", { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Save view", exact: true }),
+    ).toHaveCount(0);
+
+    await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+
+    await expect(page).toHaveURL(/section=dashboards/);
+    await expect(
+      page.getByRole("alertdialog", { name: "Discard unsaved view changes?" }),
+    ).toHaveCount(0);
+    expect(viewWrites(api.requests)).toEqual([]);
+  });
+}
+
+test("UF-C1.5: on a changed view, a sidebar click keeps a writer's record edit and create open with the typed value", async ({
+  page,
+}) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  await viewAs(page, "writer");
+  await routeQuickFilterCounts(page);
+  await installRecordCommands(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  // A writer's changed view: the guard leaves at once for a non-manager.
+  await page
+    .getByRole("group", { name: "Status" })
+    .getByRole("button", { name: /^In service\s*29$/ })
+    .click();
+  await expect(page).toHaveURL(/[?&]changes=/);
+  await page.getByRole("button", { name: "Centrifugal pump 04" }).click();
+  const details = await openedSheet(
+    page.getByRole("dialog", { name: "Record details" }),
+  );
+  await details.getByRole("button", { name: "Edit record" }).click();
+  await details.getByLabel("Serial number").fill("SN-KEPT");
+  // A modal sheet hides the sidebar from the accessibility tree, so the row
+  // is found by its address; the click lands where a person would click.
+  const sidebarDashboard = page.locator('a[href*="section=dashboards"]');
+  const leaveBySidebar = async () => {
+    const box = await sidebarDashboard.boundingBox();
+    if (!box) throw new Error("The sidebar Dashboard row is not laid out.");
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  };
+
+  // The sheet is modal: the page does not change and the typed value stays.
+  await leaveBySidebar();
+  await expect(page).toHaveURL(new RegExp(`record=${recordOneId}`));
+  await expect(page).toHaveURL(/[?&]changes=/);
+  await expect(details.getByLabel("Serial number")).toHaveValue("SN-KEPT");
+  await page.keyboard.press("Escape");
+  await expect(details.getByLabel("Serial number")).toHaveValue("SN-KEPT");
+
+  await details.getByRole("button", { name: "Cancel" }).click();
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await page.getByRole("button", { name: "New record" }).click();
+  const create = page.getByRole("dialog", { name: "New record" });
+  await create.getByLabel("Equipment name").fill("Booster pump 09");
+
+  await leaveBySidebar();
+  await page.keyboard.press("Escape");
+
+  await expect(create.getByLabel("Equipment name")).toHaveValue(
+    "Booster pump 09",
+  );
+  await expect(page).toHaveURL(new RegExp(`module=${moduleId}`));
+});
+
+test("UF-C1.1: a reader keeps temporary View filters in the address without save controls or an unsaved mark", async ({
   page,
 }) => {
   await installViewsApi(page);
@@ -2458,10 +2884,10 @@ test("a reader keeps temporary View filters in the address without save controls
     page.getByRole("menuitem", { name: /^Archived views/ }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByText("Unsaved changes")).toBeVisible();
+  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
   await page.reload();
   await expect(search).toHaveValue("valve");
-  await expect(page.getByText("Unsaved changes")).toBeVisible();
+  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
 });
 
 test("a module reader can browse archived Views without a Restore action", async ({
@@ -5159,7 +5585,743 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
   });
 }
 
-test("New record checks required values, then opens the created record", async ({
+// Item 6: the 30th record of the views mock, on page 2 at 25 a page, stands
+// in for a record the person creates, so page 1 does not hold it.
+const createdRecordId = "00000000-0000-4000-8000-000000000059";
+const createdRecordName = "Equipment 30";
+
+/**
+ * POST /api/records creates `createdRecordId`; a GET reads it, a PATCH
+ * changes it and a DELETE deletes it, as the server would. Reads by its id answer from that
+ * state: the match read (the view's deleted setting) finds it only while it
+ * is active and no filter applies.
+ */
+async function installCreatedRecord(
+  page: Page,
+  { failMatch = false }: { failMatch?: boolean } = {},
+) {
+  await installRecordCommands(page);
+  const matchReads: { filters: unknown[] }[] = [];
+  const statusLabels: Record<string, string> = {
+    [inServiceChoiceId]: "In service",
+    [inspectionDueChoiceId]: "Inspection due",
+  };
+  let current: ReturnType<typeof record> | null = null;
+  let deleted = false;
+  const pageOfCurrent = (items: ReturnType<typeof record>[]) =>
+    JSON.stringify(pageOf(items, { limit: 1, offset: 0, total: items.length }));
+  await page.route("**/api/records", async (route: Route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    current = record(createdRecordId, createdRecordName, "In service");
+    return route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify(current),
+    });
+  });
+  await page.route(`**/api/records/${createdRecordId}`, async (route) => {
+    const method = route.request().method();
+    if (!current || !["GET", "PATCH", "DELETE"].includes(method))
+      return route.fallback();
+    if (method === "GET")
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(current),
+      });
+    if (method === "DELETE") {
+      deleted = true;
+      return route.fulfill({ status: 204, body: "" });
+    }
+    const { data } = route.request().postDataJSON() as {
+      data: Record<string, unknown>;
+    };
+    const status = String(data[statusFieldId] ?? "");
+    current = {
+      ...current,
+      data: { ...current.data, ...data },
+      display_values: {
+        ...current.display_values,
+        [statusFieldId]: statusLabels[status] ?? status,
+      },
+      updated_at: "2026-09-24T00:00:00Z",
+    };
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(current),
+    });
+  });
+  await page.route("**/api/records/query", async (route: Route) => {
+    const { definition } = route.request().postDataJSON() as {
+      definition: QueryDefinition;
+    };
+    if (definition.search !== createdRecordId || !current)
+      return route.fallback();
+    if (definition.deleted === "include")
+      return route.fulfill({
+        contentType: "application/json",
+        body: pageOfCurrent([
+          deleted
+            ? {
+                ...current,
+                is_deleted: true,
+                deleted_at: "2026-09-24T00:00:00Z",
+              }
+            : current,
+        ]),
+      });
+    matchReads.push({ filters: definition.filters });
+    if (failMatch)
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Service unavailable" }),
+      });
+    return route.fulfill({
+      contentType: "application/json",
+      body: pageOfCurrent(
+        deleted || definition.filters.length > 0 ? [] : [current],
+      ),
+    });
+  });
+  return { matchReads };
+}
+
+/** Creates "Equipment 30" through New record and waits for its sheet. */
+async function createRecord(page: Page) {
+  await page.getByRole("button", { name: "New record" }).click();
+  const create = page.getByRole("dialog", { name: "New record" });
+  await create.getByLabel("Equipment name").fill(createdRecordName);
+  await create.getByRole("button", { name: /^Create / }).click();
+  await expect(page).toHaveURL(new RegExp(`record=${createdRecordId}`));
+  await expect(
+    page
+      .getByRole("dialog", { name: "Record details" })
+      .getByRole("heading", { name: createdRecordName }),
+  ).toBeVisible();
+}
+
+const pageStatus = (page: Page) =>
+  page.getByRole("status").filter({ hasText: /^Record created\./ });
+/** The page meta line under the title (DA14). */
+const metaLine = (page: Page) =>
+  page
+    .getByRole("heading", { level: 1 })
+    .locator("xpath=following-sibling::p[1]");
+/** The item 6 status, the first status of the meta line, in the meta's place. */
+const metaStatus = (page: Page) => metaLine(page).getByRole("status").first();
+
+for (const presentation of [
+  {
+    name: "table",
+    viewport: { width: 1440, height: 900 },
+    layout: "table",
+    first: (page: Page) => page.getByRole("table").getByRole("row").nth(1),
+  },
+  {
+    name: "phone rows",
+    viewport: { width: 390, height: 844 },
+    layout: "table",
+    first: (page: Page) =>
+      page.getByRole("list", { name: "Records" }).getByRole("listitem").first(),
+  },
+  {
+    name: "grid",
+    viewport: { width: 1440, height: 900 },
+    layout: "grid",
+    first: (page: Page) =>
+      page
+        .getByRole("list", { name: "Grid records" })
+        .getByRole("listitem")
+        .first(),
+  },
+] as const) {
+  test(`UF-C6.1: a created record that matches shows first in the ${presentation.name}, tagged New, with the status in the meta line`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(presentation.viewport);
+    await installViewsApi(page, {
+      disableInitialSearch: true,
+      initialLayout: presentation.layout,
+    });
+    await viewAs(page, "writer");
+    const { matchReads } = await installCreatedRecord(page);
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    const pager = page.getByText(/^Showing 1–25 of 30/);
+    await expect(pager).toBeVisible();
+    const toolbar = page.getByRole("searchbox", { name: "Search Equipment" });
+    const toolbarTop = (await toolbar.boundingBox())?.y;
+
+    await createRecord(page);
+
+    // The open sheet hides the page; nothing asks about the match yet.
+    expect(matchReads).toEqual([]);
+    await page.keyboard.press("Escape");
+
+    const first = presentation.first(page);
+    await expect(first).toContainText(createdRecordName);
+    await expect(first).toContainText("New");
+    await expect(pageStatus(page)).toHaveText("Record created.");
+    expect((await toolbar.boundingBox())?.y).toBe(toolbarTop);
+    await expect(pager).toBeVisible();
+    expect(matchReads).toHaveLength(1);
+    // The pinned record opens its sheet like any row.
+    await first
+      .getByRole("button", { name: new RegExp(createdRecordName) })
+      .click();
+    await expect(page).toHaveURL(new RegExp(`record=${createdRecordId}`));
+  });
+}
+
+test("UF-C6.2: a created record that the filters hide is not listed; the status says so and opens it", async ({
+  page,
+}) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  await viewAs(page, "writer");
+  await routeQuickFilterCounts(page);
+  const { matchReads } = await installCreatedRecord(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await page
+    .getByRole("group", { name: "Status" })
+    .getByRole("button", { name: /^In service\s*29$/ })
+    .click();
+  await expect(page).toHaveURL(/[?&]changes=/);
+
+  await createRecord(page);
+  await page.keyboard.press("Escape");
+
+  await expect(metaStatus(page)).toHaveText("Created, hidden by filters.", {
+    useInnerText: true,
+  });
+  expect(matchReads).toHaveLength(1);
+  expect(matchReads[0]?.filters).not.toEqual([]);
+  await expect(
+    page.getByRole("table").getByText("New", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Open record", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`record=${createdRecordId}`));
+});
+
+test("UF-C6.2: with search text applied, no match read is sent and the status offers Open record", async ({
+  page,
+}) => {
+  await installViewsApi(page);
+  await viewAs(page, "writer");
+  const { matchReads } = await installCreatedRecord(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await expect(
+    page.getByRole("searchbox", { name: "Search Equipment" }),
+  ).toHaveValue("pump");
+
+  await createRecord(page);
+  await page.keyboard.press("Escape");
+
+  await expect(pageStatus(page)).toHaveText("Record created.");
+  await expect(
+    page.getByRole("button", { name: "Open record", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("table").getByText("New", { exact: true }),
+  ).toHaveCount(0);
+  expect(matchReads).toEqual([]);
+});
+
+test("UF-C6.1 UF-C2.2: a pinned new record shows its value after an in-place change", async ({
+  page,
+}) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  await viewAs(page, "writer");
+  await installCreatedRecord(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await createRecord(page);
+  await page.keyboard.press("Escape");
+  const first = page.getByRole("table").getByRole("row").nth(1);
+  await expect(first).toContainText(createdRecordName);
+  await expect(first).toContainText("In service");
+
+  await first.getByRole("button", { name: createdRecordName }).click();
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Record details" }),
+  );
+  await sheet
+    .getByRole("combobox", { name: "Status", exact: true })
+    .selectOption({ label: "Inspection due" });
+  await expect(
+    sheet.getByRole("status").filter({ hasText: /^Status changed/ }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await expect(first).toContainText(createdRecordName);
+  await expect(first).toContainText("Inspection due");
+  await expect(first).toContainText("New");
+});
+
+test("UF-C6.3: a deleted new record leaves the list", async ({ page }) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  await viewAs(page, "writer");
+  await installCreatedRecord(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  const pager = page.getByText(/^Showing 1–25 of 30/);
+  await expect(pager).toBeVisible();
+  await createRecord(page);
+  await page.keyboard.press("Escape");
+  const table = page.getByRole("table");
+  await table
+    .getByRole("row")
+    .nth(1)
+    .getByRole("button", { name: createdRecordName })
+    .click();
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Record details" }),
+  );
+  await sheet.getByRole("button", { name: "More record actions" }).click();
+  await page.getByRole("menuitem", { name: "Delete record" }).click();
+  await page
+    .getByRole("alertdialog", { name: "Delete this record?" })
+    .getByRole("button", { name: "Delete record" })
+    .click();
+  await expect(page.getByText(/^Record deleted\./)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+
+  // The server's first row leads again; the deleted record is not listed.
+  await expect(table.getByRole("row").nth(1)).toContainText(
+    "Centrifugal pump 04",
+  );
+  await expect(
+    table.getByRole("button", { name: createdRecordName, exact: true }),
+  ).toHaveCount(0);
+  await expect(table.getByText("New", { exact: true })).toHaveCount(0);
+  await expect(pager).toBeVisible();
+});
+
+// Item 6 (CI re-check): a department name far longer than the line, so the
+// rule does not rest on a thin margin of any system's fonts.
+const longDepartmentName =
+  "Field service and preventive maintenance for the northern coastal region";
+
+async function useLongDepartmentName(page: Page) {
+  await page.route("**/api/departments**", (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: departmentId,
+            department_name: longDepartmentName,
+            created_at: "2026-09-23T00:00:00Z",
+            updated_at: "2026-09-23T00:00:00Z",
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: null,
+          },
+        ],
+        pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
+      },
+    }),
+  );
+}
+
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 1280, height: 720 },
+  { width: 390, height: 844 },
+] as const) {
+  for (const scene of [
+    { name: "filters hide it", words: "Created, hidden by filters." },
+    { name: "grouped view", words: "Record created." },
+    { name: "record matches", words: "Record created." },
+  ] as const) {
+    test(`UF-C6.1 UF-C6.2: at ${viewport.width}px the ${scene.name} status takes the meta's place; the toolbar stays put`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await installViewsApi(page, {
+        disableInitialSearch: true,
+        ...(scene.name === "grouped view"
+          ? { initialGroupByFieldId: statusFieldId }
+          : {}),
+      });
+      await useLongDepartmentName(page);
+      await viewAs(page, "writer");
+      await routeQuickFilterCounts(page);
+      await installCreatedRecord(page);
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      const metaText = metaLine(page).getByText(longDepartmentName, {
+        exact: false,
+      });
+      await expect(metaText).toBeVisible();
+      if (scene.name === "filters hide it") {
+        await page
+          .getByRole("group", { name: "Status" })
+          .getByRole("button", { name: /^In service\s*29$/ })
+          .click();
+        await expect(page).toHaveURL(/[?&]changes=/);
+      }
+      const filters = page.getByRole("button", {
+        name: "Filters",
+        exact: true,
+      });
+      // Measure at rest: a page status ("Refreshing records…") sits beside
+      // the meta text for a moment after a filter.
+      await expect(metaLine(page).getByRole("status").last()).toHaveText("", {
+        useInnerText: true,
+      });
+      const before = (await box(filters)).y;
+
+      await createRecord(page);
+      await page.keyboard.press("Escape");
+      await expect(
+        page.getByRole("dialog", { name: "Record details" }),
+      ).toHaveCount(0);
+
+      // DR-6.1, DR-6.5: the status takes the meta text's place at every
+      // width; the meta text leaves the page and the accessibility tree.
+      const status = metaStatus(page);
+      await expect(status).toHaveText(scene.words, { useInnerText: true });
+      await expect(metaText).toBeHidden();
+      expect(await metaLine(page).ariaSnapshot()).not.toContain(
+        "preventive maintenance",
+      );
+      const size = await status.evaluate((element) => {
+        const text = document.createRange();
+        text.selectNodeContents(element);
+        return {
+          scrollWidth: element.scrollWidth,
+          clientWidth: element.clientWidth,
+          scrollHeight: element.scrollHeight,
+          clientHeight: element.clientHeight,
+          boxHeight: element.getBoundingClientRect().height,
+          textHeight: text.getBoundingClientRect().height,
+        };
+      });
+      expect(size.scrollWidth, "status width").toBeLessThanOrEqual(
+        size.clientWidth,
+      );
+      expect(size.scrollHeight, "status height").toBeLessThanOrEqual(
+        size.clientHeight,
+      );
+      expect(size.textHeight, "status text height").toBeLessThanOrEqual(
+        size.boxHeight,
+      );
+      expect((await box(filters)).y).toBe(before);
+      // The count stays in the Records tab; the grouped view has none.
+      if (scene.name !== "grouped view")
+        await expect(page.getByLabel("Equipment page")).toContainText("30");
+      const openRecord = page.getByRole("button", {
+        name: "Open record",
+        exact: true,
+      });
+      if (scene.name === "record matches")
+        await expect(openRecord).toHaveCount(0);
+      else {
+        await expect(openRecord).toBeVisible();
+        // The line-sized button takes a 44px tap target, 32px from 1280px:
+        // measure where a tap on its middle column still lands on it.
+        const target = await box(openRecord);
+        const hit = await page.evaluate(
+          ([x, top, bottom]) => {
+            const lands = (y: number) =>
+              document.elementFromPoint(x, y)?.closest("button")
+                ?.textContent === "Open record";
+            let first = top;
+            while (lands(first - 1)) first -= 1;
+            let last = bottom;
+            while (lands(last + 1)) last += 1;
+            return last - first + 1;
+          },
+          [
+            target.x + target.width / 2,
+            Math.ceil(target.y),
+            Math.floor(target.y + target.height) - 1,
+          ],
+        );
+        expect(hit).toBeGreaterThanOrEqual(viewport.width >= 1280 ? 32 : 44);
+        expect(target.width).toBeGreaterThanOrEqual(44);
+      }
+
+      // The next action ends the status, and the meta text returns.
+      await page
+        .getByRole("searchbox", { name: "Search Equipment" })
+        .fill("pump");
+      // (The search changes the count, so the meta text may wrap anew.)
+      await expect(status).toHaveText("", { useInnerText: true });
+      await expect(metaText).toBeVisible();
+    });
+  }
+}
+
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 390, height: 844 },
+] as const) {
+  for (const department of ["long", "short"] as const) {
+    test(`UF-C6.2 UF-C1.3: at ${viewport.width}px, ${department} department: Unsaved changes yields to the status`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await installViewsApi(page, { disableInitialSearch: true });
+      if (department === "long") await useLongDepartmentName(page);
+      await routeQuickFilterCounts(page);
+      await installCreatedRecord(page);
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      await page
+        .getByRole("group", { name: "Status" })
+        .getByRole("button", { name: /^In service\s*29$/ })
+        .click();
+      const badge = metaLine(page).getByText("Unsaved changes", {
+        exact: true,
+      });
+      await expect(badge).toBeVisible();
+      const filters = page.getByRole("button", {
+        name: "Filters",
+        exact: true,
+      });
+      // Measure at rest: a page status ("Refreshing records…") sits beside
+      // the meta text for a moment after a filter.
+      await expect(metaLine(page).getByRole("status").last()).toHaveText("", {
+        useInnerText: true,
+      });
+      const before = (await box(filters)).y;
+
+      await createRecord(page);
+      await page.keyboard.press("Escape");
+
+      const status = metaStatus(page);
+      await expect(status).toHaveText("Created, hidden by filters.", {
+        useInnerText: true,
+      });
+      // The badge yields with the meta text: not seen, not in the
+      // accessibility tree; Save view, the primary, still shows the change.
+      await expect(badge).toBeHidden();
+      expect(await metaLine(page).ariaSnapshot()).not.toContain(
+        "Unsaved changes",
+      );
+      await expect(
+        page.getByRole("button", { name: "Save view", exact: true }),
+      ).toBeVisible();
+      await expect(
+        metaLine(page).getByRole("button", {
+          name: "Open record",
+          exact: true,
+        }),
+      ).toBeVisible();
+      expect((await box(filters)).y).toBe(before);
+
+      // The next action ends the status; the badge returns with the meta.
+      await page
+        .getByRole("searchbox", { name: "Search Equipment" })
+        .fill("pump");
+      await expect(status).toHaveText("", { useInnerText: true });
+      await expect(badge).toBeVisible();
+    });
+  }
+}
+
+test("UF-C6.1: opening the pinned record from the list clears the status and keeps its first place and tag", async ({
+  page,
+}) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  await viewAs(page, "writer");
+  await installCreatedRecord(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await createRecord(page);
+  await page.keyboard.press("Escape");
+  await expect(pageStatus(page)).toHaveText("Record created.");
+  const first = page.getByRole("table").getByRole("row").nth(1);
+
+  await first.getByRole("button", { name: createdRecordName }).click();
+  await openedSheet(page.getByRole("dialog", { name: "Record details" }));
+  await page.keyboard.press("Escape");
+
+  // The meta line's status settles empty, not on a passing refresh.
+  await expect(metaStatus(page)).toHaveText("");
+  await expect(first).toContainText(createdRecordName);
+  await expect(first).toContainText("New");
+});
+
+test("UF-C6.1: on a phone the New tag sits on the title line, after the title", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installViewsApi(page, { disableInitialSearch: true });
+  await viewAs(page, "writer");
+  await installCreatedRecord(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await createRecord(page);
+  await page.keyboard.press("Escape");
+  const first = page
+    .getByRole("list", { name: "Records" })
+    .getByRole("listitem")
+    .first();
+  // Measure once the match read has pinned the row.
+  await expect(first.getByText("New", { exact: true })).toBeVisible();
+  const title = await box(first.getByText(createdRecordName, { exact: true }));
+  const tag = await box(first.getByText("New", { exact: true }));
+
+  expect(tag.x).toBeGreaterThanOrEqual(title.x + title.width);
+  expect(
+    Math.abs(tag.y + tag.height / 2 - (title.y + title.height / 2)),
+  ).toBeLessThanOrEqual(4);
+});
+
+test("UF-C6.2: a failed match check adds no row and keeps Record created. with Open record", async ({
+  page,
+}) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  await viewAs(page, "writer");
+  const { matchReads } = await installCreatedRecord(page, { failMatch: true });
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await createRecord(page);
+  await page.keyboard.press("Escape");
+
+  await expect(pageStatus(page)).toHaveText("Record created.");
+  expect(matchReads).toHaveLength(1);
+  await expect(
+    page.getByRole("table").getByText("New", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Open record", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`record=${createdRecordId}`));
+});
+
+test("UF-C6.3: a sort change ends the New tag and the status; the record shows only at its sorted place", async ({
+  page,
+}) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  await viewAs(page, "writer");
+  await installCreatedRecord(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  const pager = page.getByText(/^Showing 1–25 of 30/);
+  await expect(pager).toBeVisible();
+  await createRecord(page);
+  await page.keyboard.press("Escape");
+  const table = page.getByRole("table");
+  await expect(table.getByText("New", { exact: true })).toHaveCount(1);
+
+  await page
+    .getByRole("combobox", { name: "Sort" })
+    .selectOption(`${nameFieldId}:desc`);
+
+  await expect(table.getByText("New", { exact: true })).toHaveCount(0);
+  await expect(pageStatus(page)).toHaveCount(0);
+  // Page 1 of the server order does not hold it; the pager counts it once.
+  await expect(
+    table.getByRole("button", { name: createdRecordName, exact: true }),
+  ).toHaveCount(0);
+  await expect(pager).toBeVisible();
+});
+
+// Item 12: a long record name, so a narrow title column would wrap far.
+const longRecordName =
+  "UX audit test contact with a long name that wraps in a narrow header";
+const recordHeaderActions = [
+  "Previous record",
+  "Next record",
+  "Edit record",
+  "More record actions",
+  "Close",
+] as const;
+
+/** Opens the long-named record from the list, so Previous and Next show. */
+async function openLongRecord(page: Page) {
+  await installViewsApi(page, {
+    disableInitialSearch: true,
+    recordName: longRecordName,
+  });
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await page.getByRole("button", { name: longRecordName }).click();
+  // Measure the header only once the sheet has stopped sliding in.
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Record details" }),
+  );
+  const title = sheet.getByRole("heading", { level: 2, name: longRecordName });
+  await expect(title).toBeVisible();
+  for (const name of recordHeaderActions)
+    await expect(
+      sheet.getByRole("button", { name, exact: true }),
+    ).toBeVisible();
+  return { sheet, title };
+}
+
+const box = async (locator: Locator) => {
+  const value = await locator.boundingBox();
+  if (!value) throw new Error("The element is not laid out.");
+  return value;
+};
+
+test("UF-C12.1: on a phone the record header puts its actions in one row above a full-width title of two lines at most", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { sheet, title } = await openLongRecord(page);
+  const sheetBox = await box(sheet);
+  const titleBox = await box(title);
+  const actionBoxes = await Promise.all(
+    recordHeaderActions.map((name) =>
+      box(sheet.getByRole("button", { name, exact: true })),
+    ),
+  );
+
+  // One action row, above the title.
+  const rowTop = actionBoxes[0]?.y ?? 0;
+  for (const action of actionBoxes) {
+    expect(Math.abs(action.y - rowTop)).toBeLessThanOrEqual(1);
+    expect(action.y + action.height).toBeLessThanOrEqual(titleBox.y);
+    expect(action.width).toBeGreaterThanOrEqual(44);
+    expect(action.height).toBeGreaterThanOrEqual(44);
+  }
+  // The title takes the sheet width, less the header padding, in 2 lines.
+  expect(titleBox.width).toBeGreaterThanOrEqual(sheetBox.width - 40);
+  const lines = await title.evaluate((element) =>
+    Math.round(
+      element.getBoundingClientRect().height /
+        Number.parseFloat(getComputedStyle(element).lineHeight),
+    ),
+  );
+  expect(lines).toBeLessThanOrEqual(2);
+  // Screen readers still meet the title first; nothing scrolls sideways.
+  const titleFirst = await title.evaluate(
+    (element, close) =>
+      Boolean(
+        close &&
+        element.compareDocumentPosition(close) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    await sheet
+      .getByRole("button", { name: "Close", exact: true })
+      .elementHandle(),
+  );
+  expect(titleFirst).toBe(true);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  expect(
+    await sheet.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth,
+    ),
+  ).toBe(true);
+});
+
+test("UF-C12.2: from 1440 px the record header keeps the title and its actions on one row", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const { sheet, title } = await openLongRecord(page);
+  const titleBox = await box(title);
+  for (const name of recordHeaderActions) {
+    const action = await box(sheet.getByRole("button", { name, exact: true }));
+    expect(action.x).toBeGreaterThanOrEqual(titleBox.x + titleBox.width);
+    expect(action.y).toBeLessThan(titleBox.y + titleBox.height);
+  }
+});
+
+test("UF-C6.1: New record checks required values, opens the created record, then lists it once, first, tagged New", async ({
   page,
 }) => {
   await installViewsApi(page, { disableInitialSearch: true });
@@ -5179,6 +6341,14 @@ test("New record checks required values, then opens the created record", async (
     module_id: moduleId,
     data: { [nameFieldId]: "Booster pump 09" },
   });
+  // The created record is already on this page: it shows once, first.
+  await page.keyboard.press("Escape");
+  const firstRow = page.getByRole("table").getByRole("row").nth(1);
+  await expect(firstRow).toContainText("Cooling panel 02");
+  await expect(firstRow).toContainText("New");
+  await expect(
+    page.getByRole("button", { name: "Cooling panel 02", exact: true }),
+  ).toHaveCount(1);
 });
 
 test("a Comms example record link shows a notice and returns to live Views", async ({
@@ -5457,7 +6627,7 @@ test.describe("export journeys", () => {
   });
 
   for (const role of ["member", "guest"] as const) {
-    test(`${role} exports current query and chosen pinned columns without saving`, async ({
+    test(`UF-C1.1: ${role} exports current query and pinned columns without saving`, async ({
       page,
     }) => {
       const api = await installS16Export(page, role);
@@ -5548,7 +6718,7 @@ test.describe("export journeys", () => {
       await expect(page).toHaveURL(address);
       await expect(
         page.getByText("Unsaved changes", { exact: true }),
-      ).toBeVisible();
+      ).toHaveCount(0);
       expect(api.writes).toEqual([]);
     });
   }
@@ -5970,7 +7140,7 @@ test.describe("export journeys", () => {
       expect(request).not.toHaveProperty(key);
   });
 
-  test("an incomplete filter disables export without a request", async ({
+  test("UF-C3.1: an incomplete filter keeps Export enabled and out of the request", async ({
     page,
   }) => {
     const api = await installS16Export(page);
@@ -5985,9 +7155,14 @@ test.describe("export journeys", () => {
     await page.goto(
       `/openview?section=views&module=${moduleId}&view=${viewId}`,
     );
-    await expect(
-      page.getByRole("button", { name: "Export", exact: true }),
-    ).toBeDisabled();
-    expect(api.requests).toEqual([]);
+    const dialog = await openS16Export(page);
+    await s16DownloadedBytes(page, () =>
+      dialog.getByRole("button", { name: "Download", exact: true }).click(),
+    );
+    expect(api.requests).toHaveLength(1);
+    expect(api.requests[0]).toMatchObject({
+      view_id: viewId,
+      definition: { filters: [] },
+    });
   });
 });

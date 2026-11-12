@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useId } from "react";
+import { useId, type FocusEvent, type KeyboardEvent } from "react";
 import type { OpenViewDataSourceField } from "../adapters/views-api";
 import { assignableUsersOptions } from "../adapters/openview-queries";
 import {
@@ -93,7 +93,30 @@ function PersonSelect({
   );
 }
 
-function FieldControl({
+/** What an in-place control on the Details tab adds to the form control. */
+export type InPlaceControlProps = {
+  /** The Details row label that names the control. */
+  labelledBy: string;
+  /** The value is saving (DR-2.4). */
+  busy: boolean;
+  /**
+   * A commit is running (DR-2.13). The control keeps focus and stays in the
+   * tab order, but takes no input: `aria-disabled`, not `disabled`, which
+   * would drop the focus of the person who just used it.
+   */
+  locked: boolean;
+  /** The lock has lasted past 300 ms: the control takes the disabled look. */
+  dimmed: boolean;
+  /** A date input's commit and Escape (DR-2.3). */
+  onBlur?: (event: FocusEvent<HTMLInputElement>) => void;
+  onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void;
+};
+
+/**
+ * The control of one field: the Edit form's, and the same control in place
+ * on the Details tab (DR-2.2) when `inPlace` is given.
+ */
+export function FieldControl({
   id,
   moduleId,
   field,
@@ -102,6 +125,7 @@ function FieldControl({
   invalid,
   describedBy,
   onChange,
+  inPlace,
 }: {
   id: string;
   moduleId: string;
@@ -111,6 +135,7 @@ function FieldControl({
   invalid: boolean;
   describedBy: string | undefined;
   onChange: (value: RecordFormValue) => void;
+  inPlace?: InPlaceControlProps;
 }) {
   const text = typeof value === "string" ? value : "";
   const common = {
@@ -118,11 +143,34 @@ function FieldControl({
     disabled,
     "aria-invalid": invalid || undefined,
     "aria-describedby": describedBy,
+    ...(inPlace
+      ? {
+          "aria-labelledby": inPlace.labelledBy,
+          "aria-busy": inPlace.busy || undefined,
+          "aria-disabled": inPlace.locked || undefined,
+          "data-waiting": (inPlace.dimmed && !inPlace.busy) || undefined,
+        }
+      : {}),
   };
+  // In place, a control is 32px from 1280px and 44px below it (G5). The
+  // saving control looks busy at once; the others, locked against input,
+  // take the disabled look only when the save runs past 300 ms (DR-2.13).
+  // Nothing fades: only the control the person used changes at once (G1).
+  const locked =
+    "transition-none aria-busy:cursor-progress aria-busy:opacity-50 aria-disabled:cursor-not-allowed data-[waiting]:opacity-50";
+  const height = inPlace ? `min-h-11 xl:h-8 xl:min-h-8 ${locked}` : "min-h-11";
   if (field.type === "boolean")
     return (
       <Checkbox
         {...common}
+        // In place on a phone the target is 44px square: the area sits on
+        // the 14px padding box of the bordered 16px box (14 + 2 × 15). From
+        // 1280px the shared size stays (QA-D1, G5).
+        className={
+          inPlace
+            ? `${locked} after:-inset-[15px] xl:after:-inset-x-3 xl:after:-inset-y-2`
+            : undefined
+        }
         checked={value === true}
         onCheckedChange={(checked) => onChange(checked === true)}
       />
@@ -136,22 +184,34 @@ function FieldControl({
         onChange={(event) => onChange(event.target.value)}
       />
     );
-  if (field.type === "select")
+  if (field.type === "select") {
+    const options = selectOptions(field);
+    const known = !text || options.some((option) => option.id === text);
     return (
       <Select
         {...common}
-        className="min-h-11"
+        className={height}
         value={text}
         onValueChange={onChange}
       >
-        <option value="">{field.required ? "Choose an option" : "None"}</option>
-        {selectOptions(field).map((option) => (
+        {/* In place, a required Choice list has no empty choice unless it
+            holds no value yet (DR-2.3). */}
+        {inPlace && field.required && text ? null : (
+          <option value="">
+            {field.required ? "Choose an option" : "None"}
+          </option>
+        )}
+        {inPlace && !known ? (
+          <option value={text}>Unavailable option</option>
+        ) : null}
+        {options.map((option) => (
           <option key={option.id} value={option.id}>
             {option.label}
           </option>
         ))}
       </Select>
     );
+  }
   if (field.type === "user")
     return (
       <PersonSelect
@@ -167,7 +227,10 @@ function FieldControl({
   return (
     <Input
       {...common}
-      className="min-h-11"
+      className={height}
+      onBlur={inPlace?.onBlur}
+      onKeyDown={inPlace?.onKeyDown}
+      readOnly={inPlace?.locked || undefined}
       type={INPUT_TYPES[field.type] ?? "text"}
       inputMode={field.type === "decimal" ? "decimal" : undefined}
       step={

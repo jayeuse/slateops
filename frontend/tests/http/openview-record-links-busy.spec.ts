@@ -1191,6 +1191,38 @@ test("record editing waits for complete fields and preserves an off-page value",
   );
 });
 
+test("UF-C2.1 Edit pressed on Linked records, Files or History opens the Details tab with the form", async ({
+  page,
+}) => {
+  await installLinksApi(page);
+  await openLinksPanel(page);
+  const inspector = page.getByRole("dialog", { name: "Record details" });
+  const details = inspector.getByRole("tab", { name: "Details", exact: true });
+  const edit = inspector.getByRole("button", {
+    name: "Edit record",
+    exact: true,
+  });
+  for (const tab of ["Linked records", "Files", "History"]) {
+    await inspector.getByRole("tab", { name: tab, exact: true }).click();
+    await expect(details).toHaveAttribute("aria-selected", "false");
+    await edit.click();
+    await expect(details).toHaveAttribute("aria-selected", "true");
+    // DR-2.1: focus moves to the first field of the visible form.
+    await expect(
+      inspector.getByRole("textbox", {
+        name: "Request title (required)",
+        exact: true,
+      }),
+    ).toBeFocused();
+    await expect(
+      inspector.getByRole("button", { name: "Save changes", exact: true }),
+    ).toBeVisible();
+    await inspector
+      .getByRole("button", { name: "Cancel", exact: true })
+      .click();
+  }
+});
+
 test("record editing preserves page-two values after metadata refresh", async ({
   page,
 }) => {
