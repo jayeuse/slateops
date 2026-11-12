@@ -1,5 +1,5 @@
 "use client";
-import { useId, useState } from "react";
+import { lazy, Suspense, useId, useState } from "react";
 import { ChevronDown, Plus, Table } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,6 +31,13 @@ import {
 } from "../state/use-comms-sidebar";
 import { ConversationRow } from "./conversation-row";
 import { QuickSwitcher } from "./quick-switcher";
+
+// Loaded on the first typed search, so a cold load carries none of it.
+const PeopleMatches = lazy(() =>
+  import("./people-matches").then((module) => ({
+    default: module.PeopleMatches,
+  })),
+);
 
 export function ConversationList({
   conversation,
@@ -82,6 +89,8 @@ export function ConversationList({
   // Direct-message actions wait for the role: a guest never sees them, even
   // while the check loads or after it fails (D3).
   const startsDirect = !!role && !guest;
+  // Item 5: a typed search also lists people for whoever may start a direct.
+  const findsPeople = startsDirect && !!search.trim();
   const openDirect = () => {
     dialogs.setDirectError("");
     dialogs.setDmOpen(true);
@@ -156,7 +165,11 @@ export function ConversationList({
         )}
       </div>
       <div className="px-2 pt-2">
-        <QuickSwitcher rows={actions.rows} select={select} />
+        <QuickSwitcher
+          rows={actions.rows}
+          select={select}
+          startsDirect={startsDirect}
+        />
       </div>
       <nav aria-label="OpenComms views" className="grid grid-cols-2 gap-1 px-2">
         {(
@@ -235,10 +248,22 @@ export function ConversationList({
               )}
             </section>
           )}
-          {search && !visible.length && (
-            <p className="text-muted-foreground px-2 py-3 text-sm">
-              No conversations match.
-            </p>
+          {findsPeople ? (
+            <Suspense fallback={null}>
+              <PeopleMatches
+                search={search}
+                matches={visible}
+                show="empty"
+                placement="list"
+              />
+            </Suspense>
+          ) : (
+            search &&
+            !visible.length && (
+              <p className="text-muted-foreground px-2 py-3 text-sm">
+                No conversations match.
+              </p>
+            )
           )}
           {channelsHidden && (
             <p className="text-muted-foreground px-2 py-3 text-sm">
@@ -480,6 +505,17 @@ export function ConversationList({
                 </p>
               )}
             </>
+          )}
+          {findsPeople && (
+            <Suspense fallback={null}>
+              <PeopleMatches
+                search={search}
+                matches={visible}
+                show="people"
+                placement="list"
+                onOpen={select}
+              />
+            </Suspense>
           )}
         </div>
       </ScrollArea>

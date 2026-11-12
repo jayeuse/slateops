@@ -1,4 +1,6 @@
 import {
+  answeredHeaders,
+  answeredReference,
   expect,
   expectNoHorizontalScroll,
   signedInAs,
@@ -376,7 +378,7 @@ test("Comms sidebar remains usable on desktop and phone in light and dark", asyn
   expect(errors).toEqual([]);
 });
 
-test("Comms switcher searches authorized conversations and Starred keeps a real saved preference", async ({
+test("Comms switcher searches authorized conversations and Starred keeps a real saved preference (UF-C5.1 empty text)", async ({
   page,
 }) => {
   const ids = await seedSidebar(page);
@@ -395,7 +397,7 @@ test("Comms switcher searches authorized conversations and Starred keeps a real 
     .getByRole("textbox", { name: "Find a conversation", exact: true })
     .fill("does-not-exist");
   await expect(
-    switcher.getByText("No conversations match.", { exact: true }),
+    switcher.getByText("No conversations or people match.", { exact: true }),
   ).toBeVisible();
   await switcher
     .getByRole("textbox", { name: "Find a conversation", exact: true })
@@ -412,6 +414,197 @@ test("Comms switcher searches authorized conversations and Starred keeps a real 
   await expect(switcher).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(switcher).toBeHidden();
+});
+
+test("UF-C5.1 UF-C5.2 Find a conversation lists a person and a pick opens one direct message with the composer focused", async ({
+  page,
+}) => {
+  await seedSidebar(page, "member");
+  const starts: string[] = [];
+  const reads: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/comms/directs"))
+      starts.push(request.url());
+    if (request.url().includes("/comms/direct-candidates?"))
+      reads.push(new URL(request.url()).search);
+  });
+  await page.goto("/comms");
+  const list = page.getByRole("complementary", {
+    name: "Conversations",
+    exact: true,
+  });
+  await expect(
+    list.getByRole("button", { name: /^operations,/ }),
+  ).toBeVisible();
+  // The candidate read runs only after text is typed, never on a cold load.
+  expect(reads).toEqual([]);
+  await list
+    .getByRole("textbox", { name: "Search conversations", exact: true })
+    .fill("Noah");
+  const people = list.getByRole("region", { name: "People", exact: true });
+  const noah = people.getByRole("button", { name: "Noah Tan", exact: true });
+  await expect(noah).toBeVisible();
+  // One read for the typed text, at most five people, shared by both slots.
+  expect(reads).toEqual(["?q=Noah&limit=5"]);
+  await noah.click();
+  await expect(page).toHaveURL(/conversation=/);
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeFocused();
+  expect(starts).toHaveLength(1);
+  // UF-C5.2: the new direct now matches the text, so Noah shows once, as it.
+  await expect(list.getByRole("button", { name: /^Noah Tan/ })).toHaveCount(1);
+  await expect(people).toHaveCount(0);
+});
+
+test("UF-C5.1 the switcher lists a person under People and a pick opens the direct message with the composer focused", async ({
+  page,
+}) => {
+  await seedSidebar(page, "member");
+  await page.goto("/comms");
+  await expect(
+    page.getByRole("button", { name: /^operations,/ }),
+  ).toBeVisible();
+  await page.keyboard.press("Control+k");
+  const switcher = page.getByRole("dialog", {
+    name: "Switch conversation",
+    exact: true,
+  });
+  await switcher
+    .getByRole("textbox", { name: "Find a conversation", exact: true })
+    .fill("Sofia");
+  await switcher
+    .getByRole("region", { name: "People", exact: true })
+    .getByRole("button", { name: "Sofia Garcia", exact: true })
+    .click();
+  await expect(switcher).toBeHidden();
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeFocused();
+  await expect(
+    page
+      .getByRole("complementary", { name: "Conversations", exact: true })
+      .getByRole("button", { name: /^Sofia Garcia/ }),
+  ).toHaveCount(1);
+});
+
+test("UF-C5.1 a failed start keeps the person and the typed name, shows why, and a second pick opens the direct message", async ({
+  page,
+}) => {
+  await seedSidebar(page, "member");
+  let failNext = true;
+  await page.route(
+    (url) => url.pathname === "/api/comms/directs",
+    (route) => {
+      if (!failNext) return route.fallback();
+      failNext = false;
+      return route.fulfill({
+        status: 500,
+        headers: answeredHeaders,
+        json: { detail: "direct insert failed on replica-7" },
+      });
+    },
+  );
+  await page.goto("/comms");
+  const list = page.getByRole("complementary", {
+    name: "Conversations",
+    exact: true,
+  });
+  const search = list.getByRole("textbox", {
+    name: "Search conversations",
+    exact: true,
+  });
+  await search.fill("Noah");
+  const people = list.getByRole("region", { name: "People", exact: true });
+  const noah = people.getByRole("button", { name: "Noah Tan", exact: true });
+  await noah.click();
+  const failure = people.getByRole("alert");
+  await expect(failure).toContainText(
+    "The conversation did not start. Try again.",
+  );
+  await expect(failure).toContainText(answeredReference);
+  await expect(list.getByText("replica-7")).toHaveCount(0);
+  await expect(noah).toBeEnabled();
+  await expect(search).toHaveValue("Noah");
+  await expect(page).not.toHaveURL(/conversation=/);
+  await noah.click();
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeFocused();
+  await expect(page).toHaveURL(/conversation=/);
+  await expect(people.getByRole("alert")).toHaveCount(0);
+});
+
+test("UF-C5.3 a refused or failed people read hides People and shows no server words", async ({
+  page,
+}) => {
+  await seedSidebar(page, "member");
+  const answers = [
+    { status: 403, detail: "candidate policy refused for org-17" },
+    { status: 500, detail: "candidate query timeout on replica-7" },
+  ];
+  await page.route(
+    (url) => url.pathname === "/api/comms/direct-candidates",
+    (route) => {
+      const answer = answers.shift();
+      if (!answer) return route.fallback();
+      return route.fulfill({
+        status: answer.status,
+        headers: answeredHeaders,
+        json: { detail: answer.detail },
+      });
+    },
+  );
+  await page.goto("/comms");
+  const list = page.getByRole("complementary", {
+    name: "Conversations",
+    exact: true,
+  });
+  const search = list.getByRole("textbox", {
+    name: "Search conversations",
+    exact: true,
+  });
+  for (const [text, status] of [
+    ["zz", 403],
+    ["zzy", 500],
+  ] as const) {
+    const answered = page.waitForResponse(
+      (response) =>
+        response.url().includes(`/comms/direct-candidates?q=${text}&`) &&
+        response.status() === status,
+    );
+    await search.fill(text);
+    await answered;
+    await expect(
+      list.getByText("No conversations match.", { exact: true }),
+    ).toBeVisible();
+    await expect(list.getByRole("region", { name: "People" })).toHaveCount(0);
+    await expect(list.getByRole("alert")).toHaveCount(0);
+    await expect(list.getByText(/org-17|replica-7/)).toHaveCount(0);
+  }
+});
+
+test("UF-C5.3 a guest's Find a conversation lists no people and sends no candidate read", async ({
+  page,
+}) => {
+  const { server } = await seedSidebar(page, "guest");
+  const roleCheck = page.waitForResponse((response) =>
+    response.url().includes("/api/comms/capabilities/channel-creation"),
+  );
+  await page.goto("/comms");
+  expect((await roleCheck).ok()).toBe(true);
+  const list = page.getByRole("complementary", {
+    name: "Conversations",
+    exact: true,
+  });
+  await list
+    .getByRole("textbox", { name: "Search conversations", exact: true })
+    .fill("Noah");
+  await expect(
+    list.getByText("No conversations match.", { exact: true }),
+  ).toBeVisible();
+  await expect(list.getByRole("region", { name: "People" })).toHaveCount(0);
+  expect(server.candidateQueries).toEqual([]);
 });
 
 test("Comms Inbox groups authoritative unread counts and category mute preserves mentions until unmuted", async ({
