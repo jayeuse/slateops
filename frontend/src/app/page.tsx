@@ -16,7 +16,7 @@ import { getSessionStatus } from "@/lib/auth-api";
 import { cn } from "@/lib/utils";
 
 const workflow = [
-  ["01", "Set up", "Create the first administrator outside the browser."],
+  ["01", "Join", "Your administrator sends you an invitation by email."],
   ["02", "Model", "Shape departments, modules, and fields around your team."],
   ["03", "Operate", "Work with validated records in one focused workspace."],
 ] as const;
@@ -63,9 +63,6 @@ export default function Home() {
             checkingSession && "invisible",
           )}
         >
-          <Button asChild variant="ghost" size="sm">
-            <a href="/setup">First deployment?</a>
-          </Button>
           <Button asChild size="sm">
             <a href="/login">
               Sign in <ArrowRight aria-hidden="true" />
@@ -94,9 +91,6 @@ export default function Home() {
               <a href="/login">
                 Open workspace <ArrowRight aria-hidden="true" />
               </a>
-            </Button>
-            <Button asChild variant="outline" size="lg">
-              <a href="/setup">Read setup guide</a>
             </Button>
           </div>
           <div className="text-muted-foreground mt-10 flex flex-wrap gap-x-6 gap-y-3 text-sm">
