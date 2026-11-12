@@ -136,7 +136,7 @@ export function useCreatedRecord({
     /** DR-6.1, DR-6.5: the meta-line status. */
     status: current?.statusShown
       ? current.phase === "hidden"
-        ? "Record created. Your filters hide it."
+        ? "Created, hidden by filters."
         : "Record created."
       : "",
     /**

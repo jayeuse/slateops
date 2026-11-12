@@ -5702,6 +5702,12 @@ async function createRecord(page: Page) {
 
 const pageStatus = (page: Page) =>
   page.getByRole("status").filter({ hasText: /^Record created\./ });
+/** The page meta line's status (DA14), whatever it says. */
+const metaStatus = (page: Page) =>
+  page
+    .getByRole("heading", { level: 1 })
+    .locator("xpath=following-sibling::p[1]")
+    .getByRole("status");
 
 for (const presentation of [
   {
@@ -5784,9 +5790,9 @@ test("UF-C6.2: a created record that the filters hide is not listed; the status 
   await createRecord(page);
   await page.keyboard.press("Escape");
 
-  await expect(pageStatus(page)).toHaveText(
-    "Record created. Your filters hide it.",
-  );
+  await expect(metaStatus(page)).toHaveText("Created, hidden by filters.", {
+    useInnerText: true,
+  });
   expect(matchReads).toHaveLength(1);
   expect(matchReads[0]?.filters).not.toEqual([]);
   await expect(
@@ -5929,29 +5935,68 @@ for (const viewport of [
         page.getByRole("dialog", { name: "Record details" }),
       ).toHaveCount(0);
 
-      await expect(pageStatus(page)).toHaveText(
-        scene === "filters hide it"
-          ? "Record created. Your filters hide it."
-          : "Record created.",
+      // DR-6.5: one sentence at every width, whole on one line.
+      const status = metaStatus(page);
+      await expect(status).toHaveText(
+        scene === "grouped view"
+          ? "Record created."
+          : "Created, hidden by filters.",
+        { useInnerText: true },
       );
+      // DR-6.1: below 640px a status with Open record takes the meta text's
+      // place; from 640px they share the line.
+      const metaText = page
+        .getByRole("heading", { level: 1 })
+        .locator("xpath=following-sibling::p[1]")
+        .getByText(/^Field service/);
+      if (viewport.width < 640) await expect(metaText).toBeHidden();
+      else await expect(metaText).toBeVisible();
+      expect(
+        await status.evaluate(
+          (element) =>
+            element.scrollWidth <= element.clientWidth &&
+            element.scrollHeight <= element.clientHeight,
+        ),
+      ).toBe(true);
       const openRecord = page.getByRole("button", {
         name: "Open record",
         exact: true,
       });
       await expect(openRecord).toBeVisible();
       expect((await box(filters)).y).toBe(before);
-      // The line-sized button still takes a 44px target, 32px from 1280px.
+      // The line-sized button takes a 44px tap target, 32px from 1280px:
+      // measure where a tap on its middle column still lands on it.
       const target = await box(openRecord);
-      const reach = viewport.width >= 1280 ? 3 : 9;
-      for (const y of [target.y - reach, target.y + target.height + reach])
-        expect(
-          await page.evaluate(
-            ([x, pointY]) =>
-              document.elementFromPoint(x, pointY)?.closest("button")
-                ?.textContent,
-            [target.x + target.width / 2, y],
-          ),
-        ).toBe("Open record");
+      const hit = await page.evaluate(
+        ([x, top, bottom]) => {
+          const lands = (y: number) =>
+            document.elementFromPoint(x, y)?.closest("button")?.textContent ===
+            "Open record";
+          let first = top;
+          while (lands(first - 1)) first -= 1;
+          let last = bottom;
+          while (lands(last + 1)) last += 1;
+          return last - first + 1;
+        },
+        [
+          target.x + target.width / 2,
+          Math.ceil(target.y),
+          Math.floor(target.y + target.height) - 1,
+        ],
+      );
+      expect(hit).toBeGreaterThanOrEqual(viewport.width >= 1280 ? 32 : 44);
+      expect(target.width).toBeGreaterThanOrEqual(44);
+      // The count stays in the Records tab; the grouped view has none.
+      if (scene === "filters hide it")
+        await expect(page.getByLabel("Equipment page")).toContainText("30");
+
+      // The next action ends the status, and the meta text returns.
+      await page
+        .getByRole("searchbox", { name: "Search Equipment" })
+        .fill("pump");
+      await expect(status).toHaveText("", { useInnerText: true });
+      await expect(metaText).toBeVisible();
+      expect((await box(filters)).y).toBe(before);
     });
   }
 }

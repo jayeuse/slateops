@@ -2805,6 +2805,8 @@ export default function ServerBackedViewsWorkspace({
         reportCount={reportCount}
       />
     ) : null;
+  // Item 6: a status with "Open record" shows on the meta line.
+  const createdOpenShown = createdRecord.openable && !reportsActive && !status;
   const isAdmin =
     identity.data?.role === "admin" && identity.data.id === verifiedUserId;
   return (
@@ -2817,7 +2819,17 @@ export default function ServerBackedViewsWorkspace({
             // controls keep their size, and a status cuts with an ellipsis.
             <span className="flex min-w-0 items-center gap-x-2">
               {meta ? (
-                <span className="shrink-0 whitespace-nowrap">{meta}</span>
+                // DR-6.1: below 640px a status with Open record takes the
+                // meta text's place until it clears; the Records tab keeps
+                // the count.
+                <span
+                  className={cn(
+                    "shrink-0 whitespace-nowrap",
+                    createdOpenShown && "max-sm:hidden",
+                  )}
+                >
+                  {meta}
+                </span>
               ) : null}
               {/* DR-1.2: only a view manager can save, so only they see it. */}
               {dirty && canManageViews && !reportsActive ? (
@@ -2826,9 +2838,9 @@ export default function ServerBackedViewsWorkspace({
                 </Badge>
               ) : null}
               <span role="status" className="line-clamp-1 min-w-0 break-all">
-                {reportsActive ? "" : status || createdRecord.status}
+                {reportsActive ? "" : status ? status : createdRecord.status}
               </span>
-              {createdRecord.openable && !reportsActive && !status ? (
+              {createdOpenShown ? (
                 <Button
                   type="button"
                   variant="ghost"
