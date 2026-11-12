@@ -112,8 +112,12 @@ export function LiveRecordResults({
   onPageSizeChange,
 }: LiveRecordResultsProps) {
   const narrow = useNarrowScreen();
+  // The page's own row is the freshest copy, so it leads when the page has it.
   const rows = newRecord
-    ? [newRecord, ...page.rows.filter((row) => row.id !== newRecord.id)]
+    ? [
+        page.rows.find((row) => row.id === newRecord.id) ?? newRecord,
+        ...page.rows.filter((row) => row.id !== newRecord.id),
+      ]
     : page.rows;
   const newTag = (row: OpenViewRecord) =>
     row.id === newRecord?.id ? <NewRecordTag /> : null;

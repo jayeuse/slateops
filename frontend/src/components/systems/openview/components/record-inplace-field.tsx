@@ -33,8 +33,8 @@ type RecordInPlaceFieldProps = {
  * One value changed in place on the Details tab (DR-2.2, DR-2.3): a Choice
  * list commits on pick and a Checkbox on toggle; a Date or Date and time
  * keeps a draft and commits on Enter or when it loses focus, and Escape puts
- * back the stored value. The parent keys it by the stored value, so a saved
- * or refused value starts a new draft.
+ * back the stored value. The parent keys it by field id; a new stored value
+ * or a settled commit starts a new draft.
  */
 export function RecordInPlaceField({
   id,

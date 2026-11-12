@@ -78,7 +78,6 @@ function record(updatedAt: string, data: Record<string, unknown>) {
 }
 
 const writer = {
-  enabled: true,
   canWrite: true,
   isDeleted: false,
   editing: false,
@@ -122,14 +121,15 @@ test("UF-C2.4 only Choice list, Checkbox, Date and Date and time change in place
   ]);
 });
 
-test("UF-C2.5 readers, guests, deleted records, an open form and a sheet that did not opt in show plain values", () => {
+// The Boards card sheet stays plain because it does not pass the `inPlace`
+// prop (DR-2.12); boards-card-sheets.spec.ts proves that sheet unchanged.
+test("UF-C2.5 readers, guests, deleted records and an open form show plain values", () => {
   const cases: Array<[string, Partial<typeof writer>, string]> = [
     ["writer", {}, "control"],
     // A reader, a guest and a Read-only record have no write access.
     ["no write access", { canWrite: false }, "plain"],
     ["deleted record", { isDeleted: true }, "plain"],
     ["Edit form open (DR-2.11)", { editing: true }, "plain"],
-    ["Boards card sheet (DR-2.12)", { enabled: false }, "plain"],
     // DR-2.13: the control waits, disabled, until every field is loaded.
     ["fields incomplete", { fieldsComplete: false }, "waiting"],
     [

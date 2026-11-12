@@ -39,8 +39,6 @@ export type InPlaceMode = "plain" | "control" | "waiting";
 export function inPlaceMode(
   field: Pick<OpenViewDataSourceField, "type"> | undefined,
   record: {
-    /** The sheet opted in (DR-2.12: OpenView only). */
-    enabled: boolean;
     canWrite: boolean;
     isDeleted: boolean;
     editing: boolean;
@@ -49,7 +47,6 @@ export function inPlaceMode(
 ): InPlaceMode {
   if (
     !field ||
-    !record.enabled ||
     !record.canWrite ||
     record.isDeleted ||
     record.editing ||

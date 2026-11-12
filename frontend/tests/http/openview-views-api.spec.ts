@@ -2798,16 +2798,24 @@ for (const viewer of [
   });
 }
 
-test("UF-C1.5: a writer's record edit and record create still hold against a sidebar click", async ({
+test("UF-C1.5: on a changed view, a sidebar click keeps a writer's record edit and create open with the typed value", async ({
   page,
 }) => {
   await installViewsApi(page, { disableInitialSearch: true });
   await viewAs(page, "writer");
+  await routeQuickFilterCounts(page);
   await installRecordCommands(page);
-  await page.goto(
-    `/openview?section=views&module=${moduleId}&view=${viewId}&record=${recordOneId}`,
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  // A writer's changed view: the guard leaves at once for a non-manager.
+  await page
+    .getByRole("group", { name: "Status" })
+    .getByRole("button", { name: /^In service\s*29$/ })
+    .click();
+  await expect(page).toHaveURL(/[?&]changes=/);
+  await page.getByRole("button", { name: "Centrifugal pump 04" }).click();
+  const details = await openedSheet(
+    page.getByRole("dialog", { name: "Record details" }),
   );
-  const details = page.getByRole("dialog", { name: "Record details" });
   await details.getByRole("button", { name: "Edit record" }).click();
   await details.getByLabel("Serial number").fill("SN-KEPT");
   // A modal sheet hides the sidebar from the accessibility tree, so the row
@@ -2819,11 +2827,13 @@ test("UF-C1.5: a writer's record edit and record create still hold against a sid
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   };
 
+  // The sheet is modal: the page does not change and the typed value stays.
   await leaveBySidebar();
-  await page.keyboard.press("Escape");
-
-  await expect(details.getByLabel("Serial number")).toHaveValue("SN-KEPT");
   await expect(page).toHaveURL(new RegExp(`record=${recordOneId}`));
+  await expect(page).toHaveURL(/[?&]changes=/);
+  await expect(details.getByLabel("Serial number")).toHaveValue("SN-KEPT");
+  await page.keyboard.press("Escape");
+  await expect(details.getByLabel("Serial number")).toHaveValue("SN-KEPT");
 
   await details.getByRole("button", { name: "Cancel" }).click();
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
@@ -5581,45 +5591,86 @@ const createdRecordId = "00000000-0000-4000-8000-000000000059";
 const createdRecordName = "Equipment 30";
 
 /**
- * POST /api/records creates `createdRecordId`. The match read after its sheet
- * closes (its id as search, the view's deleted setting) answers like the
- * server: the record matches only while no filter applies.
+ * POST /api/records creates `createdRecordId`; a GET reads it, a PATCH
+ * changes it and a DELETE deletes it, as the server would. Reads by its id answer from that
+ * state: the match read (the view's deleted setting) finds it only while it
+ * is active and no filter applies.
  */
 async function installCreatedRecord(page: Page) {
   await installRecordCommands(page);
   const matchReads: { filters: unknown[] }[] = [];
+  const statusLabels: Record<string, string> = {
+    [inServiceChoiceId]: "In service",
+    [inspectionDueChoiceId]: "Inspection due",
+  };
+  let current: ReturnType<typeof record> | null = null;
+  let deleted = false;
+  const pageOfCurrent = (items: ReturnType<typeof record>[]) =>
+    JSON.stringify(pageOf(items, { limit: 1, offset: 0, total: items.length }));
   await page.route("**/api/records", async (route: Route) => {
     if (route.request().method() !== "POST") return route.fallback();
+    current = record(createdRecordId, createdRecordName, "In service");
     return route.fulfill({
       status: 201,
       contentType: "application/json",
-      body: JSON.stringify(
-        record(createdRecordId, createdRecordName, "In service"),
-      ),
+      body: JSON.stringify(current),
+    });
+  });
+  await page.route(`**/api/records/${createdRecordId}`, async (route) => {
+    const method = route.request().method();
+    if (!current || !["GET", "PATCH", "DELETE"].includes(method))
+      return route.fallback();
+    if (method === "GET")
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(current),
+      });
+    if (method === "DELETE") {
+      deleted = true;
+      return route.fulfill({ status: 204, body: "" });
+    }
+    const { data } = route.request().postDataJSON() as {
+      data: Record<string, unknown>;
+    };
+    const status = String(data[statusFieldId] ?? "");
+    current = {
+      ...current,
+      data: { ...current.data, ...data },
+      display_values: {
+        ...current.display_values,
+        [statusFieldId]: statusLabels[status] ?? status,
+      },
+      updated_at: "2026-09-24T00:00:00Z",
+    };
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(current),
     });
   });
   await page.route("**/api/records/query", async (route: Route) => {
-    const body = route.request().postDataJSON() as {
+    const { definition } = route.request().postDataJSON() as {
       definition: QueryDefinition;
-      limit?: number;
-      offset?: number;
     };
-    const { definition } = body;
-    if (
-      definition.search !== createdRecordId ||
-      definition.deleted === "include"
-    )
+    if (definition.search !== createdRecordId || !current)
       return route.fallback();
+    if (definition.deleted === "include")
+      return route.fulfill({
+        contentType: "application/json",
+        body: pageOfCurrent([
+          deleted
+            ? {
+                ...current,
+                is_deleted: true,
+                deleted_at: "2026-09-24T00:00:00Z",
+              }
+            : current,
+        ]),
+      });
     matchReads.push({ filters: definition.filters });
-    if (definition.filters.length === 0) return route.fallback();
     return route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify(
-        pageOf([], {
-          limit: body.limit ?? 1,
-          offset: body.offset ?? 0,
-          total: 0,
-        }),
+      body: pageOfCurrent(
+        deleted || definition.filters.length > 0 ? [] : [current],
       ),
     });
   });
@@ -5758,6 +5809,75 @@ test("UF-C6.2: with search text applied, no match read is sent and the status of
     page.getByRole("table").getByText("New", { exact: true }),
   ).toHaveCount(0);
   expect(matchReads).toEqual([]);
+});
+
+test("UF-C6.1 UF-C2.2: a pinned new record shows its value after an in-place change", async ({
+  page,
+}) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  await viewAs(page, "writer");
+  await installCreatedRecord(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await createRecord(page);
+  await page.keyboard.press("Escape");
+  const first = page.getByRole("table").getByRole("row").nth(1);
+  await expect(first).toContainText(createdRecordName);
+  await expect(first).toContainText("In service");
+
+  await first.getByRole("button", { name: createdRecordName }).click();
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Record details" }),
+  );
+  await sheet
+    .getByRole("combobox", { name: "Status", exact: true })
+    .selectOption({ label: "Inspection due" });
+  await expect(
+    sheet.getByRole("status").filter({ hasText: /^Status changed/ }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await expect(first).toContainText(createdRecordName);
+  await expect(first).toContainText("Inspection due");
+  await expect(first).toContainText("New");
+});
+
+test("UF-C6.3: a deleted new record leaves the list", async ({ page }) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  await viewAs(page, "writer");
+  await installCreatedRecord(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  const pager = page.getByText(/^Showing 1–25 of 30/);
+  await expect(pager).toBeVisible();
+  await createRecord(page);
+  await page.keyboard.press("Escape");
+  const table = page.getByRole("table");
+  await table
+    .getByRole("row")
+    .nth(1)
+    .getByRole("button", { name: createdRecordName })
+    .click();
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Record details" }),
+  );
+  await sheet.getByRole("button", { name: "More record actions" }).click();
+  await page.getByRole("menuitem", { name: "Delete record" }).click();
+  await page
+    .getByRole("alertdialog", { name: "Delete this record?" })
+    .getByRole("button", { name: "Delete record" })
+    .click();
+  await expect(page.getByText(/^Record deleted\./)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+
+  // The server's first row leads again; the deleted record is not listed.
+  await expect(table.getByRole("row").nth(1)).toContainText(
+    "Centrifugal pump 04",
+  );
+  await expect(
+    table.getByRole("button", { name: createdRecordName, exact: true }),
+  ).toHaveCount(0);
+  await expect(table.getByText("New", { exact: true })).toHaveCount(0);
+  await expect(pager).toBeVisible();
 });
 
 test("UF-C6.3: a sort change ends the New tag and the status; the record shows only at its sorted place", async ({

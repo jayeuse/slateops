@@ -406,7 +406,7 @@ test("UF-C2.6 a value someone else changed is not overwritten: the field shows t
     "Someone changed this record. It shows their value now.",
   );
   expect(api.state.stored.data[statusId]).toBe("former");
-  await expect(headerStatus(sheet)).toHaveCount(0);
+  await expect(headerStatus(sheet)).toHaveText("");
 });
 
 test("UF-C2.6 a failed save puts back the stored value with Not saved and the reference", async ({
@@ -420,7 +420,7 @@ test("UF-C2.6 a failed save puts back the stored value with Not saved and the re
   await expect(status).toHaveValue("active");
   await expect(status).toHaveAccessibleDescription(/^Not saved\. Try again\./);
   await expect(sheet.getByText(answeredReference)).toBeVisible();
-  await expect(headerStatus(sheet)).toHaveCount(0);
+  await expect(headerStatus(sheet)).toHaveText("");
 });
 
 test("UF-C2.2 while a value saves, the header reads Saving and the other controls and Edit wait", async ({
@@ -520,7 +520,8 @@ for (const role of ["member", "guest"] as const) {
     await expect(sheet.getByRole("textbox")).toHaveCount(0);
     await sheet.getByText("Active", { exact: true }).click();
     await expect(sheet.getByRole("combobox")).toHaveCount(0);
-    await expect(headerStatus(sheet)).toHaveCount(0);
+    await expect(headerStatus(sheet)).toHaveText("");
+    await expect(sheet.getByRole("button", { name: "Undo" })).toHaveCount(0);
     expect(api.state.writes).toEqual([]);
   });
 }

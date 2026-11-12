@@ -562,7 +562,6 @@ export function RecordDetailsControls({
     // The catalog field carries the options and the required rule.
     const field = fields.find((item) => item.id === shownField.id);
     const mode = inPlaceMode(field, {
-      enabled: true,
       canWrite,
       isDeleted: record.isDeleted,
       editing: editing !== null,
