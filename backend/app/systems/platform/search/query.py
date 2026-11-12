@@ -24,6 +24,7 @@ from app.systems.boards.models import Board, BoardStatus
 from app.systems.boards.post_listing import display_join
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.post_service import published_expiry
+from app.systems.platform.search.files import library_files
 from app.systems.platform.search.schemas import (
     SearchItem,
     SearchKind,
@@ -206,6 +207,7 @@ def _records(db: Session, actor: User) -> Subquery:
             Module.module_name.label("context_label"),
             Module.id.label("module_id"),
             literal(None).label("board_id"),
+            literal(None).label("department_id"),
             literal(True).label("can_open"),
         )
         .join(Module, Module.id == Record.module_id)
@@ -233,6 +235,7 @@ def _records(db: Session, actor: User) -> Subquery:
             source.c.context_label,
             source.c.module_id,
             source.c.board_id,
+            source.c.department_id,
             source.c.can_open,
         )
         .select_from(source.outerjoin(numeric_title, true()))
@@ -251,6 +254,7 @@ def _people(db: Session, actor: User) -> Subquery:
         User.username.label("context_label"),
         literal(None).label("module_id"),
         literal(None).label("board_id"),
+        literal(None).label("department_id"),
         literal(administrator).label("can_open"),
         func.concat_ws(" ", User.display_name, User.username).label("search_text"),
     ).join(Membership, bound_membership_join()).where(
@@ -281,6 +285,7 @@ def _posts(db: Session, actor: User) -> Subquery:
             Board.name.label("context_label"),
             literal(None).label("module_id"),
             Board.id.label("board_id"),
+            literal(None).label("department_id"),
             literal(True).label("can_open"),
             func.concat_ws(" ", BoardPostRevision.title, BoardPostRevision.body).label(
                 "search_text"
@@ -307,6 +312,7 @@ def _events(db: Session, actor: User) -> Subquery:
             Board.name.label("context_label"),
             literal(None).label("module_id"),
             Board.id.label("board_id"),
+            literal(None).label("department_id"),
             literal(True).label("can_open"),
             func.concat_ws(" ", BoardEvent.title, BoardEvent.details, BoardEvent.location).label(
                 "search_text"
@@ -333,6 +339,8 @@ def search_content(db: Session, actor: User, params: SearchRequest) -> SearchRes
             candidates = _posts(db, actor)
         case SearchKind.EVENT:
             candidates = _events(db, actor)
+        case SearchKind.FILE:
+            candidates = library_files(db, actor)
     vector = func.to_tsvector("simple", candidates.c.search_text)
     query = func.plainto_tsquery("simple", params.search)
     statement = select(
@@ -341,6 +349,7 @@ def search_content(db: Session, actor: User, params: SearchRequest) -> SearchRes
         candidates.c.context_label,
         candidates.c.module_id,
         candidates.c.board_id,
+        candidates.c.department_id,
         candidates.c.can_open,
     ).where(vector.op("@@")(query))
     spec = ListQuerySpec(

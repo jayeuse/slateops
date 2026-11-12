@@ -223,7 +223,16 @@ def search_page_contains_target(
     step: str,
 ) -> bool:
     rows = validate_platform_page(body, 10, step, offset=offset)
-    keys = {"kind", "id", "title", "context_label", "module_id", "board_id", "can_open"}
+    keys = {
+        "kind",
+        "id",
+        "title",
+        "context_label",
+        "module_id",
+        "board_id",
+        "department_id",
+        "can_open",
+    }
     if any(
         set(row) != keys
         or row["kind"] != kind
@@ -232,6 +241,7 @@ def search_page_contains_target(
         or not isinstance(row["context_label"], str)
         or (row["module_id"] is None) != (kind != "record")
         or (row["board_id"] is None) != (kind not in ("post", "event"))
+        or (row["department_id"] is None) != (kind != "file")
         for row in rows
     ):
         raise SamplePhaseActionError("Search result shape differs", step=step)

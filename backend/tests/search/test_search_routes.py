@@ -101,13 +101,33 @@ def test_empty_search_is_an_empty_standard_page_without_database_queries() -> No
     database.scalar.assert_not_called()
 
 
+def test_file_kind_empty_search_is_an_empty_page_without_database_queries() -> None:
+    """BE-UF1-5: the file kind is a valid kind; an empty search reads nothing."""
+
+    database = Mock(spec=Session)
+    api = _client(database, make_user("search-member")[0])
+    assert _search(api, "file", "   ", limit=5) == {
+        "items": [],
+        "pagination": {
+            "limit": 5,
+            "offset": 0,
+            "count": 0,
+            "total": 0,
+            "total_is_capped": False,
+            "has_more": False,
+        },
+    }
+    database.execute.assert_not_called()
+    database.scalar.assert_not_called()
+
+
 def test_search_requires_identity_and_rejects_invalid_list_parameters() -> None:
     db = Mock(spec=Session)
     assert _client(db, None).get("/api/search?kind=record&search=test").status_code == 401
     api = _client(db, make_user("search-admin")[0])
     for params in (
         {},
-        {"kind": "file"},
+        {"kind": "folder"},
         {"kind": "record", "search": "x" * 101},
         {"kind": "record", "limit": 0},
         {"kind": "record", "limit": 101},
@@ -162,10 +182,12 @@ def test_record_fts_filters_access_before_counts_and_searches_displayed_titles(
             "context_label",
             "module_id",
             "board_id",
+            "department_id",
             "can_open",
         }
         assert first["kind"] == "record" and first["title"] == "Scarlet service pump"
         assert first["board_id"] is None and first["can_open"] is True
+        assert first["department_id"] is None
         pages = [
             _search(_client(db, actor), "record", "pump scarlet", limit=1, offset=i)
             for i in range(3)
