@@ -68,6 +68,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
+import { ErrorReference } from "@/components/ui/error-reference";
+import type { RecordInPlaceStatus } from "../domain/record-inplace-change";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Button } from "@/components/ui/button";
 import {
@@ -394,6 +396,9 @@ export default function ServerBackedViewsWorkspace({
   const [createRecordOpen, setCreateRecordOpen] = useState(false);
   // An open edit form keeps the record dialog from closing by accident.
   const [recordEditing, setRecordEditing] = useState(false);
+  // The record header's in-place status and Undo (item 2, DR-2.5 to DR-2.8).
+  const [recordInPlaceStatus, setRecordInPlaceStatus] =
+    useState<RecordInPlaceStatus | null>(null);
   const [recordPage, setRecordPage] = useState<RecordPageState | null>(null);
   const [recordPageSize, setRecordPageSize] = useState(
     DEFAULT_RECORD_PAGE_SIZE,
@@ -3472,6 +3477,37 @@ export default function ServerBackedViewsWorkspace({
                               ) : canWriteRecords ? null : (
                                 <Badge variant="secondary">Read-only</Badge>
                               )}
+                              {/* A value changed in place (DR-2.4 to
+                                DR-2.8): its status, then its Undo. */}
+                              {recordInPlaceStatus ? (
+                                <span
+                                  role="status"
+                                  className={
+                                    recordInPlaceStatus.kind === "failed"
+                                      ? "text-destructive"
+                                      : "text-foreground"
+                                  }
+                                >
+                                  {recordInPlaceStatus.message}
+                                  {recordInPlaceStatus.kind === "failed" ? (
+                                    <ErrorReference
+                                      id={recordInPlaceStatus.reference}
+                                      className="mt-0"
+                                    />
+                                  ) : null}
+                                </span>
+                              ) : null}
+                              {recordInPlaceStatus?.kind === "saved" &&
+                              recordInPlaceStatus.undo ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  className="text-action-text min-h-11 px-1.5 underline-offset-4 hover:bg-transparent hover:underline xl:h-8 xl:min-h-8"
+                                  onClick={recordInPlaceStatus.undo}
+                                >
+                                  Undo
+                                </Button>
+                              ) : null}
                             </p>
                           ) : null}
                         </div>
@@ -3564,6 +3600,7 @@ export default function ServerBackedViewsWorkspace({
                                   setRecordChanges((value) => value + 1);
                                 },
                                 onEditingChange: setRecordEditing,
+                                inPlace: { onStatus: setRecordInPlaceStatus },
                               }
                             : undefined
                         }
