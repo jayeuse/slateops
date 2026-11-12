@@ -36,15 +36,21 @@ import {
 } from "@/lib/api";
 import {
   currentOrganizationId,
+  lastOrganizationId,
   setCurrentOrganizationId,
 } from "@/lib/organization-context";
+import {
+  lastOrganizationToOpen,
+  openRefusalKind,
+  type OpenRefusalKind,
+} from "@/lib/last-organization";
 import { subscribeIdentityChanges } from "@/lib/session-broadcast";
 import { OrganizationGate } from "@/components/organization-gate";
 import { toast } from "@/components/ui/toast";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { ApiErrorText } from "@/lib/api-errors";
+import { apiErrorReference, type ApiErrorText } from "@/lib/api-errors";
 import { referenceViewerFor, setReferenceViewer } from "@/lib/reference-viewer";
 import { useErrorText } from "@/lib/use-error-text";
 import {
@@ -71,6 +77,8 @@ type GateCheck = SessionCheck | "organization";
 type OrganizationChoice = {
   memberships: OrganizationMembership[];
   invitations: PendingInvitation[];
+  /** The automatic open of the last organization was refused (DR-13.3). */
+  refusal?: { organization: string; kind: OpenRefusalKind; reference?: string };
 };
 
 // The shortest persisted workspace idle policy is fifteen minutes. Renewal
@@ -242,6 +250,14 @@ export function AppPage({ children }: AppPageProps) {
   const [organizationChoice, setOrganizationChoice] =
     useState<OrganizationChoice | null>(null);
   const signOutAccepted = useRef(false);
+  // The account whose sign-in already tried the last organization: one try,
+  // so a refusal or a later chooser never retries by itself.
+  const lastOrganizationTried = useRef<string | null>(null);
+  // Its refusal stays on the chooser through later checks until a pick.
+  const lastOrganizationRefusal = useRef<{
+    accountId: string;
+    refusal: NonNullable<OrganizationChoice["refusal"]>;
+  } | null>(null);
   const activityAttempt = useRef<{ userId: string; at: number } | null>(null);
   const stopActivityRenewal = useRef<(() => void) | null>(null);
   const [retryVersion, setRetryVersion] = useState(0);
@@ -453,6 +469,11 @@ export function AppPage({ children }: AppPageProps) {
         let responseOrganizationId: string | null = null;
         let responseAccountOnly = false;
         let choice: OrganizationChoice | null = null;
+        // The last organization opened: check the session again, as after a pick.
+        let reopened = false;
+        // The select found no live session (401): the session check decides,
+        // with its refresh and sign-in page, not the chooser (DR-13.3).
+        let sessionGone = false;
         try {
           const body = await getSessionStatus(controller.signal).catch(
             (error: unknown) => {
@@ -528,11 +549,78 @@ export function AppPage({ children }: AppPageProps) {
               else if (me.currentOrganization)
                 responseOrganizationId = me.currentOrganization.orgId;
               else {
-                result = "organization";
-                choice = {
-                  memberships: me.memberships,
-                  invitations: me.pendingInvitations,
-                };
+                // The organization this browser opened last opens when it is
+                // one of this account's memberships (DR-13.1); the server
+                // checks it exactly as a pick. A refusal never enters the
+                // organization's two-step or network screen (DR-13.3).
+                const last =
+                  lastOrganizationTried.current === me.id
+                    ? null
+                    : lastOrganizationToOpen(
+                        lastOrganizationId(),
+                        me.memberships,
+                      );
+                let refusal: OrganizationChoice["refusal"] =
+                  lastOrganizationRefusal.current?.accountId === me.id
+                    ? lastOrganizationRefusal.current.refusal
+                    : undefined;
+                if (last !== null) {
+                  lastOrganizationTried.current = me.id;
+                  try {
+                    const opened = await selectOrganization(
+                      last,
+                      controller.signal,
+                    );
+                    if (opened.id !== me.id) result = "unavailable";
+                    else reopened = true;
+                  } catch (caught) {
+                    // A newer check superseded this one: it tries again.
+                    if (controller.signal.aborted) {
+                      lastOrganizationTried.current = null;
+                      throw caught;
+                    }
+                    if (caught instanceof ApiError && caught.status === 401) {
+                      // The one try is spent; the recheck does not try again.
+                      sessionGone = true;
+                    } else {
+                      refusal = {
+                        organization:
+                          me.memberships.find(
+                            (membership) => membership.orgId === last,
+                          )?.name ?? "",
+                        kind:
+                          caught instanceof ApiError
+                            ? openRefusalKind(
+                                caught.status,
+                                caught.code ?? null,
+                              )
+                            : openRefusalKind(null, null),
+                        reference: apiErrorReference(caught),
+                      };
+                      lastOrganizationRefusal.current = {
+                        accountId: me.id,
+                        refusal,
+                      };
+                    }
+                  }
+                }
+                if (reopened) {
+                  // Only while this check is current and the account is the
+                  // same; a newer check or sign-out supersedes it.
+                  if (
+                    mounted.current &&
+                    current.requestId === requestId &&
+                    !signOutAccepted.current
+                  )
+                    setCurrentOrganizationId(last);
+                } else if (!sessionGone && result !== "unavailable") {
+                  result = "organization";
+                  choice = {
+                    memberships: me.memberships,
+                    invitations: me.pendingInvitations,
+                    ...(refusal ? { refusal } : {}),
+                  };
+                }
               }
             }
           }
@@ -569,6 +657,12 @@ export function AppPage({ children }: AppPageProps) {
         // Do not let a response for an older pathname or retry affect the UI;
         // the loop will immediately process the newest queued request.
         if (current.nextVersion > requested.version) continue;
+        // The last organization opened: run the check again, as after a pick.
+        // The page stays as it is meanwhile (DR-13.2).
+        if (reopened || sessionGone) {
+          current.queued ??= requested;
+          continue;
+        }
         // A refused tab organization may still permit account settings. This
         // offers navigation only; Profile must pass its own session recheck.
         setAccountProfileAvailable(
@@ -824,12 +918,14 @@ export function AppPage({ children }: AppPageProps) {
   }
 
   async function chooseOrganization(organization: OrganizationMembership) {
+    lastOrganizationRefusal.current = null;
     await openOrganization(organization.orgId);
     retrySessionCheck();
   }
 
   async function joinOrganization(invitation: PendingInvitation) {
     await acceptOrganizationInvitation(invitation.id);
+    lastOrganizationRefusal.current = null;
     try {
       await openOrganization(invitation.orgId);
     } catch {
@@ -873,6 +969,7 @@ export function AppPage({ children }: AppPageProps) {
       onCheckAgain={retrySessionCheck}
       onSignOut={() => void signOutFromGate()}
       signOutError={signOutError}
+      refusal={organizationChoice.refusal}
     />
   ) : mfaRequired && mfa.mode === "gate" ? (
     <section

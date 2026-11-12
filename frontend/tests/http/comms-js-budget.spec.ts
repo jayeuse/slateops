@@ -43,9 +43,16 @@ const gzip = {
 // into 4 chunks (about 840 bytes in CI), and the lifecycle derived_changes
 // schema adds 78 bytes. Measured 556,386 in CI and 555,297 locally at
 // 5dbc909f. Revert if the owner prefers trimming.
+// Raised to 560,000 on 2026-11-12 for the approved UX friction pass (APR-0003,
+// PR #108): the sidebar's Tools by access level with their descriptions and the
+// new breadcrumbs (item 7), the automatic open of the last organization with
+// the chooser's reason (item 13), and the people entry and matches-only filter
+// of the conversation list (item 5; the filter alone is 73 bytes locally).
+// Together 1,437 bytes in CI: 556,647 at deb555d2, 558,084 at b0d9ca05;
+// 556,958 locally. Revert if the owner prefers trimming.
 // Growth is reported against the last recorded measurement.
 const s04BaselineColdGzipBytes = 546_979;
-const coldTargetGzipBytes = 558_000;
+const coldTargetGzipBytes = 560_000;
 // docs/plans/ci-stability.md D3: a cold load within this many bytes of the
 // target warns, so the pull request that adds approved shell code records a new
 // target in the same commit instead of after a red run.

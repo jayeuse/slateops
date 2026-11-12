@@ -29,10 +29,12 @@ export const OPERATOR_LABELS: Record<OpenViewFilterOperator, string> = {
   prefix: "starts with",
   suffix: "ends with",
   in: "is one of",
+  // DR-9.3: one "no value" pair. `blank` and `not_blank` back it; a saved
+  // `empty` or `not_empty` reads apart where its result differs.
   empty: "is empty",
   not_empty: "is not empty",
-  blank: "is blank",
-  not_blank: "is not blank",
+  blank: "is empty",
+  not_blank: "is not empty",
 };
 
 export type SavedDraft = {
@@ -140,16 +142,56 @@ export function changedSavedViewFields(
     : ["Revision changed without visible field changes"];
 }
 
+/**
+ * DR-9.3: a condition's label. A saved `empty` or `not_empty` on a text-like
+ * field reads "(exact)": it matches no value but keeps a value of only
+ * spaces, where the offered pair counts that as empty. Elsewhere the result is
+ * the same, so the label is too.
+ */
+/** DR-9.3: the text fields, where a value of only spaces counts as empty. */
+const TEXT_FIELD_TYPES = new Set<OpenViewQueryFieldType>([
+  "text",
+  "long_text",
+  "email",
+  "url",
+]);
+
+export function readsExact(
+  operator: OpenViewFilterOperator,
+  type: OpenViewQueryFieldType,
+): boolean {
+  return (
+    (operator === "empty" || operator === "not_empty") &&
+    TEXT_FIELD_TYPES.has(type)
+  );
+}
+
+export function operatorLabel(
+  operator: OpenViewFilterOperator,
+  type: OpenViewQueryFieldType,
+): string {
+  return readsExact(operator, type)
+    ? `${OPERATOR_LABELS[operator]} (exact)`
+    : OPERATOR_LABELS[operator];
+}
+
+/**
+ * The conditions a field offers. The "no value" pair is `blank` and
+ * `not_blank` (DR-9.3); a saved `empty` or `not_empty` (`current`) stays
+ * listed so the condition keeps its stored operator.
+ */
 export function operatorChoices(
   type: OpenViewQueryFieldType,
+  current?: OpenViewFilterOperator,
 ): OpenViewFilterOperator[] {
+  const kept: OpenViewFilterOperator[] =
+    current === "empty" || current === "not_empty" ? [current] : [];
   const common: OpenViewFilterOperator[] = [
     "eq",
     "neq",
-    "empty",
-    "not_empty",
     "blank",
     "not_blank",
+    ...kept,
   ];
   if (SEARCHABLE_TYPES.has(type)) {
     return type === "select"

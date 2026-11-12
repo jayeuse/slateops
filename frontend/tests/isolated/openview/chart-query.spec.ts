@@ -4,6 +4,8 @@ import {
   compileChartEditorDraft,
   isNumericField,
   newChartEditorDraft,
+  operatorLabel,
+  operatorsFor,
   type ChartEditorDraft,
 } from "../../../src/components/systems/openview/domain/chart-query";
 
@@ -154,3 +156,28 @@ for (const current of [
     ).toEqual({ widgetType: "chart", config: current.config });
   });
 }
+
+// UF-C9.3 in Charts: the same one "no value" pair and labels as Views.
+test("UF-C9.3: a chart filter offers one no-value pair and a saved empty reads (exact) on text", () => {
+  const name = field("00000000-0000-4000-8000-000000000112", "Name", "text", 7);
+  const score = fields[4] as OpenViewDataSourceField;
+  for (const item of [name, score]) {
+    expect(operatorsFor(item)).toContain("blank");
+    expect(operatorsFor(item)).not.toContain("empty");
+    expect(operatorsFor(item)).not.toContain("not_empty");
+  }
+  expect(operatorsFor(name, "empty")).toContain("empty");
+  expect([
+    operatorLabel("blank", "text"),
+    operatorLabel("not_blank", "number"),
+    operatorLabel("empty", "text"),
+    operatorLabel("not_empty", "text"),
+    operatorLabel("empty", "number"),
+  ]).toEqual([
+    "Is empty",
+    "Is not empty",
+    "Is empty (exact)",
+    "Is not empty (exact)",
+    "Is empty",
+  ]);
+});

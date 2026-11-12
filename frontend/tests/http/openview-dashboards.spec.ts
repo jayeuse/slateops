@@ -14,6 +14,8 @@ import {
   reader,
   card,
   editLayout,
+  groupQuery,
+  widget,
 } from "./helpers/openview-dashboard-api";
 
 // docs/specs/openview-dashboard.md, part B: the department dashboard.
@@ -53,7 +55,7 @@ test("each department's Dashboard row opens its home dashboard, read once per mo
   await expect(
     page.getByRole("heading", { level: 1, name: "Field service dashboard" }),
   ).toBeVisible();
-  await expect(card(page, "Number of Equipment")).toContainText("12");
+  await expect(card(page, "Equipment")).toContainText("12");
   await expect(card(page, "Equipment by Category")).toContainText("Repair");
   await expect(card(page, "Quality checks by Result")).toContainText(
     "1–2 of 2",
@@ -85,7 +87,7 @@ test("a widget on a module the viewer cannot read is a locked card while the oth
   const locked = card(page, "Number");
   await expect(locked).toContainText("No access to these records");
   await expect(locked).toContainText("Ask an administrator for access.");
-  await expect(card(page, "Number of Equipment")).toContainText("12");
+  await expect(card(page, "Equipment")).toContainText("12");
   await expect(card(page, "Equipment by Category")).toContainText("Repair");
   await expect(page.getByText("OpenView data is unavailable")).toHaveCount(0);
   // A reader sees the dashboard, with no layout controls (BD2).
@@ -102,7 +104,7 @@ test("a source in a linked department names that department on its card", async 
     dashboards: [dashboardWire({ widgets: [invoicesNumber()] })],
   });
   await page.goto(homeUrl);
-  const linked = card(page, "Number of Invoices");
+  const linked = card(page, "Invoices");
   await expect(linked).toContainText("Finance");
   await expect(linked).toContainText("12");
 });
@@ -260,7 +262,8 @@ test("a manager arranges the layout with the keyboard alone and saves one update
   await page.goto(homeUrl);
   await editLayout(page);
   const handle = page.getByRole("button", {
-    name: "Move or resize Number of Equipment",
+    name: "Move or resize Equipment",
+    exact: true,
   });
   await handle.focus();
   await page.keyboard.press("ArrowRight");
@@ -350,7 +353,8 @@ test("dragging a widget by pointer moves it to the cells under it", async ({
   await page.goto(homeUrl);
   await editLayout(page);
   const handle = page.getByRole("button", {
-    name: "Move or resize Number of Equipment",
+    name: "Move or resize Equipment",
+    exact: true,
   });
   const target = page.getByRole("button", {
     name: "Add a widget at column 3, row 2",
@@ -358,7 +362,7 @@ test("dragging a widget by pointer moves it to the cells under it", async ({
   const from = await handle.boundingBox();
   const to = await target.boundingBox();
   if (!from || !to) throw new Error("The grid is not laid out");
-  const cell = await card(page, "Number of Equipment").boundingBox();
+  const cell = await card(page, "Equipment").boundingBox();
   if (!cell) throw new Error("The card is not laid out");
   // Grab the handle and drop the card's corner on column 3, row 2.
   await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
@@ -396,7 +400,7 @@ test("a layout refusal marks the widget it names, and a conflict keeps the edit 
   await page.goto(homeUrl);
   await editLayout(page);
   await page
-    .getByRole("button", { name: "Move or resize Number of Equipment" })
+    .getByRole("button", { name: "Move or resize Equipment", exact: true })
     .focus();
   await page.keyboard.press("ArrowRight");
   api.nextSaveFailure = {
@@ -446,7 +450,7 @@ test("leaving with unsaved layout changes asks first", async ({ page }) => {
   await page.goto(homeUrl);
   await editLayout(page);
   await page
-    .getByRole("button", { name: "Move or resize Number of Equipment" })
+    .getByRole("button", { name: "Move or resize Equipment", exact: true })
     .focus();
   await page.keyboard.press("ArrowDown");
   await page
@@ -544,7 +548,7 @@ test("phones stack the widgets in reading order and keep the layout for larger s
         cards.map((element) => element.getAttribute("aria-label")),
       ),
   ).resolves.toEqual([
-    "Number of Equipment",
+    "Equipment",
     "Equipment by Category",
     "Quality checks by Result",
   ]);
@@ -676,7 +680,7 @@ test("the cadence reads again on time and waits while the layout is being edited
     ],
   });
   await page.goto(homeUrl);
-  await expect(card(page, "Number of Equipment")).toContainText("12");
+  await expect(card(page, "Equipment")).toContainText("12");
   expect(api.batches).toHaveLength(1);
   await page.clock.runFor(60_000);
   await expect.poll(() => api.batches.length).toBe(2);
@@ -707,7 +711,7 @@ test("after archiving the only dashboard a manager restores it from the setup st
   await expect(
     page.getByRole("heading", { level: 1, name: "Field service dashboard" }),
   ).toBeVisible();
-  await expect(card(page, "Number of Equipment")).toContainText("12");
+  await expect(card(page, "Equipment")).toContainText("12");
   expect(api.writes.map((write) => [write.method, write.path])).toEqual([
     ["DELETE", `/api/dashboards/${ids.home}`],
     ["POST", `/api/dashboards/${ids.home}/restore`],
@@ -747,13 +751,13 @@ test("cards, spaces and empty cells follow reading order, so a move changes the 
   await page.goto(homeUrl);
   await editLayout(page);
   await page
-    .getByRole("button", { name: "Move or resize Number of Equipment" })
+    .getByRole("button", { name: "Move or resize Equipment", exact: true })
     .focus();
   await page.keyboard.press("ArrowDown");
   // Row 1 now reads: an empty cell, Invoices, two empty cells; Equipment
   // has moved to row 2.
-  await card(page, "Number of Invoices")
-    .getByRole("button", { name: "Number of Invoices, actions" })
+  await card(page, "Invoices")
+    .getByRole("button", { name: "Invoices, actions" })
     .focus();
   await page.keyboard.press("Tab");
   await expect(
@@ -801,4 +805,44 @@ test("a widget whose read fails says so and reads again on Retry", async ({
   await failed.getByRole("button", { name: "Retry" }).click();
   await expect(failed).toContainText("Repair");
   await expect(failed.getByRole("alert")).toHaveCount(0);
+});
+
+// UF-C9.4 (DR-9.4, DR-9.5): widget titles read as plain names from the
+// query, and a Number with no single value says so in words.
+test("UF-C9.4: widget titles are plain names and an empty Number reads No values yet", async ({
+  page,
+}) => {
+  await installDashboardApi(page, {
+    identity: manager,
+    dashboards: [
+      dashboardWire({
+        widgets: [
+          equipmentNumber(),
+          invoicesNumber(),
+          equipmentBar(),
+          // A distinct count over two groups has no single value to show.
+          widget("summary", at(1, 0, 1, 1), {
+            version: 1,
+            query: {
+              ...groupQuery(ids.equipment, ids.category),
+              aggregation: "distinct",
+              measure: { field_id: ids.category, expected_type: "select" },
+            },
+          }),
+        ],
+      }),
+    ],
+  });
+  await page.goto(homeUrl);
+
+  // The chart reads "Equipment" until its fields load, then gains "by …".
+  await expect(card(page, "Equipment by Category")).toContainText("Repair");
+  await expect(card(page, "Equipment")).toContainText("12");
+  await expect(card(page, "Invoices")).toBeVisible();
+  const empty = card(page, "Different category values");
+  await expect(empty).toContainText("No values yet");
+  await expect(empty).not.toContainText("—");
+  await expect(
+    page.getByRole("article", { name: /^(Number of|Sum of) / }),
+  ).toHaveCount(0);
 });

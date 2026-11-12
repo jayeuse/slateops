@@ -17,7 +17,11 @@ import {
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
-import { currentNavigationKey } from "@/components/workspace-navigation";
+import {
+  accessNavigationFor,
+  currentNavigationKey,
+} from "@/components/workspace-navigation";
+import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import { useUserPreferences } from "@/components/theme-provider";
 import {
   useVerifiedWorkspaceUserId,
@@ -26,6 +30,7 @@ import {
 import { subscribeWorkspaceInvalidations } from "@/components/systems/shared/adapters/invalidation-events";
 import { helpWorkspaceContactsOptions } from "@/components/systems/manage/adapters/manage-queries";
 import {
+  COMMS_SHORTCUTS,
   SANDBOX_SHORTCUTS,
   SANDBOX_SHORTCUT_SCOPE,
   sandboxShortcutKeys,
@@ -127,6 +132,11 @@ export function HelpPanel() {
   );
   const enabled = keyboardShortcuts === true && !disabled;
   const preferencePending = loading || saving;
+  // The Sandbox keys belong to people who can open the Sandbox (DR-9.6); a
+  // loading or failed identity shows none.
+  const identity = useQuery(authMeOptions());
+  const sandbox = accessNavigationFor(identity.data) === "all";
+  const switchConversation = COMMS_SHORTCUTS.switchConversation;
   return (
     <Sheet open={open && !suspended} onOpenChange={setOpen}>
       <SheetTrigger
@@ -214,29 +224,46 @@ export function HelpPanel() {
                 Account settings.
               </p>
             ) : null}
-            <p className="text-muted-foreground text-xs">
-              {SANDBOX_SHORTCUT_SCOPE} only. Text editing and open dialogs keep
-              their own controls.
-            </p>
-            <dl className="space-y-3 text-sm">
-              {Object.values(SANDBOX_SHORTCUTS)
-                .filter((shortcut) => enabled || shortcut.browserStandard)
-                .map((shortcut) => (
-                  <div key={shortcut.label} className="space-y-1">
-                    <dt className="font-medium">{shortcut.label}</dt>
-                    <dd className="text-muted-foreground flex flex-wrap gap-1.5">
-                      {sandboxShortcutKeys(shortcut).map((keys) => (
-                        <kbd
-                          key={keys}
-                          className="bg-muted rounded border px-1.5 py-0.5 text-xs"
-                        >
-                          {keys}
-                        </kbd>
-                      ))}
-                    </dd>
-                  </div>
-                ))}
-            </dl>
+            {enabled ? (
+              <dl className="space-y-3 text-sm">
+                <div className="space-y-1">
+                  <dt className="font-medium">{switchConversation.label}</dt>
+                  <dd className="text-muted-foreground flex flex-wrap items-center gap-1.5">
+                    <kbd className="bg-muted rounded border px-1.5 py-0.5 text-xs">
+                      {`${switchConversation.modifier} + ${switchConversation.key.toUpperCase()}`}
+                    </kbd>
+                    <span className="text-xs">in OpenComms</span>
+                  </dd>
+                </div>
+              </dl>
+            ) : null}
+            {sandbox ? (
+              <>
+                <p className="text-muted-foreground text-xs">
+                  {SANDBOX_SHORTCUT_SCOPE} only. Text editing and open dialogs
+                  keep their own controls.
+                </p>
+                <dl className="space-y-3 text-sm">
+                  {Object.values(SANDBOX_SHORTCUTS)
+                    .filter((shortcut) => enabled || shortcut.browserStandard)
+                    .map((shortcut) => (
+                      <div key={shortcut.label} className="space-y-1">
+                        <dt className="font-medium">{shortcut.label}</dt>
+                        <dd className="text-muted-foreground flex flex-wrap gap-1.5">
+                          {sandboxShortcutKeys(shortcut).map((keys) => (
+                            <kbd
+                              key={keys}
+                              className="bg-muted rounded border px-1.5 py-0.5 text-xs"
+                            >
+                              {keys}
+                            </kbd>
+                          ))}
+                        </dd>
+                      </div>
+                    ))}
+                </dl>
+              </>
+            ) : null}
             <p className="text-muted-foreground text-xs">
               Standard undo and redo remain available when shortcuts are off.
               Arrow editing and Enter or Space activation always work.

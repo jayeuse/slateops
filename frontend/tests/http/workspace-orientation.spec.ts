@@ -42,10 +42,11 @@ test("the breadcrumb names the workspace and its open section, and a phone shows
   await signIn(page);
   await page.goto("/platform?section=files");
   const breadcrumb = page.getByRole("navigation", { name: "Breadcrumb" });
-  await expect(
-    breadcrumb.getByRole("link", { name: "Platform" }),
-  ).toBeVisible();
+  // The /platform pages name no Platform crumb (DR-7.7).
   await expect(breadcrumb.locator('[aria-current="page"]')).toHaveText("Files");
+  await expect(breadcrumb.getByRole("link", { name: "Platform" })).toHaveCount(
+    0,
+  );
 
   await page.goto("/sandbox?section=history");
   await expect(

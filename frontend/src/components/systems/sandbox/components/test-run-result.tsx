@@ -39,7 +39,7 @@ export type TestResultCardProps = {
   administrator: { id: string; name: string } | null;
   /** Null until the first request: the values wait for a field (E4). */
   run: SandboxTestRun | null;
-  /** "Example item", or "Example item · <trigger> only". */
+  /** "Example record", or "Example record · <trigger> only". */
   title: string;
   fields: readonly SandboxDocumentField[];
   values: Readonly<Record<string, SandboxFieldValue>>;

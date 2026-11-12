@@ -128,7 +128,7 @@ function eventParts(
   const trigger = draft.trigger;
   switch (trigger.kind) {
     case "record-created":
-      return [plain("When an item is added to "), moduleName];
+      return [plain("When a record is added to "), moduleName];
     case "field-changed":
       return [
         plain("When "),

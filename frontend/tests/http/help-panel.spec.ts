@@ -234,6 +234,8 @@ test("Help fits a phone and lists the existing Sandbox Build keys, not a new glo
   page,
 }) => {
   const api = await installHelpApi(page);
+  // The Sandbox keys show only to an account that can open the Sandbox.
+  api.role = "admin";
   api.workspace = {
     ...fullWorkspace,
     contact_email:
@@ -288,6 +290,33 @@ test("Help fits a phone and lists the existing Sandbox Build keys, not a new glo
   await expect(close).toBeInViewport();
   expect((await close.boundingBox())?.height).toBeGreaterThanOrEqual(44);
 });
+
+// docs/specs/ux-friction-pass.md DR-9.6.
+for (const [role, sandbox] of [
+  ["member", false],
+  ["guest", false],
+  ["admin", true],
+] as const)
+  test(`UF-C9.5 Help lists the Sandbox shortcuts to ${role === "admin" ? "an administrator" : `a ${role}`} only when the account can open the Sandbox`, async ({
+    page,
+  }) => {
+    const api = await installHelpApi(page);
+    api.role = role;
+    await visitPlatform(page);
+    await openHelp(page);
+    await expect(
+      shortcuts(page).getByText(/^Sandbox · Build only\./),
+    ).toHaveCount(sandbox ? 1 : 0);
+    await expect(
+      shortcuts(page).getByText("Rename the selected item", { exact: true }),
+    ).toHaveCount(sandbox ? 1 : 0);
+    await expect(
+      shortcuts(page).getByText("Undo", { exact: true }),
+    ).toHaveCount(sandbox ? 1 : 0);
+    await expect(
+      shortcuts(page).getByText("Switch conversation", { exact: true }),
+    ).toBeVisible();
+  });
 
 test("Help off text links to Profile and updates its guide after client navigation", async ({
   page,
@@ -349,6 +378,8 @@ test("Help failed preferences explain recovery without claiming enabled keys or 
   page,
 }) => {
   const api = await installHelpApi(page);
+  // The Sandbox keys show only to an account that can open the Sandbox.
+  api.role = "admin";
   api.onPreferences = (route) =>
     route.fulfill({
       status: 503,
@@ -727,6 +758,8 @@ for (const viewport of [
       page,
     }) => {
       const api = await installHelpApi(page);
+      // The Sandbox keys show only to an account that can open the Sandbox.
+      api.role = "admin";
       api.workspace = {
         ...fullWorkspace,
         contact_email:

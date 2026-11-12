@@ -21,7 +21,7 @@ A **Status** note appears only when the term is not fully implemented. Status wo
 | Slate Operations | "Slate" (planned name) | The current product name. A rename to Slate is planned; its timing is not decided. | Customer |
 | Organization | `organizations` table, `WorkspaceProfile`, `org_id`, `/api/workspace`, `workspace_*` columns, Manage tab "Organization" | The customer and the one system it owns: its people, departments, records, and settings. One installation holds one or more organizations, and each one sees only its own data. | Customer |
 | Installation | "Supabase Compose installation", "client", "deployment" | One self-hosted copy of Slate Operations with its own Compose project, credentials, and volumes. It holds one or more organizations. See [Supabase Compose installation](#infrastructure-and-identity). | Internal |
-| Workspace | `WorkspaceNavigationGroup`, sidebar group | One area in the sidebar: Sandbox, Boards, Access, OpenView, Manage, or Platform. OpenComms and Appearance are links below the groups. Do not use "workspace" for the whole organization in new writing. | Internal |
+| Workspace | `WorkspaceNavigationGroup`, `WorkspaceTool`, sidebar group | One area of the app: Sandbox, Boards, Access, OpenView, Manage, or Platform. The sidebar's Tools list only what the person can use (`getWorkspaceTools`): Sandbox, Boards, Access, and Manage for an administrator, then a Files group with Import & export; everyone else gets a Files row, and Organization and System health as rows when they are all of Manage the person sees. Platform has no sidebar group. OpenComms and Appearance are links below the groups. Do not use "workspace" for the whole organization in new writing. | Internal |
 | Section | `?section=`, `?view=`, `item`, `ViewTab` | One sub-page inside a workspace, for example Sandbox → Build. The URL key is `section` in most workspaces and `view` in Access and Manage. | Internal |
 | System actor | "runs as the workspace", `actor_label`, empty `performed_by` | A change that no person makes, for example a record trigger or a scheduled report. The audit entry has no user and names the source in `actor_label`. | Internal |
 | Organization builder | — | The internal product category. Customer copy speaks about ownership and outcome instead. | Internal |
@@ -151,7 +151,7 @@ Organization settings, audit/security events, backups and job monitoring. Backen
 
 ## Platform
 
-Shared services for every workspace. Backend package: `app/systems/platform/`. "Platform" is the name of this sidebar group only; do not use it for the product.
+Shared services for every workspace. Backend package: `app/systems/platform/`. "Platform" names the `/platform` page and this package only; do not use it for the product. The sidebar has no Platform group: Files is a sidebar tool, Search opens from the header, and Notifications from the bell's "View all". Each `/platform?section=…` address still opens its section.
 
 | Term | Also appears as | Meaning | Copy |
 | --- | --- | --- | --- |

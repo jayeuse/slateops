@@ -6,10 +6,12 @@ import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Activity,
   BarChart3,
+  Building2,
   ChevronRight,
+  FileText,
   FolderKanban,
-  Layers3,
   Settings,
   ShieldCheck,
   Workflow,
@@ -29,6 +31,7 @@ import {
   installationOwnerFor,
   currentNavigationKey,
   getWorkspaceNavigation,
+  getWorkspaceTools,
   isWorkspaceNavigationGroupActive,
   isWorkspaceNavigationItemActive,
 } from "@/components/workspace-navigation";
@@ -92,7 +95,15 @@ const groupIcons = {
   access: ShieldCheck,
   openview: BarChart3,
   manage: Settings,
-  platform: Layers3,
+  platform: FileText,
+} as const;
+
+// Icons of the Tools' top-level rows (Files, and Manage's two rows when they
+// are all of Manage a person sees).
+const rowIcons = {
+  files: FileText,
+  organization: Building2,
+  health: Activity,
 } as const;
 
 const PREFETCH_INTENT_DELAY_MS = 120;
@@ -195,15 +206,17 @@ export function AppNavigation({
       cancelled = true;
     };
   }, [suspended, jobsAwaitingRole, queryClient]);
+  // Roles belong to memberships: the current organization's role decides.
+  const access = accessNavigationFor(identity.data);
   const groups = getWorkspaceNavigation(
     pathname,
     searchParams,
-    // Roles belong to memberships: the current organization's role decides.
-    accessNavigationFor(identity.data),
+    access,
     jobsAdmitted,
     installationOwnerFor(identity.data),
     (auditDepartmentsFor(identity.data)?.length ?? 0) > 0,
   );
+  const tools = getWorkspaceTools(groups, access);
   const departments = useDepartmentNavigation(pathname, searchParams);
   const moduleId = currentModuleId(pathname, searchParams);
   const dashboardDepartmentId = currentDashboardDepartmentId(
@@ -376,10 +389,13 @@ export function AppNavigation({
     description?: string;
     icon: ReactNode;
     active: boolean;
+    /** Open before the person toggles it; the active group by default. */
+    defaultOpen?: boolean;
     listLabel?: string;
     items: { id: string; label: string; href: string; active: boolean }[];
   }) {
-    const open = !collapsed && (expanded[group.key] ?? group.active);
+    const open =
+      !collapsed && (expanded[group.key] ?? group.defaultOpen ?? group.active);
     const showDescription = Boolean(
       surface === "drawer" && group.description && !open,
     );
@@ -485,6 +501,72 @@ export function AppNavigation({
     );
   }
 
+  // A top-level Tools row opens one section, as the OpenComms row does: it
+  // carries its own active fill, and its description like a group's.
+  function renderRow(row: {
+    key: string;
+    label: string;
+    description?: string;
+    icon: ReactNode;
+    href: string;
+    active: boolean;
+  }) {
+    const showDescription = Boolean(surface === "drawer" && row.description);
+    const descriptionId = `${descriptionIdPrefix}-${row.key}-description`;
+    return (
+      <SidebarMenuItem key={row.key}>
+        <SidebarMenuButton
+          render={
+            <Link
+              href={row.href as Route}
+              prefetch={false}
+              onNavigate={(event) => navigate(row.href, event)}
+              onPointerEnter={() => schedulePrefetch(row.href)}
+              onPointerLeave={() => cancelPrefetch(row.href)}
+              onFocus={() => schedulePrefetch(row.href)}
+              onBlur={() => cancelPrefetch(row.href)}
+            />
+          }
+          isActive={row.active}
+          aria-current={row.active ? "page" : undefined}
+          aria-label={row.label}
+          aria-describedby={showDescription ? descriptionId : undefined}
+          aria-description={
+            surface === "sidebar" ? row.description || undefined : undefined
+          }
+          title={
+            surface === "drawer"
+              ? undefined
+              : collapsed
+                ? row.description
+                  ? `${row.label} — ${row.description}`
+                  : row.label
+                : row.description || undefined
+          }
+          className={cn(
+            navigationRowSize(surface),
+            navigationActiveInk,
+            navigationIconStroke,
+            showDescription && "h-auto py-1.5",
+          )}
+        >
+          {row.icon}
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate">{row.label}</span>
+            {showDescription ? (
+              <span
+                id={descriptionId}
+                className="text-sidebar-muted truncate text-xs font-normal"
+              >
+                {row.description}
+              </span>
+            ) : null}
+          </span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    );
+  }
+
   return (
     <SidebarGroup className="p-0">
       <nav
@@ -584,30 +666,57 @@ export function AppNavigation({
           </>
         ) : null}
         <SidebarMenu className="gap-0.5">
-          {groups.map((group) => {
+          {tools.map((tool) => {
+            if (tool.kind === "row") {
+              const Icon = rowIcons[tool.itemId as keyof typeof rowIcons];
+              return renderRow({
+                key: `${tool.groupId}:${tool.id}`,
+                label: tool.label,
+                description: tool.description,
+                icon: <Icon aria-hidden="true" />,
+                href: tool.href,
+                active: isWorkspaceNavigationItemActive(
+                  tool.groupId,
+                  tool.itemId,
+                  pathname,
+                  searchParams,
+                  hash,
+                ),
+              });
+            }
+            const group = tool.group;
             const Icon = groupIcons[group.id as keyof typeof groupIcons];
+            const items =
+              group.id === "boards"
+                ? boardRows
+                : group.items.map((item) => ({
+                    id: item.id,
+                    label: item.label,
+                    href: item.href,
+                    active: isWorkspaceNavigationItemActive(
+                      group.id,
+                      item.id,
+                      pathname,
+                      searchParams,
+                      hash,
+                    ),
+                  }));
             return renderGroup({
               key: group.id,
               label: group.label,
               description: group.description,
               icon: <Icon aria-hidden="true" />,
-              active: groupActive(group),
-              ...(group.id === "boards"
-                ? { listLabel: "Boards", items: boardRows }
-                : {
-                    items: group.items.map((item) => ({
-                      id: item.id,
-                      label: item.label,
-                      href: item.href,
-                      active: isWorkspaceNavigationItemActive(
-                        group.id,
-                        item.id,
-                        pathname,
-                        searchParams,
-                        hash,
-                      ),
-                    })),
-                  }),
+              // Search and Notifications share /platform but have no row
+              // here, so Files is current only on its own sections (DR-7.6);
+              // it still opens on every /platform page.
+              ...(group.id === "platform"
+                ? {
+                    active: items.some((item) => item.active),
+                    defaultOpen: groupActive(group),
+                  }
+                : { active: groupActive(group) }),
+              ...(group.id === "boards" ? { listLabel: "Boards" } : {}),
+              items,
             });
           })}
         </SidebarMenu>

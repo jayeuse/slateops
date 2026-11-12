@@ -7,6 +7,10 @@ import {
   publicationFieldKey,
   type PublishReviewDesign,
 } from "../../../src/components/systems/sandbox/components/publish-change-groups";
+import {
+  createdModules,
+  publishedModuleLinks,
+} from "../../../src/components/systems/sandbox/components/review-publish-dialog";
 import type { SandboxPublicationChange } from "../../../src/components/systems/sandbox/state/api";
 import { staticMarkup } from "./static-markup";
 
@@ -232,33 +236,125 @@ function review(changes: Change[], design: PublishReviewDesign): string {
   return staticMarkup(PublishChangeGroups, { changes, design });
 }
 
-// S1 and SD-C1 (contributor): the summary counts each setup kind, so it
-// matches the preview `counts`.
-test("a review summary counts each kind of department setup", () => {
+// UF-11.2, DR-11.1: the summary counts only what the owner drew. Department
+// setup leaves the line; it shows as "Comes with" under its department.
+test("UF-C11.1 a review summary counts what the owner drew, not department setup", () => {
   const sales = {
     kind: "department",
     action: "create",
     sandboxId: "sales",
     label: "Sales",
   } as const;
+  const linksCustomer = {
+    kind: "relationship",
+    action: "create",
+    sandboxId: "bills",
+    label: "Bills customer",
+  } as const;
   expect(
     publicationChangeSummary([
       sales,
       ...setupChanges("sales", "Sales", "create"),
-      ...changes(2, "module", "create"),
+      ...changes(1, "module", "create"),
+      ...changes(2, "field", "create"),
+      linksCustomer,
     ]),
-  ).toBe(
-    "1 new department · 3 new groups · 1 new dashboard · 1 new Board · 1 new category · 1 new channel · 2 new modules",
-  );
+  ).toBe("1 new department · 1 new module · 2 new fields · 1 new relationship");
+  // A trigger stays on the line, so a trigger-only publish is not empty.
   expect(
     publicationChangeSummary([
       sales,
       ...setupChanges("sales", "Sales", "create"),
       ...changes(1, "trigger", "update"),
     ]),
-  ).toBe(
-    "1 department change · 3 group changes · 1 dashboard change · 1 Board change · 1 category change · 1 channel change · 1 trigger change",
+  ).toBe("1 department change · 1 trigger change");
+  // A setup change alone gives no line; its row still shows below.
+  expect(
+    publicationChangeSummary([
+      {
+        kind: "board",
+        action: "update",
+        sandboxId: "warehouse#board",
+        label: "Warehouse",
+      },
+    ]),
+  ).toBe("");
+});
+
+// UF-11.3, DR-11.2: one line directly under a new department's name says
+// what the publish creates for it; the full setup list stays under it.
+test("UF-C11.1 a new department says what comes with it, above its full setup list", () => {
+  const sales = {
+    kind: "department",
+    action: "create",
+    sandboxId: "sales",
+    label: "Sales",
+  } as const;
+  const orders = {
+    id: "orders",
+    departmentId: "sales",
+    name: "Orders",
+    closed: false,
+    fields: [{ id: "number" }, { id: "total" }],
+  };
+  const html = review(
+    [
+      sales,
+      ...setupChanges("sales", "Sales", "create"),
+      {
+        kind: "module",
+        action: "create",
+        sandboxId: "orders",
+        label: "Orders",
+      },
+      {
+        kind: "field",
+        action: "create",
+        sandboxId: publicationFieldKey("orders", "number"),
+        label: "Number",
+      },
+      {
+        kind: "field",
+        action: "create",
+        sandboxId: publicationFieldKey("orders", "total"),
+        label: "Total",
+      },
+    ],
+    reviewDesign([{ id: "sales", name: "Sales", closed: false }], [orders]),
   );
+  expect(text(html)).toContain(
+    "1 new department · 1 new module · 2 new fields Departments Sales Comes with: 3 access groups · home dashboard · Announcements board · chat category and channel Group Sales managers",
+  );
+  expect(setupRows(html, "Sales")).toEqual(salesSetupRows);
+
+  // It lists only the kinds this publish creates: here the channel is off.
+  const noChannel = review(
+    [
+      sales,
+      ...setupChanges("sales", "Sales", "create").filter(
+        (change) => change.kind !== "channel",
+      ),
+    ],
+    reviewDesign([{ id: "sales", name: "Sales", closed: false }], [orders]),
+  );
+  expect(text(noChannel)).toContain(
+    "Sales Comes with: 3 access groups · home dashboard · Announcements board · chat category Group",
+  );
+
+  // A department that is not new says nothing comes with it.
+  const renamed = review(
+    [
+      {
+        kind: "department",
+        action: "update",
+        sandboxId: "sales",
+        label: "Sales",
+      },
+      ...setupChanges("sales", "Sales", "update"),
+    ],
+    salesOpen,
+  );
+  expect(renamed).not.toContain("Comes with");
 });
 
 // S1 and S7 (SD-C23): setup items sit under their department in R2 order,
@@ -321,7 +417,7 @@ test("the review nests setup changes under their department in a fixed order", (
 // S1: a first publish shares one action, so no row has a chip; the setup
 // list is open and named, and the sidebar note sits under the new
 // department that has no open module yet (SD15).
-test("a new department lists its setup with the sidebar note", () => {
+test("UF-C11.1 a new department lists its setup with Comes with and the sidebar note", () => {
   const html = review(
     [
       {
@@ -348,7 +444,7 @@ test("a new department lists its setup with the sidebar note", () => {
   expect(setupRows(html, "Sales")).toEqual(salesSetupRows);
   expect(html).not.toContain('data-slot="badge"');
   expect(text(html)).toContain(
-    "Sales Not in the sidebar until it has a module. Group Sales managers",
+    "Sales Comes with: 3 access groups · home dashboard · Announcements board · chat category and channel Not in the sidebar until it has a module. Group Sales managers",
   );
 });
 
@@ -450,4 +546,132 @@ test("setup rows of a renamed, closed, or reopened department show only differin
     "Board Sales",
     "Restored Channel Sales",
   ]);
+});
+
+// UF-11.1, DR-11.4 to DR-11.6: Published links each open module the publish
+// creates to its records, by the live id that the bindings read after the
+// publish names. A module with no live binding gets no link.
+test("UF-C11.2 Published links each new open module by its live binding", () => {
+  const design = reviewDesign(
+    [
+      { id: "ops", name: "Operations", closed: false },
+      { id: "sales", name: "Sales", closed: false },
+    ],
+    [
+      {
+        id: "orders",
+        departmentId: "sales",
+        name: "Orders",
+        closed: false,
+        fields: [],
+      },
+      {
+        id: "archive",
+        departmentId: "sales",
+        name: "Archive",
+        closed: true,
+        fields: [],
+      },
+      {
+        id: "assets",
+        departmentId: "ops",
+        name: "Assets",
+        closed: false,
+        fields: [],
+      },
+      {
+        id: "unbound",
+        departmentId: "ops",
+        name: "Unbound",
+        closed: false,
+        fields: [],
+      },
+    ],
+  );
+  const created = createdModules(
+    [
+      {
+        kind: "module",
+        action: "create",
+        sandboxId: "orders",
+        label: "Orders",
+      },
+      // Created closed: nobody opens its records.
+      {
+        kind: "module",
+        action: "create",
+        sandboxId: "archive",
+        label: "Archive",
+      },
+      // Changed, not new.
+      {
+        kind: "module",
+        action: "update",
+        sandboxId: "assets",
+        label: "Assets",
+      },
+      {
+        kind: "module",
+        action: "create",
+        sandboxId: "unbound",
+        label: "Unbound",
+      },
+      { kind: "field", action: "create", sandboxId: "orders", label: "Orders" },
+    ],
+    design,
+  );
+  expect(created).toEqual([
+    {
+      id: "orders",
+      name: "Orders",
+      departmentName: "Sales",
+      departmentIndex: 1,
+    },
+    {
+      id: "unbound",
+      name: "Unbound",
+      departmentName: "Operations",
+      departmentIndex: 0,
+    },
+  ]);
+  const ordersLive = "00000000-0000-4000-8000-0000000000a1";
+  expect(
+    publishedModuleLinks(created, [
+      {
+        kind: "module",
+        sandbox_id: "orders",
+        parent_sandbox_id: null,
+        live_id: ordersLive,
+        is_deleted: false,
+      },
+      // Another kind with the same sandbox id is not the module.
+      {
+        kind: "department",
+        sandbox_id: "unbound",
+        parent_sandbox_id: null,
+        live_id: "00000000-0000-4000-8000-0000000000a2",
+        is_deleted: false,
+      },
+    ]),
+  ).toEqual([
+    {
+      id: "orders",
+      name: "Orders",
+      departmentName: "Sales",
+      departmentIndex: 1,
+      href: `/openview?section=views&module=${ordersLive}`,
+    },
+  ]);
+  // A deleted live module gets no link.
+  expect(
+    publishedModuleLinks(created, [
+      {
+        kind: "module",
+        sandbox_id: "orders",
+        parent_sandbox_id: null,
+        live_id: ordersLive,
+        is_deleted: true,
+      },
+    ]),
+  ).toEqual([]);
 });

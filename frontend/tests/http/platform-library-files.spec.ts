@@ -589,7 +589,9 @@ test("Library files: direct department picker excludes module-only grants and pr
       exact: true,
     }),
   ).toBeVisible();
-  await page.getByRole("link", { name: "Search", exact: true }).click();
+  await page
+    .getByRole("link", { name: "Search workspace", exact: true })
+    .click();
   await expect(
     page.getByRole("searchbox", { name: "Search workspace" }),
   ).toBeVisible();
@@ -854,7 +856,9 @@ test("Library files: unknown reservation outcome survives department and section
       exact: true,
     }),
   ).toBeVisible();
-  await page.getByRole("link", { name: "Search", exact: true }).click();
+  await page
+    .getByRole("link", { name: "Search workspace", exact: true })
+    .click();
   await expect(
     page.getByRole("searchbox", { name: "Search workspace" }),
   ).toBeVisible();

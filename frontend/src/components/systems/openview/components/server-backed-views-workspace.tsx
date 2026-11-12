@@ -121,7 +121,7 @@ import {
   isFilterApplied,
   isFilterReady,
   normalizeFilterValues,
-  OPERATOR_LABELS,
+  operatorLabel,
   upsertSavedView,
 } from "../domain/server-view-draft";
 import type { SavedDraft } from "../domain/server-view-draft";
@@ -267,7 +267,8 @@ function filterCondition(
   filter: OpenViewQueryDefinition["filters"][number],
   field: OpenViewDataSourceField | undefined,
 ): string {
-  const label = OPERATOR_LABELS[filter.operator];
+  // DR-9.3: the chip reads a stored empty apart where its result differs.
+  const label = operatorLabel(filter.operator, filter.expectedType);
   if (filter.expectedType === "user") return `${label} person`;
   if (filter.value === null || filter.value === undefined) return label;
   if (filter.expectedType === "select") {
@@ -2818,47 +2819,20 @@ export default function ServerBackedViewsWorkspace({
         <PageHeader
           title={moduleName ?? "Records"}
           description={
-            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="relative flex flex-wrap items-center gap-x-2 gap-y-1">
               {/* DR-6.1: an item 6 status takes the meta text's place at
-                every width. The meta keeps its box, invisible and out of the
-                accessibility tree, so the line and the toolbar never move;
-                the status layer sits over it. The Records tab keeps the
-                count and the breadcrumb the department. */}
-              <span className="relative">
-                {meta ? (
-                  <span className={cn(createdStatusActive && "invisible")}>
-                    {meta}
-                  </span>
-                ) : null}
-                <span className="absolute top-0 left-0 flex items-center gap-x-2 whitespace-nowrap">
-                  <span role="status">
-                    {createdStatusActive ? status || createdRecord.status : ""}
-                  </span>
-                  {createdOpenShown ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      // Sized to the line (h-auto leaves the slim 32px rule;
-                      // min-h-0! the phone 44px floor); the hit area still
-                      // reaches 44px, and 32px from 1280px.
-                      className="text-action-text relative h-auto min-h-0! shrink-0 px-1.5 py-0 leading-6 whitespace-nowrap underline-offset-4 after:absolute after:inset-x-0 after:-inset-y-2.5 after:content-[''] hover:bg-transparent hover:underline xl:after:-inset-y-1"
-                      onClick={() =>
-                        createdRecord.id &&
-                        openRecordFromResults(
-                          createdRecord.id,
-                          undefined,
-                          false,
-                        )
-                      }
-                    >
-                      Open record
-                    </Button>
-                  ) : null}
+                every width. The meta and the badge keep their boxes,
+                invisible and out of the accessibility tree, so the line and
+                the toolbar never move. The Records tab keeps the count and
+                the breadcrumb the department. */}
+              {meta ? (
+                <span className={cn(createdStatusActive && "invisible")}>
+                  {meta}
                 </span>
-              </span>
+              ) : null}
               {/* DR-1.2: only a view manager can save, so only they see it.
-                It yields with the meta text while an item 6 status shows
-                (kept in place, invisible); Save view still shows the change. */}
+                It yields with the meta text while an item 6 status shows;
+                Save view still shows the change. */}
               {dirty && canManageViews && !reportsActive ? (
                 <Badge
                   variant="outline"
@@ -2867,9 +2841,43 @@ export default function ServerBackedViewsWorkspace({
                   Unsaved changes
                 </Badge>
               ) : null}
-              <span role="status">
-                {reportsActive || createdStatusActive ? "" : status}
+              {/* One status region for every page status (DA14 and item 6),
+                never remounted: at rest it sits in the line as before; while
+                an item 6 status shows, its wrapper lies over the meta text's
+                place. */}
+              <span
+                className={
+                  createdStatusActive
+                    ? "absolute top-0 left-0 flex items-center gap-x-2 whitespace-nowrap"
+                    : "contents"
+                }
+              >
+                <span role="status">
+                  {reportsActive ? "" : status || createdRecord.status}
+                </span>
+                {createdOpenShown ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    // Sized to the line (h-auto leaves the slim 32px rule;
+                    // min-h-0! the phone 44px floor); the hit area still
+                    // reaches 44px, and 32px from 1280px.
+                    className="text-action-text relative h-auto min-h-0! shrink-0 px-1.5 py-0 leading-6 whitespace-nowrap underline-offset-4 after:absolute after:inset-x-0 after:-inset-y-2.5 after:content-[''] hover:bg-transparent hover:underline xl:after:-inset-y-1"
+                    // Opens the record without clearing the status
+                    // (fromList false): DR-6.1 clears it only when a record is
+                    // opened from the list.
+                    onClick={() =>
+                      createdRecord.id &&
+                      openRecordFromResults(createdRecord.id, undefined, false)
+                    }
+                  >
+                    Open record
+                  </Button>
+                ) : null}
               </span>
+              {/* Holds the status's empty place in the line while its wrapper
+                is lifted, so the line keeps its rest height. */}
+              {createdStatusActive ? <span aria-hidden="true" /> : null}
             </span>
           }
           actions={
@@ -3320,7 +3328,7 @@ export default function ServerBackedViewsWorkspace({
                       </Alert>
                     ) : generalGroupedView && !generalSelectedGroup ? (
                       <Alert role="note">
-                        Select a group to load its records.
+                        Choose a group to see its records.
                       </Alert>
                     ) : rowError && pageRows.length === 0 ? (
                       <Empty>

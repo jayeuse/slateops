@@ -92,7 +92,7 @@ test("a field whose settings allow no value is named once, by its error under th
     draftRevision: 1,
     administrator: null,
     run: null,
-    title: "Example item",
+    title: "Example record",
     fields,
     values: { amount: 1, status: "open", paid: false, stage: null },
     startValues: { amount: 1, status: "open", paid: false, stage: null },
@@ -135,7 +135,7 @@ test("Try this trigger takes the action ink only while it can run", () => {
     const html = staticMarkup(TestEventBlock, {
       block: {
         key: "added",
-        title: "When an item is added",
+        title: "When a record is added",
         event: { kind: "record-created" },
         triggers: [
           {
@@ -174,7 +174,7 @@ test("Change values, Clear results and Open review take the action ink only whil
       draftRevision: 1,
       administrator: null,
       run: null,
-      title: "Example item",
+      title: "Example record",
       fields: design.modules[0]!.fields,
       values: {},
       startValues: {},

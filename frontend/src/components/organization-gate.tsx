@@ -7,6 +7,10 @@ import { Building2, ChevronRight, MailOpen } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { apiErrorReference, type ApiErrorText } from "@/lib/api-errors";
+import {
+  openRefusalMessage,
+  type OpenRefusalKind,
+} from "@/lib/last-organization";
 import type {
   AccountRole,
   OrganizationMembership,
@@ -106,6 +110,8 @@ type OrganizationGateProps = {
   onSignOut: () => void;
   /** A failed sign-out and its request's reference (D1.4). */
   signOutError: ApiErrorText | null;
+  /** Why the last organization did not open by itself (DR-13.3). */
+  refusal?: { organization: string; kind: OpenRefusalKind; reference?: string };
 };
 
 /**
@@ -121,6 +127,7 @@ export function OrganizationGate({
   onCheckAgain,
   onSignOut,
   signOutError,
+  refusal,
 }: OrganizationGateProps) {
   const [opening, setOpening] = useState<string | null>(null);
   const [openFailed, setOpenFailed] = useState<{
@@ -161,6 +168,17 @@ export function OrganizationGate({
           ? "Your account belongs to more than one organization. Choose the one to open in this tab."
           : "Your account is ready, but it is not part of an organization yet. Join one from an invitation, or ask an administrator to invite you."}
       </p>
+      {refusal && hasOrganizations ? (
+        // Two-step and network rules are a policy the person meets, not a
+        // failure (DR-13.3); only "could not be opened" is, with its reference.
+        <Alert
+          variant={refusal.kind === "other" ? "destructive" : "warning"}
+          className="mt-4"
+          reference={refusal.kind === "other" ? refusal.reference : null}
+        >
+          {openRefusalMessage(refusal.organization, refusal.kind)}
+        </Alert>
+      ) : null}
 
       {hasOrganizations ? (
         <div className="mt-6 space-y-3">

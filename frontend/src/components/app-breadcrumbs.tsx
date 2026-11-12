@@ -132,7 +132,7 @@ export function AppBreadcrumbs() {
           </BreadcrumbLink>
         </BreadcrumbItem>
         <BreadcrumbSeparator className="max-sm:hidden" />
-        {location ? (
+        {location?.workspace ? (
           <>
             <BreadcrumbItem className="shrink-0 max-sm:hidden">
               <BreadcrumbLink

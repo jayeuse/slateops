@@ -376,7 +376,7 @@ test(
     await expect(detail).not.toContainText("is required");
     await expect(modulePicker).toHaveText(/Choose a module/);
     await expect(detail).toHaveAccessibleDescription(
-      "When an item is added to a module, no action yet.",
+      "When a record is added to a module, no action yet.",
     );
 
     await page.getByRole("button", { name: "Save triggers" }).click();
@@ -523,7 +523,7 @@ test(
         close(icon.height, 16);
         expect(icon.x + icon.width).toBeLessThanOrEqual(box.x + box.width);
         // No event word shows; it stays for assistive technology.
-        const word = row.getByText(/^(Item added|Schedule|Field changed)$/);
+        const word = row.getByText(/^(Record added|Schedule|Field changed)$/);
         expect((await word.boundingBox())!.width).toBeLessThanOrEqual(1);
       }
       // The name never drops below 8rem, and a long name ends in an ellipsis.
@@ -557,7 +557,7 @@ test(
     await page.getByRole("button", { name: "Save triggers" }).click();
     await checkBadge("Incomplete");
     await expect(newRow).toHaveAccessibleName(
-      "On, New trigger, Item added, Incomplete",
+      "On, New trigger, Record added, Incomplete",
     );
 
     for (const size of [
@@ -675,7 +675,7 @@ test("on a phone, choosing a trigger shows its detail first, with Back", async (
   await expectBelowAppBar(page, heading);
   // The whole-trigger sentence describes the detail.
   await expect(detail).toHaveAccessibleDescription(
-    /^When an item is added to Service requests/,
+    /^When a record is added to Service requests/,
   );
   await expect(detail.getByLabel("Trigger name")).toBeVisible();
   // The Status switch has a tap target past its box: a click 20 px to its
@@ -767,7 +767,7 @@ test("the rail edits each step in place and the sentence follows", async ({
   const ifStep = page.getByRole("region", { name: "If", exact: true });
   const then = page.getByRole("region", { name: "Then", exact: true });
   await expect(detail).toHaveAccessibleDescription(
-    /^When an item is added to Service requests,/,
+    /^When a record is added to Service requests,/,
   );
   await expect(then.getByRole("group", { name: "Action 1" })).toBeVisible();
   await then.getByRole("button", { name: "Add action" }).click();
@@ -945,7 +945,7 @@ async function expectNewTriggerOn(page: Page, module: string, fields: number) {
     page.getByRole("combobox", { name: "Event", exact: true }),
   ).toBeFocused();
   await expect(detail).toHaveAccessibleDescription(
-    `When an item is added to ${module}, no action yet.`,
+    `When a record is added to ${module}, no action yet.`,
   );
   // The structure region shows that module, not the whole design.
   await expect(
@@ -956,7 +956,7 @@ async function expectNewTriggerOn(page: Page, module: string, fields: number) {
   await expect(
     page
       .getByRole("navigation", { name: "Trigger list" })
-      .getByRole("button", { name: "On, New trigger, Item added, Unsaved" }),
+      .getByRole("button", { name: "On, New trigger, Record added, Unsaved" }),
   ).toBeVisible();
 }
 

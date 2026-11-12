@@ -1,5 +1,12 @@
 "use client";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +19,13 @@ import {
 import { useUserPreferences } from "@/components/theme-provider";
 import { COMMS_SHORTCUTS } from "@/lib/shortcuts";
 import type { SidebarRow } from "../state/use-comms-sidebar";
+
+// Loaded on the first typed search, so a cold load carries none of it.
+const PeopleMatches = lazy(() =>
+  import("./people-matches").then((module) => ({
+    default: module.PeopleMatches,
+  })),
+);
 
 const noSubscription = () => () => {};
 /** Apple keyboards say Command; the static export renders Ctrl until hydrated. */
@@ -26,9 +40,12 @@ function useAppleKeyboard() {
 export function QuickSwitcher({
   rows,
   select,
+  startsDirect,
 }: {
   rows: SidebarRow[];
   select: (id: string) => void;
+  /** Whether this person may start a direct message (never a guest). */
+  startsDirect: boolean;
 }) {
   const [open, setOpen] = useState(false),
     [search, setSearch] = useState("");
@@ -37,7 +54,10 @@ export function QuickSwitcher({
   // The hint shows only while the shortcut works.
   const shortcut = keyboardShortcuts === true && !disabled;
   const opener = useRef<HTMLElement | null>(null);
+  // A started direct sends focus to its composer, not back to the opener.
+  const returnFocus = useRef(true);
   function show() {
+    returnFocus.current = true;
     opener.current =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
@@ -68,7 +88,7 @@ export function QuickSwitcher({
   const matches = rows.filter(
     (row) =>
       !row.preferences.hidden &&
-      row.name.toLowerCase().includes(search.toLowerCase()),
+      row.name.toLowerCase().includes(search.trim().toLowerCase()),
   );
   return (
     <>
@@ -99,7 +119,7 @@ export function QuickSwitcher({
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
-          finalFocus={() => opener.current}
+          finalFocus={() => (returnFocus.current ? opener.current : false)}
           className="max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
         >
           <DialogTitle>Switch conversation</DialogTitle>
@@ -126,10 +146,26 @@ export function QuickSwitcher({
                 {row.name}
               </Button>
             ))}
-            {!matches.length && (
-              <p className="text-muted-foreground py-4 text-sm">
-                No conversations match.
-              </p>
+            {startsDirect && search.trim() ? (
+              <Suspense fallback={null}>
+                <PeopleMatches
+                  search={search}
+                  matches={matches}
+                  show="both"
+                  placement="switcher"
+                  onOpen={select}
+                  onStarted={() => {
+                    returnFocus.current = false;
+                    setOpen(false);
+                  }}
+                />
+              </Suspense>
+            ) : (
+              !matches.length && (
+                <p className="text-muted-foreground py-4 text-sm">
+                  No conversations match.
+                </p>
+              )
             )}
           </div>
           <Button

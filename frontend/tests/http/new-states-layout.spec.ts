@@ -277,10 +277,10 @@ test("a Test result with a field that allows no value fits the window at every w
   await page.goto("/sandbox?section=test");
   const reading = page.getByRole("region", { name: "Reading", exact: true });
   await reading
-    .getByRole("button", { name: "Try it: When an item is added" })
+    .getByRole("button", { name: "Try it: When a record is added" })
     .click();
   const stage = reading
-    .getByRole("region", { name: "Example item", exact: true })
+    .getByRole("region", { name: "Example record", exact: true })
     .getByLabel("Stage");
   await expect(stage).toHaveAccessibleDescription(
     "Its settings allow no value. Enter one to run.",

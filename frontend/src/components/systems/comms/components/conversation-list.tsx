@@ -1,5 +1,5 @@
 "use client";
-import { useId, useState } from "react";
+import { lazy, Suspense, useId, useState } from "react";
 import { ChevronDown, Plus, Table } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +32,13 @@ import {
 import { ConversationRow } from "./conversation-row";
 import { QuickSwitcher } from "./quick-switcher";
 
+// Loaded on the first typed search, so a cold load carries none of it.
+const PeopleMatches = lazy(() =>
+  import("./people-matches").then((module) => ({
+    default: module.PeopleMatches,
+  })),
+);
+
 export function ConversationList({
   conversation,
   navigation,
@@ -62,26 +69,29 @@ export function ConversationList({
   const role = creationCheck.data?.membership_role;
   const guest = role === "guest";
   const startTitleId = useId();
+  // DR-5.7: while the filter has text, only what matches shows.
+  // Trimmed, as the People read trims it; only spaces count as no text.
+  const typed = search.trim().toLowerCase();
   const visible = actions.rows.filter(
-    (row) =>
-      !row.preferences.hidden &&
-      row.name.toLowerCase().includes(search.toLowerCase()),
+    (row) => !row.preferences.hidden && row.name.toLowerCase().includes(typed),
   );
   const hasChannels = actions.rows.some(
     (item) => item.conversation.kind === "channel",
   );
   // Channels exist but the viewer hid every one of them.
   const channelsHidden =
-    !search &&
+    !typed &&
     hasChannels &&
     !visible.some((item) => item.conversation.kind === "channel");
-  const firstRun = !search && !visible.length && !hasChannels;
+  const firstRun = !typed && !visible.length && !hasChannels;
   const hasDirect = visible.some(
     (item) => item.conversation.kind !== "channel",
   );
   // Direct-message actions wait for the role: a guest never sees them, even
   // while the check loads or after it fails (D3).
   const startsDirect = !!role && !guest;
+  // Item 5: a typed search also lists people for whoever may start a direct.
+  const findsPeople = startsDirect && !!typed;
   const openDirect = () => {
     dialogs.setDirectError("");
     dialogs.setDmOpen(true);
@@ -127,7 +137,11 @@ export function ConversationList({
     ).keys(),
   ]
     .flatMap((id) => records.find((record) => record.id === id) ?? [])
+    .filter((record) => record.title.toLowerCase().includes(typed))
     .slice(0, 4);
+  const directRows = visible.filter(
+    (item) => item.conversation.kind !== "channel" && !item.preferences.starred,
+  );
   return (
     <aside
       id="comms-channels"
@@ -156,7 +170,11 @@ export function ConversationList({
         )}
       </div>
       <div className="px-2 pt-2">
-        <QuickSwitcher rows={actions.rows} select={select} />
+        <QuickSwitcher
+          rows={actions.rows}
+          select={select}
+          startsDirect={startsDirect}
+        />
       </div>
       <nav aria-label="OpenComms views" className="grid grid-cols-2 gap-1 px-2">
         {(
@@ -223,22 +241,36 @@ export function ConversationList({
               )}
             </section>
           ) : (
-            <section aria-label="Starred" className="mb-3">
-              <h2 className="text-muted-foreground px-2 py-2 text-xs font-semibold">
-                Starred
-              </h2>
-              {starred.map(row)}
-              {!starred.length && (
-                <p className="text-muted-foreground px-2 text-xs">
-                  Star conversations to find them here.
-                </p>
-              )}
-            </section>
+            (!typed || !!starred.length) && (
+              <section aria-label="Starred" className="mb-3">
+                <h2 className="text-muted-foreground px-2 py-2 text-xs font-semibold">
+                  Starred
+                </h2>
+                {starred.map(row)}
+                {!starred.length && (
+                  <p className="text-muted-foreground px-2 text-xs">
+                    Star conversations to find them here.
+                  </p>
+                )}
+              </section>
+            )
           )}
-          {search && !visible.length && (
-            <p className="text-muted-foreground px-2 py-3 text-sm">
-              No conversations match.
-            </p>
+          {findsPeople ? (
+            <Suspense fallback={null}>
+              <PeopleMatches
+                search={search}
+                matches={visible}
+                show="empty"
+                placement="list"
+              />
+            </Suspense>
+          ) : (
+            typed &&
+            !visible.length && (
+              <p className="text-muted-foreground px-2 py-3 text-sm">
+                No conversations match.
+              </p>
+            )
           )}
           {channelsHidden && (
             <p className="text-muted-foreground px-2 py-3 text-sm">
@@ -259,12 +291,16 @@ export function ConversationList({
                 item.conversation.category_id === category.id &&
                 !item.preferences.starred,
             );
+            if (typed && !items.length) return null;
+            // A typed filter opens the category for this view only.
+            const collapsed = preferences.collapsed && !typed;
             return (
               <Collapsible
                 key={category.id}
                 className="mb-4"
-                open={!preferences.collapsed}
+                open={!collapsed}
                 onOpenChange={(open) =>
+                  !typed &&
                   void actions.categoryChange(category.id, { collapsed: !open })
                 }
               >
@@ -352,7 +388,7 @@ export function ConversationList({
                     <ChevronDown
                       className={cn(
                         "size-3 shrink-0",
-                        preferences.collapsed && "-rotate-90",
+                        collapsed && "-rotate-90",
                       )}
                     />
                     <span className="flex min-w-0 flex-col">
@@ -388,7 +424,7 @@ export function ConversationList({
               {uncategorized.map(row)}
             </section>
           )}
-          {menuAccess.canCreateCategory && !firstRun && (
+          {menuAccess.canCreateCategory && !firstRun && !typed && (
             <Action
               variant="ghost"
               className="text-muted-foreground min-h-11 w-full justify-start"
@@ -449,7 +485,7 @@ export function ConversationList({
             </section>
           )}
           {/* A guest cannot start one (D3); others may still add them to one. */}
-          {(startsDirect || hasDirect) && (
+          {(typed ? !!directRows.length : startsDirect || hasDirect) && (
             <>
               <div className="mt-5 flex min-h-11 items-center justify-between px-2">
                 <h2 className="text-muted-foreground text-xs font-semibold">
@@ -467,19 +503,24 @@ export function ConversationList({
                   </Action>
                 )}
               </div>
-              {visible
-                .filter(
-                  (item) =>
-                    item.conversation.kind !== "channel" &&
-                    !item.preferences.starred,
-                )
-                .map(row)}
+              {directRows.map(row)}
               {!hasDirect && !firstRun && startsDirect && (
                 <p className="text-muted-foreground px-2 text-xs">
                   Start a direct or group conversation.
                 </p>
               )}
             </>
+          )}
+          {findsPeople && (
+            <Suspense fallback={null}>
+              <PeopleMatches
+                search={search}
+                matches={visible}
+                show="people"
+                placement="list"
+                onOpen={select}
+              />
+            </Suspense>
           )}
         </div>
       </ScrollArea>

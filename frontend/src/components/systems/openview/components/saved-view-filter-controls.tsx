@@ -9,7 +9,7 @@ import type {
 import { assignableUsersOptions } from "../adapters/openview-queries";
 import {
   EMPTY_OPERATORS,
-  OPERATOR_LABELS,
+  operatorLabel,
   filterInputValue,
   filterValueForType,
   hasUnsafeIntegerFilter,
@@ -199,7 +199,8 @@ export function SavedViewFilterControls({
       ) : null}
       {filters.map((filter, index) => {
         const field = activeFields.get(filter.fieldId);
-        const operators = operatorChoices(filter.expectedType);
+        // DR-9.3: a stored empty or not_empty stays in the menu.
+        const operators = operatorChoices(filter.expectedType, filter.operator);
         const needsValue = !EMPTY_OPERATORS.has(filter.operator);
         const unsafeIntegerValue = hasUnsafeIntegerFilter(filter);
         const valueErrorId = `openview-filter-value-error-${index}`;
@@ -273,7 +274,7 @@ export function SavedViewFilterControls({
               >
                 {operators.map((operator) => (
                   <option key={operator} value={operator}>
-                    {OPERATOR_LABELS[operator] ?? operator}
+                    {operatorLabel(operator, filter.expectedType)}
                   </option>
                 ))}
               </Select>

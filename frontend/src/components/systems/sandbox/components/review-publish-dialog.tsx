@@ -1,15 +1,23 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import type { Route } from "next";
+import Link from "next/link";
+import { ArrowRight } from "lucide-react";
+import { DepartmentMark } from "@/components/sandbox/department-mark";
+import { moduleHref } from "@/components/department-navigation-model";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useSkeletonVisible } from "@/components/ui/loading-region";
+import { cn } from "@/lib/utils";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -33,6 +41,7 @@ import {
   type SandboxPublicationBlocker,
   type SandboxPublicationPreview,
 } from "../state/api";
+import type { SandboxBinding } from "../state/lifecycle-api";
 import { useErrorText } from "@/lib/use-error-text";
 import { ErrorReference } from "@/components/ui/error-reference";
 
@@ -55,7 +64,13 @@ type Props = {
     note: string;
     idempotencyKey: string;
   }) => Promise<SandboxPublication>;
-  onPublished: (publication: SandboxPublication) => void;
+  /**
+   * Refreshes the page after a publish and gives the bindings read after it
+   * (DR-11.5). A failed read rejects, and the Published state has no link.
+   */
+  onPublished: (
+    publication: SandboxPublication,
+  ) => Promise<readonly SandboxBinding[]>;
   /**
    * FIT-3 (plan 11.3, DQ4): one Setup toggle of a new department, applied to
    * the draft through the Build save queue. On a conflict or a failed save
@@ -68,6 +83,130 @@ type Props = {
     on: boolean,
   ) => Promise<SandboxCommandResult<unknown>>;
 };
+
+/** A module this publish creates, kept for its link once it is live. */
+export type PublishedModule = {
+  id: string;
+  name: string;
+  departmentName: string;
+  /** The department's position in the draft, for its mark; -1 if none. */
+  departmentIndex: number;
+};
+export type PublishedModuleLink = PublishedModule & { href: string };
+
+/**
+ * The open modules a publish creates, with their departments, read from the
+ * review and the draft when Publish is pressed (DR-11.4). A module created
+ * closed has no records to open.
+ */
+export function createdModules(
+  changes: SandboxPublicationPreview["changes"],
+  design: PublishReviewDesign,
+): PublishedModule[] {
+  return changes.flatMap((change) => {
+    if (change.kind !== "module" || change.action !== "create") return [];
+    const draft = design.modules.find((item) => item.id === change.sandboxId);
+    if (!draft || draft.closed) return [];
+    const departmentIndex = design.departments.findIndex(
+      (item) => item.id === draft.departmentId,
+    );
+    return [
+      {
+        id: change.sandboxId,
+        name: change.label,
+        departmentName: design.departments[departmentIndex]?.name ?? "",
+        departmentIndex,
+      },
+    ];
+  });
+}
+
+/**
+ * Each created module that the bindings read after the publish names,
+ * linked to its records by its live id (DR-11.5). No live module, no link.
+ */
+export function publishedModuleLinks(
+  modules: readonly PublishedModule[],
+  bindings: readonly SandboxBinding[],
+): PublishedModuleLink[] {
+  return modules.flatMap((item) => {
+    const binding = bindings.find(
+      (candidate) =>
+        candidate.kind === "module" &&
+        candidate.sandbox_id === item.id &&
+        !candidate.is_deleted,
+    );
+    return binding ? [{ ...item, href: moduleHref(binding.live_id) }] : [];
+  });
+}
+
+/**
+ * The record links of the Published state: a skeleton row after 300 ms
+ * while the bindings read runs, then one link per live module, or nothing
+ * (DR-11.6). Each row is 44 px below 1280 px and 32 px from there (G5).
+ */
+function PublishedRecords({
+  links,
+}: {
+  links: "reading" | readonly PublishedModuleLink[];
+}) {
+  const headingId = useId();
+  const reading = links === "reading";
+  const skeletonVisible = useSkeletonVisible(reading);
+  if (reading || skeletonVisible)
+    return (
+      <div className={cn("grid gap-2", !skeletonVisible && "invisible")}>
+        {skeletonVisible ? (
+          <span role="status" className="sr-only">
+            Finding the new records…
+          </span>
+        ) : null}
+        <Skeleton className="h-5 w-28" />
+        <Skeleton className="h-11 w-full xl:h-8" />
+      </div>
+    );
+  if (!links.length) return null;
+  return (
+    <section aria-labelledby={headingId}>
+      <h3 id={headingId} data-slot="section-title" className="font-medium">
+        Open records
+      </h3>
+      <ul className="mt-2 grid gap-1.5">
+        {links.map((link) => (
+          <li key={link.id}>
+            <Link
+              href={link.href as Route}
+              className="border-border hover:bg-muted focus-visible:outline-ring grid min-h-11 grid-cols-[0.5rem_minmax(0,1fr)_auto] items-center gap-2.5 rounded-md border px-2.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 xl:min-h-8"
+            >
+              {link.departmentIndex >= 0 ? (
+                <DepartmentMark departmentIndex={link.departmentIndex} />
+              ) : (
+                <span aria-hidden="true" />
+              )}
+              <span className="min-w-0 wrap-anywhere">
+                <span className="font-medium">{link.name}</span>
+                {link.departmentName ? (
+                  <span className="text-muted-foreground">
+                    {" "}
+                    · {link.departmentName}
+                  </span>
+                ) : null}
+              </span>
+              {/* The row names the module; "Open" only shows where it goes. */}
+              <span
+                aria-hidden="true"
+                className="text-action-text inline-flex items-center gap-1 font-medium"
+              >
+                Open
+                <ArrowRight className="size-4" />
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 export function publicationIdempotencyKey(
   current: string,
@@ -162,11 +301,21 @@ export function ReviewPublishDialog({
   const round = useRef(0);
   const autoReviewed = useRef<number | null>(null);
   const wasOpen = useRef(false);
+  // The end state after a successful publish (DR-11.4). It stays while the
+  // page refreshes the draft, and only a new open clears it. `opens` counts
+  // opens and closes, so a bindings read that ends after a close is dropped.
+  const [published, setPublished] = useState<{
+    links: "reading" | readonly PublishedModuleLink[];
+  } | null>(null);
+  const opens = useRef(0);
+  const backRef = useRef<HTMLButtonElement>(null);
+  const focusBack = useRef(false);
 
   useEffect(() => {
     round.current += 1;
     autoReviewed.current = null;
     const opened = open && !wasOpen.current;
+    if (open !== wasOpen.current) opens.current += 1;
     wasOpen.current = open;
     if (!open) return;
     // Only an open starts empty; a new revision during an open review keeps
@@ -174,6 +323,7 @@ export function ReviewPublishDialog({
     if (opened) {
       setPreview(null);
       setSetupError("");
+      setPublished(null);
     }
     setError("");
     setPublishError("");
@@ -219,31 +369,40 @@ export function ReviewPublishDialog({
     }
   }
   useEffect(() => {
-    if (!open || disabled || pending) return;
+    // The Published state reads nothing more: the refresh after a publish
+    // gives a new revision, which must not start another review.
+    if (!open || disabled || pending || published) return;
     if (autoReviewed.current === round.current) return;
     autoReviewed.current = round.current;
     void review();
-  }, [open, expectedRevision, disabled, pending]);
+  }, [open, expectedRevision, disabled, pending, published]);
+  // The password and Publish leave with the review, so focus moves to the
+  // one action of the Published state, not to the page.
+  useEffect(() => {
+    if (!published || !focusBack.current) return;
+    focusBack.current = false;
+    backRef.current?.focus();
+  }, [published]);
   async function publish() {
     if (!preview || stale || !password || blockers.length) return;
+    // What this publish creates, as reviewed; the refresh after it replaces
+    // the draft that the page passes in.
+    const created = createdModules(preview.changes, shownDesign);
     setBusy("publish");
     setPublishError("");
     setPasswordRejected(false);
+    let publication: SandboxPublication;
     try {
       const key = publicationIdempotencyKey(idempotencyKey, () =>
         crypto.randomUUID(),
       );
       setIdempotencyKey(key);
-      const publication = await onPublish({
+      publication = await onPublish({
         preview,
         password,
         note,
         idempotencyKey: key,
       });
-      onPublished(publication);
-      setPassword("");
-      setNote("");
-      onOpenChange(false);
     } catch (reason) {
       const refused = blockedReview(preview, reason);
       if (refused) setPreview(refused);
@@ -251,8 +410,23 @@ export function ReviewPublishDialog({
         setPublishError(errorMessage(reason), reason);
         setPasswordRejected(errorCode(reason) === "invalid_password");
       }
+      return;
     } finally {
       setBusy(null);
+    }
+    // Published (DR-11.4). The read after it is not part of the publish: a
+    // failed read only leaves the state without links (DR-11.6).
+    setPassword("");
+    setNote("");
+    focusBack.current = true;
+    setPublished({ links: created.length ? "reading" : [] });
+    const current = opens.current;
+    try {
+      const bindings = await onPublished(publication);
+      if (opens.current === current && created.length)
+        setPublished({ links: publishedModuleLinks(created, bindings) });
+    } catch {
+      if (opens.current === current) setPublished({ links: [] });
     }
   }
   // The local check names the trigger, so it replaces the server's
@@ -344,12 +518,23 @@ export function ReviewPublishDialog({
           Access), so focused controls are never hidden behind them. */}
       <DialogContent className={`${dialogFrameContentClass} sm:max-w-2xl`}>
         <DialogFrameHeader
-          title={<DialogTitle>Review &amp; Publish</DialogTitle>}
-          closeLabel="Close review"
+          title={
+            <DialogTitle>
+              {published ? "Published" : <>Review &amp; Publish</>}
+            </DialogTitle>
+          }
+          description={
+            published ? (
+              <DialogDescription>
+                Your team sees these changes now.
+              </DialogDescription>
+            ) : undefined
+          }
+          closeLabel={published ? "Close" : "Close review"}
           closeDisabled={busy === "publish"}
           onClose={() => onOpenChange(false)}
         />
-        {error || setupError ? (
+        {!published && (error || setupError) ? (
           <Alert
             role="alert"
             variant="destructive"
@@ -358,7 +543,7 @@ export function ReviewPublishDialog({
             {error || setupError}
           </Alert>
         ) : null}
-        {blocked ? (
+        {!published && blocked ? (
           <Alert role="alert" variant="destructive">
             <p className="font-medium">Publishing is blocked</p>
             <ul className="mt-2 grid gap-2">
@@ -385,7 +570,9 @@ export function ReviewPublishDialog({
             </ul>
           </Alert>
         ) : null}
-        {busy === "review" && !preview ? (
+        {published ? (
+          <PublishedRecords links={published.links} />
+        ) : busy === "review" && !preview ? (
           <div role="status" className="grid gap-3">
             <p className="text-muted-foreground text-sm">
               Preparing your review…
@@ -469,7 +656,18 @@ export function ReviewPublishDialog({
           </>
         )}
         <DialogFrameFooter>
-          {preview ? (
+          {published ? (
+            <DialogFooter className="mt-0 sm:flex-row sm:justify-end">
+              <Button
+                ref={backRef}
+                variant="outline"
+                className="min-h-11 w-full sm:w-auto"
+                onClick={() => onOpenChange(false)}
+              >
+                Back to Build
+              </Button>
+            </DialogFooter>
+          ) : preview ? (
             <>
               {/* The password is its own label-left row (stacked on a
                   phone), pinned above Cancel and Publish. */}

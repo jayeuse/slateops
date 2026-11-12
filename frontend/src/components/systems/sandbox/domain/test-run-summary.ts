@@ -139,7 +139,7 @@ export function describeTrigger(
       : "";
   if (trigger.kind === "record-created") {
     const target = design.modules.find((item) => item.id === trigger.moduleId);
-    return `Runs when an item is added to ${target?.name ?? "its module"}.`;
+    return `Runs when a record is added to ${target?.name ?? "its module"}.`;
   }
   if (trigger.kind === "field-changed")
     return `Runs when ${fieldLabel(design, trigger.moduleId, trigger.fieldId)} changes${where}.`;
@@ -219,7 +219,7 @@ export function eventDescription(
   run: SandboxTestRun,
 ): string {
   const event: SandboxTestEvent = run.event;
-  if (event.kind === "record-created") return "An item is added";
+  if (event.kind === "record-created") return "A record is added";
   if (event.kind === "field-changed")
     return `${fieldName(design, run.input.moduleId, event.fieldId)} changes`;
   if (event.kind === "threshold-crossed")

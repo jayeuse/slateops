@@ -15,12 +15,14 @@ import {
 } from "./helpers/boards-api";
 import { dummyFile, type DummyFile } from "../helpers/dummy-files";
 import { pageOf } from "../helpers/pagination";
+import { MAX_FILE_BYTES } from "../../src/components/systems/shared/adapters/files-api";
 
 const UNCLEAR_UPLOAD =
   "The upload result is unclear. Use Attach file to finish, or choose the file again.";
 const postId = "00000000-0000-4000-8000-000000000061";
 const now = "2026-09-25T00:00:00Z";
 const title = "Dock 3 handover";
+const message = "Loading plan and yard photos for the morning shift.";
 
 type StoredFile = { id: string; file: DummyFile };
 type Mutation = { method: string; path: string; body: unknown };
@@ -76,7 +78,8 @@ function listPage(items: unknown[], extra: Record<string, unknown> = {}) {
 }
 
 type Options = {
-  status: "draft" | "published";
+  /** "new": no post until the editor saves one; Publish then publishes it. */
+  status: "draft" | "published" | "new";
   uploadStatus?: number;
   uploadBody?: "truncated";
   uploadState?: string;
@@ -104,6 +107,8 @@ async function installAttachmentApi(page: Page, options: Options) {
   let postRevision = 2;
   let boardRevision = 1;
   let attachFailures = options.failFirstAttach ? 1 : 0;
+  let created = false;
+  let publishedNew = false;
   const handler = async (route: Route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -129,6 +134,46 @@ async function installAttachmentApi(page: Page, options: Options) {
             ? request.postDataBuffer()
             : (request.postDataJSON() as unknown),
       });
+    if (options.status === "new") {
+      const current = publishedNew
+        ? postWire("published", null, boardRevision)
+        : postWire("draft", postRevision, boardRevision);
+      if (path === `${prefix}/posts` && method === "GET") {
+        const view = url.searchParams.get("view");
+        const visible =
+          created &&
+          (publishedNew ? view === "published" : view !== "published");
+        return reply(
+          200,
+          listPage(visible ? [current] : [], { board_revision: boardRevision }),
+        );
+      }
+      if (path === `${prefix}/posts/${postId}` && method === "GET")
+        return created
+          ? reply(200, current)
+          : reply(404, { detail: "Post not found" });
+      if (path === `${prefix}/posts` && method === "POST") {
+        created = true;
+        boardRevision += 1;
+        return reply(201, {
+          id: postId,
+          post_revision: postRevision,
+          board_revision: boardRevision,
+        });
+      }
+      if (path === `${prefix}/posts/${postId}/publish` && method === "POST") {
+        publishedNew = true;
+        boardRevision += 1;
+        const body = request.postDataJSON() as { publication_key: string };
+        return reply(200, {
+          id: "00000000-0000-4000-8000-000000000071",
+          post_id: postId,
+          publication_number: 1,
+          publication_key: body.publication_key,
+          published_at: now,
+        });
+      }
+    }
     const post =
       options.status === "draft"
         ? postWire("draft", postRevision, boardRevision)
@@ -233,6 +278,144 @@ async function openDraftAttachments(page: Page) {
   await expect(panel.getByText("No attachments yet.")).toBeVisible();
   return panel;
 }
+
+async function openNewPost(page: Page) {
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await page.getByRole("button", { name: "New post", exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "New post", exact: true });
+  await editor.getByLabel("Title", { exact: true }).fill(title);
+  await editor.getByLabel("Message", { exact: true }).fill(message);
+  return editor;
+}
+
+test("UF-C8.1 Choose file saves a new post as a draft, attaches the file, and Publish sends the post with it", async ({
+  page,
+}) => {
+  const api = await installAttachmentApi(page, { status: "new" });
+  const editor = await openNewPost(page);
+  await expect(editor.getByText("Save draft to attach")).toHaveCount(0);
+  const name = "Dock 3 loading plan.pdf";
+  await editor
+    .getByLabel("Choose file", { exact: true })
+    .setInputFiles(dummyFile(name));
+  await expect(editor.getByText(`${name} attached.`)).toBeVisible();
+  await expect(
+    editor.getByRole("button", { name: `Download ${name}` }),
+  ).toBeVisible();
+  await expect(editor.getByText("Draft saved", { exact: true })).toBeVisible();
+  expect(api.mutations.map(({ method, path }) => `${method} ${path}`)).toEqual([
+    `POST /api/boards/${boardId}/posts`,
+    `POST /api/boards/${boardId}/files`,
+    `PUT /api/boards/${boardId}/files/${fileId(0)}/content`,
+    `POST /api/boards/${boardId}/posts/${postId}/attachments`,
+  ]);
+  await editor.getByRole("button", { name: "Publish", exact: true }).click();
+  await expect(editor).toBeHidden();
+  expect(api.mutations.at(-1)?.path).toBe(
+    `/api/boards/${boardId}/posts/${postId}/publish`,
+  );
+  await expect(
+    page
+      .getByRole("article", { name: title, exact: true })
+      .getByRole("region", { name: "Files" })
+      .getByRole("button", { name: `Download ${name}` }),
+  ).toBeVisible();
+});
+
+test("UF-C8.3 a file picked into a new post saves a draft only, and the closed editor leaves it in Drafts", async ({
+  page,
+}) => {
+  const api = await installAttachmentApi(page, { status: "new" });
+  const editor = await openNewPost(page);
+  const name = "Yard layout.png";
+  await editor
+    .getByLabel("Choose file", { exact: true })
+    .setInputFiles(dummyFile(name));
+  await expect(editor.getByText(`${name} attached.`)).toBeVisible();
+  expect(api.mutations[0]).toMatchObject({
+    method: "POST",
+    path: `/api/boards/${boardId}/posts`,
+    body: { title, body: message },
+  });
+  await editor
+    .getByRole("button", { name: "Close post editor", exact: true })
+    .click();
+  await expect(editor).toBeHidden();
+  expect(
+    api.mutations.filter(
+      ({ path }) => path.endsWith("/publish") || path.endsWith("/schedule"),
+    ),
+  ).toEqual([]);
+  await page.goto(`/boards?board=${boardId}&section=posts&show=drafts`);
+  await expect(
+    page.getByRole("article", { name: title, exact: true }),
+  ).toBeVisible();
+});
+
+test("UF-C8.4 a failed draft save shows the post error, uploads nothing, and a second pick saves and attaches once", async ({
+  page,
+}) => {
+  const api = await installAttachmentApi(page, { status: "new" });
+  let failSave = true;
+  await page.route(
+    (url) => url.pathname === `/api/boards/${boardId}/posts`,
+    (route) => {
+      if (route.request().method() !== "POST" || !failSave)
+        return route.fallback();
+      failSave = false;
+      return route.fulfill({
+        status: 500,
+        headers: answeredHeaders,
+        json: { detail: "draft insert failed on replica-7" },
+      });
+    },
+  );
+  const editor = await openNewPost(page);
+  const name = "Dock 3 loading plan.pdf";
+  const choose = editor.getByLabel("Choose file", { exact: true });
+  await choose.setInputFiles(dummyFile(name));
+  const failure = editor
+    .getByRole("alert")
+    .filter({ hasText: "Post request failed. Try again." });
+  await expect(failure).toContainText(answeredReference);
+  await expect(editor.getByText("replica-7")).toHaveCount(0);
+  await expect(editor.getByLabel("Title", { exact: true })).toHaveValue(title);
+  await expect(editor.getByLabel("Message", { exact: true })).toHaveValue(
+    message,
+  );
+  await expect(editor.getByText(`${name} attached.`)).toHaveCount(0);
+  expect(api.mutations).toEqual([]);
+  await choose.setInputFiles(dummyFile(name));
+  await expect(editor.getByText(`${name} attached.`)).toBeVisible();
+  await expect(failure).toHaveCount(0);
+  expect(api.mutations.map(({ method, path }) => `${method} ${path}`)).toEqual([
+    `POST /api/boards/${boardId}/posts`,
+    `POST /api/boards/${boardId}/files`,
+    `PUT /api/boards/${boardId}/files/${fileId(0)}/content`,
+    `POST /api/boards/${boardId}/posts/${postId}/attachments`,
+  ]);
+});
+
+test("UF-C8.4 an oversize file shows the size error, keeps Title and Message, and sends nothing", async ({
+  page,
+}) => {
+  const api = await installAttachmentApi(page, { status: "new" });
+  const editor = await openNewPost(page);
+  await editor.getByLabel("Choose file", { exact: true }).setInputFiles({
+    name: "Yard survey.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.alloc(MAX_FILE_BYTES + 1),
+  });
+  await expect(
+    editor.getByRole("region", { name: "Files" }).getByRole("alert"),
+  ).toHaveText("Choose a file larger than 0 bytes and no larger than 25 MB.");
+  await expect(editor.getByLabel("Title", { exact: true })).toHaveValue(title);
+  await expect(editor.getByLabel("Message", { exact: true })).toHaveValue(
+    message,
+  );
+  await expect(editor.getByText("Draft saved", { exact: true })).toHaveCount(0);
+  expect(api.mutations).toEqual([]);
+});
 
 test("an author uploads, downloads and removes post attachments in one step each", async ({
   page,

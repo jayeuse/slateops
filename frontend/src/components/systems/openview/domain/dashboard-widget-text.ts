@@ -22,14 +22,27 @@ export function kindLabel(kind: WidgetKind): string {
   return KIND_LABELS[kind];
 }
 
+// DR-9.4: a measure in plain words ("Total credit limit"). A count reads as
+// the module's name, so it has no words here.
 const AGGREGATION_WORDS = {
-  count: "Number of",
-  sum: "Sum of",
-  average: "Average",
-  min: "Smallest",
-  max: "Largest",
-  distinct: "Distinct",
+  count: () => "",
+  sum: (measure: string) => `Total ${measure}`,
+  average: (measure: string) => `Average ${measure}`,
+  min: (measure: string) => `Smallest ${measure}`,
+  max: (measure: string) => `Largest ${measure}`,
+  distinct: (measure: string) => `Different ${measure} values`,
 } as const;
+
+/**
+ * A field name inside a title: its leading capital is lowered, unless its
+ * first word is all capitals ("VAT amount" stays; "Credit limit" reads
+ * "credit limit").
+ */
+function measureWords(name: string): string {
+  const first = name.split(/\s/)[0] ?? "";
+  const capitals = first.length > 1 && first === first.toUpperCase();
+  return capitals ? name : name.charAt(0).toLowerCase() + name.slice(1);
+}
 
 const BUCKET_WORDS = {
   day: "day",
@@ -40,9 +53,10 @@ const BUCKET_WORDS = {
 } as const;
 
 /**
- * "Quotes by Status", "Sum of Amount by Region", "Sales Orders per week",
- * "Number of Quotes"; a saved Chart keeps its name. Without its module's
- * names (a locked or loading widget) the title is the widget's kind.
+ * "Quotes by Status", "Total amount by Region", "Sales Orders per week",
+ * "Quotes" (DR-9.4, BD16 as changed by the UX friction pass); a saved Chart
+ * keeps its name. Without its module's names (a locked or loading widget)
+ * the title is the widget's kind.
  */
 export function widgetTitle(input: {
   kind: WidgetKind;
@@ -59,12 +73,14 @@ export function widgetTitle(input: {
   const query = config.query;
   if (!("mode" in query)) return moduleName;
   const measure = query.measure ? name(query.measure.fieldId) : undefined;
+  // A measure missing from the field list reads "value".
   const what =
     query.aggregation === "count"
       ? moduleName
-      : `${AGGREGATION_WORDS[query.aggregation]} ${measure ?? "a field"}`;
-  if (input.kind === "number")
-    return query.aggregation === "count" ? `Number of ${moduleName}` : what;
+      : AGGREGATION_WORDS[query.aggregation](
+          measure ? measureWords(measure) : "value",
+        );
+  if (input.kind === "number") return what;
   if (query.mode === "date_series")
     return `${what} per ${BUCKET_WORDS[query.bucket ?? "day"]}`;
   const dimension = name(query.dimension.fieldId);
