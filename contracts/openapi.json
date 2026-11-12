@@ -10222,6 +10222,10 @@
             "title": "Description",
             "type": "string"
           },
+          "has_other_grants": {
+            "title": "Has Other Grants",
+            "type": "boolean"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -10272,6 +10276,7 @@
           "revision",
           "member_ids",
           "access",
+          "has_other_grants",
           "created_at",
           "updated_at",
           "deleted_at",

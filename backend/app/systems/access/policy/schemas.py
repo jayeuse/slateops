@@ -76,6 +76,8 @@ class GroupResponse(BaseModel):
     revision: int
     member_ids: list[UUID]
     access: list[GroupAccessResponse]
+    # Membership also gives a Board level, a Comms channel grant or a Comms capability.
+    has_other_grants: bool
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None
