@@ -24,7 +24,12 @@ async function seedSidebar(
   role: "admin" | "member" | "guest" = "admin",
   directAllowed = true,
   scenario?: "nonmembers" | "empty",
-  options: { clock?: CommsTestClock; notifications?: boolean } = {},
+  options: {
+    clock?: CommsTestClock;
+    notifications?: boolean;
+    /** More categories, each with one channel, to fill a first screen. */
+    extraCategories?: number;
+  } = {},
 ) {
   await signedInAs(page, { id: userId, role });
   const owner = { user_id: userId, org_id: defaultOrganization.org_id };
@@ -56,6 +61,28 @@ async function seedSidebar(
   };
   initial.members[second] = structuredClone(initial.members[channel.id]);
   initial.high_water_seq[second] = 1;
+  for (let index = 1; index <= (options.extraCategories ?? 0); index += 1) {
+    const suffix = String(index).padStart(2, "0");
+    const extraCategory = `76000000-0000-4000-8000-0000000001${suffix}`;
+    const extraChannel = `76000000-0000-4000-8000-0000000002${suffix}`;
+    initial.categories[extraCategory] = {
+      ...category,
+      id: extraCategory,
+      name: `Yard ${index}`,
+      position: 1 + index,
+    };
+    initial.conversations[extraChannel] = {
+      ...channel,
+      id: extraChannel,
+      name: `yard-lane-${index}`,
+      category_id: extraCategory,
+      position: 0,
+    };
+    initial.members[extraChannel] = structuredClone(
+      initial.members[channel.id],
+    );
+    initial.high_water_seq[extraChannel] = 0;
+  }
   const secondMessage = {
     ...root,
     id: "76000000-0000-4000-8000-000000000003",
@@ -582,6 +609,199 @@ test("UF-C5.3 a refused or failed people read hides People and shows no server w
     await expect(list.getByRole("alert")).toHaveCount(0);
     await expect(list.getByText(/org-17|replica-7/)).toHaveCount(0);
   }
+});
+
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 390, height: 844 },
+] as const) {
+  test(`FX-D1-1 FX-D1-4 UF-C5.1 at ${viewport.width}px a typed name shows only matches with the person on the first screen, and cleared text restores the list`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await seedSidebar(page, "member", true, undefined, { extraCategories: 6 });
+    await page.goto("/comms");
+    const list = page.getByRole("complementary", {
+      name: "Conversations",
+      exact: true,
+    });
+    await expect(
+      list.getByRole("button", { name: /^yard-lane-6(,|$)/ }),
+    ).toBeAttached();
+    const before = await list.innerText();
+    const search = list.getByRole("textbox", {
+      name: "Search conversations",
+      exact: true,
+    });
+    await search.fill("Noah");
+    const noah = list
+      .getByRole("region", { name: "People", exact: true })
+      .getByRole("button", { name: "Noah Tan", exact: true });
+    await expect(noah).toBeVisible();
+    const box = await noah.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height);
+    for (const hint of [
+      "No channels here.",
+      "Star conversations to find them here.",
+      "Start a direct or group conversation.",
+    ])
+      await expect(list.getByText(hint, { exact: true })).toHaveCount(0);
+    await search.fill("");
+    await expect.poll(() => list.innerText()).toBe(before);
+  });
+}
+
+test("FX-D1-2 FX-D1-3 a typed text opens a collapsed category's matches without saving it, and filters Records you follow by title", async ({
+  page,
+}) => {
+  await seedSidebar(page, "member");
+  const writes: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "PUT" &&
+      /\/comms\/categories\/[^/]+\/preferences$/.test(request.url())
+    )
+      writes.push(request.url());
+  });
+  await page.goto("/comms");
+  const list = page.getByRole("complementary", {
+    name: "Conversations",
+    exact: true,
+  });
+  const deliveries = list.getByRole("button", { name: /^deliveries(,|$)/ });
+  await expect(deliveries).toBeVisible();
+  await list
+    .getByRole("button", { name: /^Planning/ })
+    .first()
+    .click();
+  await expect(deliveries).toBeHidden();
+  await expect.poll(() => writes.length).toBe(1);
+  const search = list.getByRole("textbox", {
+    name: "Search conversations",
+    exact: true,
+  });
+  await search.fill("deliver");
+  await expect(deliveries).toBeVisible();
+  await expect(
+    list.getByRole("button", {
+      name: "Category actions: Planning",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(list.getByRole("button", { name: /^operations,/ })).toHaveCount(
+    0,
+  );
+  await expect(
+    list.getByRole("button", {
+      name: "Category actions: Service delivery",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await search.fill("");
+  await expect(deliveries).toBeHidden();
+  expect(writes).toHaveLength(1);
+  const followed = list.getByRole("list", {
+    name: "Records you follow",
+    exact: true,
+  });
+  await expect(followed.getByRole("button")).toHaveCount(1);
+  await search.fill("riverside");
+  await expect(
+    followed.getByRole("button", { name: /^Riverside service visit/ }),
+  ).toBeVisible();
+  await search.fill("operations");
+  await expect(
+    list.getByRole("button", { name: /^operations,/ }),
+  ).toBeVisible();
+  await expect(followed).toHaveCount(0);
+});
+
+test("FX-D1-5 with nothing matching, a member sees only the no-match words and no section", async ({
+  page,
+}) => {
+  await seedSidebar(page, "member");
+  await page.goto("/comms");
+  const list = page.getByRole("complementary", {
+    name: "Conversations",
+    exact: true,
+  });
+  await expect(
+    list.getByRole("button", { name: /^operations,/ }),
+  ).toBeVisible();
+  await list
+    .getByRole("textbox", { name: "Search conversations", exact: true })
+    .fill("zzqx");
+  await expect(
+    list.getByText("No conversations or people match.", { exact: true }),
+  ).toBeVisible();
+  // Only the OpenComms title (h1) stays; no section heading shows.
+  await expect(list.getByRole("heading", { level: 2 })).toHaveCount(0);
+  await expect(
+    list.getByRole("button", { name: /^Category actions/ }),
+  ).toHaveCount(0);
+  await expect(
+    list.getByRole("list", { name: "Records you follow" }),
+  ).toHaveCount(0);
+});
+
+test("FX-D1-5 a guest's typed text shows only matching rows, no People, and the old no-match words", async ({
+  page,
+}) => {
+  const { server } = await seedSidebar(page, "guest");
+  const roleCheck = page.waitForResponse((response) =>
+    response.url().includes("/api/comms/capabilities/channel-creation"),
+  );
+  await page.goto("/comms");
+  expect((await roleCheck).ok()).toBe(true);
+  const list = page.getByRole("complementary", {
+    name: "Conversations",
+    exact: true,
+  });
+  const search = list.getByRole("textbox", {
+    name: "Search conversations",
+    exact: true,
+  });
+  await search.fill("oper");
+  await expect(
+    list.getByRole("button", { name: /^operations,/ }),
+  ).toBeVisible();
+  await expect(
+    list.getByRole("button", { name: /^deliveries(,|$)/ }),
+  ).toHaveCount(0);
+  await expect(list.getByText("Starred", { exact: true })).toHaveCount(0);
+  await search.fill("zzqx");
+  await expect(
+    list.getByText("No conversations match.", { exact: true }),
+  ).toBeVisible();
+  // Only the OpenComms title (h1) stays; no section heading shows.
+  await expect(list.getByRole("heading", { level: 2 })).toHaveCount(0);
+  await expect(list.getByRole("region", { name: "People" })).toHaveCount(0);
+  expect(server.candidateQueries).toEqual([]);
+});
+
+test("FX-D2-1 on a phone a picked person opens the direct message with the composer focused", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await seedSidebar(page, "member");
+  await page.goto("/comms");
+  const list = page.getByRole("complementary", {
+    name: "Conversations",
+    exact: true,
+  });
+  await list
+    .getByRole("textbox", { name: "Search conversations", exact: true })
+    .fill("Noah");
+  await list
+    .getByRole("region", { name: "People", exact: true })
+    .getByRole("button", { name: "Noah Tan", exact: true })
+    .click();
+  await expect(page).toHaveURL(/conversation=/);
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeFocused();
 });
 
 test("UF-C5.3 a guest's Find a conversation lists no people and sends no candidate read", async ({

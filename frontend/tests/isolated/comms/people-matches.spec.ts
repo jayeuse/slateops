@@ -116,7 +116,7 @@ test("FX-N3-1 a cancelled composer wait never focuses, even when the composer mo
     const frames = fakeFrames();
     const cancel = focusComposerWhenReady("c1", frames.frame, frames.cancel);
     frames.run(); // The composer does not exist yet.
-    cancel(); // The list unmounted.
+    cancel(); // As a second start does.
     const composer = new FakeComposer();
     world.mounted["composer-c1"] = composer;
     frames.run();

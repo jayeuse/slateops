@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { User } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -123,13 +123,6 @@ export function PeopleMatches({
   const { run, isPending } = useCommsCommands();
   const [starting, setStarting] = useState("");
   const [failure, setFailure] = useState<ApiErrorText | null>(null);
-  // The list owns its composer wait and ends it when it unmounts. The
-  // switcher closes itself on success, so its wait outlives that close.
-  const wait = useRef<(() => void) | null>(null);
-  useEffect(() => {
-    const owned = wait;
-    return () => owned.current?.();
-  }, []);
   const headingId = useId();
   async function start(person: Candidate) {
     if (isPending("people:start")) return;
@@ -141,8 +134,9 @@ export function PeopleMatches({
       );
       onOpen?.(result.data.id);
       onStarted?.();
-      const cancel = focusComposerWhenReady(result.data.id);
-      if (placement === "list") wait.current = cancel;
+      // The open itself unmounts this list on a phone and closes the
+      // switcher, so the wait outlives this component; a second start ends it.
+      focusComposerWhenReady(result.data.id);
     } catch (error) {
       setFailure(
         commsErrorText(error, "The conversation did not start. Try again."),

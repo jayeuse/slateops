@@ -69,10 +69,10 @@ export function ConversationList({
   const role = creationCheck.data?.membership_role;
   const guest = role === "guest";
   const startTitleId = useId();
+  // DR-5.7: while the filter has text, only what matches shows.
+  const typed = search.toLowerCase();
   const visible = actions.rows.filter(
-    (row) =>
-      !row.preferences.hidden &&
-      row.name.toLowerCase().includes(search.toLowerCase()),
+    (row) => !row.preferences.hidden && row.name.toLowerCase().includes(typed),
   );
   const hasChannels = actions.rows.some(
     (item) => item.conversation.kind === "channel",
@@ -136,7 +136,11 @@ export function ConversationList({
     ).keys(),
   ]
     .flatMap((id) => records.find((record) => record.id === id) ?? [])
+    .filter((record) => record.title.toLowerCase().includes(typed))
     .slice(0, 4);
+  const directRows = visible.filter(
+    (item) => item.conversation.kind !== "channel" && !item.preferences.starred,
+  );
   return (
     <aside
       id="comms-channels"
@@ -236,17 +240,19 @@ export function ConversationList({
               )}
             </section>
           ) : (
-            <section aria-label="Starred" className="mb-3">
-              <h2 className="text-muted-foreground px-2 py-2 text-xs font-semibold">
-                Starred
-              </h2>
-              {starred.map(row)}
-              {!starred.length && (
-                <p className="text-muted-foreground px-2 text-xs">
-                  Star conversations to find them here.
-                </p>
-              )}
-            </section>
+            (!search || !!starred.length) && (
+              <section aria-label="Starred" className="mb-3">
+                <h2 className="text-muted-foreground px-2 py-2 text-xs font-semibold">
+                  Starred
+                </h2>
+                {starred.map(row)}
+                {!starred.length && (
+                  <p className="text-muted-foreground px-2 text-xs">
+                    Star conversations to find them here.
+                  </p>
+                )}
+              </section>
+            )
           )}
           {findsPeople ? (
             <Suspense fallback={null}>
@@ -284,12 +290,16 @@ export function ConversationList({
                 item.conversation.category_id === category.id &&
                 !item.preferences.starred,
             );
+            if (search && !items.length) return null;
+            // A typed filter opens the category for this view only.
+            const collapsed = preferences.collapsed && !search;
             return (
               <Collapsible
                 key={category.id}
                 className="mb-4"
-                open={!preferences.collapsed}
+                open={!collapsed}
                 onOpenChange={(open) =>
+                  !search &&
                   void actions.categoryChange(category.id, { collapsed: !open })
                 }
               >
@@ -377,7 +387,7 @@ export function ConversationList({
                     <ChevronDown
                       className={cn(
                         "size-3 shrink-0",
-                        preferences.collapsed && "-rotate-90",
+                        collapsed && "-rotate-90",
                       )}
                     />
                     <span className="flex min-w-0 flex-col">
@@ -413,7 +423,7 @@ export function ConversationList({
               {uncategorized.map(row)}
             </section>
           )}
-          {menuAccess.canCreateCategory && !firstRun && (
+          {menuAccess.canCreateCategory && !firstRun && !search && (
             <Action
               variant="ghost"
               className="text-muted-foreground min-h-11 w-full justify-start"
@@ -474,7 +484,7 @@ export function ConversationList({
             </section>
           )}
           {/* A guest cannot start one (D3); others may still add them to one. */}
-          {(startsDirect || hasDirect) && (
+          {(search ? !!directRows.length : startsDirect || hasDirect) && (
             <>
               <div className="mt-5 flex min-h-11 items-center justify-between px-2">
                 <h2 className="text-muted-foreground text-xs font-semibold">
@@ -492,13 +502,7 @@ export function ConversationList({
                   </Action>
                 )}
               </div>
-              {visible
-                .filter(
-                  (item) =>
-                    item.conversation.kind !== "channel" &&
-                    !item.preferences.starred,
-                )
-                .map(row)}
+              {directRows.map(row)}
               {!hasDirect && !firstRun && startsDirect && (
                 <p className="text-muted-foreground px-2 text-xs">
                   Start a direct or group conversation.
