@@ -1,7 +1,10 @@
 """Library documents as global search candidates."""
 
+from typing import Any
+
 from sqlalchemy import and_, func, literal, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.selectable import Subquery
 
 from app.core.database.organization_scope import bound_organization_column
@@ -10,6 +13,12 @@ from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
 from app.systems.platform.files.models import File
 from app.systems.sandbox.departments.models import Department
+
+
+def separators_as_spaces(text: ColumnElement[str] | Any) -> ColumnElement[str]:
+    """Read ``.``, ``-`` and ``_`` as spaces, in the stored name and in the typed text alike."""
+
+    return func.translate(text, "._-", "   ")
 
 
 def library_files(db: Session, actor: User) -> Subquery:
@@ -22,7 +31,7 @@ def library_files(db: Session, actor: User) -> Subquery:
     organization; row-level security stays the backstop.
     """
 
-    words = func.translate(File.filename, "._-", "   ")
+    words = separators_as_spaces(File.filename)
     return (
         select(
             File.id.label("id"),

@@ -202,3 +202,29 @@ def test_department_level_filter_keeps_only_departments_whose_row_includes_the_l
     assert departments(AccessLevel.READ) == {read_only.id, writable.id}
     assert departments(AccessLevel.WRITE) == {writable.id}
     assert departments(AccessLevel.MANAGE) == set()
+
+
+def test_file_search_reads_separators_in_the_typed_text_as_spaces(
+    integration_owner_db: Session,
+) -> None:
+    """BE-UF1-11, BE-UF1-12: a name typed as written, or any part of it, finds the file."""
+
+    db = integration_owner_db
+    admin, no_level = add_user(db, role=UserRole.ADMIN), add_user(db)
+    department = add_department(db)
+    ledger = library_file(db, admin, department, name="UXP3 finance-ledger.pdf")
+    brief = library_file(db, admin, department, name="UXP3 sales-brief.pdf")
+    api = _client(db, admin)
+    for text, expected in (
+        ("finance-ledger", {ledger}),
+        ("sales-brief", {brief}),
+        ("brief.pdf", {brief}),
+        ("finance_ledger", {ledger}),
+        ("FINANCE-LEDGER", {ledger}),
+        ("ledger", {ledger}),
+        ("UXP3 finance-ledger.pdf", {ledger}),
+        ("UXP3", {ledger, brief}),
+        ("-._", set()),
+    ):
+        assert _ids(_search(api, "file", text)) == {str(file.id) for file in expected}, text
+    assert _search(_client(db, no_level), "file", "finance-ledger")["pagination"]["total"] == 0

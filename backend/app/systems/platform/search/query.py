@@ -24,7 +24,7 @@ from app.systems.boards.models import Board, BoardStatus
 from app.systems.boards.post_listing import display_join
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.post_service import published_expiry
-from app.systems.platform.search.files import library_files
+from app.systems.platform.search.files import library_files, separators_as_spaces
 from app.systems.platform.search.schemas import (
     SearchItem,
     SearchKind,
@@ -342,7 +342,11 @@ def search_content(db: Session, actor: User, params: SearchRequest) -> SearchRes
         case SearchKind.FILE:
             candidates = library_files(db, actor)
     vector = func.to_tsvector("simple", candidates.c.search_text)
-    query = func.plainto_tsquery("simple", params.search)
+    # A file name is matched with ".", "-" and "_" read as spaces, so the typed text is too.
+    file_kind = params.kind is SearchKind.FILE
+    query = func.plainto_tsquery(
+        "simple", separators_as_spaces(params.search) if file_kind else params.search
+    )
     statement = select(
         candidates.c.id,
         candidates.c.title,
