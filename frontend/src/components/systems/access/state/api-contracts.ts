@@ -171,6 +171,12 @@ export const groupSchema = z.strictObject({
   description: z.string().max(2000),
   revision: z.number().int().nonnegative(),
   member_ids: z.array(uuid),
+  /**
+   * Membership also gives a project Board level, an OpenComms channel grant,
+   * or a capability grant (S3-4). Required: a missing field is a contract
+   * failure, never false.
+   */
+  has_other_grants: z.boolean(),
   access: z.array(groupAccessResponseSchema),
   created_at: dateTime,
   updated_at: dateTime,

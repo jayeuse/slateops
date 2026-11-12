@@ -6,18 +6,20 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/disabled-reason";
 import { ErrorReference } from "@/components/ui/error-reference";
+import { LoadingRegion } from "@/components/ui/loading-region";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { SearchSelect } from "@/components/ui/search-select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api";
 import { apiErrorReference } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
 
 import { accessKeys, afterAccessGroupChange } from "../adapters/access-queries";
-import { changeGroupMembership } from "../adapters/group-membership";
 import {
   AddAccessPlanChanged,
   AddAccessStepError,
   alreadyHas,
+  fitsOnlyWithOtherGrants,
   levelLines,
   levelsFor,
   planAddAccess,
@@ -36,6 +38,7 @@ import {
   getAccessGroup,
   listAccessGroups,
   replaceAccessGroupAccess,
+  replaceAccessGroupMembers,
   type AccessLevel,
   type AccessUser,
   type AccessUserAccess,
@@ -92,6 +95,17 @@ function failureFor(caught: unknown): Failure {
         cause instanceof ApiError
           ? groupErrorMessage(cause, "The server refused the change.")
           : null,
+      reference,
+    };
+  if (
+    failed?.step === "create" &&
+    cause instanceof ApiError &&
+    cause.status === 403
+  )
+    return {
+      partial: false,
+      message: "Only an administrator can make groups.",
+      detail: null,
       reference,
     };
   if (isUnansweredRequest(cause))
@@ -176,6 +190,10 @@ export function AddAccessForm({
         })
       : null;
   const resultId = `${id}-result`;
+  // The "Already has" line is the visible reason only when it is the line shown.
+  const hasShown = Boolean(
+    has && !failure?.partial && !groups.isError && !groups.isPending,
+  );
   const options = catalogDepartments(departments.combined).map((item) => ({
     value: item.id,
     label: item.department_name,
@@ -201,15 +219,20 @@ export function AddAccessForm({
     const shown = failure?.partial ? undefined : plan;
     try {
       const result = await runAddAccess(
-        { departmentId: department.id, departmentName: department.name, level },
+        {
+          departmentId: department.id,
+          departmentName: department.name,
+          level,
+          personId: person.id,
+        },
         {
           listGroups: (offset) => listEveryGroupPage(offset),
           createGroup: (name) => createAccessGroup({ name }),
           getGroup: (groupId) => getAccessGroup(groupId),
           setAccess: (groupId, rows, etag) =>
             replaceAccessGroupAccess(groupId, { access: rows, etag }),
-          addMember: (groupId) =>
-            changeGroupMembership(groupId, person.id, true),
+          putMembers: (groupId, memberIds, etag) =>
+            replaceAccessGroupMembers(groupId, { member_ids: memberIds, etag }),
         },
         shown,
       );
@@ -220,8 +243,11 @@ export function AddAccessForm({
       );
     } catch (caught) {
       if (caught instanceof AddAccessPlanChanged) {
-        // Nothing was written: show the fresh plan; the next click runs it.
-        client.setQueryData(everyGroupKey, caught.groups);
+        // No member write was sent: show the fresh plan; the next click runs
+        // it. A stopped member step reads the groups again, because a group
+        // may have been made before it.
+        if (caught.groups) client.setQueryData(everyGroupKey, caught.groups);
+        else void afterAccessGroupChange(client);
         if (mounted.current) setChanged(true);
         return;
       }
@@ -350,7 +376,7 @@ export function AddAccessForm({
         <div aria-live="polite" className="text-sm">
           {changed ? (
             <p role="status" className="mb-1 font-medium">
-              The groups changed. Check what happens now before you add.
+              The groups changed. Check the new line, then add.
             </p>
           ) : null}
           {failure?.partial ? (
@@ -361,11 +387,6 @@ export function AddAccessForm({
               {failure.detail ? <p>{failure.detail}</p> : null}
               <ErrorReference id={failure.reference} className="mt-0" />
             </div>
-          ) : !department ? null : has ? (
-            <p id={resultId}>
-              Already has {levelLabels[has.level]} in {department.name}
-              {has.groupName ? `, from ${has.groupName}` : ""}.
-            </p>
           ) : groups.isError ? (
             <div role="alert" className="space-y-2">
               <p id={resultId}>The groups could not be read.</p>
@@ -375,19 +396,29 @@ export function AddAccessForm({
                 className="min-h-11"
                 onClick={() => void groups.refetch()}
               >
-                Retry
+                Try again
               </Button>
               <ErrorReference
                 id={apiErrorReference(groups.error)}
                 className="mt-0"
               />
             </div>
-          ) : !plan ? (
-            <p id={resultId} className="text-muted-foreground">
-              Reading the groups…
+          ) : groups.isPending ? (
+            // Nothing for 300 ms, then one skeleton line (DR-10.7).
+            <LoadingRegion
+              loading
+              label="Reading the groups…"
+              skeleton={<Skeleton className="h-5 w-56 max-w-full" />}
+            />
+          ) : !department ? null : has ? (
+            <p id={resultId}>
+              Already has {levelLabels[has.level]} in {department.name}
+              {has.groupName ? `, from ${has.groupName}` : ""}.
             </p>
-          ) : plan.kind === "join" ? (
+          ) : !plan ? null : plan.kind === "join" ? (
             <p id={resultId}>{plan.group.name} gives exactly this.</p>
+          ) : fitsOnlyWithOtherGrants(groups.data, department.id, level) ? (
+            <p id={resultId}>No group gives only this.</p>
           ) : (
             <p id={resultId}>No group gives exactly this.</p>
           )}
@@ -402,7 +433,7 @@ export function AddAccessForm({
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           <DisabledReason
             reason={reason}
-            reasonId={has && department ? resultId : undefined}
+            reasonId={hasShown ? resultId : undefined}
             stable
           >
             <Button

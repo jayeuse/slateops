@@ -96,6 +96,8 @@ export function group(
     description: "",
     revision: 1,
     member_ids: members,
+    // A project Board level, a channel grant or a capability grant.
+    has_other_grants: false,
     access: access.map((entry) => ({
       ...entry,
       department_name:

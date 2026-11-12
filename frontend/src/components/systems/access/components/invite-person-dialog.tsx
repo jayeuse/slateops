@@ -456,7 +456,11 @@ export function InvitePersonDialog({
                                 id={lineId}
                                 className="text-muted-foreground block text-xs break-words"
                               >
-                                {groupAccessLine(group.access, form.role)}
+                                {groupAccessLine(
+                                  group.access,
+                                  form.role,
+                                  group.has_other_grants,
+                                )}
                               </span>
                             </span>
                           </label>

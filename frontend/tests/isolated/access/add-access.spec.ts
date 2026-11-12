@@ -5,11 +5,13 @@ import {
   alreadyHas,
   canAddAccess,
   exactFit,
+  fitsOnlyWithOtherGrants,
   groupAccessLine,
   levelsFor,
   madeGroupName,
   planAddAccess,
   runAddAccess,
+  samePlan,
   type AddAccessCalls,
 } from "../../../src/components/systems/access/helpers/add-access";
 import type {
@@ -17,6 +19,7 @@ import type {
   AccessGroupAccessEntry,
   AccessUserAccess,
 } from "../../../src/components/systems/access/state/api-contracts";
+import { groupSchema } from "../../../src/components/systems/access/state/api-contracts";
 import { group as groupFixture, timestamp } from "./fixtures";
 
 // Item 10 of docs/specs/ux-friction-pass.md: the group lines in Invite and
@@ -117,10 +120,25 @@ test("UF-C10.1 a group line says what the group gives, with differing modules, m
       "Sales · Write",
     ],
     [
-      "only module rows",
+      "one module only",
       [[sales, quotes, "read"]],
       "member",
-      "Sales · 1 module",
+      "Sales · Quotes · Read",
+    ],
+    [
+      "several modules only",
+      [
+        [sales, quotes, "read"],
+        [sales, leads, "write"],
+      ],
+      "member",
+      "Sales · 2 modules",
+    ],
+    [
+      "guest: one module above Read",
+      [[sales, quotes, "write"]],
+      "guest",
+      "Sales · Quotes · Read (guest limit)",
     ],
     ["no access rows", [], "member", "Gives no access yet"],
     [
@@ -246,6 +264,7 @@ test("UF-C10.6 a retry uses the made group: it joins it once it gives exactly th
     departmentId: finance,
     departmentName: "Finance",
     level: "read" as const,
+    personId: person,
   };
   // The access step failed after the create: the made group is empty.
   const empty = group(9, "Finance read access", []);
@@ -309,6 +328,8 @@ function recordedCalls(
     data,
     etag: `"${data.id}:${data.revision}"`,
   });
+  // The server's groups: a create adds one, an access write replaces rows.
+  const store = new Map(groups.flat().map((item) => [item.id, item]));
   const made = group(9, "", []);
   const calls: AddAccessCalls = {
     listGroups: async (offset) => {
@@ -330,19 +351,31 @@ function recordedCalls(
     createGroup: async (name) => {
       log.push(`create ${name}`);
       if (fail?.at === "create") throw fail.error;
-      return versioned({ ...made, name, created_at: timestamp });
+      const created = { ...made, name, created_at: timestamp };
+      store.set(created.id, created);
+      return versioned(created);
     },
     getGroup: async (id) => {
       log.push(`get ${id}`);
-      return versioned(groups.flat().find((item) => item.id === id)!);
+      return versioned(store.get(id)!);
     },
     setAccess: async (id, access, etag) => {
       log.push(`access ${id} ${etag} ${JSON.stringify(access)}`);
       if (fail?.at === "access") throw fail.error;
-      return versioned({ ...made, id, revision: 2 });
+      const next = {
+        ...store.get(id)!,
+        access: access.map((entry) => ({
+          ...entry,
+          department_name: names[entry.department_id],
+          module_name: null,
+        })),
+        revision: 2,
+      };
+      store.set(id, next);
+      return versioned(next);
     },
-    addMember: async (id) => {
-      log.push(`member ${id}`);
+    putMembers: async (id, memberIds, etag) => {
+      log.push(`member ${id} ${etag} ${JSON.stringify(memberIds)}`);
       if (fail?.at === "member") throw fail.error;
     },
   };
@@ -354,6 +387,7 @@ test("P3F3-2 Add access reads every page of groups, then joins the exact fit, or
     departmentId: finance,
     departmentName: "Finance",
     level: "read" as const,
+    personId: person,
   };
   const fit = group(2, "Finance Review", [[finance, null, "read"]]);
   const first = [group(1, "Accounts", [[sales, null, "read"]])];
@@ -362,7 +396,12 @@ test("P3F3-2 Add access reads every page of groups, then joins the exact fit, or
     groupName: "Finance Review",
     plan: "join",
   });
-  expect(run.log).toEqual(["list 0", "list 1", `member ${fit.id}`]);
+  expect(run.log).toEqual([
+    "list 0",
+    "list 1",
+    `get ${fit.id}`,
+    `member ${fit.id} "${fit.id}:${groupFixture.revision}" ["${person}"]`,
+  ]);
 
   run = recordedCalls([first]);
   await expect(runAddAccess(target, run.calls)).resolves.toEqual({
@@ -374,7 +413,8 @@ test("P3F3-2 Add access reads every page of groups, then joins the exact fit, or
     "list 0",
     "create Finance read access",
     `access ${madeId} "${madeId}:${groupFixture.revision}" [{"department_id":"${finance}","module_id":null,"level":"read"}]`,
-    `member ${madeId}`,
+    `get ${madeId}`,
+    `member ${madeId} "${madeId}:2" ["${person}"]`,
   ]);
 
   // A reused group is read first for its ETag.
@@ -385,7 +425,8 @@ test("P3F3-2 Add access reads every page of groups, then joins the exact fit, or
     "list 0",
     `get ${empty.id}`,
     `access ${empty.id} "${empty.id}:${groupFixture.revision}" [{"department_id":"${finance}","module_id":null,"level":"read"}]`,
-    `member ${empty.id}`,
+    `get ${empty.id}`,
+    `member ${empty.id} "${empty.id}:2" ["${person}"]`,
   ]);
 });
 
@@ -394,6 +435,7 @@ test("UF-C10.6 a failure after the create names the made group; a failed create 
     departmentId: finance,
     departmentName: "Finance",
     level: "read" as const,
+    personId: person,
   };
   const refused = new Error("refused");
   for (const [at, made] of [
@@ -421,6 +463,7 @@ test("P3F3-9 a run whose fresh plan differs from the shown one stops before any 
     departmentId: finance,
     departmentName: "Finance",
     level: "read" as const,
+    personId: person,
   };
   const fit = group(2, "Finance Review", [[finance, null, "read"]]);
   const shown = planAddAccess({ ...target, groups: [fit] });
@@ -440,5 +483,130 @@ test("P3F3-9 a run whose fresh plan differs from the shown one stops before any 
     groupName: "Finance Review",
     plan: "join",
   });
-  expect(run.log).toEqual(["list 0", `member ${fit.id}`]);
+  expect(run.log).toEqual([
+    "list 0",
+    `get ${fit.id}`,
+    `member ${fit.id} "${fit.id}:${groupFixture.revision}" ["${person}"]`,
+  ]);
+});
+
+test("AA-AC2 a group with other grants is never an exact fit, never reused by name, and never the same plan; the field is required", () => {
+  const target = {
+    departmentId: finance,
+    departmentName: "Finance",
+    level: "read" as const,
+  };
+  // One Finance read row, but also a Board level or a channel grant (S3-4).
+  const linked = {
+    ...group(2, "Finance readers", [[finance, null, "read"]]),
+    has_other_grants: true,
+  };
+  expect(exactFit([linked], finance, "read", "Finance")).toBeNull();
+  expect(planAddAccess({ ...target, groups: [linked] })).toEqual({
+    kind: "make",
+    name: "Finance read access",
+  });
+  // The line then reads "No group gives only this." (DR-10.10, 1a).
+  expect(fitsOnlyWithOtherGrants([linked], finance, "read")).toBe(true);
+  expect(
+    planAddAccess({
+      ...target,
+      groups: [group(3, "Sales Desk", [[sales, null, "read"]])],
+    }),
+  ).toEqual({
+    kind: "make",
+    name: "Finance read access",
+  });
+  expect(
+    fitsOnlyWithOtherGrants(
+      [group(3, "Sales Desk", [[sales, null, "read"]])],
+      finance,
+      "read",
+    ),
+  ).toBe(false);
+  // An empty same-name group with other grants is not reused.
+  const emptyLinked = {
+    ...group(9, "Finance read access", []),
+    has_other_grants: true,
+  };
+  expect(planAddAccess({ ...target, groups: [emptyLinked] })).toEqual({
+    kind: "make",
+    name: "Finance read access 2",
+  });
+  // The shown join and a fresh join of the same group that gained a grant.
+  const fit = group(2, "Finance readers", [[finance, null, "read"]]);
+  expect(
+    samePlan({ kind: "join", group: fit }, { kind: "join", group: linked }),
+  ).toBe(false);
+  expect(
+    samePlan({ kind: "join", group: fit }, { kind: "join", group: fit }),
+  ).toBe(true);
+  // Missing is a parse failure, never false.
+  const missing = Object.fromEntries(
+    Object.entries(groupFixture).filter(([key]) => key !== "has_other_grants"),
+  );
+  expect(groupSchema.safeParse(missing).success).toBe(false);
+  expect(groupSchema.safeParse(groupFixture).success).toBe(true);
+});
+
+test("AA-AC5 when several groups fit exactly, the department's own Sandbox group comes first, otherwise the earliest name", () => {
+  const fits = (level: "read" | "write" | "manage") => [
+    group(1, "Aardvark", [[finance, null, level]]),
+    group(2, "Finance viewers", [[finance, null, level]]),
+    group(3, "Finance members", [[finance, null, level]]),
+    group(4, "Finance managers", [[finance, null, level]]),
+  ];
+  expect(exactFit(fits("read"), finance, "read", "Finance")?.name).toBe(
+    "Finance viewers",
+  );
+  expect(exactFit(fits("write"), finance, "write", "Finance")?.name).toBe(
+    "Finance members",
+  );
+  expect(exactFit(fits("manage"), finance, "manage", "Finance")?.name).toBe(
+    "Finance managers",
+  );
+  // The name only breaks a tie: "Finance viewers" with Write is not chosen
+  // for Read, and without the own group the earliest name wins.
+  const others = [
+    group(1, "Zeta", [[finance, null, "read"]]),
+    group(2, "Finance viewers", [[finance, null, "write"]]),
+    group(3, "Beta", [[finance, null, "read"]]),
+  ];
+  expect(exactFit(others, finance, "read", "Finance")?.name).toBe("Beta");
+});
+
+test("AA-AC8 a group with other grants says so in its Invite line, with the words last", () => {
+  const cases: [string, Row[], "member" | "guest", string][] = [
+    ["no access rows", [], "member", "Boards or OpenComms access only"],
+    [
+      "one department",
+      [[sales, null, "read"]],
+      "member",
+      "Sales · Read · also Boards or OpenComms",
+    ],
+    [
+      "after +2 more",
+      [
+        [sales, null, "write"],
+        [finance, null, "read"],
+        [people, null, "read"],
+        [ops, null, "manage"],
+      ],
+      "member",
+      "Finance · Read, Operations · Manage +2 more · also Boards or OpenComms",
+    ],
+    [
+      "after the guest limit",
+      [[sales, null, "write"]],
+      "guest",
+      "Sales · Read (guest limit) · also Boards or OpenComms",
+    ],
+  ];
+  for (const [label, rows, role, expected] of cases)
+    expect(groupAccessLine(rows.map(row), role, true), label).toBe(expected);
+  // Without other grants the lines stay as they are.
+  expect(groupAccessLine([], "member", false)).toBe("Gives no access yet");
+  expect(groupAccessLine([row([sales, null, "read"])], "member", false)).toBe(
+    "Sales · Read",
+  );
 });

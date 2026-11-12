@@ -10,8 +10,10 @@ import {
 import type { Locator } from "@playwright/test";
 
 import {
+  etag,
   expectNoWrites,
   fixtureId,
+  group,
   ids,
   mockAccessApi,
   person,
@@ -409,12 +411,9 @@ test("P3F3-9 when the groups changed after the line was shown, the click makes a
   await form.getByRole("button", { name: "Add to Finance readers" }).click();
 
   await expect(
-    form.getByText(
-      "The groups changed. Check what happens now before you add.",
-      {
-        exact: true,
-      },
-    ),
+    form.getByText("The groups changed. Check the new line, then add.", {
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(form).toContainText("No group gives exactly this.");
   const make = form.getByRole("button", {
@@ -436,4 +435,239 @@ test("P3F3-9 when the groups changed after the line was shown, the click makes a
   expect(
     api.sent("PUT", `/api/access/groups/${ids.readers}/members`),
   ).toHaveLength(0);
+});
+
+/** Finance readers gives exactly Finance Read, and Ben is not in it. */
+function readersWithoutBen(api: Api) {
+  const readers = api.groups.get(ids.readers)!;
+  api.groups.set(ids.readers, { ...readers, member_ids: [] });
+  accessFromGroups(api, ids.ben, "member");
+  return api.groups.get(ids.readers)!;
+}
+
+/** Finance readers with a second row: Inventory at Manage. */
+function widened(readers: ReturnType<typeof readersWithoutBen>) {
+  return {
+    ...readers,
+    revision: readers.revision + 1,
+    access: group(
+      readers.id,
+      readers.name,
+      [],
+      [
+        { department_id: ids.finance, module_id: null, level: "read" },
+        { department_id: ids.inventory, module_id: null, level: "manage" },
+      ],
+    ).access,
+  };
+}
+
+async function openForm(page: Page) {
+  const sheet = await openAccessTab(page, "Ben Cruz", ids.ben);
+  await sheet.getByRole("button", { name: "Add access", exact: true }).click();
+  return { sheet, form: sheet.getByRole("form", { name: "Add access" }) };
+}
+
+test("AA-AC1 a group that gives Finance Read but also other grants is not joined: the line says no group gives only this, and a new group is made", async ({
+  page,
+}) => {
+  const api = await mockAccessApi(page);
+  const readers = readersWithoutBen(api);
+  // A project Board link or a channel grant rides on the membership (S3-4).
+  api.groups.set(ids.readers, { ...readers, has_other_grants: true });
+  const { sheet, form } = await openForm(page);
+  await chooseDepartment(page, sheet, "Finance");
+  await expect(form).toContainText("No group gives only this.");
+  await form
+    .getByRole("button", { name: 'Make group "Finance read access" and add' })
+    .click();
+
+  await expect(
+    sheet.getByText("Added Finance · Read, from Finance read access.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(
+    api.sent("PUT", `/api/access/groups/${ids.readers}/members`),
+  ).toHaveLength(0);
+  expect(api.sent("POST", "/api/access/groups")[0]?.body).toEqual({
+    name: "Finance read access",
+  });
+});
+
+test("AA-AC3 when the member step's read shows a second access row, no member write is sent and the line says the groups changed", async ({
+  page,
+}) => {
+  const api = await mockAccessApi(page);
+  const readers = readersWithoutBen(api);
+  api.on("GET", `/api/access/groups/${ids.readers}`, (route) => {
+    const fresh = widened(readers);
+    return route.fulfill({ headers: { ETag: etag(fresh) }, json: fresh });
+  });
+  const { sheet, form } = await openForm(page);
+  await chooseDepartment(page, sheet, "Finance");
+  await form.getByRole("button", { name: "Add to Finance readers" }).click();
+
+  await expect(
+    form.getByText("The groups changed. Check the new line, then add.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(api.sent("GET", `/api/access/groups/${ids.readers}`)).toHaveLength(1);
+  expect(
+    api.sent("PUT", `/api/access/groups/${ids.readers}/members`),
+  ).toHaveLength(0);
+});
+
+for (const change of ["a second access row", "other grants"] as const)
+  test(`AA-AC4 after a 412 on the member write, a re-read with ${change} sends no second member write`, async ({
+    page,
+  }) => {
+    const api = await mockAccessApi(page);
+    const readers = readersWithoutBen(api);
+    api.on("PUT", `/api/access/groups/${ids.readers}/members`, (route) => {
+      // Another administrator changed the group between the read and the write.
+      api.groups.set(
+        ids.readers,
+        change === "other grants"
+          ? {
+              ...readers,
+              revision: readers.revision + 1,
+              has_other_grants: true,
+            }
+          : widened(readers),
+      );
+      return route.fulfill({
+        status: 412,
+        json: { detail: "Resource changed" },
+      });
+    });
+    const { sheet, form } = await openForm(page);
+    await chooseDepartment(page, sheet, "Finance");
+    await form.getByRole("button", { name: "Add to Finance readers" }).click();
+
+    await expect(
+      form.getByText("The groups changed. Check the new line, then add.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(
+      api.sent("PUT", `/api/access/groups/${ids.readers}/members`),
+    ).toHaveLength(1);
+    expect(api.sent("GET", `/api/access/groups/${ids.readers}`)).toHaveLength(
+      2,
+    );
+  });
+
+test("AA-AC1 an empty same-name group with other grants is not reused: the new group takes 2, and nothing is written to the flagged group", async ({
+  page,
+}) => {
+  const api = await mockAccessApi(page);
+  accessFromGroups(api, ids.ben, "member");
+  const flagged = {
+    ...group(fixtureId(191), "Finance read access", [], []),
+    has_other_grants: true,
+  };
+  api.groups.set(flagged.id, flagged);
+  // Finance readers would fit, so give it a second row: no group fits.
+  const readers = api.groups.get(ids.readers)!;
+  api.groups.set(ids.readers, { ...widened(readers), member_ids: [] });
+  const { sheet, form } = await openForm(page);
+  await chooseDepartment(page, sheet, "Finance");
+  await form
+    .getByRole("button", { name: 'Make group "Finance read access 2" and add' })
+    .click();
+
+  await expect(
+    sheet.getByText("Added Finance · Read, from Finance read access 2.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(api.sent("PUT", `/api/access/groups/${flagged.id}/access`)).toEqual(
+    [],
+  );
+  expect(api.sent("PUT", `/api/access/groups/${flagged.id}/members`)).toEqual(
+    [],
+  );
+});
+
+test("AA-AC7 the groups read shows nothing for 300 ms, then a skeleton heard as reading the groups; a failed read offers Try again with the reference", async ({
+  page,
+}) => {
+  await page.clock.install();
+  const api = await mockAccessApi(page);
+  readersWithoutBen(api);
+  const hold = heldResponse();
+  // Armed while the form opens: the People page reads groups too, and a
+  // development build mounts the form twice.
+  let armed = false;
+  api.on("GET", "/api/access/groups", async (route) => {
+    if (!armed) return "next";
+    hold.enter();
+    await hold.released;
+    return route.fulfill({
+      status: 503,
+      headers: answeredHeaders,
+      json: { detail: "Unavailable" },
+    });
+  });
+  const sheet = await openAccessTab(page, "Ben Cruz", ids.ben);
+  const open = sheet.getByRole("button", { name: "Add access", exact: true });
+  // The tab's own reads land through timers, so they finish before the pause.
+  await expect(open).toBeVisible();
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1_000));
+  armed = true;
+  await open.click();
+  const form = sheet.getByRole("form", { name: "Add access" });
+  await expect(form).toBeVisible();
+  const reading = form
+    .getByRole("status")
+    .filter({ hasText: "Reading the groups…" });
+  const line = form.locator('[data-slot="loading-region"] > div').first();
+  await page.clock.runFor(299);
+  await expect(line).toHaveClass(/invisible/);
+  await expect(reading).toHaveCount(0);
+  await page.clock.runFor(1);
+  await expect(line).not.toHaveClass(/invisible/);
+  await expect(reading).toHaveCount(1);
+  await page.clock.resume();
+  armed = false;
+  hold.release();
+
+  const failure = form
+    .getByRole("alert")
+    .filter({ hasText: "The groups could not be read." });
+  await expect(failure).toBeVisible();
+  await expectAnsweredReference(failure);
+  await failure.getByRole("button", { name: "Try again" }).click();
+  await expect(failure).toBeHidden();
+  await chooseDepartment(page, sheet, "Finance");
+  await expect(form).toContainText("Finance readers gives exactly this.");
+});
+
+test('AA-AC7 a refused create reads "Only an administrator can make groups." with the reference', async ({
+  page,
+}) => {
+  const api = await mockAccessApi(page);
+  accessFromGroups(api, ids.ben, "member");
+  api.on("POST", "/api/access/groups", (route) =>
+    route.fulfill({
+      status: 403,
+      headers: answeredHeaders,
+      json: { detail: "Administrator required" },
+    }),
+  );
+  const { sheet, form } = await openForm(page);
+  await chooseDepartment(page, sheet, "Finance");
+  await form.getByRole("radio", { name: "Write", exact: true }).check();
+  await form
+    .getByRole("button", { name: 'Make group "Finance write access" and add' })
+    .click();
+
+  const refusal = form
+    .getByRole("alert")
+    .filter({ hasText: "Only an administrator can make groups." });
+  await expect(refusal).toBeVisible();
+  await expectAnsweredReference(refusal);
+  expect(api.sent("PUT", `/api/access/groups/${made}/access`)).toHaveLength(0);
 });

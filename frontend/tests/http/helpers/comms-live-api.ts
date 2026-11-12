@@ -307,6 +307,7 @@ export async function installCommsLiveApi(
                 .filter((person) => person.group_ids.includes(group.id))
                 .map((person) => person.user_id),
               access: [],
+              has_other_grants: false,
             }))
           : url.pathname === "/api/departments"
             ? Object.values(state.departments).map((department) => ({
