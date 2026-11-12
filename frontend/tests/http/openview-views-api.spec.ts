@@ -5702,12 +5702,13 @@ async function createRecord(page: Page) {
 
 const pageStatus = (page: Page) =>
   page.getByRole("status").filter({ hasText: /^Record created\./ });
-/** The page meta line's status (DA14), whatever it says. */
-const metaStatus = (page: Page) =>
+/** The page meta line under the title (DA14). */
+const metaLine = (page: Page) =>
   page
     .getByRole("heading", { level: 1 })
-    .locator("xpath=following-sibling::p[1]")
-    .getByRole("status");
+    .locator("xpath=following-sibling::p[1]");
+/** The item 6 status, the first status of the meta line, in the meta's place. */
+const metaStatus = (page: Page) => metaLine(page).getByRole("status").first();
 
 for (const presentation of [
   {
@@ -5895,28 +5896,64 @@ test("UF-C6.3: a deleted new record leaves the list", async ({ page }) => {
   await expect(pager).toBeVisible();
 });
 
+// Item 6 (CI re-check): a department name far longer than the line, so the
+// rule does not rest on a thin margin of any system's fonts.
+const longDepartmentName =
+  "Field service and preventive maintenance for the northern coastal region";
+
+async function useLongDepartmentName(page: Page) {
+  await page.route("**/api/departments**", (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: departmentId,
+            department_name: longDepartmentName,
+            created_at: "2026-09-23T00:00:00Z",
+            updated_at: "2026-09-23T00:00:00Z",
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: null,
+          },
+        ],
+        pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
+      },
+    }),
+  );
+}
+
 for (const viewport of [
   { width: 1440, height: 900 },
+  { width: 1280, height: 720 },
   { width: 390, height: 844 },
 ] as const) {
-  for (const scene of ["filters hide it", "grouped view"] as const) {
-    test(`UF-C6.1 UF-C6.2: at ${viewport.width}px the toolbar stays put when the ${scene} status shows with Open record`, async ({
+  for (const scene of [
+    { name: "filters hide it", words: "Created, hidden by filters." },
+    { name: "grouped view", words: "Record created." },
+    { name: "record matches", words: "Record created." },
+  ] as const) {
+    test(`UF-C6.1 UF-C6.2: at ${viewport.width}px the ${scene.name} status takes the meta's place; the toolbar stays put`, async ({
       page,
     }) => {
       await page.setViewportSize(viewport);
       await installViewsApi(page, {
         disableInitialSearch: true,
-        ...(scene === "grouped view"
+        ...(scene.name === "grouped view"
           ? { initialGroupByFieldId: statusFieldId }
           : {}),
       });
+      await useLongDepartmentName(page);
       await viewAs(page, "writer");
       await routeQuickFilterCounts(page);
       await installCreatedRecord(page);
       await page.goto(
         `/openview?section=views&module=${moduleId}&view=${viewId}`,
       );
-      if (scene === "filters hide it") {
+      const metaText = metaLine(page).getByText(longDepartmentName, {
+        exact: false,
+      });
+      await expect(metaText).toBeVisible();
+      if (scene.name === "filters hide it") {
         await page
           .getByRole("group", { name: "Status" })
           .getByRole("button", { name: /^In service\s*29$/ })
@@ -5927,6 +5964,11 @@ for (const viewport of [
         name: "Filters",
         exact: true,
       });
+      // Measure at rest: a page status ("Refreshing records…") sits beside
+      // the meta text for a moment after a filter.
+      await expect(metaLine(page).getByRole("status").last()).toHaveText("", {
+        useInnerText: true,
+      });
       const before = (await box(filters)).y;
 
       await createRecord(page);
@@ -5935,68 +5977,147 @@ for (const viewport of [
         page.getByRole("dialog", { name: "Record details" }),
       ).toHaveCount(0);
 
-      // DR-6.5: one sentence at every width, whole on one line.
+      // DR-6.1, DR-6.5: the status takes the meta text's place at every
+      // width; the meta text leaves the page and the accessibility tree.
       const status = metaStatus(page);
-      await expect(status).toHaveText(
-        scene === "grouped view"
-          ? "Record created."
-          : "Created, hidden by filters.",
-        { useInnerText: true },
+      await expect(status).toHaveText(scene.words, { useInnerText: true });
+      await expect(metaText).toBeHidden();
+      expect(await metaLine(page).ariaSnapshot()).not.toContain(
+        "preventive maintenance",
       );
-      // DR-6.1: below 640px a status with Open record takes the meta text's
-      // place; from 640px they share the line.
-      const metaText = page
-        .getByRole("heading", { level: 1 })
-        .locator("xpath=following-sibling::p[1]")
-        .getByText(/^Field service/);
-      if (viewport.width < 640) await expect(metaText).toBeHidden();
-      else await expect(metaText).toBeVisible();
-      expect(
-        await status.evaluate(
-          (element) =>
-            element.scrollWidth <= element.clientWidth &&
-            element.scrollHeight <= element.clientHeight,
-        ),
-      ).toBe(true);
+      const size = await status.evaluate((element) => {
+        const text = document.createRange();
+        text.selectNodeContents(element);
+        return {
+          scrollWidth: element.scrollWidth,
+          clientWidth: element.clientWidth,
+          scrollHeight: element.scrollHeight,
+          clientHeight: element.clientHeight,
+          boxHeight: element.getBoundingClientRect().height,
+          textHeight: text.getBoundingClientRect().height,
+        };
+      });
+      expect(size.scrollWidth, "status width").toBeLessThanOrEqual(
+        size.clientWidth,
+      );
+      expect(size.scrollHeight, "status height").toBeLessThanOrEqual(
+        size.clientHeight,
+      );
+      expect(size.textHeight, "status text height").toBeLessThanOrEqual(
+        size.boxHeight,
+      );
+      expect((await box(filters)).y).toBe(before);
+      // The count stays in the Records tab; the grouped view has none.
+      if (scene.name !== "grouped view")
+        await expect(page.getByLabel("Equipment page")).toContainText("30");
       const openRecord = page.getByRole("button", {
         name: "Open record",
         exact: true,
       });
-      await expect(openRecord).toBeVisible();
-      expect((await box(filters)).y).toBe(before);
-      // The line-sized button takes a 44px tap target, 32px from 1280px:
-      // measure where a tap on its middle column still lands on it.
-      const target = await box(openRecord);
-      const hit = await page.evaluate(
-        ([x, top, bottom]) => {
-          const lands = (y: number) =>
-            document.elementFromPoint(x, y)?.closest("button")?.textContent ===
-            "Open record";
-          let first = top;
-          while (lands(first - 1)) first -= 1;
-          let last = bottom;
-          while (lands(last + 1)) last += 1;
-          return last - first + 1;
-        },
-        [
-          target.x + target.width / 2,
-          Math.ceil(target.y),
-          Math.floor(target.y + target.height) - 1,
-        ],
-      );
-      expect(hit).toBeGreaterThanOrEqual(viewport.width >= 1280 ? 32 : 44);
-      expect(target.width).toBeGreaterThanOrEqual(44);
-      // The count stays in the Records tab; the grouped view has none.
-      if (scene === "filters hide it")
-        await expect(page.getByLabel("Equipment page")).toContainText("30");
+      if (scene.name === "record matches")
+        await expect(openRecord).toHaveCount(0);
+      else {
+        await expect(openRecord).toBeVisible();
+        // The line-sized button takes a 44px tap target, 32px from 1280px:
+        // measure where a tap on its middle column still lands on it.
+        const target = await box(openRecord);
+        const hit = await page.evaluate(
+          ([x, top, bottom]) => {
+            const lands = (y: number) =>
+              document.elementFromPoint(x, y)?.closest("button")
+                ?.textContent === "Open record";
+            let first = top;
+            while (lands(first - 1)) first -= 1;
+            let last = bottom;
+            while (lands(last + 1)) last += 1;
+            return last - first + 1;
+          },
+          [
+            target.x + target.width / 2,
+            Math.ceil(target.y),
+            Math.floor(target.y + target.height) - 1,
+          ],
+        );
+        expect(hit).toBeGreaterThanOrEqual(viewport.width >= 1280 ? 32 : 44);
+        expect(target.width).toBeGreaterThanOrEqual(44);
+      }
 
       // The next action ends the status, and the meta text returns.
       await page
         .getByRole("searchbox", { name: "Search Equipment" })
         .fill("pump");
+      // (The search changes the count, so the meta text may wrap anew.)
       await expect(status).toHaveText("", { useInnerText: true });
       await expect(metaText).toBeVisible();
+    });
+  }
+}
+
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 390, height: 844 },
+] as const) {
+  for (const department of ["long", "short"] as const) {
+    test(`UF-C6.2 UF-C1.3: at ${viewport.width}px, ${department} department: Unsaved changes yields to the status`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await installViewsApi(page, { disableInitialSearch: true });
+      if (department === "long") await useLongDepartmentName(page);
+      await routeQuickFilterCounts(page);
+      await installCreatedRecord(page);
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      await page
+        .getByRole("group", { name: "Status" })
+        .getByRole("button", { name: /^In service\s*29$/ })
+        .click();
+      const badge = metaLine(page).getByText("Unsaved changes", {
+        exact: true,
+      });
+      await expect(badge).toBeVisible();
+      const filters = page.getByRole("button", {
+        name: "Filters",
+        exact: true,
+      });
+      // Measure at rest: a page status ("Refreshing records…") sits beside
+      // the meta text for a moment after a filter.
+      await expect(metaLine(page).getByRole("status").last()).toHaveText("", {
+        useInnerText: true,
+      });
+      const before = (await box(filters)).y;
+
+      await createRecord(page);
+      await page.keyboard.press("Escape");
+
+      const status = metaStatus(page);
+      await expect(status).toHaveText("Created, hidden by filters.", {
+        useInnerText: true,
+      });
+      // The badge yields with the meta text: not seen, not in the
+      // accessibility tree; Save view, the primary, still shows the change.
+      await expect(badge).toBeHidden();
+      expect(await metaLine(page).ariaSnapshot()).not.toContain(
+        "Unsaved changes",
+      );
+      await expect(
+        page.getByRole("button", { name: "Save view", exact: true }),
+      ).toBeVisible();
+      await expect(
+        metaLine(page).getByRole("button", {
+          name: "Open record",
+          exact: true,
+        }),
+      ).toBeVisible();
       expect((await box(filters)).y).toBe(before);
+
+      // The next action ends the status; the badge returns with the meta.
+      await page
+        .getByRole("searchbox", { name: "Search Equipment" })
+        .fill("pump");
+      await expect(status).toHaveText("", { useInnerText: true });
+      await expect(badge).toBeVisible();
     });
   }
 }
@@ -6018,11 +6139,7 @@ test("UF-C6.1: opening the pinned record from the list clears the status and kee
   await page.keyboard.press("Escape");
 
   // The meta line's status settles empty, not on a passing refresh.
-  await expect(
-    page
-      .locator("p", { has: page.getByText(/ · 30 records$/) })
-      .getByRole("status"),
-  ).toHaveText("");
+  await expect(metaStatus(page)).toHaveText("");
   await expect(first).toContainText(createdRecordName);
   await expect(first).toContainText("New");
 });

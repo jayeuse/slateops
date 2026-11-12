@@ -2805,7 +2805,10 @@ export default function ServerBackedViewsWorkspace({
         reportCount={reportCount}
       />
     ) : null;
-  // Item 6: a status with "Open record" shows on the meta line.
+  // Item 6: its status holds the meta text's place while it is active, even
+  // while a page status ("Refreshing records…") shows over it for a moment.
+  const createdStatusActive = Boolean(createdRecord.status) && !reportsActive;
+  // Its "Open record" shows with its words, not over a page status.
   const createdOpenShown = createdRecord.openable && !reportsActive && !status;
   const isAdmin =
     identity.data?.role === "admin" && identity.data.id === verifiedUserId;
@@ -2815,47 +2818,58 @@ export default function ServerBackedViewsWorkspace({
         <PageHeader
           title={moduleName ?? "Records"}
           description={
-            // DR-6.1: one line, so the toolbar never moves: the meta and the
-            // controls keep their size, and a status cuts with an ellipsis.
-            <span className="flex min-w-0 items-center gap-x-2">
-              {meta ? (
-                // DR-6.1: below 640px a status with Open record takes the
-                // meta text's place until it clears; the Records tab keeps
-                // the count.
-                <span
-                  className={cn(
-                    "shrink-0 whitespace-nowrap",
-                    createdOpenShown && "max-sm:hidden",
-                  )}
-                >
-                  {meta}
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              {/* DR-6.1: an item 6 status takes the meta text's place at
+                every width. The meta keeps its box, invisible and out of the
+                accessibility tree, so the line and the toolbar never move;
+                the status layer sits over it. The Records tab keeps the
+                count and the breadcrumb the department. */}
+              <span className="relative">
+                {meta ? (
+                  <span className={cn(createdStatusActive && "invisible")}>
+                    {meta}
+                  </span>
+                ) : null}
+                <span className="absolute top-0 left-0 flex items-center gap-x-2 whitespace-nowrap">
+                  <span role="status">
+                    {createdStatusActive ? status || createdRecord.status : ""}
+                  </span>
+                  {createdOpenShown ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      // Sized to the line (h-auto leaves the slim 32px rule;
+                      // min-h-0! the phone 44px floor); the hit area still
+                      // reaches 44px, and 32px from 1280px.
+                      className="text-action-text relative h-auto min-h-0! shrink-0 px-1.5 py-0 leading-6 whitespace-nowrap underline-offset-4 after:absolute after:inset-x-0 after:-inset-y-2.5 after:content-[''] hover:bg-transparent hover:underline xl:after:-inset-y-1"
+                      onClick={() =>
+                        createdRecord.id &&
+                        openRecordFromResults(
+                          createdRecord.id,
+                          undefined,
+                          false,
+                        )
+                      }
+                    >
+                      Open record
+                    </Button>
+                  ) : null}
                 </span>
-              ) : null}
-              {/* DR-1.2: only a view manager can save, so only they see it. */}
+              </span>
+              {/* DR-1.2: only a view manager can save, so only they see it.
+                It yields with the meta text while an item 6 status shows
+                (kept in place, invisible); Save view still shows the change. */}
               {dirty && canManageViews && !reportsActive ? (
-                <Badge variant="outline" className="shrink-0">
+                <Badge
+                  variant="outline"
+                  className={cn(createdStatusActive && "invisible")}
+                >
                   Unsaved changes
                 </Badge>
               ) : null}
-              <span role="status" className="line-clamp-1 min-w-0 break-all">
-                {reportsActive ? "" : status ? status : createdRecord.status}
+              <span role="status">
+                {reportsActive || createdStatusActive ? "" : status}
               </span>
-              {createdOpenShown ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  // Sized to the line (h-auto leaves the slim 32px rule;
-                  // min-h-0! the phone 44px floor); the hit area still
-                  // reaches 44px, and 32px from 1280px.
-                  className="text-action-text relative h-auto min-h-0! shrink-0 px-1.5 py-0 leading-6 whitespace-nowrap underline-offset-4 after:absolute after:inset-x-0 after:-inset-y-2.5 after:content-[''] hover:bg-transparent hover:underline xl:after:-inset-y-1"
-                  onClick={() =>
-                    createdRecord.id &&
-                    openRecordFromResults(createdRecord.id, undefined, false)
-                  }
-                >
-                  Open record
-                </Button>
-              ) : null}
             </span>
           }
           actions={
