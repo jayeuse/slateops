@@ -5787,6 +5787,112 @@ test("UF-C6.3: a sort change ends the New tag and the status; the record shows o
   await expect(pager).toBeVisible();
 });
 
+// Item 12: a long record name, so a narrow title column would wrap far.
+const longRecordName =
+  "UX audit test contact with a long name that wraps in a narrow header";
+const recordHeaderActions = [
+  "Previous record",
+  "Next record",
+  "Edit record",
+  "More record actions",
+  "Close",
+] as const;
+
+/** Opens the long-named record from the list, so Previous and Next show. */
+async function openLongRecord(page: Page) {
+  await installViewsApi(page, {
+    disableInitialSearch: true,
+    recordName: longRecordName,
+  });
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await page.getByRole("button", { name: longRecordName }).click();
+  // Measure the header only once the sheet has stopped sliding in.
+  const sheet = await openedSheet(
+    page.getByRole("dialog", { name: "Record details" }),
+  );
+  const title = sheet.getByRole("heading", { level: 2, name: longRecordName });
+  await expect(title).toBeVisible();
+  for (const name of recordHeaderActions)
+    await expect(
+      sheet.getByRole("button", { name, exact: true }),
+    ).toBeVisible();
+  return { sheet, title };
+}
+
+const box = async (locator: Locator) => {
+  const value = await locator.boundingBox();
+  if (!value) throw new Error("The element is not laid out.");
+  return value;
+};
+
+test("UF-C12.1: on a phone the record header puts its actions in one row above a full-width title of two lines at most", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { sheet, title } = await openLongRecord(page);
+  const sheetBox = await box(sheet);
+  const titleBox = await box(title);
+  const actionBoxes = await Promise.all(
+    recordHeaderActions.map((name) =>
+      box(sheet.getByRole("button", { name, exact: true })),
+    ),
+  );
+
+  // One action row, above the title.
+  const rowTop = actionBoxes[0]?.y ?? 0;
+  for (const action of actionBoxes) {
+    expect(Math.abs(action.y - rowTop)).toBeLessThanOrEqual(1);
+    expect(action.y + action.height).toBeLessThanOrEqual(titleBox.y);
+    expect(action.width).toBeGreaterThanOrEqual(44);
+    expect(action.height).toBeGreaterThanOrEqual(44);
+  }
+  // The title takes the sheet width, less the header padding, in 2 lines.
+  expect(titleBox.width).toBeGreaterThanOrEqual(sheetBox.width - 40);
+  const lines = await title.evaluate((element) =>
+    Math.round(
+      element.getBoundingClientRect().height /
+        Number.parseFloat(getComputedStyle(element).lineHeight),
+    ),
+  );
+  expect(lines).toBeLessThanOrEqual(2);
+  // Screen readers still meet the title first; nothing scrolls sideways.
+  const titleFirst = await title.evaluate(
+    (element, close) =>
+      Boolean(
+        close &&
+        element.compareDocumentPosition(close) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    await sheet
+      .getByRole("button", { name: "Close", exact: true })
+      .elementHandle(),
+  );
+  expect(titleFirst).toBe(true);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  expect(
+    await sheet.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth,
+    ),
+  ).toBe(true);
+});
+
+test("UF-C12.2: from 1440 px the record header keeps the title and its actions on one row", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const { sheet, title } = await openLongRecord(page);
+  const titleBox = await box(title);
+  for (const name of recordHeaderActions) {
+    const action = await box(sheet.getByRole("button", { name, exact: true }));
+    expect(action.x).toBeGreaterThanOrEqual(titleBox.x + titleBox.width);
+    expect(action.y).toBeLessThan(titleBox.y + titleBox.height);
+  }
+});
+
 test("UF-C6.1: New record checks required values, opens the created record, then lists it once, first, tagged New", async ({
   page,
 }) => {

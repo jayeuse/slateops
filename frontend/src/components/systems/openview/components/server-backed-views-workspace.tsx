@@ -3585,9 +3585,12 @@ export default function ServerBackedViewsWorkspace({
                       <SheetTitle className="sr-only">
                         Record details
                       </SheetTitle>
-                      <header className="flex shrink-0 items-start gap-3 border-b p-5 pr-3">
+                      {/* DR-12.1: below 640px the actions row shows first and
+                        the title takes the full width; the DOM keeps the title
+                        first for screen readers. */}
+                      <header className="flex shrink-0 items-start gap-3 border-b p-5 pr-3 max-sm:flex-col-reverse max-sm:items-stretch max-sm:gap-2 max-sm:pt-3">
                         <div className="min-w-0 flex-1">
-                          <h2 className="text-lg leading-tight font-semibold wrap-anywhere">
+                          <h2 className="text-lg leading-tight font-semibold wrap-anywhere max-sm:line-clamp-2">
                             {linkedRecord
                               ? recordTitle(
                                   linkedRecord,
@@ -3651,7 +3654,7 @@ export default function ServerBackedViewsWorkspace({
                             </p>
                           ) : null}
                         </div>
-                        <div className="flex shrink-0 items-center gap-1">
+                        <div className="flex shrink-0 items-center gap-1 max-sm:justify-end">
                           {linkedRecord &&
                           activeInspectionContext &&
                           !recordEditing ? (
