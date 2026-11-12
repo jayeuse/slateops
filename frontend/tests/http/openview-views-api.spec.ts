@@ -6185,9 +6185,15 @@ test("UF-C9.2: Layout settings name sort and group in plain words, with the defa
   await expect(
     dialog.getByRole("heading", { name: "Sort and group", exact: true }),
   ).toBeVisible();
+  // One priority hint, under "Sort order"; none under the heading.
+  await expect(
+    dialog.getByText("Use up to three rules. The first one counts most.", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(
     dialog.getByText("The first sort rule counts most.", { exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     dialog.getByText("With no rule, the oldest records come first.", {
       exact: true,
@@ -6197,8 +6203,36 @@ test("UF-C9.2: Layout settings name sort and group in plain words, with the defa
     dialog.getByText("Choose a group to see its records.", { exact: true }),
   ).toBeVisible();
   const words = (await dialog.innerText()).toLowerCase();
-  for (const word of ["query", "source order", "server", "paged"])
+  for (const word of [
+    "query",
+    "source order",
+    "server",
+    "paged",
+    "highest priority",
+  ])
     expect(words, `"${word}" in Layout settings`).not.toContain(word);
+});
+
+test("UF-C9.2: the grouped list says once, in plain words, to choose a group", async ({
+  page,
+}) => {
+  await installViewsApi(page, {
+    disableInitialSearch: true,
+    initialGroupByFieldId: statusFieldId,
+  });
+  await viewAs(page, "writer");
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+
+  await expect(
+    page.getByText("Choose a group to see its records.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Counts include all matching records/),
+  ).toHaveCount(0);
+  await expect(page.getByText(/page of records is loaded/)).toHaveCount(0);
+  await expect(
+    page.getByText("Select a group to load its records."),
+  ).toHaveCount(0);
 });
 
 test("UF-C9.3: a saved view that holds empty keeps its operator, reads it apart on text, and sends empty", async ({

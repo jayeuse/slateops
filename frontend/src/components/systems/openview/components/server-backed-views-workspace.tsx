@@ -3328,7 +3328,7 @@ export default function ServerBackedViewsWorkspace({
                       </Alert>
                     ) : generalGroupedView && !generalSelectedGroup ? (
                       <Alert role="note">
-                        Select a group to load its records.
+                        Choose a group to see its records.
                       </Alert>
                     ) : rowError && pageRows.length === 0 ? (
                       <Empty>

@@ -60,9 +60,6 @@ export function SavedViewAdvancedControls({
           >
             Sort and group
           </h3>
-          <p className="text-muted-foreground text-sm">
-            The first sort rule counts most.
-          </p>
         </div>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-3">
@@ -72,8 +69,7 @@ export function SavedViewAdvancedControls({
                   Sort order
                 </h3>
                 <p className="text-muted-foreground text-xs">
-                  The first rule has the highest priority. Use up to three
-                  rules.
+                  Use up to three rules. The first one counts most.
                 </p>
               </div>
               <Button

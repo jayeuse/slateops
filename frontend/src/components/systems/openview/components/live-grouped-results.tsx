@@ -67,10 +67,6 @@ export function LiveGroupedResults({
           <h2 data-slot="section-title" className="font-medium">
             Groups by {fieldName}
           </h2>
-          <p className="text-muted-foreground text-sm">
-            Counts include all matching records. Only the selected group’s page
-            of records is loaded.
-          </p>
         </div>
         <p aria-live="polite" className="text-muted-foreground text-sm">
           {loading ? "Loading groups…" : range}
