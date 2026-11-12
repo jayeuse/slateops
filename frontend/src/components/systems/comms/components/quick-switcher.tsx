@@ -88,7 +88,7 @@ export function QuickSwitcher({
   const matches = rows.filter(
     (row) =>
       !row.preferences.hidden &&
-      row.name.toLowerCase().includes(search.toLowerCase()),
+      row.name.toLowerCase().includes(search.trim().toLowerCase()),
   );
   return (
     <>

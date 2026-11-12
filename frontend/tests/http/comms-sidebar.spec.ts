@@ -29,6 +29,8 @@ async function seedSidebar(
     notifications?: boolean;
     /** More categories, each with one channel, to fill a first screen. */
     extraCategories?: number;
+    /** One more category with no channel, so "No channels here." shows. */
+    emptyCategory?: boolean;
   } = {},
 ) {
   await signedInAs(page, { id: userId, role });
@@ -82,6 +84,15 @@ async function seedSidebar(
       initial.members[channel.id],
     );
     initial.high_water_seq[extraChannel] = 0;
+  }
+  if (options.emptyCategory) {
+    const emptyCategory = "76000000-0000-4000-8000-000000000199";
+    initial.categories[emptyCategory] = {
+      ...category,
+      id: emptyCategory,
+      name: "Yard empty",
+      position: 2 + (options.extraCategories ?? 0),
+    };
   }
   const secondMessage = {
     ...root,
@@ -619,16 +630,56 @@ for (const viewport of [
     page,
   }) => {
     await page.setViewportSize(viewport);
-    await seedSidebar(page, "member", true, undefined, { extraCategories: 6 });
+    await seedSidebar(page, "member", true, undefined, {
+      extraCategories: 6,
+      emptyCategory: true,
+    });
     await page.goto("/comms");
     const list = page.getByRole("complementary", {
       name: "Conversations",
       exact: true,
     });
-    await expect(
-      list.getByRole("button", { name: /^yard-lane-6(,|$)/ }),
-    ).toBeAttached();
-    const before = await list.innerText();
+    const yards = [1, 2, 3, 4, 5, 6];
+    // The unfiltered list, by name: every section heading, hint, category
+    // menu, channel row and followed record (unread counts may change).
+    const expectFullList = async () => {
+      for (const name of ["Starred", "Records you follow", "Direct messages"])
+        await expect(
+          list.getByRole("heading", { name, exact: true }),
+        ).toBeVisible();
+      for (const hint of [
+        "Star conversations to find them here.",
+        "No channels here.",
+        "Start a direct or group conversation.",
+      ])
+        await expect(list.getByText(hint, { exact: true })).toHaveCount(1);
+      for (const name of [
+        "Service delivery",
+        "Planning",
+        ...yards.map((index) => `Yard ${index}`),
+        "Yard empty",
+      ])
+        await expect(
+          list.getByRole("button", {
+            name: `Category actions: ${name}`,
+            exact: true,
+          }),
+        ).toBeVisible();
+      for (const name of [
+        "operations",
+        "deliveries",
+        ...yards.map((index) => `yard-lane-${index}`),
+      ])
+        await expect(
+          list.getByRole("button", { name: new RegExp(`^${name}(,|$)`) }),
+        ).toBeVisible();
+      await expect(
+        list
+          .getByRole("list", { name: "Records you follow", exact: true })
+          .getByRole("button", { name: /^Riverside service visit/ }),
+      ).toBeVisible();
+    };
+    await expectFullList();
     const search = list.getByRole("textbox", {
       name: "Search conversations",
       exact: true,
@@ -649,7 +700,7 @@ for (const viewport of [
     ])
       await expect(list.getByText(hint, { exact: true })).toHaveCount(0);
     await search.fill("");
-    await expect.poll(() => list.innerText()).toBe(before);
+    await expectFullList();
   });
 }
 
@@ -779,6 +830,114 @@ test("FX-D1-5 a guest's typed text shows only matching rows, no People, and the 
   await expect(list.getByRole("heading", { level: 2 })).toHaveCount(0);
   await expect(list.getByRole("region", { name: "People" })).toHaveCount(0);
   expect(server.candidateQueries).toEqual([]);
+});
+
+test("FX-N2-1 a trailing space keeps a person with a direct message once, as that conversation, not under People", async ({
+  page,
+}) => {
+  await seedSidebar(page, "member");
+  await page.goto("/comms");
+  const list = page.getByRole("complementary", {
+    name: "Conversations",
+    exact: true,
+  });
+  const search = list.getByRole("textbox", {
+    name: "Search conversations",
+    exact: true,
+  });
+  await search.fill("Noah");
+  await list
+    .getByRole("region", { name: "People", exact: true })
+    .getByRole("button", { name: "Noah Tan", exact: true })
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeFocused();
+  const read = page.waitForResponse((response) =>
+    response.url().includes("/comms/direct-candidates?q=Noah+Tan&"),
+  );
+  await search.fill("Noah Tan ");
+  await read;
+  await expect(
+    list.getByRole("heading", { name: "Direct messages", exact: true }),
+  ).toBeVisible();
+  await expect(list.getByRole("button", { name: /^Noah Tan/ })).toHaveCount(1);
+  await expect(list.getByRole("region", { name: "People" })).toHaveCount(0);
+});
+
+test("FX-N2-3 in the switcher a trailing space keeps a person with a direct message once, as that conversation, not under People", async ({
+  page,
+}) => {
+  await seedSidebar(page, "member");
+  await page.goto("/comms");
+  const list = page.getByRole("complementary", {
+    name: "Conversations",
+    exact: true,
+  });
+  await list
+    .getByRole("textbox", { name: "Search conversations", exact: true })
+    .fill("Noah");
+  await list
+    .getByRole("region", { name: "People", exact: true })
+    .getByRole("button", { name: "Noah Tan", exact: true })
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Control+k");
+  const switcher = page.getByRole("dialog", {
+    name: "Switch conversation",
+    exact: true,
+  });
+  const read = page.waitForResponse((response) =>
+    response.url().includes("/comms/direct-candidates?q=Noah+Tan&"),
+  );
+  await switcher
+    .getByRole("textbox", { name: "Find a conversation", exact: true })
+    .fill("Noah Tan ");
+  await read;
+  // The only "Noah Tan" button must be the conversation, never a People row.
+  await expect(
+    switcher.getByRole("button", { name: "Noah Tan", exact: true }),
+  ).toBeVisible();
+  await expect(switcher.getByRole("region", { name: "People" })).toHaveCount(0);
+  await expect(
+    switcher.getByRole("button", { name: "Noah Tan", exact: true }),
+  ).toHaveCount(1);
+});
+
+test("FX-N2-2 a filter of only spaces shows the full list with its hints", async ({
+  page,
+}) => {
+  await seedSidebar(page, "member");
+  await page.goto("/comms");
+  const list = page.getByRole("complementary", {
+    name: "Conversations",
+    exact: true,
+  });
+  await expect(
+    list.getByRole("button", { name: /^operations,/ }),
+  ).toBeVisible();
+  await list
+    .getByRole("textbox", { name: "Search conversations", exact: true })
+    .fill("   ");
+  // Every section and hint of the unfiltered list stays.
+  for (const hint of [
+    "Star conversations to find them here.",
+    "Start a direct or group conversation.",
+  ])
+    await expect(list.getByText(hint, { exact: true })).toBeVisible();
+  for (const name of ["Starred", "Records you follow", "Direct messages"])
+    await expect(
+      list.getByRole("heading", { name, exact: true }),
+    ).toBeVisible();
+  for (const name of ["Service delivery", "Planning"])
+    await expect(
+      list.getByRole("button", { name: `Category actions: ${name}` }),
+    ).toBeVisible();
+  await expect(
+    list.getByText("No conversations match.", { exact: true }),
+  ).toHaveCount(0);
 });
 
 test("FX-D2-1 on a phone a picked person opens the direct message with the composer focused", async ({

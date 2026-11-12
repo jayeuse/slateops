@@ -143,3 +143,23 @@ test("FX-N3-1 a second start ends the first wait; only the newer composer takes 
     restore();
   }
 });
+
+test("FX-N3-1b a start from the other entry ends the first entry's wait", () => {
+  const restore = installDocument();
+  try {
+    // The list and the switcher each schedule their own frames.
+    const list = fakeFrames();
+    const switcher = fakeFrames();
+    focusComposerWhenReady("from-list", list.frame, list.cancel);
+    focusComposerWhenReady("from-switcher", switcher.frame, switcher.cancel);
+    const fromList = new FakeComposer();
+    const fromSwitcher = new FakeComposer();
+    world.mounted["composer-from-list"] = fromList;
+    world.mounted["composer-from-switcher"] = fromSwitcher;
+    list.run();
+    switcher.run();
+    expect([fromList.focused, fromSwitcher.focused]).toEqual([0, 1]);
+  } finally {
+    restore();
+  }
+});

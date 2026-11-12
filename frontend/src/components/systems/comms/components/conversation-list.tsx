@@ -70,7 +70,8 @@ export function ConversationList({
   const guest = role === "guest";
   const startTitleId = useId();
   // DR-5.7: while the filter has text, only what matches shows.
-  const typed = search.toLowerCase();
+  // Trimmed, as the People read trims it; only spaces count as no text.
+  const typed = search.trim().toLowerCase();
   const visible = actions.rows.filter(
     (row) => !row.preferences.hidden && row.name.toLowerCase().includes(typed),
   );
@@ -79,10 +80,10 @@ export function ConversationList({
   );
   // Channels exist but the viewer hid every one of them.
   const channelsHidden =
-    !search &&
+    !typed &&
     hasChannels &&
     !visible.some((item) => item.conversation.kind === "channel");
-  const firstRun = !search && !visible.length && !hasChannels;
+  const firstRun = !typed && !visible.length && !hasChannels;
   const hasDirect = visible.some(
     (item) => item.conversation.kind !== "channel",
   );
@@ -90,7 +91,7 @@ export function ConversationList({
   // while the check loads or after it fails (D3).
   const startsDirect = !!role && !guest;
   // Item 5: a typed search also lists people for whoever may start a direct.
-  const findsPeople = startsDirect && !!search.trim();
+  const findsPeople = startsDirect && !!typed;
   const openDirect = () => {
     dialogs.setDirectError("");
     dialogs.setDmOpen(true);
@@ -240,7 +241,7 @@ export function ConversationList({
               )}
             </section>
           ) : (
-            (!search || !!starred.length) && (
+            (!typed || !!starred.length) && (
               <section aria-label="Starred" className="mb-3">
                 <h2 className="text-muted-foreground px-2 py-2 text-xs font-semibold">
                   Starred
@@ -264,7 +265,7 @@ export function ConversationList({
               />
             </Suspense>
           ) : (
-            search &&
+            typed &&
             !visible.length && (
               <p className="text-muted-foreground px-2 py-3 text-sm">
                 No conversations match.
@@ -290,16 +291,16 @@ export function ConversationList({
                 item.conversation.category_id === category.id &&
                 !item.preferences.starred,
             );
-            if (search && !items.length) return null;
+            if (typed && !items.length) return null;
             // A typed filter opens the category for this view only.
-            const collapsed = preferences.collapsed && !search;
+            const collapsed = preferences.collapsed && !typed;
             return (
               <Collapsible
                 key={category.id}
                 className="mb-4"
                 open={!collapsed}
                 onOpenChange={(open) =>
-                  !search &&
+                  !typed &&
                   void actions.categoryChange(category.id, { collapsed: !open })
                 }
               >
@@ -423,7 +424,7 @@ export function ConversationList({
               {uncategorized.map(row)}
             </section>
           )}
-          {menuAccess.canCreateCategory && !firstRun && !search && (
+          {menuAccess.canCreateCategory && !firstRun && !typed && (
             <Action
               variant="ghost"
               className="text-muted-foreground min-h-11 w-full justify-start"
@@ -484,7 +485,7 @@ export function ConversationList({
             </section>
           )}
           {/* A guest cannot start one (D3); others may still add them to one. */}
-          {(search ? !!directRows.length : startsDirect || hasDirect) && (
+          {(typed ? !!directRows.length : startsDirect || hasDirect) && (
             <>
               <div className="mt-5 flex min-h-11 items-center justify-between px-2">
                 <h2 className="text-muted-foreground text-xs font-semibold">
