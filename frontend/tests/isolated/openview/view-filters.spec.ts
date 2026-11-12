@@ -6,6 +6,8 @@ import {
   filterValueForType,
   hasUnsafeIntegerFilter,
   isFilterReady,
+  operatorChoices,
+  operatorLabel,
 } from "../../../src/components/systems/openview/domain/server-view-draft";
 import { emptyQuery } from "../../helpers/query-definitions";
 
@@ -116,4 +118,65 @@ test("UF-C3.1 UF-C3.4: a View read keeps only complete conditions without an uns
     ...definition,
     filters: [complete, noValueNeeded, choices, equalsFilter("int", 12)],
   });
+});
+
+// UF-C9.3: one "no value" pair in the menu, backed by the stored blank pair;
+// a saved condition that still uses empty keeps its operator and reads apart
+// where its result differs (text-like fields trim spaces for blank).
+test("UF-C9.3: the condition menu offers one no-value pair and a saved empty reads distinctly", () => {
+  const labels = (type: Filter["expectedType"]) =>
+    operatorChoices(type).map((operator) => operatorLabel(operator, type));
+  for (const type of ["text", "number", "select"] as const) {
+    expect(operatorChoices(type)).toContain("blank");
+    expect(operatorChoices(type)).toContain("not_blank");
+    expect(operatorChoices(type)).not.toContain("empty");
+    expect(operatorChoices(type)).not.toContain("not_empty");
+    expect(labels(type).filter((label) => label === "is empty")).toHaveLength(
+      1,
+    );
+    expect(
+      labels(type).filter((label) => label === "is not empty"),
+    ).toHaveLength(1);
+  }
+  // A saved condition keeps its stored operator in the menu.
+  expect(operatorChoices("text", "empty")).toContain("empty");
+  expect(operatorChoices("text", "not_empty")).toContain("not_empty");
+  expect(
+    [
+      ["empty", "text"],
+      ["not_empty", "text"],
+      ["empty", "number"],
+      ["not_empty", "date"],
+      ["blank", "text"],
+      ["not_blank", "number"],
+    ].map(([operator, type]) =>
+      operatorLabel(
+        operator as Filter["operator"],
+        type as Filter["expectedType"],
+      ),
+    ),
+  ).toEqual([
+    "is empty (exact)",
+    "is not empty (exact)",
+    "is empty",
+    "is not empty",
+    "is empty",
+    "is not empty",
+  ]);
+});
+
+// UF-C9.3 (review N-1): "(exact)" marks text fields only; a Choice list and
+// every other type read the plain words.
+test("UF-C9.3: a stored empty reads (exact) on text, long text, email and web link only", () => {
+  const read = (type: Filter["expectedType"]) => [
+    operatorLabel("empty", type),
+    operatorLabel("not_empty", type),
+  ];
+  for (const type of ["text", "long_text", "email", "url"] as const)
+    expect(read(type), type).toEqual([
+      "is empty (exact)",
+      "is not empty (exact)",
+    ]);
+  for (const type of ["select", "user", "boolean", "number", "date"] as const)
+    expect(read(type), type).toEqual(["is empty", "is not empty"]);
 });

@@ -58,10 +58,10 @@ export function SavedViewAdvancedControls({
             id="openview-advanced-settings-heading"
             className="font-medium"
           >
-            Advanced query settings
+            Sort and group
           </h3>
           <p className="text-muted-foreground text-sm">
-            Control sort priority and grouping.
+            The first sort rule counts most.
           </p>
         </div>
         <div className="flex flex-col gap-4">
@@ -114,7 +114,7 @@ export function SavedViewAdvancedControls({
             </div>
             {draft.definition.sort.length === 0 ? (
               <p className="text-muted-foreground text-sm">
-                Records keep their source order.
+                With no rule, the oldest records come first.
               </p>
             ) : null}
             {draft.definition.sort.map((sort, index) => (
@@ -250,8 +250,7 @@ export function SavedViewAdvancedControls({
               </Select>
             </Field>
             <p className="text-muted-foreground max-w-prose text-sm">
-              Counts come from the server. Select a group to load its paged
-              records.
+              Choose a group to see its records.
             </p>
             {draft.presentation.groupByFieldId && !groupByField ? (
               <p role="note" className="text-muted-foreground text-sm">

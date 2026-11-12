@@ -73,6 +73,7 @@ import {
   type ReportViewSource,
 } from "./report-draft";
 import { useErrorText } from "@/lib/use-error-text";
+import { readsExact } from "../domain/server-view-draft";
 
 type FilterOperator = ReportFilterDraft["operator"];
 const VALUELESS = new Set<FilterOperator>([
@@ -92,10 +93,12 @@ const OPERATORS: { value: FilterOperator; label: string }[] = [
   { value: "prefix", label: "Starts with" },
   { value: "suffix", label: "Ends with" },
   { value: "in", label: "Is one of" },
+  // DR-9.3: one "no value" pair, backed by blank and not_blank; a saved
+  // empty or not_empty reads "(exact)" where its result differs.
   { value: "empty", label: "Is empty" },
   { value: "not_empty", label: "Is not empty" },
-  { value: "blank", label: "Is blank" },
-  { value: "not_blank", label: "Is not blank" },
+  { value: "blank", label: "Is empty" },
+  { value: "not_blank", label: "Is not empty" },
 ];
 
 function fieldReference(
@@ -126,21 +129,39 @@ function membershipIds(value: string): string[] {
     .filter(Boolean);
 }
 
-function operatorsFor(type: OpenViewDataSourceField["type"]): FilterOperator[] {
-  const base: FilterOperator[] = [
-    "eq",
-    "neq",
-    "empty",
-    "not_empty",
-    "blank",
-    "not_blank",
-  ];
+function operatorsFor(
+  type: OpenViewDataSourceField["type"],
+  current: FilterOperator,
+): FilterOperator[] {
+  // A saved empty or not_empty stays listed, so it keeps its operator.
+  const kept: FilterOperator[] =
+    current === "empty" || current === "not_empty" ? [current] : [];
+  const base: FilterOperator[] = ["eq", "neq", "blank", "not_blank", ...kept];
   if (["text", "long_text", "email", "url"].includes(type))
     return [...base, "contains", "prefix", "suffix"];
   if (type === "select") return [...base, "contains", "in"];
   if (["number", "decimal", "int", "date", "datetime"].includes(type))
     return [...base, "lt", "lte", "gt", "gte"];
   return base;
+}
+
+/**
+ * The report condition menu (DR-9.3): one "no value" pair; a stored empty or
+ * not_empty stays, labelled "(exact)" where its result differs.
+ */
+export function reportOperatorOptions(
+  type: OpenViewDataSourceField["type"],
+  current: FilterOperator,
+): { value: FilterOperator; label: string }[] {
+  const allowed = operatorsFor(type, current);
+  return OPERATORS.filter((option) => allowed.includes(option.value)).map(
+    (option) => ({
+      value: option.value,
+      label: readsExact(option.value, type)
+        ? `${option.label} (exact)`
+        : option.label,
+    }),
+  );
 }
 
 /**
@@ -738,7 +759,6 @@ export function ReportRecipeEditor({
                   ) : null}
                   <FieldGroup>
                     {draft.filters.map((filter) => {
-                      const allowed = operatorsFor(filter.expectedType);
                       const field = moduleFields.find(
                         (entry) => entry.id === filter.fieldId,
                       );
@@ -815,8 +835,9 @@ export function ReportRecipeEditor({
                                 })
                               }
                             >
-                              {OPERATORS.filter((option) =>
-                                allowed.includes(option.value),
+                              {reportOperatorOptions(
+                                filter.expectedType,
+                                filter.operator,
                               ).map((option) => (
                                 <option key={option.value} value={option.value}>
                                   {option.label}

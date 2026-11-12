@@ -149,8 +149,9 @@ export function ChartFilterControls({
         const field = filterFields.find(
           (candidate) => candidate.id === filter.fieldId,
         );
+        // DR-9.3: a stored empty or not_empty stays in the menu.
         const fieldOperators = field
-          ? operatorsFor(field)
+          ? operatorsFor(field, filter.operator)
           : COMMON_FILTER_OPERATORS;
         const selectChoices = selectOptionsForField(field);
         const selectedUser = eligiblePeople.some(
@@ -220,7 +221,7 @@ export function ChartFilterControls({
               >
                 {fieldOperators.map((operator) => (
                   <option key={operator} value={operator}>
-                    {operatorLabel(operator)}
+                    {operatorLabel(operator, field?.type)}
                   </option>
                 ))}
               </Select>

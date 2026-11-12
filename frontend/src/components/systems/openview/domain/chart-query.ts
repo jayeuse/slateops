@@ -15,6 +15,7 @@ import {
   validAggregateBucketWindow,
   type AggregateBucket,
 } from "./aggregate-buckets";
+import { readsExact } from "./server-view-draft";
 
 export type ChartType = "bar" | "line" | "pie";
 export type Aggregation =
@@ -57,11 +58,10 @@ export const EMPTY_OPERATORS = new Set<FilterOperator>([
   "blank",
   "not_blank",
 ]);
+// DR-9.3: one "no value" pair, backed by blank and not_blank.
 export const COMMON_FILTER_OPERATORS: FilterOperator[] = [
   "eq",
   "neq",
-  "empty",
-  "not_empty",
   "blank",
   "not_blank",
 ];
@@ -87,22 +87,37 @@ export function defaultDimension(
   return undefined;
 }
 
-export function operatorsFor(field: OpenViewDataSourceField): FilterOperator[] {
+/** A chart filter's conditions; a stored empty or not_empty (`current`) stays. */
+export function operatorsFor(
+  field: OpenViewDataSourceField,
+  current?: FilterOperator,
+): FilterOperator[] {
+  const common: FilterOperator[] =
+    current === "empty" || current === "not_empty"
+      ? [...COMMON_FILTER_OPERATORS, current]
+      : COMMON_FILTER_OPERATORS;
   if (["text", "long_text", "email", "url"].includes(field.type)) {
-    return [...COMMON_FILTER_OPERATORS, "contains", "prefix", "suffix"];
+    return [...common, "contains", "prefix", "suffix"];
   }
-  if (field.type === "select") return [...COMMON_FILTER_OPERATORS, "contains"];
-  if (field.type === "user") return COMMON_FILTER_OPERATORS;
+  if (field.type === "select") return [...common, "contains"];
+  if (field.type === "user") return common;
   if (
     NUMERIC_TYPES.has(field.type) ||
     ["date", "datetime"].includes(field.type)
   ) {
-    return [...COMMON_FILTER_OPERATORS, "lt", "lte", "gt", "gte"];
+    return [...common, "lt", "lte", "gt", "gte"];
   }
-  return COMMON_FILTER_OPERATORS;
+  return common;
 }
 
-export function operatorLabel(operator: FilterOperator): string {
+/**
+ * A chart filter's condition label (DR-9.3): the same words as Views, with
+ * "(exact)" on a stored empty or not_empty where its result differs.
+ */
+export function operatorLabel(
+  operator: FilterOperator,
+  type?: OpenViewDataSourceField["type"],
+): string {
   const labels: Record<FilterOperator, string> = {
     eq: "Is",
     neq: "Is not",
@@ -116,10 +131,12 @@ export function operatorLabel(operator: FilterOperator): string {
     in: "Is one of",
     empty: "Is empty",
     not_empty: "Is not empty",
-    blank: "Is blank",
-    not_blank: "Is not blank",
+    blank: "Is empty",
+    not_blank: "Is not empty",
   };
-  return labels[operator];
+  return type && readsExact(operator, type)
+    ? `${labels[operator]} (exact)`
+    : labels[operator];
 }
 
 export function canonicalDecimal(value: string): string | null {

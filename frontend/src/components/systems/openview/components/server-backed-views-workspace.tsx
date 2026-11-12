@@ -121,7 +121,7 @@ import {
   isFilterApplied,
   isFilterReady,
   normalizeFilterValues,
-  OPERATOR_LABELS,
+  operatorLabel,
   upsertSavedView,
 } from "../domain/server-view-draft";
 import type { SavedDraft } from "../domain/server-view-draft";
@@ -267,7 +267,8 @@ function filterCondition(
   filter: OpenViewQueryDefinition["filters"][number],
   field: OpenViewDataSourceField | undefined,
 ): string {
-  const label = OPERATOR_LABELS[filter.operator];
+  // DR-9.3: the chip reads a stored empty apart where its result differs.
+  const label = operatorLabel(filter.operator, filter.expectedType);
   if (filter.expectedType === "user") return `${label} person`;
   if (filter.value === null || filter.value === undefined) return label;
   if (filter.expectedType === "select") {
@@ -2874,10 +2875,10 @@ export default function ServerBackedViewsWorkspace({
                   </Button>
                 ) : null}
               </span>
-            </span>
               {/* Holds the status's empty place in the line while its wrapper
                 is lifted, so the line keeps its rest height. */}
               {createdStatusActive ? <span aria-hidden="true" /> : null}
+            </span>
           }
           actions={
             reportsActive ? (
