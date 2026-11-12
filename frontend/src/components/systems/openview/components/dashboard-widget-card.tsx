@@ -434,9 +434,14 @@ function WidgetBody({
     const value = query ? numberValue(data.result, query.aggregation) : null;
     return (
       <div className="mt-auto">
-        <p className="font-display text-3xl leading-none font-semibold tracking-tight tabular-nums">
-          {value === null ? "—" : value.toLocaleString()}
-        </p>
+        {/* DR-9.5: no single value reads in words, in the muted style. */}
+        {value === null ? (
+          <p className="text-muted-foreground text-sm">No values yet</p>
+        ) : (
+          <p className="font-display text-3xl leading-none font-semibold tracking-tight tabular-nums">
+            {value.toLocaleString()}
+          </p>
+        )}
         {numberCaption(moduleName, query) ? (
           <p className="text-muted-foreground mt-1 truncate text-xs">
             {numberCaption(moduleName, query)}
