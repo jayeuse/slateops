@@ -5575,7 +5575,219 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
   });
 }
 
-test("New record checks required values, then opens the created record", async ({
+// Item 6: the 30th record of the views mock, on page 2 at 25 a page, stands
+// in for a record the person creates, so page 1 does not hold it.
+const createdRecordId = "00000000-0000-4000-8000-000000000059";
+const createdRecordName = "Equipment 30";
+
+/**
+ * POST /api/records creates `createdRecordId`. The match read after its sheet
+ * closes (its id as search, the view's deleted setting) answers like the
+ * server: the record matches only while no filter applies.
+ */
+async function installCreatedRecord(page: Page) {
+  await installRecordCommands(page);
+  const matchReads: { filters: unknown[] }[] = [];
+  await page.route("**/api/records", async (route: Route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    return route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify(
+        record(createdRecordId, createdRecordName, "In service"),
+      ),
+    });
+  });
+  await page.route("**/api/records/query", async (route: Route) => {
+    const body = route.request().postDataJSON() as {
+      definition: QueryDefinition;
+      limit?: number;
+      offset?: number;
+    };
+    const { definition } = body;
+    if (
+      definition.search !== createdRecordId ||
+      definition.deleted === "include"
+    )
+      return route.fallback();
+    matchReads.push({ filters: definition.filters });
+    if (definition.filters.length === 0) return route.fallback();
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(
+        pageOf([], {
+          limit: body.limit ?? 1,
+          offset: body.offset ?? 0,
+          total: 0,
+        }),
+      ),
+    });
+  });
+  return { matchReads };
+}
+
+/** Creates "Equipment 30" through New record and waits for its sheet. */
+async function createRecord(page: Page) {
+  await page.getByRole("button", { name: "New record" }).click();
+  const create = page.getByRole("dialog", { name: "New record" });
+  await create.getByLabel("Equipment name").fill(createdRecordName);
+  await create.getByRole("button", { name: /^Create / }).click();
+  await expect(page).toHaveURL(new RegExp(`record=${createdRecordId}`));
+  await expect(
+    page
+      .getByRole("dialog", { name: "Record details" })
+      .getByRole("heading", { name: createdRecordName }),
+  ).toBeVisible();
+}
+
+const pageStatus = (page: Page) =>
+  page.getByRole("status").filter({ hasText: /^Record created\./ });
+
+for (const presentation of [
+  {
+    name: "table",
+    viewport: { width: 1440, height: 900 },
+    layout: "table",
+    first: (page: Page) => page.getByRole("table").getByRole("row").nth(1),
+  },
+  {
+    name: "phone rows",
+    viewport: { width: 390, height: 844 },
+    layout: "table",
+    first: (page: Page) =>
+      page.getByRole("list", { name: "Records" }).getByRole("listitem").first(),
+  },
+  {
+    name: "grid",
+    viewport: { width: 1440, height: 900 },
+    layout: "grid",
+    first: (page: Page) =>
+      page
+        .getByRole("list", { name: "Grid records" })
+        .getByRole("listitem")
+        .first(),
+  },
+] as const) {
+  test(`UF-C6.1: a created record that matches shows first in the ${presentation.name}, tagged New, with the status in the meta line`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(presentation.viewport);
+    await installViewsApi(page, {
+      disableInitialSearch: true,
+      initialLayout: presentation.layout,
+    });
+    await viewAs(page, "writer");
+    const { matchReads } = await installCreatedRecord(page);
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    const pager = page.getByText(/^Showing 1–25 of 30/);
+    await expect(pager).toBeVisible();
+    const toolbar = page.getByRole("searchbox", { name: "Search Equipment" });
+    const toolbarTop = (await toolbar.boundingBox())?.y;
+
+    await createRecord(page);
+
+    // The open sheet hides the page; nothing asks about the match yet.
+    expect(matchReads).toEqual([]);
+    await page.keyboard.press("Escape");
+
+    const first = presentation.first(page);
+    await expect(first).toContainText(createdRecordName);
+    await expect(first).toContainText("New");
+    await expect(pageStatus(page)).toHaveText("Record created.");
+    expect((await toolbar.boundingBox())?.y).toBe(toolbarTop);
+    await expect(pager).toBeVisible();
+    expect(matchReads).toHaveLength(1);
+    // The pinned record opens its sheet like any row.
+    await first
+      .getByRole("button", { name: new RegExp(createdRecordName) })
+      .click();
+    await expect(page).toHaveURL(new RegExp(`record=${createdRecordId}`));
+  });
+}
+
+test("UF-C6.2: a created record that the filters hide is not listed; the status says so and opens it", async ({
+  page,
+}) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  await viewAs(page, "writer");
+  await routeQuickFilterCounts(page);
+  const { matchReads } = await installCreatedRecord(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await page
+    .getByRole("group", { name: "Status" })
+    .getByRole("button", { name: /^In service\s*29$/ })
+    .click();
+  await expect(page).toHaveURL(/[?&]changes=/);
+
+  await createRecord(page);
+  await page.keyboard.press("Escape");
+
+  await expect(pageStatus(page)).toHaveText(
+    "Record created. Your filters hide it.",
+  );
+  expect(matchReads).toHaveLength(1);
+  expect(matchReads[0]?.filters).not.toEqual([]);
+  await expect(
+    page.getByRole("table").getByText("New", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Open record", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`record=${createdRecordId}`));
+});
+
+test("UF-C6.2: with search text applied, no match read is sent and the status offers Open record", async ({
+  page,
+}) => {
+  await installViewsApi(page);
+  await viewAs(page, "writer");
+  const { matchReads } = await installCreatedRecord(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await expect(
+    page.getByRole("searchbox", { name: "Search Equipment" }),
+  ).toHaveValue("pump");
+
+  await createRecord(page);
+  await page.keyboard.press("Escape");
+
+  await expect(pageStatus(page)).toHaveText("Record created.");
+  await expect(
+    page.getByRole("button", { name: "Open record", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("table").getByText("New", { exact: true }),
+  ).toHaveCount(0);
+  expect(matchReads).toEqual([]);
+});
+
+test("UF-C6.3: a sort change ends the New tag and the status; the record shows only at its sorted place", async ({
+  page,
+}) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  await viewAs(page, "writer");
+  await installCreatedRecord(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  const pager = page.getByText(/^Showing 1–25 of 30/);
+  await expect(pager).toBeVisible();
+  await createRecord(page);
+  await page.keyboard.press("Escape");
+  const table = page.getByRole("table");
+  await expect(table.getByText("New", { exact: true })).toHaveCount(1);
+
+  await page
+    .getByRole("combobox", { name: "Sort" })
+    .selectOption(`${nameFieldId}:desc`);
+
+  await expect(table.getByText("New", { exact: true })).toHaveCount(0);
+  await expect(pageStatus(page)).toHaveCount(0);
+  // Page 1 of the server order does not hold it; the pager counts it once.
+  await expect(
+    table.getByRole("button", { name: createdRecordName, exact: true }),
+  ).toHaveCount(0);
+  await expect(pager).toBeVisible();
+});
+
+test("UF-C6.1: New record checks required values, opens the created record, then lists it once, first, tagged New", async ({
   page,
 }) => {
   await installViewsApi(page, { disableInitialSearch: true });
@@ -5595,6 +5807,14 @@ test("New record checks required values, then opens the created record", async (
     module_id: moduleId,
     data: { [nameFieldId]: "Booster pump 09" },
   });
+  // The created record is already on this page: it shows once, first.
+  await page.keyboard.press("Escape");
+  const firstRow = page.getByRole("table").getByRole("row").nth(1);
+  await expect(firstRow).toContainText("Cooling panel 02");
+  await expect(firstRow).toContainText("New");
+  await expect(
+    page.getByRole("button", { name: "Cooling panel 02", exact: true }),
+  ).toHaveCount(1);
 });
 
 test("a Comms example record link shows a notice and returns to live Views", async ({

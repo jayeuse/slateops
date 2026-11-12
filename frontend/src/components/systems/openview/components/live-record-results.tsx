@@ -19,6 +19,7 @@ import {
 import {
   formatOpenViewFieldValue,
   LiveRecordCards,
+  NewRecordTag,
   RecordPersonCard,
 } from "./live-record-cards";
 import { openViewRecordFieldValue } from "../domain/record-display";
@@ -57,6 +58,12 @@ type LiveRecordResultsProps = {
   pageSize: number;
   /** The record open in the sheet, tinted in the list. */
   selectedId: string | null;
+  /**
+   * A record this page just created that matches the view: shown first with
+   * a "New" tag, once, and never counted by the pager (DR-6.3, DR-6.4).
+   * Off unless the page passes it.
+   */
+  newRecord?: OpenViewRecord | null;
   onOpenRecord: (recordId: string) => void;
   onPageIndexChange: (pageIndex: number) => void;
   onPageSizeChange: (pageSize: number) => void;
@@ -99,11 +106,17 @@ export function LiveRecordResults({
   pending,
   pageSize,
   selectedId,
+  newRecord = null,
   onOpenRecord,
   onPageIndexChange,
   onPageSizeChange,
 }: LiveRecordResultsProps) {
   const narrow = useNarrowScreen();
+  const rows = newRecord
+    ? [newRecord, ...page.rows.filter((row) => row.id !== newRecord.id)]
+    : page.rows;
+  const newTag = (row: OpenViewRecord) =>
+    row.id === newRecord?.id ? <NewRecordTag /> : null;
   const cellValue = (row: OpenViewRecord, field: OpenViewDataSourceField) =>
     formatOpenViewFieldValue(
       openViewRecordFieldValue(row, field),
@@ -123,7 +136,8 @@ export function LiveRecordResults({
           <LiveRecordCards
             region={region}
             layout={cardLayout}
-            rows={page.rows}
+            rows={rows}
+            newRecordId={newRecord?.id ?? null}
             fields={cardFields}
             primaryFieldId={presentation.primaryFieldId}
             secondaryFieldId={presentation.secondaryFieldId}
@@ -136,7 +150,7 @@ export function LiveRecordResults({
         // Phones: a two-line row per record, its name, then the next two
         // filled fields (DESIGN.md, Access phone rows).
         <ul aria-label="Records" className="divide-border divide-y">
-          {page.rows.map((row) => {
+          {rows.map((row) => {
             const [first, ...rest] = tableFields;
             const title = first ? cellValue(row, first) : "Open record";
             const details = rest
@@ -164,6 +178,7 @@ export function LiveRecordResults({
                   }
                   onOpen={() => onOpenRecord(row.id)}
                 />
+                {newTag(row)}
               </li>
             );
           })}
@@ -192,7 +207,7 @@ export function LiveRecordResults({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {page.rows.map((row) => (
+              {rows.map((row) => (
                 // OD6: one line per record; the whole row opens it.
                 // A pinned cell is sticky, which keeps the open button's
                 // overlay inside it, so the row opens the record itself.
@@ -245,6 +260,7 @@ export function LiveRecordResults({
                               inline
                               onOpen={() => onOpenRecord(row.id)}
                             />
+                            {newTag(row)}
                             {field.type === "user" ? (
                               <RecordPersonCard row={row} field={field} inline>
                                 {value}

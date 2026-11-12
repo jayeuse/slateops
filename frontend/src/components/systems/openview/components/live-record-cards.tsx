@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { PersonCardPopover } from "@/components/person-card";
+import { Badge } from "@/components/ui/badge";
 import type {
   OpenViewDataSourceField,
   OpenViewRecord,
@@ -24,6 +25,8 @@ type LiveRecordCardsProps = {
   secondaryFieldId: string | null;
   cardSize: "comfortable" | "compact";
   wrap: boolean;
+  /** The first card's record when the page just created it (item 6). */
+  newRecordId?: string | null;
   onOpenRecord: (recordId: string) => void;
 };
 
@@ -115,6 +118,7 @@ export function LiveRecordCards({
   secondaryFieldId,
   cardSize,
   wrap,
+  newRecordId = null,
   onOpenRecord,
 }: LiveRecordCardsProps) {
   const primaryField =
@@ -149,6 +153,31 @@ export function LiveRecordCards({
               "Untitled record",
             )
           : "Untitled record";
+        const title = (
+          <h3
+            id={`openview-card-title-${row.id}`}
+            className={
+              layout === "gallery" ? "text-lg font-semibold" : "font-semibold"
+            }
+          >
+            <button
+              type="button"
+              aria-label={`Open record: ${primaryValue}`}
+              className="text-primary focus-visible:ring-ring min-h-11 max-w-full min-w-11 text-left underline-offset-4 hover:underline focus-visible:ring-2"
+              onClick={() => onOpenRecord(row.id)}
+            >
+              <span
+                className={
+                  wrap
+                    ? "block break-words whitespace-normal"
+                    : "block truncate"
+                }
+              >
+                {primaryField?.type === "user" ? "Open record" : primaryValue}
+              </span>
+            </button>
+          </h3>
+        );
         return (
           <li key={row.id} className="min-w-0">
             <article
@@ -156,33 +185,15 @@ export function LiveRecordCards({
               className={`bg-background flex h-full min-w-0 flex-col rounded-[var(--radius)] border ${cardSize === "compact" ? "min-h-28 gap-3 p-3" : "min-h-36 gap-4 p-4"} ${layout === "gallery" && cardSize === "comfortable" ? "sm:p-5" : ""}`}
             >
               <header className="min-w-0">
-                <h3
-                  id={`openview-card-title-${row.id}`}
-                  className={
-                    layout === "gallery"
-                      ? "text-lg font-semibold"
-                      : "font-semibold"
-                  }
-                >
-                  <button
-                    type="button"
-                    aria-label={`Open record: ${primaryValue}`}
-                    className="text-primary focus-visible:ring-ring min-h-11 max-w-full min-w-11 text-left underline-offset-4 hover:underline focus-visible:ring-2"
-                    onClick={() => onOpenRecord(row.id)}
-                  >
-                    <span
-                      className={
-                        wrap
-                          ? "block break-words whitespace-normal"
-                          : "block truncate"
-                      }
-                    >
-                      {primaryField?.type === "user"
-                        ? "Open record"
-                        : primaryValue}
-                    </span>
-                  </button>
-                </h3>
+                {row.id === newRecordId ? (
+                  // Item 6: only the new card puts its tag beside the title.
+                  <div className="flex min-w-0 items-center gap-2 [&>h3]:min-w-0">
+                    {title}
+                    <NewRecordTag />
+                  </div>
+                ) : (
+                  title
+                )}
                 {primaryField?.type === "user" ? (
                   <RecordPersonCard row={row} field={primaryField}>
                     {primaryValue}
@@ -238,5 +249,14 @@ export function LiveRecordCards({
         );
       })}
     </ul>
+  );
+}
+
+/** The tag after a just-created record's title (item 6). */
+export function NewRecordTag() {
+  return (
+    <Badge variant="outline" className="shrink-0">
+      New
+    </Badge>
   );
 }

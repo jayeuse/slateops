@@ -426,6 +426,25 @@ export default function ServerBackedViewsWorkspace({
     useState<PendingNavigation>(null);
   const [pendingAction, setPendingAction] = useState("");
   const [notice, setNotice] = useState("");
+  // Item 6: the record this page just created. `key` is the list it was
+  // created in; another filter, sort, search, page, or view ends it (DR-6.6).
+  // routing → sheet (its sheet opened) → checking (the sheet closed and the
+  // match read runs) → pinned, hidden, failed; unchecked when the read cannot
+  // prove a match (search text or a grouped view).
+  const [createdRecord, setCreatedRecord] = useState<{
+    id: string;
+    key: string;
+    phase:
+      | "routing"
+      | "sheet"
+      | "checking"
+      | "pinned"
+      | "hidden"
+      | "failed"
+      | "unchecked";
+    row: OpenViewRecord | null;
+  } | null>(null);
+  const createdMatchRequest = useRef(0);
   const [actionErrorFailure, setActionError] = useErrorText();
   const actionError = actionErrorFailure?.message ?? "";
   const [saveOpen, setSaveOpen] = useState(false);
@@ -1055,6 +1074,85 @@ export default function ServerBackedViewsWorkspace({
     recordInvalidation,
   ]);
 
+  // DR-6.6: the list a created record belongs to.
+  const createdListKey = JSON.stringify({
+    draftKey,
+    definition: appliedDraftDefinition,
+    offset: recordOffset,
+    limit: recordPageSize,
+  });
+  const currentCreatedRecord =
+    createdRecord?.key === createdListKey ? createdRecord : null;
+  useEffect(() => {
+    const created = createdRecord;
+    if (!created) return;
+    if (created.key !== createdListKey) {
+      createdMatchRequest.current += 1;
+      setCreatedRecord(null);
+      return;
+    }
+    if (created.phase === "routing") {
+      if (requestedRecord === created.id)
+        setCreatedRecord({ ...created, phase: "sheet" });
+      return;
+    }
+    if (created.phase !== "sheet" || isUuid(requestedRecord)) return;
+    // DR-6.2: the person's search text is replaced by the id search, so the
+    // read cannot prove a match; a grouped view cannot prove the group.
+    if (!moduleId || appliedDraftDefinition.search || generalGroupedView) {
+      setCreatedRecord({ ...created, phase: "unchecked" });
+      return;
+    }
+    setCreatedRecord({ ...created, phase: "checking" });
+    const request = ++createdMatchRequest.current;
+    const settle = (
+      phase: "pinned" | "hidden" | "failed",
+      row: OpenViewRecord | null,
+    ) => {
+      if (request !== createdMatchRequest.current) return;
+      setCreatedRecord((current) =>
+        current?.id === created.id && current.key === created.key
+          ? { ...current, phase, row }
+          : current,
+      );
+    };
+    void queryOpenViewRecords({
+      moduleId,
+      definition: {
+        ...appliedDraftDefinition,
+        search: created.id,
+        searchFields: [],
+      },
+      limit: 1,
+      offset: 0,
+    })
+      .then((result) => {
+        const row = result.items.find((item) => item.id === created.id);
+        settle(row ? "pinned" : "hidden", row ?? null);
+      })
+      .catch(() => settle("failed", null));
+  }, [
+    appliedDraftDefinition,
+    createdListKey,
+    createdRecord,
+    generalGroupedView,
+    moduleId,
+    requestedRecord,
+  ]);
+  const pinnedNewRecord =
+    currentCreatedRecord?.phase === "pinned" && !generalGroupedView
+      ? currentCreatedRecord.row
+      : null;
+  const createdStatus = currentCreatedRecord
+    ? currentCreatedRecord.phase === "hidden"
+      ? "Record created. Your filters hide it."
+      : "Record created."
+    : "";
+  // DR-6.5: when the list cannot show it, the status opens it.
+  const createdOpenable =
+    currentCreatedRecord?.phase === "hidden" ||
+    currentCreatedRecord?.phase === "unchecked";
+
   const ordinaryRecordPage =
     recordPage &&
     recordPage.moduleId === moduleId &&
@@ -1317,6 +1415,7 @@ export default function ServerBackedViewsWorkspace({
     recordId: string,
     pageContext?: RecordInspectionPage,
   ) => {
+    if (createdRecord && createdRecord.id !== recordId) setCreatedRecord(null);
     const sourcePage = pageContext ?? currentRecordPage;
     if (
       moduleId &&
@@ -2729,7 +2828,10 @@ export default function ServerBackedViewsWorkspace({
               Boolean(currentWorkspace?.fieldsHasMore) ||
               metadataLoadingMore
             }
-            onClick={() => setCreateRecordOpen(true)}
+            onClick={() => {
+              setCreatedRecord(null);
+              setCreateRecordOpen(true);
+            }}
           >
             <Plus aria-hidden="true" />
             New record
@@ -2797,7 +2899,22 @@ export default function ServerBackedViewsWorkspace({
               {dirty && canManageViews && !reportsActive ? (
                 <Badge variant="outline">Unsaved changes</Badge>
               ) : null}
-              <span role="status">{reportsActive ? "" : status}</span>
+              <span role="status">
+                {reportsActive ? "" : status || createdStatus}
+              </span>
+              {createdOpenable && !reportsActive && !status ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="text-action-text min-h-11 px-1.5 underline-offset-4 hover:bg-transparent hover:underline xl:h-8 xl:min-h-8"
+                  onClick={() =>
+                    currentCreatedRecord &&
+                    openRecordFromResults(currentCreatedRecord.id)
+                  }
+                >
+                  Open record
+                </Button>
+              ) : null}
             </span>
           }
           actions={
@@ -3321,6 +3438,7 @@ export default function ServerBackedViewsWorkspace({
                         presentation={draft.presentation}
                         pending={Boolean(pendingAction)}
                         pageSize={currentRecordPage?.limit ?? recordPageSize}
+                        newRecord={pinnedNewRecord}
                         onOpenRecord={openRecordFromResults}
                         onPageIndexChange={(pageIndex) => {
                           if (rowPageLoading || pendingAction) return;
@@ -3655,7 +3773,14 @@ export default function ServerBackedViewsWorkspace({
                       onOpenChange={setCreateRecordOpen}
                       onCreated={(created) => {
                         setCreateRecordOpen(false);
-                        setNotice("Record created.");
+                        // DR-6.1: a status in the meta line, not a banner.
+                        createdMatchRequest.current += 1;
+                        setCreatedRecord({
+                          id: created.id,
+                          key: createdListKey,
+                          phase: "routing",
+                          row: null,
+                        });
                         setRecordChanges((value) => value + 1);
                         setInspectionContext(null);
                         setRoute({ record: created.id });
