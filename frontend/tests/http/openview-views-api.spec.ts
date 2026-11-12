@@ -6122,6 +6122,57 @@ for (const viewport of [
   }
 }
 
+test("UF-C6.1 UF-C6.2: one status region on the meta line announces Refreshing records… and the new-record status", async ({
+  page,
+}) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  await viewAs(page, "writer");
+  await routeQuickFilterCounts(page);
+  await installCreatedRecord(page);
+  // Holds the list read of the quick chip, so "Refreshing records…" stays.
+  let release = () => {};
+  let hold = false;
+  await page.route("**/api/records/query", async (route: Route) => {
+    const { definition } = route.request().postDataJSON() as {
+      definition: QueryDefinition;
+    };
+    const quickChipRead = definition.filters.some(
+      (filter) => filter.value === inServiceChoiceId,
+    );
+    if (!hold || !quickChipRead) return route.fallback();
+    hold = false;
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return route.fallback();
+  });
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  const regions = metaLine(page).getByRole("status");
+  await expect(regions).toHaveCount(1);
+
+  hold = true;
+  await page
+    .getByRole("group", { name: "Status" })
+    .getByRole("button", { name: /^In service\s*29$/ })
+    .click();
+  await expect(regions).toHaveText("Refreshing records…");
+  // Mark this element: the next status must come from the same node.
+  await regions.evaluate((element) =>
+    element.setAttribute("data-test-region", "page"),
+  );
+  release();
+  await expect(regions).toHaveText("");
+
+  await createRecord(page);
+  await page.keyboard.press("Escape");
+
+  await expect(regions).toHaveCount(1);
+  await expect(regions).toHaveText("Created, hidden by filters.", {
+    useInnerText: true,
+  });
+  await expect(regions).toHaveAttribute("data-test-region", "page");
+});
+
 test("UF-C6.1: opening the pinned record from the list clears the status and keeps its first place and tag", async ({
   page,
 }) => {
