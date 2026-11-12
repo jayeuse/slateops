@@ -414,8 +414,10 @@ function withNewDepartments(departments: Array<{ id: string; name: string }>) {
   };
 }
 
-// SD-C1, SD-C6, SD-C21 (contributor); states S1, S4, S5 of the setup design.
-test("the review lists each new department's setup, and a taken group name blocks Publish", async ({
+// SD-C1, SD-C6, SD-C21 (contributor); states S1, S4, S5 of the setup design;
+// UF-C11.1 (contributor): the counts line names only what the owner drew,
+// and "Comes with" sits under each new department, over its setup list.
+test("UF-C11.1 the review counts what the owner drew, lists each new department's setup, and a taken group name blocks Publish", async ({
   page,
 }) => {
   const taken =
@@ -446,11 +448,14 @@ test("the review lists each new department's setup, and a taken group name block
   const dialog = page.getByRole("dialog", { name: "Review & Publish" });
   // Every change is new, so the summary says it once and rows carry no chip.
   await expect(
+    dialog.getByText("2 new departments", { exact: true }),
+  ).toBeVisible();
+  await expect(
     dialog.getByText(
-      "2 new departments · 6 new groups · 2 new dashboards · 2 new Boards · 2 new categories · 2 new channels",
+      "Comes with: 3 access groups · home dashboard · Announcements board · chat category and channel",
       { exact: true },
     ),
-  ).toBeVisible();
+  ).toHaveCount(2);
   await expect(
     dialog
       .getByRole("list", { name: "Setup for Sales", exact: true })

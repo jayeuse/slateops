@@ -230,9 +230,12 @@ async function publishDraft(
   const response = await publication;
   expect(response.status()).toBe(201);
   onPublished?.();
-  await expect(
-    page.getByText("Changes published", { exact: true }),
-  ).toBeVisible();
+  // The review ends in its Published state (UF-C11.2); Back to Build closes
+  // it, so the caller acts on the page next.
+  const done = page.getByRole("dialog", { name: "Published", exact: true });
+  await expect(done).toBeVisible();
+  await done.getByRole("button", { name: "Back to Build" }).click();
+  await expect(done).toBeHidden();
 }
 
 /** Names one per Enter in the open add-next entry, then Escape ends it. */

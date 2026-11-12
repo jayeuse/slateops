@@ -2172,10 +2172,17 @@ function SandboxWorkspace() {
               })
             }
             onPublished={async () => {
+              // The review says "Published" itself (DR-11.4), so no notice.
               await refresh();
               if (section === "Triggers") await refreshTriggerActivity();
-              reportDone("Changes published");
               setPublishCount((count) => count + 1);
+              // DR-11.5: the publish wrote the new module bindings, and
+              // refresh() marked the cached read stale, so this read joins
+              // the refetch it started instead of sending a second one.
+              const bindings = await queryClient.fetchQuery(
+                sandboxBindingsOptions(sessionRef.current?.revision ?? 0),
+              );
+              return bindings.items;
             }}
           />
         ) : null}

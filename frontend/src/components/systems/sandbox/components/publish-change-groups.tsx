@@ -52,13 +52,10 @@ const KIND_NOUNS: Record<Kind, readonly [string, string]> = {
   relationship: ["relationship", "relationships"],
   trigger: ["trigger", "triggers"],
 };
-const KIND_ORDER: readonly Kind[] = [
+// What the owner draws in Build, in summary order (DR-11.1). Department setup
+// is not drawn: it shows as "Comes with" under its department.
+const DRAWN_KINDS: readonly Kind[] = [
   "department",
-  "group",
-  "dashboard",
-  "board",
-  "category",
-  "channel",
   "module",
   "field",
   "relationship",
@@ -133,11 +130,14 @@ const SHARED_ACTION_WORDS: Partial<Record<Change["action"], string>> = {
  * changes" or "3 module changes · 7 trigger changes". When every change
  * shares one action that says more than "changes" (a first publish), the
  * rows drop their chips and the summary says it once: "2 new modules".
+ * It counts only what the owner drew (DR-11.1), so a publish of setup
+ * changes alone gives an empty summary; the shared action still reads every
+ * change, as the row chips do.
  */
 export function publicationChangeSummary(changes: readonly Change[]): string {
   const action = sharedAction(changes);
   const shared = action ? SHARED_ACTION_WORDS[action] : undefined;
-  return KIND_ORDER.flatMap((kind) => {
+  return DRAWN_KINDS.flatMap((kind) => {
     const count = changes.filter((change) => change.kind === kind).length;
     if (!count) return [];
     const [one, many] = KIND_NOUNS[kind];
@@ -145,6 +145,32 @@ export function publicationChangeSummary(changes: readonly Change[]): string {
       ? [`${count} ${shared} ${count === 1 ? one : many}`]
       : [`${count} ${one} ${count === 1 ? "change" : "changes"}`];
   }).join(" · ");
+}
+
+/**
+ * What a new department comes with (DR-11.2): one phrase per setup kind this
+ * publish creates for it, in setup order; null when it creates none.
+ */
+export function departmentComesWith(setup: readonly Change[]): string | null {
+  const created = setup.filter((change) => change.action === "create");
+  const has = (kind: SetupKind) =>
+    created.some((change) => change.kind === kind);
+  const groups = created.filter((change) => change.kind === "group").length;
+  const chat =
+    has("category") && has("channel")
+      ? "chat category and channel"
+      : has("category")
+        ? "chat category"
+        : has("channel")
+          ? "chat channel"
+          : null;
+  const parts = [
+    groups ? counted(groups, ["access group", "access groups"]) : null,
+    has("dashboard") ? "home dashboard" : null,
+    has("board") ? "Announcements board" : null,
+    chat,
+  ].filter((part): part is string => part !== null);
+  return parts.length ? `Comes with: ${parts.join(" · ")}` : null;
 }
 
 /** The one action every change shares, such as a first publish. */
@@ -460,6 +486,8 @@ function DepartmentChanges({
           setup: draft.setup,
         })
       : null;
+  const comesWith =
+    entry.change?.action === "create" ? departmentComesWith(entry.setup) : null;
   return (
     <>
       <div className="flex flex-wrap items-start gap-x-2">
@@ -487,6 +515,14 @@ function DepartmentChanges({
           </span>
         ) : null}
       </div>
+      {comesWith ? (
+        // Directly under the name; the full setup list stays below (SD6).
+        <p
+          className={`text-muted-foreground -mt-1 text-xs ${showActions ? "ml-22" : ""}`}
+        >
+          {comesWith}
+        </p>
+      ) : null}
       {waitsForModule(entry, design) ? (
         <p
           className={`text-muted-foreground -mt-1 text-xs ${showActions ? "ml-22" : ""}`}
@@ -544,12 +580,13 @@ export function PublishChangeGroups({
   departmentControl?: DepartmentRowControl;
 }) {
   const groups = groupPublicationChanges(changes, design);
+  const summary = publicationChangeSummary(changes);
   return (
     <ShowActions.Provider value={sharedAction(changes) === null}>
       <div className="grid gap-4">
-        <p className="text-muted-foreground text-sm">
-          {publicationChangeSummary(changes)}
-        </p>
+        {summary ? (
+          <p className="text-muted-foreground text-sm">{summary}</p>
+        ) : null}
         <ChangeGroup
           title="Departments"
           noun={KIND_NOUNS.department}

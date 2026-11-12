@@ -51,9 +51,12 @@ async function publishDraft(page: Page, password: string): Promise<number> {
   await page.getByRole("button", { name: "Publish changes" }).click();
   const response = await published;
   expect(response.status()).toBe(201);
-  await expect(
-    page.getByText("Changes published", { exact: true }),
-  ).toBeVisible();
+  // The review ends in its Published state (UF-C11.2); Back to Build closes
+  // it, so the caller acts on the page next.
+  const done = page.getByRole("dialog", { name: "Published", exact: true });
+  await expect(done).toBeVisible();
+  await done.getByRole("button", { name: "Back to Build" }).click();
+  await expect(done).toBeHidden();
   const body = (await response.json()) as { version: { sequence: number } };
   return body.version.sequence;
 }

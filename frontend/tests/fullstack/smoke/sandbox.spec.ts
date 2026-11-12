@@ -32,7 +32,12 @@ test("The Sandbox designer publishes a change @sandbox", async ({ page }) => {
     .getByLabel("Your password")
     .fill(smokeFixture().roles.admin.password);
   await review.getByRole("button", { name: "Publish changes" }).click();
-  await expect(review).toBeHidden({ timeout: 30_000 });
+  // The review ends in its Published state (UF-C11.2); Back to Build closes it.
+  await expect(
+    review.getByRole("heading", { name: "Published", exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  await review.getByRole("button", { name: "Back to Build" }).click();
+  await expect(review).toBeHidden();
   await expect(
     page.getByRole("button", { name: "Review & Publish" }),
   ).toBeDisabled();

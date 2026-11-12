@@ -2863,7 +2863,7 @@ async function openConnect(page: Page) {
   return page.getByRole("dialog", { name: "Connect Service requests to" });
 }
 
-test("a relationship can target a module in another department and publish", async ({
+test("UF-C11.2 a relationship can target a module in another department and publish to Published", async ({
   page,
 }) => {
   const sandbox = await openAuthenticatedSandbox(page, {
@@ -2924,7 +2924,7 @@ test("a relationship can target a module in another department and publish", asy
   await review.getByLabel("Your password").fill("local password");
   await review.getByRole("button", { name: "Publish changes" }).click();
   await expect(
-    page.getByText("Changes published", { exact: true }),
+    page.getByRole("dialog", { name: "Published", exact: true }),
   ).toBeVisible();
   expect(published).toHaveLength(1);
 });
@@ -3068,7 +3068,7 @@ test("a rejected password is reported beside Publish, not above the list", async
   );
 });
 
-test("a successful Publish plays the look's title signature once", async ({
+test("UF-C11.2 a successful Publish shows Published and plays the look's title signature once", async ({
   page,
 }) => {
   await openAuthenticatedSandbox(page, {
@@ -3109,9 +3109,11 @@ test("a successful Publish plays the look's title signature once", async ({
   await dialog.getByLabel("Your password").fill("local password");
   await dialog.getByRole("button", { name: "Publish changes" }).click();
 
-  await expect(
-    page.getByText("Changes published", { exact: true }),
-  ).toBeVisible();
+  // The review ends in its Published state; Back to Build shows the page.
+  const done = page.getByRole("dialog", { name: "Published", exact: true });
+  await expect(done).toBeVisible();
+  await done.getByRole("button", { name: "Back to Build" }).click();
+  await expect(done).toBeHidden();
   await expect(title).toHaveAttribute("data-signature", "play");
   expect(published).toEqual([
     {
@@ -3121,6 +3123,138 @@ test("a successful Publish plays the look's title signature once", async ({
       password: "local password",
     },
   ]);
+});
+
+function acceptPublication() {
+  return {
+    status: 201,
+    contentType: "application/json",
+    body: JSON.stringify({
+      id: "00000000-0000-4000-8000-000000000721",
+      version: {
+        id: "00000000-0000-4000-8000-000000000722",
+        sequence: 1,
+        kind: "published",
+        label: "Published",
+      },
+      documentRevision: 1,
+      documentHash: "b".repeat(64),
+      impactDigest: "c".repeat(64),
+      publishedAt: "2026-11-12T00:00:00Z",
+    }),
+  };
+}
+
+// UF-11.1, DR-11.4, DR-11.5: the review ends in "Published" with a link to
+// the records of each module it created, found by the bindings read after
+// the publish (before it, the module has no live binding).
+test("UF-C11.2 Published links the new module to its records in one action", async ({
+  page,
+}) => {
+  const customersLive = "00000000-0000-4000-8000-0000000007a1";
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    { ...configuredSandboxDesign, rules: [] },
+    {
+      previewChanges: [
+        {
+          kind: "module",
+          action: "create",
+          sandboxId: "sample-customers",
+          label: "Customers",
+        },
+        {
+          kind: "field",
+          action: "create",
+          sandboxId: "field:raw:16:sample-customers:sample-field-Name",
+          label: "Name",
+        },
+        {
+          kind: "field",
+          action: "create",
+          sandboxId: "field:raw:16:sample-customers:sample-field-Email",
+          label: "Email",
+        },
+      ],
+    },
+  );
+  await page.route("**/api/sandbox/publications", (route) => {
+    sandbox.confirmBindings([
+      {
+        kind: "module",
+        sandbox_id: "sample-customers",
+        parent_sandbox_id: null,
+        live_id: customersLive,
+        is_deleted: false,
+      },
+    ]);
+    return route.fulfill(acceptPublication());
+  });
+  await page.getByRole("button", { name: "Review & Publish" }).click();
+  const review = page.getByRole("dialog", { name: "Review & Publish" });
+  await review.getByLabel("Your password").fill("local password");
+  await review.getByRole("button", { name: "Publish changes" }).click();
+
+  const done = page.getByRole("dialog", { name: "Published", exact: true });
+  await expect(done).toHaveAccessibleDescription(
+    "Your team sees these changes now.",
+  );
+  const records = done.getByRole("region", { name: "Open records" });
+  const link = records.getByRole("link", { name: "Customers · Commercial" });
+  await expect(link).toHaveAttribute(
+    "href",
+    `/openview?section=views&module=${customersLive}`,
+  );
+  await link.click();
+  await expect(page).toHaveURL(
+    `/openview?section=views&module=${customersLive}`,
+  );
+});
+
+// UF-11.1, DR-11.6: a publish that creates no module ends in "Published"
+// with no record link; Back to Build, which has focus, closes it.
+test("UF-C11.4 a field-only publish shows Published with no record link and goes back to Build", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(
+    page,
+    { ...configuredSandboxDesign, rules: [] },
+    {
+      previewChanges: [
+        {
+          kind: "field",
+          action: "update",
+          sandboxId: "field:raw:16:sample-customers:sample-field-Status",
+          label: "Status",
+        },
+      ],
+    },
+  );
+  await page.route("**/api/sandbox/publications", (route) =>
+    route.fulfill(acceptPublication()),
+  );
+  await page.getByRole("button", { name: "Review & Publish" }).click();
+  const review = page.getByRole("dialog", { name: "Review & Publish" });
+  await review.getByLabel("Your password").fill("local password");
+  await review.getByRole("button", { name: "Publish changes" }).click();
+
+  const done = page.getByRole("dialog", { name: "Published", exact: true });
+  await expect(done).toHaveAccessibleDescription(
+    "Your team sees these changes now.",
+  );
+  const back = done.getByRole("button", { name: "Back to Build" });
+  await expect(back).toBeFocused();
+  await expect(done.getByRole("link")).toHaveCount(0);
+  await expect(done.getByText("Open records")).toHaveCount(0);
+  await back.click();
+  await expect(done).toBeHidden();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Build", exact: true }),
+  ).toBeVisible();
+  // The next open is a new review, not the last Published state.
+  await page.getByRole("button", { name: "Review & Publish" }).click();
+  await expect(review.getByLabel("Your password")).toHaveValue("");
+  await expect(done).toHaveCount(0);
 });
 
 test("hovering a module or relationship traces its connections", async ({
