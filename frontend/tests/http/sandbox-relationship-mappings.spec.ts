@@ -6974,9 +6974,10 @@ for (const transition of ["unmount", "account"] as const) {
       versions: capacityVersions(1),
     });
     if (transition === "unmount") {
-      await page
-        .getByRole("link", { name: "Search workspace", exact: true })
-        .click();
+      // The bell's "View all" leaves the Sandbox (the header Search opens a
+      // panel over the page).
+      await page.getByRole("button", { name: /^Notifications(?:,|$)/ }).click();
+      await page.getByRole("link", { name: "View all", exact: true }).click();
       await expect(page).toHaveURL(/\/platform/);
       await page.getByRole("link", { name: "Build", exact: true }).click();
       await expect(

@@ -104,6 +104,7 @@ async function workspaceSession(page: Page, baseURL: string | undefined) {
               context_label: "Owned activity test",
               module_id: null,
               board_id: null,
+              department_id: null,
               can_open: false,
             },
           ]

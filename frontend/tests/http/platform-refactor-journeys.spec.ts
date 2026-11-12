@@ -192,6 +192,7 @@ test("Search queries four kinds, pages within cards and uses typed destinations"
       context_label: kind === "person" ? "reader" : "Maintenance",
       module_id: kind === "record" ? MODULE : null,
       board_id: kind === "post" || kind === "event" ? BOARD : null,
+      department_id: null,
       can_open: kind !== "person" || i === 1,
     }));
     return r.fulfill({
@@ -260,6 +261,7 @@ test("Administrator people results open the existing People destination and empt
                 context_label: "operator",
                 module_id: null,
                 board_id: null,
+                department_id: null,
                 can_open: true,
               },
             ]
@@ -635,8 +637,10 @@ test("Leaving waits for the current import receipt and never starts a later batc
     .getByRole("button", { name: "Import 101 valid rows", exact: true })
     .click();
   await expect.poll(() => writes).toBe(1);
+  // The sidebar Files row leaves the page (the header Search opens a panel).
   await page
-    .getByRole("link", { name: "Search workspace", exact: true })
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Files", exact: true })
     .click();
   const dialog = page.getByRole("dialog", { name: "Stop import and leave?" });
   await expect(dialog).toBeVisible();
@@ -645,8 +649,7 @@ test("Leaving waits for the current import receipt and never starts a later batc
     .click();
   await expect(page).toHaveURL(/section=import-export/);
   await held?.fulfill({ json: importResult(submitted!) });
-  // The header Search opens /platform, which shows Search.
-  await expect(page).toHaveURL(/\/platform$/);
+  await expect(page).toHaveURL(/section=files/);
   expect(writes).toBe(1);
 });
 
@@ -735,6 +738,7 @@ test("Search ignores old replies, hides denial and recovers with explicit retry"
             context_label: "Maintenance",
             module_id: MODULE,
             board_id: null,
+            department_id: null,
             can_open: true,
           },
         ],
@@ -908,8 +912,10 @@ async function queueLeaveDuringSecondBatch(page: Page) {
   await expect(
     page.getByText("Confirmed record IDs (100)", { exact: true }),
   ).toBeVisible();
+  // The sidebar Files row leaves the page (the header Search opens a panel).
   await page
-    .getByRole("link", { name: "Search workspace", exact: true })
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Files", exact: true })
     .click();
   const dialog = page.getByRole("dialog", {
     name: "Stop import and leave?",
@@ -967,11 +973,12 @@ for (const outcome of [
       page.getByRole("button", { name: "Preview import", exact: true }),
     ).toBeDisabled();
     expect(pending.writes).toBe(2);
-    // The header Search opens /platform, which shows Search.
+    // The sidebar Files row leaves the page (the header Search opens a panel).
     await page
-      .getByRole("link", { name: "Search workspace", exact: true })
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("link", { name: "Files", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/platform$/);
+    await expect(page).toHaveURL(/section=files/);
     expect(pending.writes).toBe(2);
   });
 }
@@ -1019,8 +1026,8 @@ test("Queued leave positive control resumes after the same held second receipt",
 }) => {
   const pending = await queueLeaveDuringSecondBatch(page);
   await pending.held!.fulfill({ json: importResult(pending.submitted!) });
-  // The queued destination is the header Search: /platform, which shows Search.
-  await expect(page).toHaveURL(/\/platform$/);
+  // The queued destination is the sidebar Files row.
+  await expect(page).toHaveURL(/section=files/);
   expect(pending.writes).toBe(2);
 });
 

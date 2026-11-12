@@ -5,7 +5,7 @@ import {
   readPlatformSearch,
   searchDestination,
   type PlatformSearchItem,
-  type SearchKind,
+  type PlatformSearchKind,
 } from "../../../src/components/systems/platform/adapters/platform-search-api";
 import { ids, installFetch, pagination } from "./fixtures";
 import { wirePagination } from "../../helpers/pagination";
@@ -24,6 +24,7 @@ function hit(overrides: Partial<PlatformSearchItem> = {}): PlatformSearchItem {
     context_label: "Maintenance",
     module_id: ids.module,
     board_id: null,
+    department_id: null,
     can_open: true,
     ...overrides,
   };
@@ -55,6 +56,16 @@ const destinations: {
     href: `/boards?board=${ids.board}&section=calendar&event=${ids.result}`,
   },
   {
+    name: "UF-C4.2 a library file opens Files in its department, searched by its name",
+    item: hit({
+      kind: "file",
+      title: "harbor rate card.pdf",
+      module_id: null,
+      department_id: ids.department,
+    }),
+    href: `/platform?section=files&department=${ids.department}&search=harbor%20rate%20card.pdf`,
+  },
+  {
     name: "a result the reader cannot open has no destination",
     item: hit({ can_open: false }),
     href: null,
@@ -68,7 +79,7 @@ for (const row of destinations)
 
 type PageRow = {
   name: string;
-  kind?: SearchKind;
+  kind?: PlatformSearchKind;
   offset?: number;
   body: unknown;
 };
@@ -138,6 +149,21 @@ const refused: PageRow[] = [
     },
   },
   {
+    name: "UF-C4.2 a file hit without its department",
+    kind: "file",
+    body: {
+      items: [hit({ kind: "file", module_id: null })],
+      pagination: pagination(1, { limit: 10 }),
+    },
+  },
+  {
+    name: "UF-C4.2 a record hit with a department",
+    body: {
+      items: [hit({ department_id: ids.department })],
+      pagination: pagination(1, { limit: 10 }),
+    },
+  },
+  {
     name: "an extra field on a hit",
     body: {
       items: [{ ...hit(), snippet: "Private record text" }],
@@ -179,6 +205,36 @@ test("search page reads ten hits of one kind by relevance", async () => {
     expect(mock.requests[0]?.init?.cache).toBe("no-store");
   } finally {
     mock.restore();
+  }
+});
+
+test("UF-C4.1 the search panel reads five hits of one kind, and the page must echo five", async () => {
+  const file = hit({
+    kind: "file",
+    module_id: null,
+    department_id: ids.department,
+  });
+  const mock = installFetch(() =>
+    Response.json({ items: [file], pagination: pagination(1, { limit: 5 }) }),
+  );
+  try {
+    const page = await readPlatformSearch("harbor", "file", 0, undefined, 5);
+    expect(page.items).toEqual([file]);
+    expect(String(mock.requests[0]?.input)).toBe(
+      "/api/search?search=harbor&kind=file&limit=5&offset=0&sort_by=relevance&sort_order=desc&deleted=exclude",
+    );
+  } finally {
+    mock.restore();
+  }
+  const ten = installFetch(() =>
+    Response.json({ items: [file], pagination: pagination(1, { limit: 10 }) }),
+  );
+  try {
+    await expect(
+      readPlatformSearch("harbor", "file", 0, undefined, 5),
+    ).rejects.toBeInstanceOf(ApiContractError);
+  } finally {
+    ten.restore();
   }
 });
 

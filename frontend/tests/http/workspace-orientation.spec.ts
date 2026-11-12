@@ -131,8 +131,20 @@ test("Comms snapshot recovery stays within Comms while live routes and returning
   const message = page.getByRole("textbox", { name: "Message", exact: true });
   await expect(message).toBeVisible();
   await message.fill("Unsent route-owned Comms draft");
+  // The header Search opens the search panel; its "Show all results" leaves
+  // for the Search page (DR-4.8).
   await page
-    .getByRole("link", { name: "Search workspace", exact: true })
+    .getByRole("button", { name: "Search workspace", exact: true })
+    .click();
+  const searchPanel = page.getByRole("dialog", {
+    name: "Search workspace",
+    exact: true,
+  });
+  await searchPanel
+    .getByRole("combobox", { name: "Search workspace", exact: true })
+    .fill("a");
+  await searchPanel
+    .getByRole("link", { name: /^Show all results for/ })
     .click();
   await expect(
     page.getByRole("searchbox", { name: "Search workspace", exact: true }),

@@ -75,6 +75,7 @@ async function workspaceWithAuthOutage(page: Page, baseURL?: string) {
                 context_label: "Reconnect test",
                 module_id: null,
                 board_id: null,
+                department_id: null,
                 can_open: false,
               },
             ]

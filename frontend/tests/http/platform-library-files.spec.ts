@@ -589,20 +589,8 @@ test("Library files: direct department picker excludes module-only grants and pr
       exact: true,
     }),
   ).toBeVisible();
-  await page
-    .getByRole("link", { name: "Search workspace", exact: true })
-    .click();
-  await expect(
-    page.getByRole("searchbox", { name: "Search workspace" }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "Files", exact: true }).click();
-  await expect(picker).toContainText("Operations");
-  await expect(
-    page.getByRole("button", {
-      name: "Download Operations guide.pdf",
-      exact: true,
-    }),
-  ).toBeVisible();
+  // The header Search is a panel now, so no step leaves Files and keeps the
+  // department (DR-4.1); the address keeps it across a reload.
   await page.reload();
   await expect(picker).toContainText("Operations");
   expect(
@@ -856,8 +844,20 @@ test("Library files: unknown reservation outcome survives department and section
       exact: true,
     }),
   ).toBeVisible();
+  // The header Search opens the search panel; its "Show all results" leaves
+  // for the Search page (DR-4.8).
   await page
-    .getByRole("link", { name: "Search workspace", exact: true })
+    .getByRole("button", { name: "Search workspace", exact: true })
+    .click();
+  const searchPanel = page.getByRole("dialog", {
+    name: "Search workspace",
+    exact: true,
+  });
+  await searchPanel
+    .getByRole("combobox", { name: "Search workspace", exact: true })
+    .fill("a");
+  await searchPanel
+    .getByRole("link", { name: /^Show all results for/ })
     .click();
   await expect(
     page.getByRole("searchbox", { name: "Search workspace" }),

@@ -279,7 +279,21 @@ test("Report notification SSE resync and recipient invalidation refresh without 
   await expect(
     connected.getByText("No notifications on this page."),
   ).toBeVisible();
-  await page.getByRole("link", { name: "Search workspace" }).click();
+  // The header Search opens the search panel; its "Show all results" leaves
+  // for the Search page (DR-4.8).
+  await page
+    .getByRole("button", { name: "Search workspace", exact: true })
+    .click();
+  const searchPanel = page.getByRole("dialog", {
+    name: "Search workspace",
+    exact: true,
+  });
+  await searchPanel
+    .getByRole("combobox", { name: "Search workspace", exact: true })
+    .fill("a");
+  await searchPanel
+    .getByRole("link", { name: /^Show all results for/ })
+    .click();
   await expect(
     page.getByRole("searchbox", { name: "Search workspace" }),
   ).toBeVisible();
@@ -1071,7 +1085,21 @@ test("the shell keeps one active stream and only unavailable-stream focus refres
   await expect(
     page.getByRole("button", { name: "Notifications, 9 unread" }),
   ).toBeVisible();
-  await page.getByRole("link", { name: "Search workspace" }).click();
+  // The header Search opens the search panel; its "Show all results" leaves
+  // for the Search page (DR-4.8).
+  await page
+    .getByRole("button", { name: "Search workspace", exact: true })
+    .click();
+  const searchPanel = page.getByRole("dialog", {
+    name: "Search workspace",
+    exact: true,
+  });
+  await searchPanel
+    .getByRole("combobox", { name: "Search workspace", exact: true })
+    .fill("a");
+  await searchPanel
+    .getByRole("link", { name: /^Show all results for/ })
+    .click();
   await expect(
     page.getByRole("searchbox", { name: "Search workspace" }),
   ).toBeVisible();
@@ -1268,7 +1296,21 @@ test("cached inbox revisits retain the authorized page while a refresh is held",
       .getByRole("region", { name: "Notifications" })
       .getByText("Operations review", { exact: true }),
   ).toHaveCount(25);
-  await page.getByRole("link", { name: "Search workspace" }).click();
+  // The header Search opens the search panel; its "Show all results" leaves
+  // for the Search page (DR-4.8).
+  await page
+    .getByRole("button", { name: "Search workspace", exact: true })
+    .click();
+  const searchPanel = page.getByRole("dialog", {
+    name: "Search workspace",
+    exact: true,
+  });
+  await searchPanel
+    .getByRole("combobox", { name: "Search workspace", exact: true })
+    .fill("a");
+  await searchPanel
+    .getByRole("link", { name: /^Show all results for/ })
+    .click();
   await expect(
     page.getByRole("searchbox", { name: "Search workspace" }),
   ).toBeVisible();
@@ -1488,7 +1530,21 @@ test("a confirmed inbox read updates the shared count after leaving the inbox wi
   state.holdCommand = command.released;
   await inbox.getByRole("button", { name: "Mark as read" }).first().click();
   await expect.poll(() => state.commands.length).toBe(1);
-  await page.getByRole("link", { name: "Search workspace" }).click();
+  // The header Search opens the search panel; its "Show all results" leaves
+  // for the Search page (DR-4.8).
+  await page
+    .getByRole("button", { name: "Search workspace", exact: true })
+    .click();
+  const searchPanel = page.getByRole("dialog", {
+    name: "Search workspace",
+    exact: true,
+  });
+  await searchPanel
+    .getByRole("combobox", { name: "Search workspace", exact: true })
+    .fill("a");
+  await searchPanel
+    .getByRole("link", { name: /^Show all results for/ })
+    .click();
   await expect(
     page.getByRole("searchbox", { name: "Search workspace" }),
   ).toBeVisible();

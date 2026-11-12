@@ -63,6 +63,7 @@ async function installSurface(
                   context_label: "Equipment team",
                   module_id: null,
                   board_id: null,
+                  department_id: null,
                   can_open: true,
                 },
               ]

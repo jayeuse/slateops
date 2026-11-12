@@ -16,6 +16,7 @@ import { emptyQuery } from "../../helpers/query-definitions";
 const sessionId = "00000000-0000-4000-8000-000000000001";
 const moduleId = "00000000-0000-4000-8000-000000000002";
 const fieldId = "00000000-0000-4000-8000-000000000003";
+const departmentId = "00000000-0000-4000-8000-000000000004";
 
 const definition: OpenViewQueryDefinition = emptyQuery({
   columns: [{ fieldId, expectedType: "text" }],
@@ -45,8 +46,34 @@ describeContracts("Platform", [
       // The adapter checks that each hit is the requested kind with its own
       // destination ids, and that the page echoes the request.
       "GET /api/search": {
-        items: [{ kind: "record", module_id: moduleId, board_id: null }],
+        items: [
+          {
+            kind: "record",
+            module_id: moduleId,
+            board_id: null,
+            department_id: null,
+          },
+        ],
         pagination: { limit: 10, offset: 0, count: 1, total: 1 },
+      },
+    },
+  },
+  {
+    // UF-C4.2 (spec new test 5): the panel's file read and its item shape.
+    name: "readPlatformSearch file kind for the search panel UF-C4.2",
+    run: () => readPlatformSearch("harbor", "file", 0, undefined, 5),
+    responses: {
+      // A file hit carries only its department, and the page echoes five.
+      "GET /api/search": {
+        items: [
+          {
+            kind: "file",
+            module_id: null,
+            board_id: null,
+            department_id: departmentId,
+          },
+        ],
+        pagination: { limit: 5, offset: 0, count: 1, total: 1 },
       },
     },
   },
