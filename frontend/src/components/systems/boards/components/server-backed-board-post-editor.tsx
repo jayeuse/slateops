@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Upload } from "lucide-react";
 import { AdvancedSection } from "@/components/ui/advanced-section";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -15,13 +15,18 @@ import {
 } from "@/components/ui/dialog-frame";
 import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Field, FieldLabel } from "@/components/ui/field";
+import { FilePickerButton } from "@/components/ui/file-picker-button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 import { cn } from "@/lib/utils";
 import type { BoardPost } from "../adapters/board-posts-api";
 import type { BoardAttachmentVersions } from "../adapters/board-files-api";
-import { HydratedBoardAttachments } from "./server-backed-board-attachments";
+import {
+  ATTACHMENT_ACCEPT,
+  boardFileProblem,
+  HydratedBoardAttachments,
+} from "./server-backed-board-attachments";
 import { HydratedBoardRecordLinks } from "./hydrated-board-record-links";
 import {
   useServerBoardPostEditor,
@@ -73,6 +78,14 @@ function scheduledLabel(timestamp: string, region: WorkspaceRegion): string {
   });
 }
 
+/** Why Choose file cannot save the draft yet, or null when it can (DR-8.2). */
+export function chooseFileBlockedReason(view: PostEditorView): string | null {
+  const form = view.form;
+  if (!form || !form.title.trim() || !form.body.trim())
+    return "Add a title and a message first.";
+  return publishBlockedReason(view);
+}
+
 /** Why Publish cannot act yet, or null when it can. */
 export function publishBlockedReason(view: PostEditorView): string | null {
   const form = view.form;
@@ -100,6 +113,7 @@ export function ServerBoardPostEditorDisplay({
   onToggleSchedule,
   onChange,
   onSave,
+  onChooseFile,
   onPublish,
   onSchedule,
   onCancelSchedule,
@@ -119,6 +133,8 @@ export function ServerBoardPostEditorDisplay({
   onToggleSchedule: () => void;
   onChange: (form: PostEditorForm) => void;
   onSave: () => void;
+  /** Saves the post as a draft for a picked file; settles when the save ends. */
+  onChooseFile: () => Promise<void>;
   onPublish: () => void;
   onSchedule: () => void;
   onCancelSchedule: () => void;
@@ -149,6 +165,15 @@ export function ServerBoardPostEditorDisplay({
     savedDraft && (running !== "publish" || savedDraftId === settledDraftId)
       ? savedDraft
       : null;
+  // A file chosen before the draft exists (item 8): the draft is saved
+  // first, then the attachments control uploads this file. A save that ends
+  // with no draft drops the file, so no upload starts without a post.
+  const [picked, setPicked] = useState<{
+    file: File;
+    saved: boolean;
+  } | null>(null);
+  const [pickError, setPickError] = useState<string | null>(null);
+  if (picked?.saved && !draftTarget) setPicked(null);
   if (!view.active || view.status === "denied")
     return (
       <p className="text-muted-foreground text-sm">
@@ -197,6 +222,7 @@ export function ServerBoardPostEditorDisplay({
       }
     : null;
   const blocked = publishBlockedReason(view);
+  const fileBlocked = chooseFileBlockedReason(view);
   // An unchanged draft has nothing to save; a published post saves as a
   // draft even unchanged.
   const saveBlocked =
@@ -206,7 +232,9 @@ export function ServerBoardPostEditorDisplay({
       : null);
   const advancedSet = (form.pinned ? 1 : 0) + (form.expiresLocal ? 1 : 0);
   const saveState = view.pending
-    ? null
+    ? picked && !picked.saved
+      ? "Saving…"
+      : null
     : view.dirty
       ? "Unsaved changes"
       : selected?.status === "scheduled" && selected.publishAt && view.region
@@ -287,19 +315,52 @@ export function ServerBoardPostEditorDisplay({
             refreshVersions={refreshAttachmentVersions}
             onBusyChange={onAttachmentBusyChange}
             locked={locked}
+            firstFile={picked?.saved ? picked.file : null}
+            onFirstFileTaken={() => setPicked(null)}
           />
         ) : (
-          <DisabledReason reason={view.pending ? null : blocked}>
-            <Button
-              type="button"
-              variant="outline"
-              className={cn(control, "self-start")}
-              disabled={view.pending}
-              onClick={onSave}
-            >
-              Save draft to attach
-            </Button>
-          </DisabledReason>
+          <>
+            {fileBlocked && !view.pending ? (
+              <DisabledReason reason={fileBlocked}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11 self-start md:min-h-9"
+                >
+                  <Upload aria-hidden="true" />
+                  Choose file
+                </Button>
+              </DisabledReason>
+            ) : (
+              <FilePickerButton
+                id="board-post-first-file"
+                aria-label="Choose file"
+                accept={ATTACHMENT_ACCEPT}
+                disabled={view.pending}
+                onFiles={(chosen, event) => {
+                  const file = chosen[0];
+                  event.currentTarget.value = "";
+                  if (!file) return;
+                  const problem = boardFileProblem(file);
+                  setPickError(problem);
+                  if (problem) return;
+                  setPicked({ file, saved: false });
+                  void onChooseFile().then(() =>
+                    setPicked((current) =>
+                      current?.file === file ? { file, saved: true } : current,
+                    ),
+                  );
+                }}
+              >
+                Choose file
+              </FilePickerButton>
+            )}
+            {pickError ? (
+              <Alert role="alert" variant="destructive">
+                {pickError}
+              </Alert>
+            ) : null}
+          </>
         )}
       </section>
       <section aria-label="Links" className="flex min-w-0 flex-col gap-2">
@@ -681,6 +742,7 @@ export function BoardPostEditorDialog({
               onChange={editor.changeForm}
               running={view.pending ? running : null}
               onSave={() => run("save", editor.save)}
+              onChooseFile={editor.save}
               onPublish={() =>
                 run("publish", async () => {
                   const postId = await editor.publish();

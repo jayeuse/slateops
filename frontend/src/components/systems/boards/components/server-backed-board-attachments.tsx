@@ -54,6 +54,13 @@ type EditableProps = {
   refreshVersions: () => Promise<BoardAttachmentVersions>;
   onBusyChange: (busy: boolean) => void;
   locked?: boolean;
+  /**
+   * A file picked before this draft existed (Choose file in a new post's
+   * editor). It is uploaded once, as soon as the control can act; then
+   * `onFirstFileTaken` runs so the owner forgets it. Absent by default.
+   */
+  firstFile?: File | null;
+  onFirstFileTaken?: () => void;
 };
 type Props = ReadOnlyProps | EditableProps;
 
@@ -82,7 +89,21 @@ function ambiguousUpload(error: unknown): boolean {
   return !(error instanceof AttachmentFileError);
 }
 // Matches the backend extension allowlist in files/validation.py.
-const ATTACHMENT_ACCEPT = ".pdf,.png,.jpg,.jpeg,.docx,.xlsx,.pptx";
+export const ATTACHMENT_ACCEPT = ".pdf,.png,.jpg,.jpeg,.docx,.xlsx,.pptx";
+
+/** Why a chosen file cannot be uploaded, or null; checked before any request. */
+export function boardFileProblem(file: Pick<File, "name" | "size">) {
+  if (file.size < 1 || file.size > MAX_BOARD_ATTACHMENT_BYTES)
+    return "Choose a file larger than 0 bytes and no larger than 25 MB.";
+  if (
+    file.name.length > 255 ||
+    file.name === "." ||
+    file.name === ".." ||
+    /[\\/\u0000-\u001f\u007f]/.test(file.name)
+  )
+    return "Choose a plain file name up to 255 characters.";
+  return null;
+}
 
 function isAbort(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
@@ -256,17 +277,9 @@ export function ServerBoardAttachments(props: Props) {
 
   async function uploadSelectedFile(file: File) {
     if (!editable || editable.locked || busy) return;
-    if (file.size < 1 || file.size > MAX_BOARD_ATTACHMENT_BYTES) {
-      setError("Choose a file larger than 0 bytes and no larger than 25 MB.");
-      return;
-    }
-    if (
-      file.name.length > 255 ||
-      file.name === "." ||
-      file.name === ".." ||
-      /[\\/\u0000-\u001f\u007f]/.test(file.name)
-    ) {
-      setError("Choose a plain file name up to 255 characters.");
+    const problem = boardFileProblem(file);
+    if (problem) {
+      setError(problem);
       return;
     }
     const controller = new AbortController();
@@ -317,6 +330,25 @@ export function ServerBoardAttachments(props: Props) {
       setOperation(null);
     }
   }
+
+  // The latest upload step, for the one-time start of a first file.
+  const uploadRef = useRef(uploadSelectedFile);
+  useEffect(() => {
+    uploadRef.current = uploadSelectedFile;
+  });
+  const firstFile = editable?.firstFile ?? null;
+  const firstFileTaken = editable?.onFirstFileTaken;
+  const firstLocked = editable?.locked === true;
+  useEffect(() => {
+    if (!firstFile || firstLocked || busy) return;
+    // A timer, not a direct call: a development double mount clears the
+    // first one, so the file uploads once in every build.
+    const timer = setTimeout(() => {
+      firstFileTaken?.();
+      void uploadRef.current(firstFile);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [firstFile, firstFileTaken, firstLocked, busy]);
 
   async function removeAttachment(file: BoardAttachmentFile) {
     if (!editable || editable.locked || busy) return;

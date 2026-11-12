@@ -67,6 +67,7 @@ function markup(view: PostEditorView, scheduleOpen = false): string {
       onToggleSchedule: () => undefined,
       onChange: () => undefined,
       onSave: () => undefined,
+      onChooseFile: async () => undefined,
       onPublish: () => undefined,
       onSchedule: () => undefined,
       onCancelSchedule: () => undefined,
@@ -107,15 +108,48 @@ test("the editor carries no rule sentences", () => {
     expect(html).not.toContain(sentence);
 });
 
-test("a post that is not saved as a draft offers to save before files and record links", () => {
+/** The Files row's Choose file button, and whether it says why it waits. */
+function chooseFile(html: string): { found: boolean; waits: boolean } {
+  const button = /<button(?:(?!<\/button>)[\s\S])*?Choose file<\/button>/.exec(
+    html,
+  )?.[0];
+  return {
+    found: button !== undefined,
+    waits: button?.includes('aria-disabled="true"') ?? false,
+  };
+}
+
+test("UF-C8.1 a post that is not saved as a draft offers Choose file for files and saves before record links", () => {
   const unsaved = markup({ ...baseView, selected: null, dirty: true });
-  expect(unsaved).toContain("Save draft to attach");
+  expect(unsaved).not.toContain("Save draft to attach");
+  expect(chooseFile(unsaved)).toEqual({ found: true, waits: false });
   expect(unsaved).toContain("Save draft to link");
   const published = markup({
     ...baseView,
     selected: { ...draft, status: "published", publishAt: now },
   });
-  expect(published).toContain("Save draft to attach");
+  expect(published).not.toContain("Save draft to attach");
+  expect(chooseFile(published)).toEqual({ found: true, waits: false });
+});
+
+test("UF-C8.2 Choose file waits for a title and a message and says why", () => {
+  // Empty after trimming spaces, as the server strips both (DR-8.2).
+  for (const form of [
+    { title: "", body: "Loading plan" },
+    { title: "Dock 3", body: "   " },
+    { title: "  ", body: "" },
+  ]) {
+    const html = markup({
+      ...baseView,
+      selected: null,
+      dirty: true,
+      form: { ...baseView.form!, ...form },
+    });
+    expect(chooseFile(html)).toEqual({ found: true, waits: true });
+    expect(html).toContain("Add a title and a message first.");
+  }
+  const ready = markup({ ...baseView, selected: null, dirty: true });
+  expect(ready).not.toContain("Add a title and a message first.");
 });
 
 test("Schedule… opens a local date and time with the zone beside it", () => {
