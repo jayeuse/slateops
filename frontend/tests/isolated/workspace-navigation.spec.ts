@@ -6,6 +6,7 @@ import {
   installationOwnerFor,
   getWorkspaceLocation,
   getWorkspaceNavigation,
+  getWorkspaceTools,
   isWorkspaceNavigationItemActive,
   currentNavigationKey,
   organizationLinkExit,
@@ -216,6 +217,112 @@ test("Manage shows each section only to an account whose requests the server adm
       .find((group) => group.id === "manage")
       ?.items.map((entry) => entry.id),
   ).toEqual(["organization", "health"]);
+});
+
+// docs/specs/ux-friction-pass.md item 7: the Tools each level sees, as the
+// sidebar lists them. A group reads "Label: rows"; a top-level row its label.
+function tools(
+  identity: Parameters<typeof accessNavigationFor>[0] & { operator: boolean },
+  jobsAdmitted = false,
+) {
+  const access = accessNavigationFor(identity);
+  return getWorkspaceTools(
+    getWorkspaceNavigation(
+      "/boards",
+      new URLSearchParams(),
+      access,
+      jobsAdmitted,
+      installationOwnerFor(identity),
+      (auditDepartmentsFor(identity)?.length ?? 0) > 0,
+    ),
+    access,
+  ).map((tool) =>
+    tool.kind === "group"
+      ? `${tool.group.label}: ${tool.group.items.map((entry) => entry.label).join(", ")}`
+      : tool.label,
+  );
+}
+
+test("UF-C7.1 a writer, reader or guest sees Boards, Files, Organization and System health, with no Platform and no Import & export", () => {
+  for (const identity of [
+    {
+      role: "member" as const,
+      access: [{ departmentId, moduleId: null, level: "write" as const }],
+      operator: false,
+    },
+    {
+      role: "member" as const,
+      access: [{ departmentId, moduleId: null, level: "read" as const }],
+      operator: false,
+    },
+    { role: "guest" as const, access: [], operator: false },
+  ])
+    expect(tools(identity), identity.role).toEqual([
+      "Boards: Company, All boards",
+      "Files",
+      "Organization",
+      "System health",
+    ]);
+  const files = getWorkspaceTools(
+    getWorkspaceNavigation("/boards", new URLSearchParams(), "none"),
+    "none",
+  ).find((tool) => tool.kind === "row" && tool.id === "files");
+  expect(files).toEqual({
+    kind: "row",
+    id: "files",
+    groupId: "platform",
+    itemId: "files",
+    label: "Files",
+    description: "Department documents",
+    href: "/platform?section=files",
+  });
+});
+
+test("UF-C7.2 a department manager sees Boards, Access (Groups), Files, then Manage with Audit", () => {
+  expect(
+    tools({
+      role: "member",
+      access: [{ departmentId, moduleId: null, level: "manage" }],
+      operator: false,
+    }),
+  ).toEqual([
+    "Boards: Company, All boards",
+    "Access: Groups",
+    "Files",
+    "Manage: Organization, System health, Audit",
+  ]);
+  // A module-only manager has no Audit, so Manage is its two rows.
+  expect(
+    tools({
+      role: "member",
+      access: [{ departmentId, moduleId, level: "manage" }],
+      operator: false,
+    }),
+  ).toEqual([
+    "Boards: Company, All boards",
+    "Access: Groups",
+    "Files",
+    "Organization",
+    "System health",
+  ]);
+});
+
+test("UF-C7.3 an administrator sees Sandbox, Boards, Access, Manage as now, then Files with Import & export", () => {
+  expect(tools({ role: "admin", access: [], operator: true }, true)).toEqual([
+    "Sandbox: Build, Triggers, Test, History",
+    "Boards: Company, All boards",
+    "Access: Overview, People, Groups, Security",
+    "Manage: Organization, System health, Backup, Audit, Jobs, Updates & licensing",
+    "Files: Files, Import & export",
+  ]);
+  const files = getWorkspaceTools(
+    getWorkspaceNavigation("/boards", new URLSearchParams(), "all"),
+    "all",
+  ).find((tool) => tool.kind === "group" && tool.group.id === "platform");
+  expect(files?.kind === "group" ? files.group : null).toMatchObject({
+    label: "Files",
+    href: "/platform?section=files",
+  });
 });
 
 test("Manage opens on Organization; System health has its own address", () => {
@@ -511,6 +618,8 @@ test("the workspace location names the open section and links its workspace", ()
       "all",
     )?.section,
   ).toBe("Build");
+  // The /platform pages have no Platform crumb (DR-7.7): "Files",
+  // "Files › Import & export", "Search", "Notifications", for every level.
   expect(
     getWorkspaceLocation(
       "/platform",
@@ -518,28 +627,67 @@ test("the workspace location names the open section and links its workspace", ()
       "",
       "all",
     ),
+  ).toEqual({ workspace: null, section: "Search" });
+  expect(
+    getWorkspaceLocation(
+      "/platform",
+      new URLSearchParams("section=files"),
+      "",
+      "none",
+    ),
+  ).toEqual({ workspace: null, section: "Files" });
+  expect(
+    getWorkspaceLocation(
+      "/platform",
+      new URLSearchParams("section=import-export&department=sales"),
+      "",
+      "none",
+    ),
   ).toEqual({
-    workspace: { label: "Platform", href: "/platform?section=search" },
-    section: "Search",
+    workspace: {
+      label: "Files",
+      href: "/platform?section=files&department=sales",
+    },
+    section: "Import & export",
   });
+  expect(
+    getWorkspaceLocation(
+      "/platform",
+      new URLSearchParams("section=notifications"),
+      "",
+      "groups",
+    ),
+  ).toEqual({ workspace: null, section: "Notifications" });
   expect(
     getWorkspaceLocation("/comms", new URLSearchParams(), "", "all"),
   ).toBeNull();
 });
 
+// Every tool, group or row, keeps a one-line description (DR-7.2, DR-7.3):
+// the drawer shows it, the sidebar has it as title and aria-description.
 test("every workspace describes what it holds in one short line", () => {
-  const groups = getWorkspaceNavigation(
-    "/sandbox",
-    new URLSearchParams(),
-    "all",
-  );
+  const described = (access: "all" | "none") =>
+    getWorkspaceTools(
+      getWorkspaceNavigation("/sandbox", new URLSearchParams(), access),
+      access,
+    ).map((tool) =>
+      tool.kind === "group"
+        ? [tool.group.label, tool.group.description]
+        : [tool.label, tool.description],
+    );
 
-  expect(groups.map((group) => [group.id, group.description])).toEqual([
-    ["sandbox", "Design departments and records"],
-    ["boards", "Team pages and events"],
-    ["access", "Who can see and change what"],
-    ["manage", "Organization settings, system health, and audit"],
-    ["platform", "Files, search, and import & export"],
+  expect(described("all")).toEqual([
+    ["Sandbox", "Design departments and records"],
+    ["Boards", "Team pages and events"],
+    ["Access", "Who can see and change what"],
+    ["Manage", "Organization settings, system health, and audit"],
+    ["Files", "Department documents, and import and export"],
+  ]);
+  expect(described("none")).toEqual([
+    ["Boards", "Team pages and events"],
+    ["Files", "Department documents"],
+    ["Organization", "Name, region, and look"],
+    ["System health", "Whether everything is working"],
   ]);
 });
 

@@ -165,7 +165,8 @@ test("the end-session confirmation names the device it signs out", () => {
 
 // Start page lists the sections the sidebar shows this person (PD62): only
 // the Sandbox (administrators) and Access (administrators and managers) are
-// gated. A saved section the person can no longer open stays readable.
+// gated, and the sidebar has no Platform group (UF-C7.5). A saved section
+// the person can no longer open stays readable.
 const startPageRows = [
   {
     name: "an administrator sees every section",
@@ -179,7 +180,6 @@ const startPageRows = [
       "Access",
       "OpenView",
       "Manage",
-      "Platform",
     ],
     disabled: [],
   },
@@ -194,7 +194,6 @@ const startPageRows = [
       "Access",
       "OpenView",
       "Manage",
-      "Platform",
     ],
     disabled: [],
   },
@@ -202,14 +201,7 @@ const startPageRows = [
     name: "a reader or a guest sees neither the Sandbox nor Access",
     access: "none",
     saved: undefined,
-    options: [
-      "Automatic",
-      "Boards",
-      "OpenComms",
-      "OpenView",
-      "Manage",
-      "Platform",
-    ],
+    options: ["Automatic", "Boards", "OpenComms", "OpenView", "Manage"],
     disabled: [],
   },
   {
@@ -223,7 +215,6 @@ const startPageRows = [
       "Access (not available)",
       "OpenView",
       "Manage",
-      "Platform",
     ],
     disabled: ["Access (not available)"],
   },

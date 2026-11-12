@@ -22,6 +22,9 @@ const startPages: readonly [StartPage, string][] = [
 
 /** Whether the sidebar shows this section to the person (`getWorkspaceNavigation`). */
 function opens(page: StartPage, access: AccessNavigation): boolean {
+  // The sidebar has no Platform group (docs/specs/ux-friction-pass.md
+  // DR-7.8): a saved "Platform" stays readable and still opens Search.
+  if (page === "platform") return false;
   if (page === "sandbox") return access === "all";
   if (page === "access") return access !== "none";
   return true;

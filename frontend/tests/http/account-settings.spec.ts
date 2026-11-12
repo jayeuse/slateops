@@ -942,9 +942,37 @@ test("Start page lists only the sections this account can open, and keeps a hidd
     "OpenComms",
     "OpenView",
     "Manage",
-    "Platform",
   ]);
   await expect(
     start.getByRole("option", { name: "Sandbox (not available)" }),
   ).toBeDisabled();
+});
+
+// docs/specs/ux-friction-pass.md DR-7.8 and D-4 (a): the sidebar has no
+// Platform group, so a saved "Platform" reads as not available and is kept.
+// It still opens Search at sign-in (isolated/auth/workspace-start.spec.ts).
+test("UF-C7.5 a saved Start page Platform stays chosen, marked not available, and unchanged", async ({
+  page,
+}) => {
+  const api = await installProfileApi(page, { role: "member" });
+  api.appearance.start_page = "platform";
+  await page.goto("/settings#look");
+  const start = page.getByRole("combobox", {
+    name: "Start page after sign-in",
+    exact: true,
+  });
+  await expect(start).toBeEnabled();
+  await expect(start).toHaveValue("platform");
+  await expect(start.getByRole("option")).toHaveText([
+    "Automatic",
+    "Boards",
+    "OpenComms",
+    "OpenView",
+    "Manage",
+    "Platform (not available)",
+  ]);
+  await expect(
+    start.getByRole("option", { name: "Platform (not available)" }),
+  ).toBeDisabled();
+  expect(api.writes).toEqual([]);
 });

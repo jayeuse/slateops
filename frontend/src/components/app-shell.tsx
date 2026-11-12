@@ -931,6 +931,14 @@ function AppHeaderActions({
 }) {
   const requestNavigation = useWorkspaceNavigationRequest();
   const suspended = useWorkspaceInteractionSuspended();
+  // On a /platform page with a chosen department, Search keeps it, so Files
+  // still shows that department after a visit to Search.
+  const pathname = usePathname();
+  const department = useSearchParams().get("department");
+  const searchHref =
+    pathname === "/platform" && department
+      ? `/platform?${new URLSearchParams({ department })}`
+      : "/platform";
   const identity = useQuery({ ...authMeOptions(), enabled: !suspended });
   const self =
     !suspended && identity.data?.id === verifiedUserId
@@ -950,7 +958,7 @@ function AppHeaderActions({
       {/* A quiet control that opens Platform search; it navigates, so it
           stays a link (PD21). */}
       <GuardedWorkspaceLink
-        href={"/platform" as Route}
+        href={searchHref as Route}
         aria-label="Search workspace"
         title="Search workspace"
         className="text-muted-foreground hover:text-foreground focus-visible:outline-ring flex size-11 shrink-0 items-center justify-center gap-2 rounded-md text-sm transition-colors hover:bg-(--surface-hover) focus-visible:outline-2 focus-visible:outline-offset-2 sm:w-auto sm:bg-(--surface-sunken) sm:px-3 xl:h-8"

@@ -1274,7 +1274,8 @@ test("cached inbox revisits retain the authorized page while a refresh is held",
   ).toBeVisible();
   const refresh = heldResponse();
   state.holdList = refresh.released;
-  await page.getByRole("link", { name: "Notifications", exact: true }).click();
+  const popup = await notificationPopover(page);
+  await popup.getByRole("link", { name: "View all", exact: true }).click();
   try {
     await expect(
       page

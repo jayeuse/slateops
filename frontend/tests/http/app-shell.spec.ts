@@ -323,7 +323,7 @@ test("the phone drawer has 44px rows with visible descriptions and the active in
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signInAsHarborAdmin(page);
-  await page.goto("/platform");
+  await page.goto("/platform?section=files");
   await page
     .getByRole("button", { name: "Open navigation", exact: true })
     .click();
@@ -337,7 +337,7 @@ test("the phone drawer has 44px rows with visible descriptions and the active in
   });
   await expect(access).toContainText("Who can see and change what");
   expect(await height(access)).toBeGreaterThanOrEqual(44);
-  const active = navigation.getByRole("link", { name: "Search", exact: true });
+  const active = navigation.getByRole("link", { name: "Files", exact: true });
   await expect(active).toHaveAttribute("aria-current", "page");
   expect(await height(active)).toBeGreaterThanOrEqual(44);
   await expect(active).toHaveCSS("color", "rgb(29, 78, 216)");

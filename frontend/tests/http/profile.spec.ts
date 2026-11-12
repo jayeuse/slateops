@@ -802,11 +802,13 @@ test("Profile entry honors explicit Platform section precedence and Your profile
     page.getByRole("heading", { name: "Platform", exact: true }),
   ).toBeVisible();
   await expect(page).toHaveURL(/\/platform\?section=search#account$/);
-  await expect(
-    page
-      .getByRole("navigation", { name: "Main navigation", exact: true })
-      .getByRole("button", { name: "Platform", exact: true }),
-  ).toHaveAttribute("aria-expanded", "true");
+  // The sidebar has no Search row (UF-C7.1): the member's Files row shows,
+  // and no row is current on Search.
+  const files = page
+    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("link", { name: "Files", exact: true });
+  await expect(files).toBeVisible();
+  await expect(files).not.toHaveAttribute("aria-current", "page");
   await expect(
     page.getByRole("link", { name: "Account", exact: true }),
   ).toHaveCount(0);

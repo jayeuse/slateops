@@ -223,11 +223,51 @@ test("a person who reads no module sees no Departments section", async ({
 }) => {
   await target.goto("/platform?section=search");
   const nav = sidebar(target);
+  // The Tools stay: an administrator's Files group (UF-C7.3).
   await expect(
-    nav.getByRole("button", { name: "Platform", exact: true }),
+    nav.getByRole("button", { name: "Files", exact: true }),
   ).toBeVisible();
   await expect(nav.getByRole("list", { name: "Departments" })).toHaveCount(0);
   await expect(nav.getByText("Tools", { exact: true })).toHaveCount(0);
+});
+
+// docs/specs/ux-friction-pass.md DR-7.6: the Platform group is gone, and
+// each /platform address still opens with its current checks.
+test("UF-C7.4 a writer opens Import & export only by its address, where the administrator refusal shows, and notifications from the bell's View all", async ({
+  page: target,
+}) => {
+  await signedInAs(target, {
+    id: "00000000-0000-4000-8000-0000000000a7",
+    role: "member",
+    access: [{ department_id: ids.sales, module_id: null, level: "write" }],
+  });
+  await target.goto("/platform?section=import-export");
+  await expect(
+    target.getByRole("alert").filter({
+      hasText:
+        "Administrator permission is required to import and export records.",
+    }),
+  ).toBeVisible();
+  const nav = sidebar(target);
+  await expect(
+    nav.getByRole("link", { name: "Files", exact: true }),
+  ).toBeVisible();
+  await expect(
+    nav.getByRole("link", {
+      name: /^(Import & export|Search|Notifications)$/,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    nav.getByRole("button", { name: "Platform", exact: true }),
+  ).toHaveCount(0);
+  await target
+    .getByRole("button", { name: "Notifications, 0 unread", exact: true })
+    .click();
+  await target.getByRole("link", { name: "View all", exact: true }).click();
+  await expect(target).toHaveURL(/\/platform\?section=notifications$/);
+  await expect(
+    target.getByRole("region", { name: "Notifications", exact: true }),
+  ).toBeVisible();
 });
 
 test("the collapsed rail shows one Departments button that opens the sidebar", async ({

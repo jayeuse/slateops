@@ -635,7 +635,9 @@ test("Leaving waits for the current import receipt and never starts a later batc
     .getByRole("button", { name: "Import 101 valid rows", exact: true })
     .click();
   await expect.poll(() => writes).toBe(1);
-  await page.getByRole("link", { name: "Search", exact: true }).click();
+  await page
+    .getByRole("link", { name: "Search workspace", exact: true })
+    .click();
   const dialog = page.getByRole("dialog", { name: "Stop import and leave?" });
   await expect(dialog).toBeVisible();
   await dialog
@@ -643,7 +645,8 @@ test("Leaving waits for the current import receipt and never starts a later batc
     .click();
   await expect(page).toHaveURL(/section=import-export/);
   await held?.fulfill({ json: importResult(submitted!) });
-  await expect(page).toHaveURL(/section=search/);
+  // The header Search opens /platform, which shows Search.
+  await expect(page).toHaveURL(/\/platform$/);
   expect(writes).toBe(1);
 });
 
@@ -905,7 +908,9 @@ async function queueLeaveDuringSecondBatch(page: Page) {
   await expect(
     page.getByText("Confirmed record IDs (100)", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("link", { name: "Search", exact: true }).click();
+  await page
+    .getByRole("link", { name: "Search workspace", exact: true })
+    .click();
   const dialog = page.getByRole("dialog", {
     name: "Stop import and leave?",
     exact: true,
@@ -962,8 +967,11 @@ for (const outcome of [
       page.getByRole("button", { name: "Preview import", exact: true }),
     ).toBeDisabled();
     expect(pending.writes).toBe(2);
-    await page.getByRole("link", { name: "Search", exact: true }).click();
-    await expect(page).toHaveURL(/section=search/);
+    // The header Search opens /platform, which shows Search.
+    await page
+      .getByRole("link", { name: "Search workspace", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/platform$/);
     expect(pending.writes).toBe(2);
   });
 }
@@ -1011,7 +1019,8 @@ test("Queued leave positive control resumes after the same held second receipt",
 }) => {
   const pending = await queueLeaveDuringSecondBatch(page);
   await pending.held!.fulfill({ json: importResult(pending.submitted!) });
-  await expect(page).toHaveURL(/section=search/);
+  // The queued destination is the header Search: /platform, which shows Search.
+  await expect(page).toHaveURL(/\/platform$/);
   expect(pending.writes).toBe(2);
 });
 
@@ -1190,8 +1199,13 @@ for (const viewport of [
         page.getByRole("dialog", { name: "Slate Operations navigation" }),
       );
     }
-    await page.getByRole("link", { name: "Search", exact: true }).click();
-    await expect(page).toHaveURL(/section=search/);
+    // The sidebar (the drawer on a phone) has no Search row: Files is its
+    // /platform row. The breadcrumb "Files › Import & export" also links Files.
+    await page
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("link", { name: "Files", exact: true })
+      .click();
+    await expect(page).toHaveURL(/section=files/);
     await containedPage();
   });
 }

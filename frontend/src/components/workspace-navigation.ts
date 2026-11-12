@@ -104,7 +104,8 @@ const workspaceNavigationDefinitions = [
   {
     id: "platform",
     label: "Platform",
-    description: "Files, search, and import & export",
+    // The administrator's Files group in the Tools (DR-7.2).
+    description: "Department documents, and import and export",
     pathname: "/platform",
     queryKey: "section",
     defaultItem: "search",
@@ -352,8 +353,110 @@ export function getWorkspaceNavigation(
   });
 }
 
+/**
+ * One entry of the sidebar's Tools (docs/specs/ux-friction-pass.md, item 7):
+ * a group with its header and rows, or a top-level row that opens one
+ * section (`groupId` and `itemId` name it for the active state).
+ */
+export type WorkspaceTool =
+  | { kind: "group"; group: WorkspaceNavigationGroup }
+  | {
+      kind: "row";
+      id: string;
+      groupId: string;
+      itemId: string;
+      label: string;
+      description?: string;
+      href: string;
+    };
+
+const filesDescription = "Department documents";
+// Manage's sections that show as rows, each with its one-line description.
+const flatManageDescriptions: Readonly<Record<string, string>> = {
+  organization: "Name, region, and look",
+  health: "Whether everything is working",
+};
+
+/**
+ * The sidebar's Tools for the groups this person sees (DR-7.1 to DR-7.5).
+ * There is no Platform group: Search is the header's, Notifications the
+ * bell's, and their addresses keep working. Files is one row, and an
+ * administrator, the only person the server admits to import and export,
+ * gets a Files group with Import & export after Manage. Manage shows as its
+ * Organization and System health rows when they are all of Manage this
+ * person sees.
+ */
+export function getWorkspaceTools(
+  groups: readonly WorkspaceNavigationGroup[],
+  access: AccessNavigation,
+): WorkspaceTool[] {
+  const tools: WorkspaceTool[] = [];
+  let filesRow: WorkspaceTool | null = null;
+  for (const group of groups) {
+    if (group.id === "platform") {
+      const items = group.items.filter(
+        (item) =>
+          item.id === "files" ||
+          (item.id === "import-export" && access === "all"),
+      );
+      const files = items.find((item) => item.id === "files");
+      if (!files) continue;
+      if (items.length > 1)
+        tools.push({
+          kind: "group",
+          group: {
+            ...group,
+            label: "Files",
+            href: files.href,
+            items,
+          },
+        });
+      else
+        filesRow = {
+          kind: "row",
+          id: "files",
+          groupId: group.id,
+          itemId: files.id,
+          label: files.label,
+          description: filesDescription,
+          href: files.href,
+        };
+      continue;
+    }
+    if (
+      group.id === "manage" &&
+      group.items.every((item) =>
+        Object.hasOwn(flatManageDescriptions, item.id),
+      )
+    ) {
+      for (const item of group.items)
+        tools.push({
+          kind: "row",
+          id: item.id,
+          groupId: group.id,
+          itemId: item.id,
+          label: item.label,
+          description: flatManageDescriptions[item.id],
+          href: item.href,
+        });
+      continue;
+    }
+    tools.push({ kind: "group", group });
+  }
+  if (!filesRow) return tools;
+  // A Files row sits before Manage, the daily tools first.
+  const manageAt = tools.findIndex((tool) =>
+    tool.kind === "group"
+      ? tool.group.id === "manage"
+      : tool.groupId === "manage",
+  );
+  tools.splice(manageAt === -1 ? tools.length : manageAt, 0, filesRow);
+  return tools;
+}
+
 export type WorkspaceLocation = {
-  workspace: { label: string; href: string };
+  /** The workspace crumb; null where the page names only itself. */
+  workspace: { label: string; href: string } | null;
   section: string;
 };
 
@@ -369,6 +472,26 @@ export function getWorkspaceLocation(
   );
   if (!definition) return null;
   const sectionId = sectionFor(definition, searchParams, hash, access);
+  // The sidebar has no Platform group (DR-7.7): its pages read "Files",
+  // "Files › Import & export", "Search" and "Notifications", for every level,
+  // as a link to a section the person cannot open lands on its refusal.
+  if (definition.id === "platform") {
+    const item = definition.items.find((entry) => entry.id === sectionId);
+    if (!item) return null;
+    return {
+      workspace:
+        item.id === "import-export"
+          ? {
+              label: "Files",
+              href: href(
+                definition.pathname,
+                paramsFor(definition, "files", pathname, searchParams),
+              ),
+            }
+          : null,
+      section: item.label,
+    };
+  }
   // A current URL's breadcrumb names its section; it does not admit a menu or
   // read. Manage names every section, since a link to one this person cannot
   // open lands on a notice with that section's title.
