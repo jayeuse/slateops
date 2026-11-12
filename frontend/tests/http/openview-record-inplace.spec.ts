@@ -577,3 +577,112 @@ test("UF-C2.2 UF-C2.3 focus stays on the used control through each in-place save
   expect(api.state.writes).toHaveLength(4);
   expect(await fallbacks()).toBe(0);
 });
+
+test("UF-C2.3 Edit and a tab change clear the in-place status with its Undo", async ({
+  page,
+}) => {
+  await installInPlaceApi(page);
+  const sheet = await openRecord(page);
+  const status = sheet.getByRole("combobox", { name: "Status", exact: true });
+  await status.selectOption("former");
+  await expect(headerStatus(sheet)).toHaveText("Status changed to Former.");
+  await sheet.getByRole("button", { name: "Edit record", exact: true }).click();
+  await expect(
+    sheet.getByRole("button", { name: "Save changes", exact: true }),
+  ).toBeVisible();
+  // DR-2.6: the words go with the Undo; nothing stays beside the form.
+  await expect(headerStatus(sheet)).toHaveText("");
+  await expect(sheet.getByRole("button", { name: "Undo" })).toHaveCount(0);
+  await sheet.getByRole("button", { name: "Cancel", exact: true }).click();
+
+  await status.selectOption("paused");
+  await expect(headerStatus(sheet)).toHaveText("Status changed to Paused.");
+  await sheet.getByRole("tab", { name: "History", exact: true }).click();
+  await sheet.getByRole("tab", { name: "Details", exact: true }).click();
+  await expect(status).toHaveValue("paused");
+  await expect(headerStatus(sheet)).toHaveText("");
+  await expect(sheet.getByRole("button", { name: "Undo" })).toHaveCount(0);
+});
+
+test("UF-C2.2 during a save only the saving control looks busy at once; the others dim after 300 ms", async ({
+  page,
+}) => {
+  await page.clock.install();
+  const api = await installInPlaceApi(page);
+  const sheet = await openRecord(page);
+  await page.clock.pauseAt(new Date(Date.now() + 2_000));
+  const status = sheet.getByRole("combobox", { name: "Status", exact: true });
+  const paid = sheet.getByRole("checkbox", { name: "Paid", exact: true });
+  const release = api.holdNextWrite();
+  await status.selectOption("former");
+  await expect(headerStatus(sheet)).toHaveText("Saving…");
+  await expect(status).toHaveAttribute("aria-busy", "true");
+  await expect(status).toHaveCSS("opacity", "0.5");
+  // The other controls take no input at once, but keep their look (G2).
+  await expect(paid).toHaveAttribute("aria-disabled", "true");
+  await expect(paid).toHaveCSS("opacity", "1");
+  await page.clock.runFor(299);
+  await expect(paid).toHaveCSS("opacity", "1");
+  await page.clock.runFor(1);
+  await expect(paid).toHaveCSS("opacity", "0.5");
+  // The lock still blocks a second commit while the first one saves: the
+  // locked control keeps focus and takes the key, but nothing changes.
+  await paid.focus();
+  await page.keyboard.press("Space");
+  await expect(paid).not.toBeChecked();
+  release();
+  await expect(headerStatus(sheet)).toHaveText("Status changed to Former.");
+  await expect(paid).toHaveCSS("opacity", "1");
+  await expect(paid).not.toHaveAttribute("aria-disabled", "true");
+  expect(api.state.writes).toHaveLength(1);
+});
+
+test.describe("on a phone", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
+
+  test("UF-C2.2 the in-place Checkbox target is 44 px on a phone, and a tap in it toggles once", async ({
+    page,
+  }) => {
+    const api = await installInPlaceApi(page);
+    const sheet = await openRecord(page);
+    const paid = sheet.getByRole("checkbox", { name: "Paid", exact: true });
+    await paid.scrollIntoViewIfNeeded();
+    const box = await paid.boundingBox();
+    expect(box).not.toBeNull();
+    const x = box!.x + box!.width / 2;
+    const y = box!.y + box!.height / 2;
+    // Each point 21 px from the center lands on the Checkbox (a 44 px target).
+    const hits = (points: Array<[number, number]>) =>
+      page.evaluate(
+        (list) =>
+          list.map(([left, top]) =>
+            Boolean(
+              document
+                .elementFromPoint(left, top)
+                ?.closest('[role="checkbox"]'),
+            ),
+          ),
+        points,
+      );
+    expect(
+      await hits([
+        [x, y - 21],
+        [x, y + 21],
+        [x - 21, y],
+        [x + 21, y],
+      ]),
+    ).toEqual([true, true, true, true]);
+    await page.touchscreen.tap(x, y + 20);
+    await expect(headerStatus(sheet)).toHaveText("Paid turned on.");
+    await expect(paid).toBeChecked();
+    expect(api.state.writes).toHaveLength(1);
+    // From 1280 px the target keeps its desktop size.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const wide = await paid.boundingBox();
+    expect(
+      await hits([
+        [wide!.x + wide!.width / 2, wide!.y + wide!.height / 2 + 20],
+      ]),
+    ).toEqual([false]);
+  });
+});

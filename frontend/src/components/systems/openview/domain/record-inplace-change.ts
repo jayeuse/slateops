@@ -230,7 +230,8 @@ export type InPlaceAction =
       /** The record read again after a conflict, when the read succeeded. */
       record: OpenViewRecord | null;
     }
-  | { type: "clear-undo" };
+  /** Edit, a tab change: the Undo offer ends and its words go (DR-2.6). */
+  | { type: "clear-status" };
 
 /** Whether a new commit may start: never beside one that is saving. */
 export function canStartInPlace(state: InPlaceState): boolean {
@@ -316,8 +317,11 @@ export function inPlaceReducer(
         ...refusal(state.saving, action.failure, state.notice),
       };
     }
-    case "clear-undo":
-      return state.undo ? { ...state, undo: null } : state;
+    case "clear-status":
+      // The words go with the Undo; a failure message stays only until here.
+      return state.undo || state.notice
+        ? { ...state, undo: null, notice: null }
+        : state;
   }
 }
 

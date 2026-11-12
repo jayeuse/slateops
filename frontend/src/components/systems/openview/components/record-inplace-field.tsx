@@ -22,6 +22,8 @@ type RecordInPlaceFieldProps = {
   disabled: boolean;
   /** A commit on this record is running: the control takes no input. */
   locked: boolean;
+  /** The commit has run past 300 ms: a locked control looks disabled. */
+  dimmed: boolean;
   /** Changes when a commit settles or a value is put back: the draft resets. */
   settled: number;
   error: InPlaceFieldError | null;
@@ -45,6 +47,7 @@ export function RecordInPlaceField({
   saving,
   disabled,
   locked,
+  dimmed,
   settled,
   error,
   onCommit,
@@ -75,6 +78,7 @@ export function RecordInPlaceField({
         labelledBy: labelId,
         busy: saving !== null,
         locked,
+        dimmed,
         onBlur: typed
           ? (event) =>
               onCommit(

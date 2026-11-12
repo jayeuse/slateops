@@ -310,12 +310,14 @@ test("UF-C2.3 UF-C2.6 the header status: Saving, the change with Undo, a failed 
     message: "Status changed back to Active.",
     canUndo: false,
   });
-  // A tab change, Edit, or Previous and Next end the offer; the words stay.
-  expect(statusOf(inPlaceReducer(changed, { type: "clear-undo" }))).toEqual({
-    kind: "saved",
-    message: "Status changed to Former.",
-    canUndo: false,
-  });
+  // A tab change or Edit ends the offer, and its words go with it (DR-2.6).
+  const ended = inPlaceReducer(changed, { type: "clear-status" });
+  expect(statusOf(ended)).toBeNull();
+  expect(ended.undo).toBeNull();
+  // A failure message stays until that next action, then clears too.
+  expect(
+    statusOf(inPlaceReducer(undoConflict, { type: "clear-status" })),
+  ).toBeNull();
   // A new change ends the offer and the words; its refusal shows under it.
   const next = start(changed, paidId, true, false);
   const conflict = refused(next, { kind: "conflict" });

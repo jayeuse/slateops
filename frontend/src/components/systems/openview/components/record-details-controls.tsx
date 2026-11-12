@@ -238,6 +238,14 @@ export function RecordDetailsControls({
   // Each settled commit starts a new draft in the controls.
   const [inPlaceSettled, setInPlaceSettled] = useState(0);
   const inPlaceLock = useRef(false);
+  // Locked in-place controls dim only when the wait runs past 300 ms (G2).
+  const [lockLong, setLockLong] = useState(false);
+  useEffect(() => {
+    if (!busy) return;
+    const timer = window.setTimeout(() => setLockLong(true), 300);
+    return () => window.clearTimeout(timer);
+  }, [busy]);
+  if (!busy && lockLong) setLockLong(false);
   const undoRef = useRef<() => void>(() => undefined);
   const undo = useCallback(() => undoRef.current(), []);
   // Leaving the Details tab ends the Undo offer (DR-2.6).
@@ -245,7 +253,7 @@ export function RecordDetailsControls({
   const [wasDetailsActive, setWasDetailsActive] = useState(detailsActive);
   if (wasDetailsActive !== detailsActive) {
     setWasDetailsActive(detailsActive);
-    if (!detailsActive) dispatchInPlace({ type: "clear-undo" });
+    if (!detailsActive) dispatchInPlace({ type: "clear-status" });
   }
   // A commit, the header's Undo included, needs the complete catalog and a
   // writable record; otherwise a PATCH would drop values (DR-2.13).
@@ -289,7 +297,7 @@ export function RecordDetailsControls({
     if (!reload) {
       // DR-2.1: the form opens on Details, whichever tab is open.
       onShowDetails?.();
-      dispatchInPlace({ type: "clear-undo" });
+      dispatchInPlace({ type: "clear-status" });
     }
     setPending(reload ? "reload" : "open");
     setError("");
@@ -589,6 +597,7 @@ export function RecordDetailsControls({
         // While a commit runs, every control here waits without losing
         // focus (DR-2.4, DR-2.13).
         locked={busy}
+        dimmed={busy && lockLong}
         settled={inPlaceSettled}
         error={
           inPlaceState.fieldError?.fieldId === field.id

@@ -105,6 +105,8 @@ export type InPlaceControlProps = {
    * would drop the focus of the person who just used it.
    */
   locked: boolean;
+  /** The lock has lasted past 300 ms: the control takes the disabled look. */
+  dimmed: boolean;
   /** A date input's commit and Escape (DR-2.3). */
   onBlur?: (event: FocusEvent<HTMLInputElement>) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void;
@@ -146,18 +148,29 @@ export function FieldControl({
           "aria-labelledby": inPlace.labelledBy,
           "aria-busy": inPlace.busy || undefined,
           "aria-disabled": inPlace.locked || undefined,
+          "data-waiting": (inPlace.dimmed && !inPlace.busy) || undefined,
         }
       : {}),
   };
-  // In place, a control is 32px from 1280px and 44px below it (G5); while
-  // locked it looks as a disabled control does.
-  const locked = "aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
+  // In place, a control is 32px from 1280px and 44px below it (G5). The
+  // saving control looks busy at once; the others, locked against input,
+  // take the disabled look only when the save runs past 300 ms (DR-2.13).
+  // Nothing fades: only the control the person used changes at once (G1).
+  const locked =
+    "transition-none aria-busy:cursor-progress aria-busy:opacity-50 aria-disabled:cursor-not-allowed data-[waiting]:opacity-50";
   const height = inPlace ? `min-h-11 xl:h-8 xl:min-h-8 ${locked}` : "min-h-11";
   if (field.type === "boolean")
     return (
       <Checkbox
         {...common}
-        className={inPlace ? locked : undefined}
+        // In place on a phone the target is 44px square: the area sits on
+        // the 14px padding box of the bordered 16px box (14 + 2 × 15). From
+        // 1280px the shared size stays (QA-D1, G5).
+        className={
+          inPlace
+            ? `${locked} after:-inset-[15px] xl:after:-inset-x-3 xl:after:-inset-y-2`
+            : undefined
+        }
         checked={value === true}
         onCheckedChange={(checked) => onChange(checked === true)}
       />
