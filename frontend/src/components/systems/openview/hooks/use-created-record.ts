@@ -30,6 +30,8 @@ type CreatedRecord = {
   row: OpenViewRecord | null;
   /** The records invalidation that answer belongs to. */
   readAt: number;
+  /** DR-6.1: the status shows until a record is opened from the list. */
+  statusShown: boolean;
 };
 
 /**
@@ -132,13 +134,21 @@ export function useCreatedRecord({
     /** DR-6.3: the server's current row, pinned first with "New". */
     pinned: current?.phase === "pinned" && !groupedView ? current.row : null,
     /** DR-6.1, DR-6.5: the meta-line status. */
-    status: current
+    status: current?.statusShown
       ? current.phase === "hidden"
         ? "Record created. Your filters hide it."
         : "Record created."
       : "",
-    /** DR-6.5: the list cannot show it, so the status opens it. */
-    openable: current?.phase === "hidden" || current?.phase === "unchecked",
+    /**
+     * DR-6.5 and the Failure and Grouped view states: the list cannot show
+     * it, so the status opens it.
+     */
+    openable: Boolean(
+      current?.statusShown &&
+      (current.phase === "hidden" ||
+        current.phase === "unchecked" ||
+        current.phase === "failed"),
+    ),
     start: (id: string) => {
       request.current += 1;
       setCreated({
@@ -147,18 +157,24 @@ export function useCreatedRecord({
         phase: "routing",
         row: null,
         readAt: invalidation,
+        statusShown: true,
       });
     },
     end: () => {
       request.current += 1;
       setCreated(null);
     },
-    /** Opening another record ends it (DR-6.1). */
-    endUnless: (recordId: string) => {
-      if (created && created.id !== recordId) {
+    /**
+     * DR-6.1: opening a record from the list clears the status. Another
+     * record ends it; the new one keeps its first place and its tag.
+     */
+    openedFromList: (recordId: string) => {
+      if (!created) return;
+      if (created.id !== recordId) {
         request.current += 1;
         setCreated(null);
-      }
+      } else if (created.statusShown)
+        setCreated({ ...created, statusShown: false });
     },
   };
 }

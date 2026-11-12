@@ -162,11 +162,46 @@ export function LiveRecordResults({
               .filter((value) => value && value !== "—")
               .slice(0, 2)
               .join(" · ");
+            const label =
+              first?.type === "user" ? `Open record: ${title}` : title;
+            const rowProps = {
+              "data-record-id": row.id,
+              "data-state": row.id === selectedId ? "selected" : undefined,
+            };
+            // DR-6.3: the new record's tag sits on its title line, so its
+            // second line follows the title and tag; the button's hit area
+            // still covers the row.
+            if (row.id === newRecord?.id)
+              return (
+                <li
+                  key={row.id}
+                  {...rowProps}
+                  className={cn(
+                    openRowClassName,
+                    tintRowClassName,
+                    "flex min-h-14 flex-col justify-center px-4 py-1.5",
+                  )}
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <RowOpenButton
+                      title={title}
+                      label={label}
+                      className="min-h-0!"
+                      onOpen={() => onOpenRecord(row.id)}
+                    />
+                    <NewRecordTag />
+                  </span>
+                  {details ? (
+                    <span className="text-muted-foreground block truncate text-xs">
+                      {details}
+                    </span>
+                  ) : null}
+                </li>
+              );
             return (
               <li
                 key={row.id}
-                data-record-id={row.id}
-                data-state={row.id === selectedId ? "selected" : undefined}
+                {...rowProps}
                 className={cn(
                   openRowClassName,
                   tintRowClassName,
@@ -177,12 +212,9 @@ export function LiveRecordResults({
                 <RowOpenButton
                   title={title}
                   subtitle={details || undefined}
-                  label={
-                    first?.type === "user" ? `Open record: ${title}` : title
-                  }
+                  label={label}
                   onOpen={() => onOpenRecord(row.id)}
                 />
-                {newTag(row)}
               </li>
             );
           })}

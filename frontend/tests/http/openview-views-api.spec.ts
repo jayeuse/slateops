@@ -5596,7 +5596,10 @@ const createdRecordName = "Equipment 30";
  * state: the match read (the view's deleted setting) finds it only while it
  * is active and no filter applies.
  */
-async function installCreatedRecord(page: Page) {
+async function installCreatedRecord(
+  page: Page,
+  { failMatch = false }: { failMatch?: boolean } = {},
+) {
   await installRecordCommands(page);
   const matchReads: { filters: unknown[] }[] = [];
   const statusLabels: Record<string, string> = {
@@ -5667,6 +5670,12 @@ async function installCreatedRecord(page: Page) {
         ]),
       });
     matchReads.push({ filters: definition.filters });
+    if (failMatch)
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Service unavailable" }),
+      });
     return route.fulfill({
       contentType: "application/json",
       body: pageOfCurrent(
@@ -5878,6 +5887,143 @@ test("UF-C6.3: a deleted new record leaves the list", async ({ page }) => {
   ).toHaveCount(0);
   await expect(table.getByText("New", { exact: true })).toHaveCount(0);
   await expect(pager).toBeVisible();
+});
+
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 390, height: 844 },
+] as const) {
+  for (const scene of ["filters hide it", "grouped view"] as const) {
+    test(`UF-C6.1 UF-C6.2: at ${viewport.width}px the toolbar stays put when the ${scene} status shows with Open record`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await installViewsApi(page, {
+        disableInitialSearch: true,
+        ...(scene === "grouped view"
+          ? { initialGroupByFieldId: statusFieldId }
+          : {}),
+      });
+      await viewAs(page, "writer");
+      await routeQuickFilterCounts(page);
+      await installCreatedRecord(page);
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      if (scene === "filters hide it") {
+        await page
+          .getByRole("group", { name: "Status" })
+          .getByRole("button", { name: /^In service\s*29$/ })
+          .click();
+        await expect(page).toHaveURL(/[?&]changes=/);
+      }
+      const filters = page.getByRole("button", {
+        name: "Filters",
+        exact: true,
+      });
+      const before = (await box(filters)).y;
+
+      await createRecord(page);
+      await page.keyboard.press("Escape");
+      await expect(
+        page.getByRole("dialog", { name: "Record details" }),
+      ).toHaveCount(0);
+
+      await expect(pageStatus(page)).toHaveText(
+        scene === "filters hide it"
+          ? "Record created. Your filters hide it."
+          : "Record created.",
+      );
+      const openRecord = page.getByRole("button", {
+        name: "Open record",
+        exact: true,
+      });
+      await expect(openRecord).toBeVisible();
+      expect((await box(filters)).y).toBe(before);
+      // The line-sized button still takes a 44px target, 32px from 1280px.
+      const target = await box(openRecord);
+      const reach = viewport.width >= 1280 ? 3 : 9;
+      for (const y of [target.y - reach, target.y + target.height + reach])
+        expect(
+          await page.evaluate(
+            ([x, pointY]) =>
+              document.elementFromPoint(x, pointY)?.closest("button")
+                ?.textContent,
+            [target.x + target.width / 2, y],
+          ),
+        ).toBe("Open record");
+    });
+  }
+}
+
+test("UF-C6.1: opening the pinned record from the list clears the status and keeps its first place and tag", async ({
+  page,
+}) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  await viewAs(page, "writer");
+  await installCreatedRecord(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await createRecord(page);
+  await page.keyboard.press("Escape");
+  await expect(pageStatus(page)).toHaveText("Record created.");
+  const first = page.getByRole("table").getByRole("row").nth(1);
+
+  await first.getByRole("button", { name: createdRecordName }).click();
+  await openedSheet(page.getByRole("dialog", { name: "Record details" }));
+  await page.keyboard.press("Escape");
+
+  // The meta line's status settles empty, not on a passing refresh.
+  await expect(
+    page
+      .locator("p", { has: page.getByText(/ · 30 records$/) })
+      .getByRole("status"),
+  ).toHaveText("");
+  await expect(first).toContainText(createdRecordName);
+  await expect(first).toContainText("New");
+});
+
+test("UF-C6.1: on a phone the New tag sits on the title line, after the title", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installViewsApi(page, { disableInitialSearch: true });
+  await viewAs(page, "writer");
+  await installCreatedRecord(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await createRecord(page);
+  await page.keyboard.press("Escape");
+  const first = page
+    .getByRole("list", { name: "Records" })
+    .getByRole("listitem")
+    .first();
+  // Measure once the match read has pinned the row.
+  await expect(first.getByText("New", { exact: true })).toBeVisible();
+  const title = await box(first.getByText(createdRecordName, { exact: true }));
+  const tag = await box(first.getByText("New", { exact: true }));
+
+  expect(tag.x).toBeGreaterThanOrEqual(title.x + title.width);
+  expect(
+    Math.abs(tag.y + tag.height / 2 - (title.y + title.height / 2)),
+  ).toBeLessThanOrEqual(4);
+});
+
+test("UF-C6.2: a failed match check adds no row and keeps Record created. with Open record", async ({
+  page,
+}) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  await viewAs(page, "writer");
+  const { matchReads } = await installCreatedRecord(page, { failMatch: true });
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await createRecord(page);
+  await page.keyboard.press("Escape");
+
+  await expect(pageStatus(page)).toHaveText("Record created.");
+  expect(matchReads).toHaveLength(1);
+  await expect(
+    page.getByRole("table").getByText("New", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Open record", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`record=${createdRecordId}`));
 });
 
 test("UF-C6.3: a sort change ends the New tag and the status; the record shows only at its sorted place", async ({

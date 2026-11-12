@@ -1333,8 +1333,9 @@ export default function ServerBackedViewsWorkspace({
   const openRecordFromResults = (
     recordId: string,
     pageContext?: RecordInspectionPage,
+    fromList = true,
   ) => {
-    createdRecord.endUnless(recordId);
+    if (fromList) createdRecord.openedFromList(recordId);
     const sourcePage = pageContext ?? currentRecordPage;
     if (
       moduleId &&
@@ -2812,22 +2813,32 @@ export default function ServerBackedViewsWorkspace({
         <PageHeader
           title={moduleName ?? "Records"}
           description={
-            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              {meta ? <span>{meta}</span> : null}
+            // DR-6.1: one line, so the toolbar never moves: the meta and the
+            // controls keep their size, and a status cuts with an ellipsis.
+            <span className="flex min-w-0 items-center gap-x-2">
+              {meta ? (
+                <span className="shrink-0 whitespace-nowrap">{meta}</span>
+              ) : null}
               {/* DR-1.2: only a view manager can save, so only they see it. */}
               {dirty && canManageViews && !reportsActive ? (
-                <Badge variant="outline">Unsaved changes</Badge>
+                <Badge variant="outline" className="shrink-0">
+                  Unsaved changes
+                </Badge>
               ) : null}
-              <span role="status">
+              <span role="status" className="line-clamp-1 min-w-0 break-all">
                 {reportsActive ? "" : status || createdRecord.status}
               </span>
               {createdRecord.openable && !reportsActive && !status ? (
                 <Button
                   type="button"
                   variant="ghost"
-                  className="text-action-text min-h-11 px-1.5 underline-offset-4 hover:bg-transparent hover:underline xl:h-8 xl:min-h-8"
+                  // Sized to the line (h-auto leaves the slim 32px rule;
+                  // min-h-0! the phone 44px floor); the hit area still
+                  // reaches 44px, and 32px from 1280px.
+                  className="text-action-text relative h-auto min-h-0! shrink-0 px-1.5 py-0 leading-6 whitespace-nowrap underline-offset-4 after:absolute after:inset-x-0 after:-inset-y-2.5 after:content-[''] hover:bg-transparent hover:underline xl:after:-inset-y-1"
                   onClick={() =>
-                    createdRecord.id && openRecordFromResults(createdRecord.id)
+                    createdRecord.id &&
+                    openRecordFromResults(createdRecord.id, undefined, false)
                   }
                 >
                   Open record
