@@ -2587,7 +2587,260 @@ test("temporary View changes live in the address, survive reload, and are never 
   });
 });
 
-test("a reader keeps temporary View filters in the address without save controls", async ({
+const otherDepartmentId = "00000000-0000-4000-8000-000000000101";
+type ViewerAccess = {
+  department_id: string;
+  module_id: string | null;
+  level: "read" | "write" | "manage";
+};
+// Item 1: who may save a view on the open module decides the mark and the
+// leave question. Each case is one account's identity and access.
+const viewers = {
+  writer: {
+    role: "member",
+    access: [
+      { department_id: departmentId, module_id: moduleId, level: "write" },
+    ],
+  },
+  reader: {
+    role: "member",
+    access: [{ department_id: departmentId, module_id: null, level: "read" }],
+  },
+  guest: {
+    role: "guest",
+    access: [{ department_id: departmentId, module_id: null, level: "read" }],
+  },
+  "department manager": {
+    role: "member",
+    access: [{ department_id: departmentId, module_id: null, level: "manage" }],
+  },
+  "manager of another department who writes here": {
+    role: "member",
+    access: [
+      { department_id: otherDepartmentId, module_id: null, level: "manage" },
+      { department_id: departmentId, module_id: moduleId, level: "write" },
+    ],
+  },
+  "department manager who only reads this module": {
+    role: "member",
+    access: [
+      { department_id: departmentId, module_id: null, level: "manage" },
+      { department_id: departmentId, module_id: moduleId, level: "read" },
+    ],
+  },
+} satisfies Record<
+  string,
+  { role: "member" | "guest"; access: ViewerAccess[] }
+>;
+
+async function viewAs(page: Page, viewer: keyof typeof viewers) {
+  const { role, access } = viewers[viewer];
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: authMeBody({
+        id: userId,
+        role,
+        default_organization_blocked: null,
+        access,
+      }),
+    }),
+  );
+}
+
+/** The quick filter strip's counts: "All 29 · In service 29". */
+async function routeQuickFilterCounts(page: Page) {
+  await page.route("**/api/records/aggregate-query", async (route) => {
+    const body = route.request().postDataJSON() as {
+      limit: number;
+      offset: number;
+    };
+    await route.fulfill({
+      json: {
+        items: [
+          {
+            key: inServiceChoiceId,
+            label: "In service",
+            value: "29",
+            record_count: 29,
+          },
+        ],
+        pagination: {
+          limit: body.limit,
+          offset: body.offset,
+          count: 1,
+          total: 1,
+          has_more: false,
+          total_is_capped: false,
+        },
+      },
+    });
+  });
+}
+
+/**
+ * Opens the module page as `viewer` (the mock's administrator without one)
+ * and clicks the quick chip "In service".
+ */
+async function chooseQuickChipAs(page: Page, viewer?: keyof typeof viewers) {
+  const api = await installViewsApi(page, { disableInitialSearch: true });
+  if (viewer) await viewAs(page, viewer);
+  await routeQuickFilterCounts(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  const strip = page.getByRole("group", { name: "Status" });
+  await strip.getByRole("button", { name: /^In service\s*29$/ }).click();
+  await expect(
+    strip.getByRole("button", { name: /^In service/ }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page).toHaveURL(/[?&]changes=/);
+  return { api, strip };
+}
+
+const viewWrites = (requests: readonly string[]) =>
+  requests.filter((request) => !request.startsWith("GET "));
+
+for (const viewer of ["writer", "reader", "guest"] as const) {
+  test(`UF-C1.1: a ${viewer} filters with a quick chip and leaves with no unsaved mark and no question`, async ({
+    page,
+  }) => {
+    const { api } = await chooseQuickChipAs(page, viewer);
+    await expect
+      .poll(() =>
+        api.recordQueryRequests.some(({ definition }) =>
+          definition.filters.some(
+            (filter) =>
+              filter.field_id === statusFieldId &&
+              filter.value === inServiceChoiceId,
+          ),
+        ),
+      )
+      .toBe(true);
+    await expect(
+      page.getByText("Unsaved changes", { exact: true }),
+    ).toHaveCount(0);
+
+    await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+
+    await expect(page).toHaveURL(/section=dashboards/);
+    await expect(
+      page.getByRole("alertdialog", { name: "Discard unsaved view changes?" }),
+    ).toHaveCount(0);
+    expect(viewWrites(api.requests)).toEqual([]);
+  });
+}
+
+test("UF-C1.2: after leaving, browser Back brings a writer's quick chip back with Copy link and Reset changes", async ({
+  page,
+}) => {
+  const { api } = await chooseQuickChipAs(page, "writer");
+  await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+  await expect(page).toHaveURL(/section=dashboards/);
+
+  await page.goBack();
+
+  await expect(page).toHaveURL(new RegExp(`module=${moduleId}.*[?&]changes=`));
+  await expect(
+    page
+      .getByRole("group", { name: "Status" })
+      .getByRole("button", { name: /^In service/ }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "More view actions" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Copy link", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", { name: "Reset changes", exact: true }),
+  ).toBeVisible();
+  expect(viewWrites(api.requests)).toEqual([]);
+});
+
+for (const viewer of ["department manager", undefined] as const) {
+  test(`UF-C1.3: a ${viewer ?? "administrator"} keeps the unsaved mark, Save view, and the leave question`, async ({
+    page,
+  }) => {
+    await chooseQuickChipAs(page, viewer);
+
+    await expect(
+      page.getByText("Unsaved changes", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Save view", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+    await expect(
+      page.getByRole("alertdialog", { name: "Discard unsaved view changes?" }),
+    ).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`module=${moduleId}`));
+  });
+}
+
+for (const viewer of [
+  "manager of another department who writes here",
+  "department manager who only reads this module",
+] as const) {
+  test(`UF-C1.4: a ${viewer} filters and leaves like a writer`, async ({
+    page,
+  }) => {
+    const { api } = await chooseQuickChipAs(page, viewer);
+    await expect(
+      page.getByText("Unsaved changes", { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Save view", exact: true }),
+    ).toHaveCount(0);
+
+    await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+
+    await expect(page).toHaveURL(/section=dashboards/);
+    await expect(
+      page.getByRole("alertdialog", { name: "Discard unsaved view changes?" }),
+    ).toHaveCount(0);
+    expect(viewWrites(api.requests)).toEqual([]);
+  });
+}
+
+test("UF-C1.5: a writer's record edit and record create still hold against a sidebar click", async ({
+  page,
+}) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  await viewAs(page, "writer");
+  await installRecordCommands(page);
+  await page.goto(
+    `/openview?section=views&module=${moduleId}&view=${viewId}&record=${recordOneId}`,
+  );
+  const details = page.getByRole("dialog", { name: "Record details" });
+  await details.getByRole("button", { name: "Edit record" }).click();
+  await details.getByLabel("Serial number").fill("SN-KEPT");
+  // A modal sheet hides the sidebar from the accessibility tree, so the row
+  // is found by its address; the click lands where a person would click.
+  const sidebarDashboard = page.locator('a[href*="section=dashboards"]');
+  const leaveBySidebar = async () => {
+    const box = await sidebarDashboard.boundingBox();
+    if (!box) throw new Error("The sidebar Dashboard row is not laid out.");
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  };
+
+  await leaveBySidebar();
+  await page.keyboard.press("Escape");
+
+  await expect(details.getByLabel("Serial number")).toHaveValue("SN-KEPT");
+  await expect(page).toHaveURL(new RegExp(`record=${recordOneId}`));
+
+  await details.getByRole("button", { name: "Cancel" }).click();
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await page.getByRole("button", { name: "New record" }).click();
+  const create = page.getByRole("dialog", { name: "New record" });
+  await create.getByLabel("Equipment name").fill("Booster pump 09");
+
+  await leaveBySidebar();
+  await page.keyboard.press("Escape");
+
+  await expect(create.getByLabel("Equipment name")).toHaveValue(
+    "Booster pump 09",
+  );
+  await expect(page).toHaveURL(new RegExp(`module=${moduleId}`));
+});
+
+test("UF-C1.1: a reader keeps temporary View filters in the address without save controls or an unsaved mark", async ({
   page,
 }) => {
   await installViewsApi(page);
@@ -2621,10 +2874,10 @@ test("a reader keeps temporary View filters in the address without save controls
     page.getByRole("menuitem", { name: /^Archived views/ }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByText("Unsaved changes")).toBeVisible();
+  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
   await page.reload();
   await expect(search).toHaveValue("valve");
-  await expect(page.getByText("Unsaved changes")).toBeVisible();
+  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
 });
 
 test("a module reader can browse archived Views without a Restore action", async ({
@@ -5620,7 +5873,7 @@ test.describe("export journeys", () => {
   });
 
   for (const role of ["member", "guest"] as const) {
-    test(`${role} exports current query and chosen pinned columns without saving`, async ({
+    test(`UF-C1.1: ${role} exports current query and pinned columns without saving`, async ({
       page,
     }) => {
       const api = await installS16Export(page, role);
@@ -5711,7 +5964,7 @@ test.describe("export journeys", () => {
       await expect(page).toHaveURL(address);
       await expect(
         page.getByText("Unsaved changes", { exact: true }),
-      ).toBeVisible();
+      ).toHaveCount(0);
       expect(api.writes).toEqual([]);
     });
   }

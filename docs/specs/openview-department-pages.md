@@ -69,6 +69,7 @@ Tools
 The module page is the umbrella's Views direction (comp `views.html`), with the module chosen by the sidebar:
 
 - **Header** (OD1, OD5): the module name as the title; one meta line, "Sales · 30 records", with "Unsaved changes" when the view changed; the saved-view picker; Export; a "More view actions" menu (Archived views, Copy link, Reset changes), so it is never empty; one primary, New record for writers or Save view with unsaved changes ("Save as new view" beside it). No data-source card and no intro sentence.
+  - Changed by `docs/specs/ux-friction-pass.md` item 1 (APR-0003): "Unsaved changes" and the view leave guard show only to view managers.
 - **Toolbar** (OD3, OD4, OD14): one row with search, the quick filter (the first choice field, with counts), Filters (a popover from 768px, a bottom sheet below) with chips under the toolbar, Sort, Columns, and the Layout select.
 - **Records** (OD6): the table panel fills the page; only its body scrolls; the pager stays at the bottom. 40px one-line rows; the whole row opens the record; people as avatar and name in ink; one date format.
 - **Record** (OD7): a right sheet with Previous and Next, a quiet Edit, Delete in the "More record actions" menu, a named close, and the tabs Details, Linked records, Files, History. Edit and create use the shared dialog frame.

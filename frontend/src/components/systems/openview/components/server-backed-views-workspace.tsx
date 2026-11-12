@@ -1483,8 +1483,14 @@ export default function ServerBackedViewsWorkspace({
       });
       startNavigation(() => router.push(href, { scroll: false }));
     };
-    if (dirty) setPendingNavigation({ href, resume, discardDraft: true });
-    else resume();
+    // DR-1.3: only a view manager is asked; for anyone else the draft goes
+    // at once, and its address entry keeps it for Back.
+    if (dirty && canManageViews)
+      setPendingNavigation({ href, resume, discardDraft: true });
+    else {
+      if (dirty) setDraftState(null);
+      resume();
+    }
   };
 
   useEffect(() => {
@@ -1602,15 +1608,30 @@ export default function ServerBackedViewsWorkspace({
         new URL(href, window.location.origin).href === window.location.href
       )
         return true;
+      // DR-1.3: someone who cannot save a view leaves at once, as "Discard
+      // and continue" does: the draft goes inside the navigation, so the
+      // address entry keeps it for Back.
+      if (!canManageViews) {
+        setDraftState(null);
+        startNavigation(resume);
+        return false;
+      }
       setPendingNavigation({ href, resume, discardDraft: true });
       return false;
     },
-    [dirty, pendingAction, setPendingNavigation],
+    [
+      canManageViews,
+      dirty,
+      pendingAction,
+      setDraftState,
+      setPendingNavigation,
+      startNavigation,
+    ],
   );
   useWorkspaceNavigationGuard(navigationGuard);
 
   const confirmDraftDiscard = (resume: () => void) => {
-    if (!dirtyRef.current) {
+    if (!dirtyRef.current || !canManageViews) {
       resume();
       return;
     }
@@ -2772,7 +2793,8 @@ export default function ServerBackedViewsWorkspace({
           description={
             <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
               {meta ? <span>{meta}</span> : null}
-              {dirty && !reportsActive ? (
+              {/* DR-1.2: only a view manager can save, so only they see it. */}
+              {dirty && canManageViews && !reportsActive ? (
                 <Badge variant="outline">Unsaved changes</Badge>
               ) : null}
               <span role="status">{reportsActive ? "" : status}</span>

@@ -54,6 +54,7 @@ A person sees their records at once. They find, filter, and open a record withou
 - Every capability stays reachable, for every role that has it now.
 - URLs and their values stay the same: `?section=`, `?module=`, `?view=`, `?record=`, `?dashboard=`, `?report=`, and the view state that lives in the URL. Links from Boards, Platform search, and notifications keep working.
 - Saved views, drafts, the unsaved-changes guards, conflicts, exports, chart snapshots, dashboard refresh, report runs, and schedules behave as they do now.
+  - Changed by `docs/specs/ux-friction-pass.md` item 1 (APR-0003): the OD5 "Unsaved changes" chip and the view leave guard show only to view managers. The record edit and create guards do not change.
 - Charts keep the explicit Apply. The table and exports keep the last applied result.
 - Server refusals stay the source of truth.
 
