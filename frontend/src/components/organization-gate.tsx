@@ -169,10 +169,10 @@ export function OrganizationGate({
           : "Your account is ready, but it is not part of an organization yet. Join one from an invitation, or ask an administrator to invite you."}
       </p>
       {refusal && hasOrganizations ? (
-        // A two-step request is a step to take, not a failure; the reference
-        // shows only for an unexplained refusal.
+        // Two-step and network rules are a policy the person meets, not a
+        // failure (DR-13.3); only "could not be opened" is, with its reference.
         <Alert
-          variant={refusal.kind === "mfa" ? "warning" : "destructive"}
+          variant={refusal.kind === "other" ? "destructive" : "warning"}
           className="mt-4"
           reference={refusal.kind === "other" ? refusal.reference : null}
         >

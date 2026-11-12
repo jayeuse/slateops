@@ -46,7 +46,15 @@ async function installTwoOrganizations(
   selection: Selection,
   stored: string = school.org_id,
 ) {
-  const state = { selects: [] as string[], mfaReads: 0, sessionReads: 0 };
+  const state = {
+    selects: [] as string[],
+    mfaReads: 0,
+    sessionReads: 0,
+    // A dead session reads as signed out; the sign-in page signs in again.
+    signedIn: true,
+    // Refreshes that succeed (and sign the session in again); others are 401.
+    refreshGrants: 0,
+  };
   // This browser opened Riverside School last; a reload keeps what the app
   // stores after that.
   await page.addInitScript(
@@ -60,8 +68,26 @@ async function installTwoOrganizations(
     },
     [lastOrganizationKey, stored],
   );
+  await page.route("**/api/auth/login", (route) => {
+    state.signedIn = true;
+    return route.fulfill({
+      json: { authenticated: true, setup_required: false },
+    });
+  });
+  await page.route("**/api/auth/refresh", (route) => {
+    if (state.refreshGrants === 0)
+      return route.fulfill({
+        status: 401,
+        json: { detail: "Unauthenticated" },
+      });
+    state.refreshGrants -= 1;
+    state.signedIn = true;
+    return route.fulfill({ json: { authenticated: true } });
+  });
   await page.route("**/api/auth/session", (route) => {
     state.sessionReads += 1;
+    if (!state.signedIn)
+      return route.fulfill({ json: { authenticated: false } });
     return route.fulfill({
       json: {
         authenticated: true,
@@ -161,6 +187,10 @@ test("UF-C13.3 a refused automatic open shows the chooser with the reason and en
       { exact: true },
     ),
   ).toBeVisible();
+  // A policy the person meets, not a failure (DR-13.3).
+  await expect(
+    refusalAlert(page, "Riverside School asks for two-step verification."),
+  ).toHaveAttribute("data-variant", "warning");
   expect(state.selects).toEqual([school.org_id]);
   await expect(
     page.getByRole("heading", { name: "Complete two-step verification" }),
@@ -256,7 +286,7 @@ test("UF-C13.3 a network refusal of the automatic open shows its reason on the c
       page,
       "Riverside School does not allow sign-in from this network.",
     ),
-  ).toBeVisible();
+  ).toHaveAttribute("data-variant", "warning");
   await expect(
     page.getByText("Access from this address is not allowed", { exact: false }),
   ).toHaveCount(0);
@@ -265,21 +295,66 @@ test("UF-C13.3 a network refusal of the automatic open shows its reason on the c
   expect(state.selects).toEqual([school.org_id]);
 });
 
-for (const status of [401, 503])
-  test(`UF-C13.3 a ${status} on the automatic open shows "could not be opened" with its reference`, async ({
-    page,
-  }) => {
-    const state = await installTwoOrganizations(page, { status });
-    await page.goto("/platform?section=notifications");
-    await expect(
-      page.getByRole("heading", { name: "Choose an organization" }),
-    ).toBeVisible();
-    const alert = refusalAlert(page, "Riverside School could not be opened.");
-    await expect(alert).toBeVisible();
-    await expectAnsweredReference(alert);
-    expect(await tabOrganization(page)).toBeNull();
-    expect(state.selects).toEqual([school.org_id]);
+test('UF-C13.3 a 503 on the automatic open shows "could not be opened" with its reference', async ({
+  page,
+}) => {
+  const state = await installTwoOrganizations(page, { status: 503 });
+  await page.goto("/platform?section=notifications");
+  await expect(
+    page.getByRole("heading", { name: "Choose an organization" }),
+  ).toBeVisible();
+  const alert = refusalAlert(page, "Riverside School could not be opened.");
+  await expect(alert).toHaveAttribute("data-variant", "destructive");
+  await expectAnsweredReference(alert);
+  expect(await tabOrganization(page)).toBeNull();
+  expect(state.selects).toEqual([school.org_id]);
+});
+
+// DR-13.3 (PR2 screen review): a 401 is not an organization refusal. The
+// session check takes it (refresh, then the sign-in page). One automatic try
+// belongs to each mount of the signed-in app: the sign-in page unmounts it,
+// so the next sign-in may try once more.
+test("UF-C13.3 a 401 on the automatic open follows the session check to the sign-in page, and the next sign-in tries once more", async ({
+  page,
+}) => {
+  const state = await installTwoOrganizations(page, {
+    status: 0,
+    answer: async (route, attempt) => {
+      if (attempt === 1) {
+        // The session died between the session read and the select.
+        state.signedIn = false;
+        await route.fulfill({
+          status: 401,
+          headers: answeredHeaders,
+          json: { detail: "Invalid authentication credentials" },
+        });
+        return;
+      }
+      await route.fulfill({
+        json: authMeBody({
+          id: userId,
+          role: "member",
+          memberships: [harbor, school],
+          current_organization: { ...school, access: [] },
+        }),
+      });
+    },
   });
+  await page.goto("/platform?section=notifications");
+  await expect(page).toHaveURL(/\/login$/);
+  expect(state.selects).toEqual([school.org_id]);
+  expect(await chooserSeen(page)).toBe(false);
+  expect(await tabOrganization(page)).toBeNull();
+
+  await page.getByLabel("Email", { exact: true }).fill("member@example.test");
+  await page.getByLabel("Password").fill("correct horse battery");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(
+    page.getByRole("navigation", { name: "Main navigation" }),
+  ).toBeVisible();
+  expect(state.selects).toEqual([school.org_id, school.org_id]);
+  expect(await tabOrganization(page)).toBe(school.org_id);
+});
 
 // Security review F3: a newer check interrupts the select. It tries exactly
 // once more, then never again, and the interrupted try leaves no trace.
@@ -333,4 +408,46 @@ test("UF-C13.3 an interrupted automatic open tries once more, then never again, 
     page.getByRole("heading", { name: "Choose an organization" }),
   ).toBeVisible();
   expect(state.selects).toEqual([school.org_id, school.org_id]);
+});
+
+// Security delta review F4: a 401 while the session stays live (say, a CSRF
+// failure). The re-check refreshes and finds the session; the one try is
+// spent, so it shows the chooser and never selects again. Selects after the
+// second are held, so a build that loops stops instead of running on.
+test("UF-C13.3 a 401 on the automatic open while the session stays live does not try again: the chooser shows with no reason", async ({
+  page,
+}) => {
+  const state = await installTwoOrganizations(page, {
+    status: 0,
+    answer: async (route, attempt) => {
+      if (attempt > 2) return new Promise<void>(() => {});
+      if (attempt === 1) {
+        state.signedIn = false;
+        state.refreshGrants = 1;
+      }
+      await route.fulfill({
+        status: 401,
+        headers: answeredHeaders,
+        json: { detail: "Invalid authentication credentials" },
+      });
+    },
+  });
+  await page.goto("/platform?section=notifications");
+  await expect
+    .poll(async () => state.selects.length > 1 || (await chooserSeen(page)))
+    .toBe(true);
+  expect(state.selects).toEqual([school.org_id]);
+  await expect(
+    page.getByRole("heading", { name: "Choose an organization" }),
+  ).toBeVisible();
+  await expect(page.locator('[data-slot="alert"]')).toHaveCount(0);
+  expect(await tabOrganization(page)).toBeNull();
+  await expect(page).not.toHaveURL(/\/login$/);
+  const reads = state.sessionReads;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => state.sessionReads).toBeGreaterThan(reads);
+  await expect(
+    page.getByRole("heading", { name: "Choose an organization" }),
+  ).toBeVisible();
+  expect(state.selects).toEqual([school.org_id]);
 });

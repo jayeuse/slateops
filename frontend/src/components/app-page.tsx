@@ -471,6 +471,9 @@ export function AppPage({ children }: AppPageProps) {
         let choice: OrganizationChoice | null = null;
         // The last organization opened: check the session again, as after a pick.
         let reopened = false;
+        // The select found no live session (401): the session check decides,
+        // with its refresh and sign-in page, not the chooser (DR-13.3).
+        let sessionGone = false;
         try {
           const body = await getSessionStatus(controller.signal).catch(
             (error: unknown) => {
@@ -576,21 +579,29 @@ export function AppPage({ children }: AppPageProps) {
                       lastOrganizationTried.current = null;
                       throw caught;
                     }
-                    refusal = {
-                      organization:
-                        me.memberships.find(
-                          (membership) => membership.orgId === last,
-                        )?.name ?? "",
-                      kind:
-                        caught instanceof ApiError
-                          ? openRefusalKind(caught.status, caught.code ?? null)
-                          : openRefusalKind(null, null),
-                      reference: apiErrorReference(caught),
-                    };
-                    lastOrganizationRefusal.current = {
-                      accountId: me.id,
-                      refusal,
-                    };
+                    if (caught instanceof ApiError && caught.status === 401) {
+                      // The one try is spent; the recheck does not try again.
+                      sessionGone = true;
+                    } else {
+                      refusal = {
+                        organization:
+                          me.memberships.find(
+                            (membership) => membership.orgId === last,
+                          )?.name ?? "",
+                        kind:
+                          caught instanceof ApiError
+                            ? openRefusalKind(
+                                caught.status,
+                                caught.code ?? null,
+                              )
+                            : openRefusalKind(null, null),
+                        reference: apiErrorReference(caught),
+                      };
+                      lastOrganizationRefusal.current = {
+                        accountId: me.id,
+                        refusal,
+                      };
+                    }
                   }
                 }
                 if (reopened) {
@@ -602,7 +613,7 @@ export function AppPage({ children }: AppPageProps) {
                     !signOutAccepted.current
                   )
                     setCurrentOrganizationId(last);
-                } else if (result !== "unavailable") {
+                } else if (!sessionGone && result !== "unavailable") {
                   result = "organization";
                   choice = {
                     memberships: me.memberships,
@@ -648,7 +659,7 @@ export function AppPage({ children }: AppPageProps) {
         if (current.nextVersion > requested.version) continue;
         // The last organization opened: run the check again, as after a pick.
         // The page stays as it is meanwhile (DR-13.2).
-        if (reopened) {
+        if (reopened || sessionGone) {
           current.queued ??= requested;
           continue;
         }
