@@ -33,10 +33,13 @@ import {
 import { serializeCsv } from "@/lib/csv";
 import { cn } from "@/lib/utils";
 import { moduleHref } from "@/components/department-navigation-model";
+import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-api";
 import type { OpenViewAggregateSnapshotResult } from "../adapters/analytics-api";
 import type {
   OpenViewDashboard,
   OpenViewDashboardChartConfig,
+  OpenViewDashboardChartQuery,
+  OpenViewDashboardGroupQuery,
   OpenViewDashboardWidgetConfig,
 } from "../adapters/dashboards-api";
 import { fieldsFirstPageOptions } from "../adapters/openview-queries";
@@ -67,8 +70,17 @@ import {
   rowsForSpan,
   widgetTitle,
 } from "../domain/dashboard-widget-text";
-import { openViewRecordFieldValue } from "../domain/record-display";
+import { serializeOpenViewUrl } from "../domain/model";
+import {
+  openViewRecordFieldValue,
+  openViewRecordTitle,
+} from "../domain/record-display";
 import { encodeTemporaryDefinition } from "../domain/temporary-view";
+import {
+  widgetLinkChanges,
+  type WidgetLinkGroup,
+  type WidgetLinkInput,
+} from "../domain/widget-records-link";
 import { OpenViewChartPreview } from "./chart-preview";
 import { RecordPersonCard } from "./live-record-cards";
 
@@ -181,6 +193,23 @@ type Paging = {
   pageSize: number;
 };
 
+/**
+ * Where a view-mode card links its figure, group rows and record rows
+ * (candidate 6 of docs/specs/subtle-interactions.md). Null in edit mode, in
+ * the builder's preview, and on a locked card.
+ */
+type CardLinks = {
+  moduleId: string;
+  moduleName: string | null;
+  titleFieldId: string | null;
+  /** The widget's query, for the links that add a group condition. */
+  input: WidgetLinkInput | null;
+  /** The exact records of a figure; null when they cannot be carried. */
+  figureHref: string | null;
+  /** The card's title, which names a figure that is not a count. */
+  widgetTitle: string;
+};
+
 function useWidgetMeta(
   config: OpenViewDashboardWidgetConfig | null,
   sources: readonly OpenViewDataSource[],
@@ -240,7 +269,54 @@ function WidgetCardFrame(
       ? (props.departmentNames.get(source.departmentId) ?? null)
       : null;
   const edit = modeProps.mode === "edit" ? modeProps : null;
-  const openHref = config ? recordsHref(config) : null;
+  const query = aggregateQuery(config);
+  const dateWindow =
+    query?.dateField && query.fromDate && query.toDate
+      ? {
+          dateField: query.dateField,
+          fromDate: query.fromDate,
+          toDate: query.toDate,
+        }
+      : null;
+  // A Date and time window starts at the workspace's local midnight, so only
+  // such a card reads the workspace timezone (DR-SI-6.6).
+  const calendar = useQuery({
+    ...workspaceCalendarQueryOptions(),
+    staleTime: 30_000,
+    enabled: dateWindow?.dateField.expectedType === "datetime" && !read.locked,
+  });
+  const linkInput: WidgetLinkInput | null = query
+    ? {
+        definition: query.definition,
+        window: dateWindow,
+        fields,
+        timezone: calendar.data?.timezone ?? null,
+      }
+    : null;
+  const exactChanges = linkInput ? widgetLinkChanges(linkInput) : null;
+  const exactHref =
+    config && exactChanges
+      ? `${moduleHref(config.query.moduleId)}&changes=${exactChanges}`
+      : null;
+  // The menu item stays (SI-6.5): the counted records when they can be
+  // carried exactly. Otherwise it opens the widget's conditions as far as
+  // they carry, and its words promise no match with the figure (DR-SI-6.5).
+  const openHref = config ? (exactHref ?? recordsHref(config)) : null;
+  const openLabel =
+    !query || exactHref
+      ? "Open the records"
+      : `Open ${source?.name ?? "the module"}`;
+  const links: CardLinks | null =
+    config && modeProps.mode === "view" && !props.preview && !read.locked
+      ? {
+          moduleId: config.query.moduleId,
+          moduleName: source?.name ?? null,
+          titleFieldId: source?.titleFieldId ?? null,
+          input: linkInput,
+          figureHref: exactHref,
+          widgetTitle: title,
+        }
+      : null;
   const aggregate =
     read.snapshot?.data.kind === "aggregate" ? read.snapshot.data.result : null;
   return (
@@ -299,6 +375,7 @@ function WidgetCardFrame(
               modeProps.mode === "view"
                 ? {
                     openHref: read.locked ? null : openHref,
+                    openLabel,
                     onDownload:
                       aggregate && !read.locked
                         ? () => downloadCsv(aggregate, title, config)
@@ -329,6 +406,7 @@ function WidgetCardFrame(
           fields={fields}
           paging={props.paging}
           openHref={openHref}
+          links={links}
         />
       </div>
       {edit?.handles.sizeTag ? (
@@ -365,6 +443,7 @@ function WidgetBody({
   fields,
   paging,
   openHref,
+  links,
 }: {
   widget: DraftWidget;
   kind: WidgetKind;
@@ -375,6 +454,7 @@ function WidgetBody({
   fields: readonly OpenViewDataSourceField[];
   paging?: Paging;
   openHref: string | null;
+  links: CardLinks | null;
 }) {
   if (read.locked)
     return (
@@ -427,6 +507,17 @@ function WidgetBody({
         paging={paging}
         moduleName={moduleName}
         openHref={openHref}
+        recordHref={
+          links
+            ? (id) =>
+                serializeOpenViewUrl({
+                  section: "views",
+                  module: links.moduleId,
+                  record: id,
+                })
+            : null
+        }
+        titleFieldId={links?.titleFieldId ?? null}
       />
     );
   const query = config && "mode" in config.query ? config.query : null;
@@ -439,7 +530,23 @@ function WidgetBody({
           <p className="text-muted-foreground text-sm">No values yet</p>
         ) : (
           <p className="font-display text-3xl leading-none font-semibold tracking-tight tabular-nums">
-            {value.toLocaleString()}
+            {links?.figureHref ? (
+              // SI-6.1: the figure opens the records it counts. The 44 px
+              // target overlaps its margins, so the card keeps its layout.
+              <Link
+                href={links.figureHref as Route}
+                aria-label={figureName(
+                  value.toLocaleString(),
+                  query?.aggregation === "count",
+                  links,
+                )}
+                className="-my-1.75 inline-flex min-h-11 items-center rounded-sm underline-offset-4 hover:underline focus-visible:underline xl:my-0 xl:min-h-0"
+              >
+                {value.toLocaleString()}
+              </Link>
+            ) : (
+              value.toLocaleString()
+            )}
           </p>
         )}
         {numberCaption(moduleName, query) ? (
@@ -467,6 +574,11 @@ function WidgetBody({
           )?.name ?? "Group"
         }
         rows={rowsForSpan(widget.placement?.rowSpan ?? null)}
+        groupHref={
+          links?.input && query?.mode === "groups"
+            ? groupHref(links.moduleId, links.input, query.dimension)
+            : null
+        }
       />
     );
   const chartType =
@@ -539,11 +651,14 @@ function TableBody({
   valueLabel,
   groupLabel,
   rows,
+  groupHref,
 }: {
   result: OpenViewAggregateSnapshotResult;
   valueLabel: string;
   groupLabel: string;
   rows: number;
+  /** A group's records, or null when it cannot be stated exactly (SI-6.2). */
+  groupHref: ((key: string | null) => string | null) | null;
 }) {
   const [page, setPage] = useState(0);
   const pages = Math.max(1, Math.ceil(result.items.length / rows));
@@ -572,17 +687,34 @@ function TableBody({
           </tr>
         </thead>
         <tbody>
-          {visible.map((item, index) => (
-            <tr
-              key={`${item.key ?? "none"}-${offset + index}`}
-              className="h-8 border-b"
-            >
-              <td className="truncate">{item.label}</td>
-              <td className="text-right tabular-nums">
-                {item.value === null ? "—" : String(item.value)}
-              </td>
-            </tr>
-          ))}
+          {visible.map((item, index) => {
+            const href = groupHref?.(item.key) ?? null;
+            return (
+              <tr
+                key={`${item.key ?? "none"}-${offset + index}`}
+                className="h-8 border-b"
+              >
+                {/* A linked cell does not clip: its link truncates itself, and
+                    the focus ring draws outside the link. */}
+                <td className={href ? undefined : "truncate"}>
+                  {href ? (
+                    <Link
+                      href={href as Route}
+                      aria-label={`Open the ${item.label} ${groupLabel} records`}
+                      className={LINK_CELL}
+                    >
+                      {item.label}
+                    </Link>
+                  ) : (
+                    item.label
+                  )}
+                </td>
+                <td className="text-right tabular-nums">
+                  {item.value === null ? "—" : String(item.value)}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
       <CompactPager
@@ -602,6 +734,8 @@ function RecordsBody({
   paging,
   moduleName,
   openHref,
+  recordHref,
+  titleFieldId,
 }: {
   result: Extract<
     NonNullable<WidgetRead["snapshot"]>["data"],
@@ -612,6 +746,9 @@ function RecordsBody({
   paging?: Paging;
   moduleName: string | null;
   openHref: string | null;
+  /** The record's own page (SI-6.3); null where rows do not link. */
+  recordHref: ((recordId: string) => string) | null;
+  titleFieldId: string | null;
 }) {
   const columns = (config?.query.definition.columns ?? [])
     .slice(0, 3)
@@ -644,13 +781,32 @@ function RecordsBody({
         <tbody>
           {result.items.map((record) => (
             <tr key={record.id} className="h-8 border-b">
-              {columns.map((column) => (
-                <td key={column.id} className="truncate">
-                  <RecordPersonCard row={record} field={column}>
-                    {displayValue(openViewRecordFieldValue(record, column))}
-                  </RecordPersonCard>
-                </td>
-              ))}
+              {columns.map((column, index) =>
+                index === 0 && recordHref ? (
+                  // SI-6.3: the first cell opens the record. A person in it
+                  // shows as text, since a link cannot hold the card's button.
+                  // The cell does not clip, so the link's focus ring shows.
+                  <td key={column.id}>
+                    <Link
+                      href={recordHref(record.id) as Route}
+                      aria-label={recordRowName(
+                        displayValue(openViewRecordFieldValue(record, column)),
+                        openViewRecordTitle(record, titleFieldId),
+                        column.id === titleFieldId,
+                      )}
+                      className={LINK_CELL}
+                    >
+                      {displayValue(openViewRecordFieldValue(record, column))}
+                    </Link>
+                  </td>
+                ) : (
+                  <td key={column.id} className="truncate">
+                    <RecordPersonCard row={record} field={column}>
+                      {displayValue(openViewRecordFieldValue(record, column))}
+                    </RecordPersonCard>
+                  </td>
+                ),
+              )}
             </tr>
           ))}
         </tbody>
@@ -743,6 +899,33 @@ function CompactPager({
   );
 }
 
+/**
+ * A table cell that links (SI-6.2, SI-6.3): the row is its 44 px target below
+ * 768 px and 32 px from 768 px, where the fixed grid rows cannot hold 44 px
+ * rows and the pager (DR-SI-6.2). The underline shows on hover and focus only.
+ */
+// `max-md:` keeps these rows out of the global 44 px floor for `min-h-11`
+// (globals.css), which would hold them at 44 px up to 1280 px.
+const LINK_CELL =
+  "block truncate rounded-sm leading-8 underline-offset-4 hover:underline focus-visible:underline max-md:min-h-11 max-md:leading-11";
+
+/**
+ * A figure's name holds its visible text (WCAG 2.5.3). A count names its
+ * records; another figure names the widget it sums up (DR-SI-6.1).
+ */
+function figureName(figure: string, count: boolean, links: CardLinks) {
+  const records = links.moduleName ?? "records";
+  return count
+    ? `Open the ${figure} ${records}`
+    : `Open the ${records} behind ${links.widgetTitle}: ${figure}`;
+}
+
+/** A record row's name starts with its visible cell text (DR-SI-6.4). */
+function recordRowName(cell: string, title: string, cellIsTitle: boolean) {
+  return cellIsTitle
+    ? `${title}, open record`
+    : `${cell}, open record ${title}`;
+}
 const MENU_ROW = "min-h-11 xl:min-h-8";
 /**
  * A row that cannot be chosen dims only its label: the reason beside it stays
@@ -768,6 +951,7 @@ function WidgetMenu({
   edit: EditMenu | null;
   view: {
     openHref: string | null;
+    openLabel: string;
     onDownload: (() => void) | null;
     onEdit: (() => void) | null;
     onRemove: (() => void) | null;
@@ -875,7 +1059,7 @@ function WidgetMenu({
                 className={MENU_ROW}
                 render={<Link href={view.openHref as Route} />}
               >
-                Open the records
+                {view.openLabel}
               </DropdownMenuItem>
             ) : null}
             {view.onDownload ? (
@@ -903,6 +1087,28 @@ function WidgetMenu({
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+/** The query of a Number, table or chart widget; a records widget has none. */
+function aggregateQuery(
+  config: OpenViewDashboardWidgetConfig | null,
+): OpenViewDashboardChartQuery | OpenViewDashboardGroupQuery | null {
+  return config && "mode" in config.query
+    ? (config.query as
+        OpenViewDashboardChartQuery | OpenViewDashboardGroupQuery)
+    : null;
+}
+
+/** A table group's records: the widget's query plus the group (SI-6.2). */
+function groupHref(
+  moduleId: string,
+  input: WidgetLinkInput,
+  dimension: WidgetLinkGroup["dimension"],
+) {
+  return (key: string | null) => {
+    const changes = widgetLinkChanges(input, { dimension, key });
+    return changes ? `${moduleHref(moduleId)}&changes=${changes}` : null;
+  };
 }
 
 /** The module page with the widget's filters (BD5), as temporary changes. */

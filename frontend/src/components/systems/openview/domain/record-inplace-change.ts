@@ -1,5 +1,5 @@
 import { ApiError, getApiFieldErrors } from "@/lib/api";
-import { apiErrorReference } from "@/lib/api-errors";
+import { apiErrorMessage, apiErrorReference } from "@/lib/api-errors";
 import type {
   OpenViewDataSourceField,
   OpenViewRecord,
@@ -177,7 +177,78 @@ export type RecordInPlaceStatus =
       /** Writes the previous value back; null once undone (DR-2.6). */
       undo: (() => void) | null;
     }
+  | { kind: "failed"; message: string; reference: string | undefined }
+  /**
+   * The record was just deleted (DR-SI-9.2): "Record deleted." and its Undo,
+   * which restores it; null while that restore runs. The page moves focus to
+   * Undo when it appears.
+   */
+  | { kind: "deleted"; message: string; undo: (() => void) | null }
+  /**
+   * An Undo found the record deleted forever (DR-SI-9.3): the sheet reads
+   * again and shows "Record unavailable", and the page keeps these words in
+   * the sheet header after the record's own status goes.
+   */
+  | { kind: "gone"; message: string };
+
+/** The words of a delete with Undo and its restore (DR-SI-9.2, DR-SI-9.3). */
+export const DELETE_UNDO_WORDS = {
+  deleted: "Record deleted.",
+  restored: "Record restored.",
+  alreadyRestored: "Someone already restored this record.",
+  deletedForever: "This record was deleted forever.",
+} as const;
+
+/** What a refused Undo of a delete shows (DR-SI-9.3, DR-SI-9.4). */
+export type DeleteUndoFailure =
+  /** 409 "Record is not deleted": someone restored it first. */
+  | { kind: "already-restored" }
+  /** 404: the record was deleted forever. */
+  | { kind: "deleted-forever" }
+  /** A value check refused the restore: the server's reason. */
+  | { kind: "refused"; message: string }
   | { kind: "failed"; message: string; reference: string | undefined };
+
+const FIELD_PREFIX = /^Field ([0-9a-f-]{36})\b/i;
+
+export function deleteUndoFailure(
+  error: unknown,
+  fields: readonly Pick<OpenViewDataSourceField, "id" | "name">[],
+): DeleteUndoFailure {
+  if (error instanceof ApiError && error.status === 404)
+    return { kind: "deleted-forever" };
+  if (
+    error instanceof ApiError &&
+    error.status === 409 &&
+    error.message === "Record is not deleted"
+  )
+    return { kind: "already-restored" };
+  if (
+    error instanceof ApiError &&
+    (error.status === 422 || error.code === "record_validation_failed")
+  ) {
+    // The field the server names, as an invalid list change names it
+    // (DR-SI-1.9): "<Field>: <message>".
+    const [fieldId, messages] =
+      Object.entries(getApiFieldErrors(error)).find(
+        ([, items]) => items.length > 0,
+      ) ?? [];
+    const text = messages?.[0] ?? error.message;
+    const named = fields.find(
+      (field) => field.id === (fieldId ?? FIELD_PREFIX.exec(text)?.[1]),
+    );
+    const message = serverFieldMessage(text);
+    return {
+      kind: "refused",
+      message: named ? `${named.name}: ${message}` : message,
+    };
+  }
+  return {
+    kind: "failed",
+    message: apiErrorMessage(error, "The record could not be restored."),
+    reference: apiErrorReference(error),
+  };
+}
 
 /** The value an Undo writes back, and the change it undoes. */
 export type InPlaceUndo = { fieldId: string; previous: unknown };

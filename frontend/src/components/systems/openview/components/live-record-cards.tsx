@@ -25,8 +25,8 @@ type LiveRecordCardsProps = {
   secondaryFieldId: string | null;
   cardSize: "comfortable" | "compact";
   wrap: boolean;
-  /** The first card's record when the page just created it (item 6). */
-  newRecordId?: string | null;
+  /** The first cards' records when the page just created them (item 6). */
+  newRecordIds?: ReadonlySet<string>;
   onOpenRecord: (recordId: string) => void;
 };
 
@@ -118,7 +118,7 @@ export function LiveRecordCards({
   secondaryFieldId,
   cardSize,
   wrap,
-  newRecordId = null,
+  newRecordIds,
   onOpenRecord,
 }: LiveRecordCardsProps) {
   const primaryField =
@@ -185,8 +185,8 @@ export function LiveRecordCards({
               className={`bg-background flex h-full min-w-0 flex-col rounded-[var(--radius)] border ${cardSize === "compact" ? "min-h-28 gap-3 p-3" : "min-h-36 gap-4 p-4"} ${layout === "gallery" && cardSize === "comfortable" ? "sm:p-5" : ""}`}
             >
               <header className="min-w-0">
-                {row.id === newRecordId ? (
-                  // Item 6: only the new card puts its tag beside the title.
+                {newRecordIds?.has(row.id) ? (
+                  // Item 6: only a new card puts its tag beside the title.
                   <div className="flex min-w-0 items-center gap-2 [&>h3]:min-w-0">
                     {title}
                     <NewRecordTag />

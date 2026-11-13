@@ -1,9 +1,10 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { sendOpenViewEvent } from "./helpers/openview-event-source";
 import {
   at,
   checksTable,
   dashboardWire,
+  definition,
   equipmentBar,
   equipmentNumber,
   homeUrl,
@@ -15,8 +16,11 @@ import {
   card,
   editLayout,
   groupQuery,
+  timestamp,
   widget,
 } from "./helpers/openview-dashboard-api";
+import { keysetPageOf, pageOf } from "../helpers/pagination";
+import { wireBucket, wireField, wireRecord } from "../helpers/wire";
 
 // docs/specs/openview-dashboard.md, part B: the department dashboard.
 
@@ -845,4 +849,621 @@ test("UF-C9.4: widget titles are plain names and an empty Number reads No values
   await expect(
     page.getByRole("article", { name: /^(Number of|Sum of) / }),
   ).toHaveCount(0);
+});
+
+// docs/specs/subtle-interactions.md, candidate 6: a Number figure, a table
+// group row and a records row open exactly the records they count.
+
+/** The "Repair" option of the fixture's Choice fields. */
+const repairOption = "00000000-0000-4000-8000-000000000901";
+const inspectionOption = "00000000-0000-4000-8000-000000000902";
+const nameField = "00000000-0000-4000-8000-000000000407";
+const loggedAt = "00000000-0000-4000-8000-000000000408";
+
+type ExactRead = {
+  moduleId: string;
+  logic: "and" | "or";
+  /** Each condition as "<field id> <operator> <JSON value>". */
+  conditions: string[];
+  total: number;
+};
+
+/**
+ * The module page a dashboard link opens: its views and its records. The
+ * records read answers the figure's total only for the exact conditions it
+ * names; any other read gets the fixture's 9 records, so a wrong condition
+ * shows a different count.
+ */
+async function installModulePage(page: Page, exact: ExactRead[]) {
+  const viewWrites: string[] = [];
+  await page.route("**/api/views**", (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    // The catalog (`/api/views/data-sources…`) stays with the dashboard mock.
+    if (
+      url.pathname.startsWith("/api/views/data-sources") ||
+      (url.pathname !== "/api/views" &&
+        !/^\/api\/views\/[^/]+$/.test(url.pathname))
+    )
+      return route.fallback();
+    if (request.method() !== "GET") {
+      viewWrites.push(`${request.method()} ${url.pathname}`);
+      return route.fulfill({ status: 405, json: { detail: "Not allowed" } });
+    }
+    return url.pathname === "/api/views"
+      ? route.fulfill({ json: pageOf([], { limit: 100 }) })
+      : route.fulfill({ status: 404, json: { detail: "View not found" } });
+  });
+  await page.route("**/api/relationships**", (route) =>
+    route.fulfill({
+      json: keysetPageOf([], { limit: 100, offset: 0, total: 0 }),
+    }),
+  );
+  await page.route("**/api/records/query", (route) => {
+    const body = route.request().postDataJSON() as {
+      module_id: string;
+      limit: number;
+      offset: number;
+      definition: {
+        logic: string;
+        filters: { field_id: string; operator: string; value?: unknown }[];
+      };
+    };
+    const conditions = body.definition.filters.map(
+      (filter) =>
+        `${filter.field_id} ${filter.operator} ${JSON.stringify(filter.value ?? null)}`,
+    );
+    const match = exact.find(
+      (item) =>
+        item.moduleId === body.module_id &&
+        item.logic === body.definition.logic &&
+        JSON.stringify(item.conditions) === JSON.stringify(conditions),
+    );
+    if (!match) return route.fallback();
+    const rows = Array.from({ length: match.total }, (_, index) =>
+      wireRecord({
+        id: `00000000-0000-4000-8000-${String(index + 901).padStart(12, "0")}`,
+        module_id: body.module_id,
+        data: {},
+        created_at: timestamp,
+        updated_at: timestamp,
+      }),
+    );
+    return route.fulfill({
+      json: pageOf(rows.slice(body.offset, body.offset + body.limit), {
+        limit: body.limit,
+        offset: body.offset,
+        total: rows.length,
+      }),
+    });
+  });
+  return { viewWrites };
+}
+
+/**
+ * Equipment names its records by a Name field, and its records read answers
+ * two named records: North pump and South valve, both "Repair".
+ */
+async function installNamedEquipment(page: Page) {
+  // Equipment names its records by the Name field.
+  await page.route("**/api/views/data-sources**", (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/views/data-sources")
+      return route.fulfill({
+        json: pageOf(
+          [
+            {
+              id: ids.equipment,
+              name: "Equipment",
+              department_id: ids.department,
+              title_field_id: nameField,
+            },
+            {
+              id: ids.checks,
+              name: "Quality checks",
+              department_id: ids.department,
+              title_field_id: null,
+            },
+          ],
+          { limit: 100 },
+        ),
+      });
+    if (url.pathname === `/api/views/data-sources/${ids.equipment}/fields`)
+      return route.fulfill({
+        json: pageOf(
+          [
+            wireField({
+              id: nameField,
+              module_id: ids.equipment,
+              name: "Name",
+              type: "text",
+              position: 0,
+            }),
+            wireField({
+              id: ids.category,
+              module_id: ids.equipment,
+              name: "Category",
+              type: "select",
+              position: 1,
+              config: {
+                options: [{ id: repairOption, label: "Repair" }],
+              },
+            }),
+          ],
+          { limit: 100 },
+        ),
+      });
+    return route.fallback();
+  });
+  const records = ["North pump", "South valve"].map((name, index) =>
+    wireRecord({
+      id: `00000000-0000-4000-8000-${String(index + 811).padStart(12, "0")}`,
+      module_id: ids.equipment,
+      data: { [nameField]: name, [ids.category]: repairOption },
+      display_values: { [ids.category]: "Repair" },
+      created_at: timestamp,
+      updated_at: timestamp,
+    }),
+  );
+  await page.route("**/api/records/query", (route) =>
+    route.fulfill({ json: pageOf(records, { limit: 5 }) }),
+  );
+  return records;
+}
+
+test("SI-C6.1: a Number figure opens its module page with the widget's conditions and its Date or Date-and-time window, and the page counts the figure", async ({
+  page,
+}) => {
+  await installDashboardApi(page, {
+    identity: manager,
+    dashboards: [
+      dashboardWire({
+        widgets: [
+          widget("summary", at(0, 0, 1, 1), {
+            version: 1,
+            query: {
+              ...groupQuery(ids.equipment, ids.category),
+              definition: {
+                ...definition,
+                filters: [
+                  {
+                    field_id: ids.category,
+                    expected_type: "select",
+                    operator: "eq",
+                    value: repairOption,
+                  },
+                ],
+              },
+              date_field: { field_id: ids.occurred, expected_type: "date" },
+              from_date: "2026-10-01",
+              to_date: "2026-10-31",
+            },
+          }),
+          // A Date and time window: midnight in the workspace zone
+          // (Asia/Manila in the fixture), with its offset.
+          widget("summary", at(1, 0, 1, 1), {
+            version: 1,
+            query: {
+              ...groupQuery(ids.invoices, ids.invoiceStatus),
+              date_field: { field_id: loggedAt, expected_type: "datetime" },
+              from_date: "2026-10-26",
+              to_date: "2026-10-26",
+            },
+          }),
+          // No window: the widget's conditions only.
+          widget("summary", at(2, 0, 1, 1), {
+            version: 1,
+            query: groupQuery(ids.checks, ids.checkStatus),
+          }),
+          // No single value: words, not a link (DR-9.5).
+          // A total is not a count: its name says what the figure is.
+          widget("summary", at(0, 1, 1, 1), {
+            version: 1,
+            query: {
+              ...groupQuery(ids.equipment, ids.category),
+              aggregation: "sum",
+              measure: { field_id: ids.amount, expected_type: "decimal" },
+            },
+          }),
+          widget("summary", at(3, 0, 1, 1), {
+            version: 1,
+            query: {
+              ...groupQuery(ids.equipment, ids.category),
+              aggregation: "distinct",
+              measure: { field_id: ids.category, expected_type: "select" },
+            },
+          }),
+        ],
+      }),
+    ],
+  });
+  await installModulePage(page, [
+    {
+      moduleId: ids.equipment,
+      logic: "and",
+      conditions: [
+        `${ids.category} eq "${repairOption}"`,
+        `${ids.occurred} gte "2026-10-01"`,
+        `${ids.occurred} lte "2026-10-31"`,
+      ],
+      total: 12,
+    },
+    {
+      moduleId: ids.invoices,
+      logic: "and",
+      conditions: [
+        `${loggedAt} gte "2026-10-26T00:00:00+08:00"`,
+        `${loggedAt} lt "2026-10-27T00:00:00+08:00"`,
+      ],
+      total: 12,
+    },
+    { moduleId: ids.checks, logic: "and", conditions: [], total: 12 },
+  ]);
+  await page.route(
+    `**/api/views/data-sources/${ids.invoices}/fields**`,
+    (route) =>
+      route.fulfill({
+        json: pageOf(
+          [
+            wireField({
+              id: ids.invoiceStatus,
+              module_id: ids.invoices,
+              name: "Status",
+              type: "select",
+              position: 0,
+              config: { options: [{ id: repairOption, label: "Repair" }] },
+            }),
+            wireField({
+              id: loggedAt,
+              module_id: ids.invoices,
+              name: "Logged at",
+              type: "datetime",
+              position: 1,
+            }),
+          ],
+          { limit: 100 },
+        ),
+      }),
+  );
+  await page.goto(homeUrl);
+
+  const figure = page.getByRole("link", {
+    name: "Open the 12 Equipment",
+    exact: true,
+  });
+  await expect(figure).toHaveText("12");
+  await expect(
+    card(page, "Different category values").getByRole("link"),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("link", {
+      name: "Open the Equipment behind Total amount: 12",
+      exact: true,
+    }),
+  ).toHaveText("12");
+  // The widget menu's "Open the records" opens the same counted records.
+  const href = await figure.getAttribute("href");
+  await card(page, "Equipment")
+    .getByRole("button", { name: "Equipment, actions" })
+    .click();
+  await expect(
+    page.getByRole("menuitem", { name: "Open the records", exact: true }),
+  ).toHaveAttribute("href", href ?? "");
+  await page.keyboard.press("Escape");
+
+  await figure.click();
+  await expect(page).toHaveURL(
+    new RegExp(`module=${ids.equipment}&changes=[A-Za-z0-9_-]+`),
+  );
+  await expect(
+    page.getByText("Field service · 12 records", { exact: true }),
+  ).toBeVisible();
+
+  await page.goBack();
+  await page
+    .getByRole("link", { name: "Open the 12 Invoices", exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`module=${ids.invoices}&changes=`));
+  await expect(
+    page.getByText("Finance · 12 records", { exact: true }),
+  ).toBeVisible();
+
+  await page.goBack();
+  await page
+    .getByRole("link", { name: "Open the 12 Quality checks", exact: true })
+    .click();
+  // No condition differs from the module's starting view, so the page keeps
+  // no temporary changes in its address.
+  await expect(page).toHaveURL(`/openview?section=views&module=${ids.checks}`);
+  await expect(
+    page.getByText("Field service · 12 records", { exact: true }),
+  ).toBeVisible();
+});
+
+test("SI-C6.2: each table group row opens its group's records, and the empty group uses the stored empty operator", async ({
+  page,
+}) => {
+  await installDashboardApi(page, {
+    identity: manager,
+    dashboards: [dashboardWire({ widgets: [checksTable(at(0, 0, 2, 2))] })],
+  });
+  await page.route("**/api/records/aggregate-snapshots", (route) => {
+    const body = route.request().postDataJSON() as { queries: unknown[] };
+    return route.fulfill({
+      json: {
+        items: body.queries.map(() =>
+          pageOf(
+            [
+              wireBucket({
+                key: repairOption,
+                label: "Repair",
+                value: 7,
+                record_count: 7,
+              }),
+              wireBucket({
+                key: null,
+                label: "Unspecified",
+                value: 2,
+                record_count: 2,
+              }),
+            ],
+            { limit: 100 },
+          ),
+        ),
+      },
+    });
+  });
+  await installModulePage(page, [
+    {
+      moduleId: ids.checks,
+      logic: "and",
+      conditions: [`${ids.checkStatus} eq "${repairOption}"`],
+      total: 7,
+    },
+    {
+      moduleId: ids.checks,
+      logic: "and",
+      conditions: [`${ids.checkStatus} empty null`],
+      total: 2,
+    },
+  ]);
+  await page.goto(homeUrl);
+
+  const table = card(page, "Quality checks by Result");
+  await table
+    .getByRole("link", { name: "Open the Repair Result records", exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`module=${ids.checks}&changes=`));
+  await expect(
+    page.getByText("Field service · 7 records", { exact: true }),
+  ).toBeVisible();
+  // A manager of the module sees the link's conditions as unsaved (UF-1.3).
+  await expect(
+    page.getByText("Unsaved changes", { exact: true }),
+  ).toBeVisible();
+
+  await page.goBack();
+  await table
+    .getByRole("link", {
+      name: "Open the Unspecified Result records",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByText("Field service · 2 records", { exact: true }),
+  ).toBeVisible();
+});
+
+test("SI-C6.5: a reader's group-row link opens the counted records as temporary changes, with no Unsaved changes and no view write", async ({
+  page,
+}) => {
+  await installDashboardApi(page, { identity: reader });
+  const modulePage = await installModulePage(page, [
+    {
+      moduleId: ids.checks,
+      logic: "and",
+      conditions: [`${ids.checkStatus} eq "${repairOption}"`],
+      total: 7,
+    },
+  ]);
+  await page.goto(homeUrl);
+  await card(page, "Quality checks by Result")
+    .getByRole("link", { name: "Open the Repair Result records", exact: true })
+    .click();
+  await expect(page).toHaveURL(
+    new RegExp(`module=${ids.checks}&changes=[A-Za-z0-9_-]+`),
+  );
+  await expect(
+    page.getByText("Field service · 7 records", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Unsaved changes", { exact: true })).toHaveCount(
+    0,
+  );
+  expect(modulePage.viewWrites).toEqual([]);
+});
+
+test("SI-C6.6: at 390 px a Number figure and a group row are 44 px targets that open with the keyboard and a tap", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installDashboardApi(page, { identity: manager });
+  await installModulePage(page, []);
+  await page.goto(homeUrl);
+
+  const figure = page.getByRole("link", {
+    name: "Open the 12 Equipment",
+    exact: true,
+  });
+  await expect(figure).toBeVisible();
+  expect((await figure.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  await figure.focus();
+  await page.keyboard.press("Enter");
+  // The figure has no condition, so the address keeps no changes.
+  await expect(page).toHaveURL(
+    `/openview?section=views&module=${ids.equipment}`,
+  );
+
+  await page.goBack();
+  const row = card(page, "Quality checks by Result").getByRole("link", {
+    name: "Open the Repair Result records",
+    exact: true,
+  });
+  await expect(row).toBeVisible();
+  expect((await row.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  await row.click();
+  await expect(page).toHaveURL(new RegExp(`module=${ids.checks}&changes=`));
+});
+
+test("SI-C6.4: at 390 px each records widget row opens its record with the keyboard and a tap", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installDashboardApi(page, {
+    identity: manager,
+    dashboards: [
+      dashboardWire({
+        widgets: [
+          widget("records", at(0, 0, 4, 2), {
+            version: 1,
+            query: {
+              module_id: ids.equipment,
+              definition: {
+                ...definition,
+                columns: [
+                  { field_id: nameField, expected_type: "text" },
+                  { field_id: ids.category, expected_type: "select" },
+                ],
+              },
+            },
+          }),
+        ],
+      }),
+    ],
+  });
+  const records = await installNamedEquipment(page);
+  await page.goto(homeUrl);
+
+  const north = page.getByRole("link", {
+    name: "North pump, open record",
+    exact: true,
+  });
+  await expect(north).toBeVisible();
+  expect((await north.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  await north.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(
+    `/openview?section=views&module=${ids.equipment}&record=${records[0].id}`,
+  );
+
+  await page.goBack();
+  const south = page.getByRole("link", {
+    name: "South valve, open record",
+    exact: true,
+  });
+  await expect(south).toBeVisible();
+  expect((await south.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  await south.click();
+  await expect(page).toHaveURL(
+    `/openview?section=views&module=${ids.equipment}&record=${records[1].id}`,
+  );
+});
+
+test("SI-C6.5: when no exact link can be made, the figure stays plain and the menu reads Open <module> with the widget's conditions", async ({
+  page,
+}) => {
+  await installDashboardApi(page, {
+    identity: manager,
+    dashboards: [
+      dashboardWire({
+        widgets: [
+          // "Any condition" over two conditions cannot take the window.
+          widget("summary", at(0, 0, 1, 1), {
+            version: 1,
+            query: {
+              ...groupQuery(ids.equipment, ids.category),
+              definition: {
+                ...definition,
+                logic: "or",
+                filters: [repairOption, inspectionOption].map((value) => ({
+                  field_id: ids.category,
+                  expected_type: "select",
+                  operator: "eq",
+                  value,
+                })),
+              },
+              date_field: { field_id: ids.occurred, expected_type: "date" },
+              from_date: "2026-10-01",
+              to_date: "2026-10-31",
+            },
+          }),
+        ],
+      }),
+    ],
+  });
+  await page.goto(homeUrl);
+  const number = card(page, "Equipment");
+  await expect(number).toContainText("12");
+  await expect(number.getByRole("link")).toHaveCount(0);
+  await number.getByRole("button", { name: "Equipment, actions" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Open the records", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitem", { name: "Open Equipment", exact: true }),
+  ).toHaveAttribute(
+    "href",
+    new RegExp(`module=${ids.equipment}&changes=[A-Za-z0-9_-]+$`),
+  );
+});
+
+test("SI-C6.6: from 768 px group and record rows are 32 px, a record row's name starts with its cell text, and the table pager stays in its card", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await installDashboardApi(page, {
+    identity: manager,
+    dashboards: [
+      dashboardWire({
+        widgets: [
+          // Category first: the row's name starts with "Repair".
+          widget("records", at(0, 0, 2, 2), {
+            version: 1,
+            query: {
+              module_id: ids.equipment,
+              definition: {
+                ...definition,
+                columns: [
+                  { field_id: ids.category, expected_type: "select" },
+                  { field_id: nameField, expected_type: "text" },
+                ],
+              },
+            },
+          }),
+          checksTable(at(2, 0, 2, 2)),
+        ],
+      }),
+    ],
+  });
+  await installNamedEquipment(page);
+  await page.goto(homeUrl);
+
+  const record = page.getByRole("link", {
+    name: "Repair, open record North pump",
+    exact: true,
+  });
+  const group = card(page, "Quality checks by Result").getByRole("link", {
+    name: "Open the Repair Result records",
+    exact: true,
+  });
+  await expect(group).toBeVisible();
+  expect((await group.boundingBox())?.height).toBe(32);
+  await expect(record).toBeVisible();
+  expect((await record.boundingBox())?.height).toBe(32);
+  const table = await card(page, "Quality checks by Result").boundingBox();
+  const pager = await card(page, "Quality checks by Result")
+    .getByRole("navigation", { name: "Table pages" })
+    .boundingBox();
+  expect((pager?.y ?? 0) + (pager?.height ?? 0)).toBeLessThanOrEqual(
+    (table?.y ?? 0) + (table?.height ?? 0),
+  );
 });

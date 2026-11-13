@@ -3108,7 +3108,7 @@ for (const layout of ["table", "grid", "gallery"] as const) {
         .getByRole("table")
         .getByRole("row")
         .nth(1)
-        .getByRole("button", { name: "In service" })
+        .getByRole("button", { name: "In service", exact: true })
         .click();
       const inspector = page.getByRole("dialog", { name: "Record details" });
       await expect(
@@ -3157,7 +3157,9 @@ test("saved table presentation controls persist and drive the rendered table", a
   await page.setViewportSize({ width: 768, height: 1024 });
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
   const table = page.getByRole("table");
+  // The first column holds a writer's selection boxes (SI-5.1).
   await expect(table.getByRole("columnheader")).toHaveText([
+    "",
     "Equipment name",
     "Status",
     "Serial number",
@@ -3219,6 +3221,7 @@ test("saved table presentation controls persist and drive the rendered table", a
 
   await page.reload();
   await expect(table.getByRole("columnheader")).toHaveText([
+    "",
     "Status",
     "Equipment name",
     "Updated",
@@ -3245,11 +3248,11 @@ test("saved table presentation controls persist and drive the rendered table", a
     .getByRole("row")
     .first()
     .getByRole("cell")
-    .first();
+    .nth(1);
   await expect(pinnedHeader).toHaveCSS("position", "sticky");
-  await expect(pinnedHeader).toHaveCSS("left", "0px");
+  await expect(pinnedHeader).toHaveCSS("left", "40px");
   await expect(pinnedCell).toHaveCSS("position", "sticky");
-  await expect(pinnedCell).toHaveCSS("left", "0px");
+  await expect(pinnedCell).toHaveCSS("left", "40px");
   const initialPinnedLeft = await pinnedHeader.evaluate(
     (element) => element.getBoundingClientRect().left,
   );
@@ -3273,11 +3276,11 @@ test("saved table presentation controls persist and drive the rendered table", a
     .nth(1)
     .getByRole("row")
     .first();
-  await expect(firstDataRow.getByRole("cell").first()).toHaveCSS(
+  await expect(firstDataRow.getByRole("cell").nth(1)).toHaveCSS(
     "padding-top",
     "6px",
   );
-  await expect(firstDataRow.getByRole("cell").nth(1)).toHaveCSS(
+  await expect(firstDataRow.getByRole("cell").nth(2)).toHaveCSS(
     "white-space",
     "normal",
   );
@@ -3556,9 +3559,10 @@ test("a click anywhere on a record's row opens it, though its name cell is pinne
     .nth(1)
     .getByRole("row")
     .first();
-  // A real click on the second cell, outside the pinned name cell.
-  const cell = await firstRow.getByRole("cell").nth(1).boundingBox();
-  if (!cell) throw new Error("The second cell has no box");
+  // A real click on a cell outside the pinned name cell, past the
+  // selection box and the Status value's menu (OD6, SI-1.1).
+  const cell = await firstRow.getByRole("cell").nth(3).boundingBox();
+  if (!cell) throw new Error("The fourth cell has no box");
   await page.mouse.click(cell.x + cell.width / 2, cell.y + cell.height / 2);
   await expect(page).toHaveURL(/[?&]record=/);
   await expect(
@@ -5210,33 +5214,6 @@ test("record details save every active value with the revision the user opened",
   ).toMatchObject({ [serialFieldId]: "SN-AGAIN" });
 });
 
-test("record details delete only after confirmation", async ({ page }) => {
-  await installViewsApi(page, { disableInitialSearch: true });
-  const commands = await installRecordCommands(page);
-  await page.goto(
-    `/openview?section=views&module=${moduleId}&view=${viewId}&record=${recordOneId}`,
-  );
-  const details = page.getByRole("dialog", { name: "Record details" });
-  // Delete is in the record menu of the sheet header (OD7).
-  const openRecordMenu = () =>
-    details.getByRole("button", { name: "More record actions" }).click();
-  await openRecordMenu();
-  await page.getByRole("menuitem", { name: "Delete record" }).click();
-  const confirm = page.getByRole("alertdialog", {
-    name: "Delete this record?",
-  });
-  await confirm.getByRole("button", { name: "Cancel" }).click();
-  expect(commands.calls.some((call) => call.method === "DELETE")).toBe(false);
-
-  await openRecordMenu();
-  await page.getByRole("menuitem", { name: "Delete record" }).click();
-  await confirm.getByRole("button", { name: "Delete record" }).click();
-  await expect(page.getByText(/^Record deleted\./)).toBeVisible();
-  expect(commands.calls.find((call) => call.method === "DELETE")?.path).toBe(
-    `/api/records/${recordOneId}`,
-  );
-});
-
 test("an administrator can preview and confirm deleted-record purging with a fresh password for each attempt", async ({
   page,
 }) => {
@@ -5691,7 +5668,12 @@ async function createRecord(page: Page) {
   await page.getByRole("button", { name: "New record" }).click();
   const create = page.getByRole("dialog", { name: "New record" });
   await create.getByLabel("Equipment name").fill(createdRecordName);
-  await create.getByRole("button", { name: /^Create / }).click();
+  await create
+    .getByRole("button", {
+      name: "Create Equipment record",
+      exact: true,
+    })
+    .click();
   await expect(page).toHaveURL(new RegExp(`record=${createdRecordId}`));
   await expect(
     page
@@ -5876,12 +5858,11 @@ test("UF-C6.3: a deleted new record leaves the list", async ({ page }) => {
     page.getByRole("dialog", { name: "Record details" }),
   );
   await sheet.getByRole("button", { name: "More record actions" }).click();
+  // SI-9.1: the OpenView sheet deletes at once, with Undo in its header.
   await page.getByRole("menuitem", { name: "Delete record" }).click();
-  await page
-    .getByRole("alertdialog", { name: "Delete this record?" })
-    .getByRole("button", { name: "Delete record" })
-    .click();
-  await expect(page.getByText(/^Record deleted\./)).toBeVisible();
+  await expect(sheet.locator("header").getByRole("status")).toHaveText(
+    "Record deleted.",
+  );
   await page.keyboard.press("Escape");
   await expect(sheet).toHaveCount(0);
 
@@ -6496,12 +6477,22 @@ test("UF-C6.1: New record checks required values, opens the created record, then
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
   await page.getByRole("button", { name: "New record" }).click();
   const create = page.getByRole("dialog", { name: "New record" });
-  await create.getByRole("button", { name: /^Create / }).click();
+  await create
+    .getByRole("button", {
+      name: "Create Equipment record",
+      exact: true,
+    })
+    .click();
   await expect(create.getByText("Enter a value.")).toBeVisible();
   expect(commands.calls.some((call) => call.method === "POST")).toBe(false);
 
   await create.getByLabel("Equipment name").fill("Booster pump 09");
-  await create.getByRole("button", { name: /^Create / }).click();
+  await create
+    .getByRole("button", {
+      name: "Create Equipment record",
+      exact: true,
+    })
+    .click();
   await expect(page).toHaveURL(new RegExp(`record=${recordTwoId}`));
   const created = commands.calls.find((call) => call.method === "POST");
   expect(created?.body).toMatchObject({

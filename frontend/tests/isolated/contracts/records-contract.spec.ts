@@ -15,6 +15,7 @@ import {
   unlinkOpenViewRecords,
   updateOpenViewRecord,
 } from "../../../src/components/systems/openview/adapters/records-api";
+import { batchUpdateOpenViewRecords } from "../../../src/components/systems/openview/adapters/record-batch-api";
 import type { OpenViewQueryDefinition } from "../../../src/components/systems/openview/adapters/views-schemas";
 import {
   previewReportPurge,
@@ -66,6 +67,25 @@ describeContracts("Records and relationships", [
         revision: "2026-01-02T03:04:05Z",
         data: { name: "Pump" },
       }),
+  },
+  {
+    name: "batchUpdateOpenViewRecords",
+    run: () =>
+      batchUpdateOpenViewRecords({
+        moduleId,
+        items: [
+          {
+            recordId,
+            revision: "2026-01-02T03:04:05Z",
+            fieldId,
+            value: "active",
+          },
+        ],
+      }),
+    // The server answers each record sent, once, by its id.
+    responses: {
+      "POST /api/records/batch-update": { results: [{ record_id: recordId }] },
+    },
   },
   { name: "deleteOpenViewRecord", run: () => deleteOpenViewRecord(recordId) },
   { name: "restoreOpenViewRecord", run: () => restoreOpenViewRecord(recordId) },

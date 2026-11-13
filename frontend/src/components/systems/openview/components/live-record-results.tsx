@@ -1,12 +1,13 @@
 "use client";
 
-import { useSyncExternalStore, type MouseEvent } from "react";
+import { useSyncExternalStore, type MouseEvent, type ReactNode } from "react";
 import type {
   OpenViewDataSourceField,
   OpenViewPresentation,
   OpenViewRecord,
 } from "../adapters/views-api";
 import { Card } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { TablePagination } from "@/components/ui/table-pagination";
 import {
   Table,
@@ -23,6 +24,7 @@ import {
   RecordPersonCard,
 } from "./live-record-cards";
 import { openViewRecordFieldValue } from "../domain/record-display";
+import { selectionLabel } from "../domain/record-batch-change";
 import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
 import { cn } from "@/lib/utils";
 import {
@@ -32,6 +34,9 @@ import {
 } from "@/components/systems/access/components/row-open-button";
 
 const headClassName = "text-muted-foreground h-9 px-4 text-xs font-medium";
+/** A sticky cell keeps the row's tint over the cells scrolling under it. */
+const pinnedCellClassName =
+  "bg-card sticky z-10 group-hover:bg-[color-mix(in_oklab,var(--ink)_6%,var(--card))] group-data-[state=selected]:bg-[color-mix(in_oklab,var(--ink)_14%,var(--card))]";
 
 type RecordPage = {
   rows: readonly OpenViewRecord[];
@@ -59,14 +64,40 @@ type LiveRecordResultsProps = {
   /** The record open in the sheet, tinted in the list. */
   selectedId: string | null;
   /**
-   * A record this page just created that matches the view: shown first with
-   * a "New" tag, once, and never counted by the pager (DR-6.3, DR-6.4).
-   * Off unless the page passes it.
+   * The records this page just created that match the view, in the order
+   * given (newest first, DR-SI-3.6): shown first with a "New" tag, each
+   * once, and never counted by the pager (DR-6.3, DR-6.4, SI-3.4). Off
+   * unless the page passes them.
    */
-  newRecord?: OpenViewRecord | null;
+  newRecords?: readonly OpenViewRecord[];
+  /**
+   * Candidate 1: a Choice list value as its menu (DR-SI-1.1, DR-SI-1.2).
+   * Returns null where the value stays as now. Off unless the page passes it.
+   */
+  choiceCell?: ChoiceCellRenderer | null;
+  /** The field of the phone row's chip: the quick-filter field (OD14). */
+  chipFieldId?: string | null;
+  /** Candidate 5: a writer's row selection (DR-SI-5.1 to DR-SI-5.3). */
+  selection?: RowSelectionProps | null;
+  /** The record whose change runs: its row waits to open (DR-SI-1.6). */
+  busyRecordId?: string | null;
   onOpenRecord: (recordId: string) => void;
   onPageIndexChange: (pageIndex: number) => void;
   onPageSizeChange: (pageSize: number) => void;
+};
+
+export type ChoiceCellRenderer = (
+  row: OpenViewRecord,
+  field: OpenViewDataSourceField,
+  variant: "cell" | "chip",
+) => ReactNode | null;
+
+export type RowSelectionProps = {
+  selectedIds: ReadonlySet<string>;
+  disabled: boolean;
+  /** `range`: Shift was held, so the rows from the last toggled one join. */
+  onToggle: (recordId: string, range: boolean) => void;
+  onToggleAll: () => void;
 };
 
 const NARROW_QUERY = "(max-width: 47.99rem)";
@@ -90,9 +121,50 @@ export function useNarrowScreen(): boolean {
   );
 }
 
-/** A cell's click opens the record, unless it hit a control of its own. */
+/**
+ * A cell's click opens the record, unless it hit a control of its own or
+ * the selection cell (DR-SI-5.3). A click inside a cell's menu reaches the
+ * row through React's portal bubbling, but it is not in the row.
+ */
 function opensRecord(event: MouseEvent<HTMLElement>): boolean {
-  return !(event.target as Element).closest("button, a, [role=button]");
+  const target = event.target as Element;
+  return (
+    event.currentTarget.contains(target) &&
+    !target.closest("button, a, [role=button], [data-row-select]")
+  );
+}
+
+/** Whether Shift was held: a range selection, by pointer or Shift+Space. */
+function withShift(event: Event | undefined): boolean {
+  return Boolean(event && "shiftKey" in event && event.shiftKey === true);
+}
+
+function RowCheckbox({
+  label,
+  checked,
+  selection,
+  recordId,
+  className,
+}: {
+  label: string;
+  checked: boolean;
+  selection: RowSelectionProps;
+  recordId: string;
+  className?: string;
+}) {
+  return (
+    <Checkbox
+      aria-label={label}
+      checked={checked}
+      disabled={selection.disabled}
+      // Above the row's open button, whose hit area covers the row; 44 px
+      // below 1280 px and 32 px from it.
+      className={cn("z-10 after:-inset-3.5 xl:after:-inset-2", className)}
+      onCheckedChange={(_checked, details) =>
+        selection.onToggle(recordId, withShift(details.event))
+      }
+    />
+  );
 }
 
 export function LiveRecordResults({
@@ -106,21 +178,41 @@ export function LiveRecordResults({
   pending,
   pageSize,
   selectedId,
-  newRecord = null,
-  onOpenRecord,
+  newRecords = [],
+  choiceCell = null,
+  chipFieldId = null,
+  selection = null,
+  busyRecordId = null,
+  onOpenRecord: openRecord,
   onPageIndexChange,
   onPageSizeChange,
 }: LiveRecordResultsProps) {
   const narrow = useNarrowScreen();
+  // DR-SI-1.6: the row of a running change waits to open.
+  const onOpenRecord = (recordId: string) => {
+    if (recordId !== busyRecordId) openRecord(recordId);
+  };
+  const chipField = chipFieldId
+    ? tableFields.find((field) => field.id === chipFieldId)
+    : undefined;
+  const chip = (row: OpenViewRecord) =>
+    choiceCell && chipField ? choiceCell(row, chipField, "chip") : null;
+  const selectedCount = selection
+    ? page.rows.filter((row) => selection.selectedIds.has(row.id)).length
+    : 0;
   // The page's own row is the freshest copy, so it leads when the page has it.
-  const rows = newRecord
-    ? [
-        page.rows.find((row) => row.id === newRecord.id) ?? newRecord,
-        ...page.rows.filter((row) => row.id !== newRecord.id),
-      ]
-    : page.rows;
+  const newIds = new Set(newRecords.map((row) => row.id));
+  const rows =
+    newIds.size > 0
+      ? [
+          ...newRecords.map(
+            (newRow) => page.rows.find((row) => row.id === newRow.id) ?? newRow,
+          ),
+          ...page.rows.filter((row) => !newIds.has(row.id)),
+        ]
+      : page.rows;
   const newTag = (row: OpenViewRecord) =>
-    row.id === newRecord?.id ? <NewRecordTag /> : null;
+    newIds.has(row.id) ? <NewRecordTag /> : null;
   const cellValue = (row: OpenViewRecord, field: OpenViewDataSourceField) =>
     formatOpenViewFieldValue(
       openViewRecordFieldValue(row, field),
@@ -141,7 +233,7 @@ export function LiveRecordResults({
             region={region}
             layout={cardLayout}
             rows={rows}
-            newRecordId={newRecord?.id ?? null}
+            newRecordIds={newIds}
             fields={cardFields}
             primaryFieldId={presentation.primaryFieldId}
             secondaryFieldId={presentation.secondaryFieldId}
@@ -164,14 +256,15 @@ export function LiveRecordResults({
               .join(" · ");
             const label =
               first?.type === "user" ? `Open record: ${title}` : title;
+            const rowChip = chip(row);
             const rowProps = {
               "data-record-id": row.id,
               "data-state": row.id === selectedId ? "selected" : undefined,
             };
-            // DR-6.3: the new record's tag sits on its title line, so its
+            // DR-6.3: a new record's tag sits on its title line, so its
             // second line follows the title and tag; the button's hit area
             // still covers the row.
-            if (row.id === newRecord?.id)
+            if (newIds.has(row.id))
               return (
                 <li
                   key={row.id}
@@ -183,6 +276,15 @@ export function LiveRecordResults({
                   )}
                 >
                   <span className="flex min-w-0 items-center gap-2">
+                    {selection ? (
+                      <RowCheckbox
+                        label={selectionLabel(first ? title : undefined)}
+                        checked={selection.selectedIds.has(row.id)}
+                        selection={selection}
+                        recordId={row.id}
+                        className="mr-1 shrink-0"
+                      />
+                    ) : null}
                     <RowOpenButton
                       title={title}
                       label={label}
@@ -190,6 +292,9 @@ export function LiveRecordResults({
                       onOpen={() => onOpenRecord(row.id)}
                     />
                     <NewRecordTag />
+                    {rowChip ? (
+                      <span className="ml-auto pl-2">{rowChip}</span>
+                    ) : null}
                   </span>
                   {details ? (
                     <span className="text-muted-foreground block truncate text-xs">
@@ -208,6 +313,15 @@ export function LiveRecordResults({
                   "flex min-h-14 items-center px-4 py-1.5",
                 )}
               >
+                {selection ? (
+                  <RowCheckbox
+                    label={selectionLabel(first ? title : undefined)}
+                    checked={selection.selectedIds.has(row.id)}
+                    selection={selection}
+                    recordId={row.id}
+                    className="mr-4 shrink-0"
+                  />
+                ) : null}
                 {/* The name names the button; the second line describes it. */}
                 <RowOpenButton
                   title={title}
@@ -215,6 +329,9 @@ export function LiveRecordResults({
                   label={label}
                   onOpen={() => onOpenRecord(row.id)}
                 />
+                {rowChip ? (
+                  <span className="ml-auto pl-2">{rowChip}</span>
+                ) : null}
               </li>
             );
           })}
@@ -224,6 +341,29 @@ export function LiveRecordResults({
           <Table className="min-w-[36rem] text-left text-sm">
             <TableHeader>
               <TableRow className="hover:bg-transparent">
+                {selection ? (
+                  <TableHead
+                    scope="col"
+                    className={cn(
+                      headClassName,
+                      "w-10 px-3",
+                      pinnedFieldId && "bg-card sticky left-0 z-20",
+                    )}
+                  >
+                    <Checkbox
+                      aria-label="Select all on this page"
+                      checked={
+                        selectedCount > 0 && selectedCount === page.rows.length
+                      }
+                      indeterminate={
+                        selectedCount > 0 && selectedCount < page.rows.length
+                      }
+                      disabled={selection.disabled || page.rows.length === 0}
+                      className="z-10 after:-inset-3.5 xl:after:-inset-2"
+                      onCheckedChange={() => selection.onToggleAll()}
+                    />
+                  </TableHead>
+                ) : null}
                 {tableFields.map((field) => (
                   <TableHead
                     key={field.id}
@@ -231,7 +371,10 @@ export function LiveRecordResults({
                     className={cn(
                       headClassName,
                       field.id === pinnedFieldId &&
-                        "bg-card sticky left-0 z-20",
+                        cn(
+                          "bg-card sticky z-20",
+                          selection ? "left-10" : "left-0",
+                        ),
                     )}
                   >
                     {field.name}
@@ -263,6 +406,28 @@ export function LiveRecordResults({
                     if (opensRecord(event)) onOpenRecord(row.id);
                   }}
                 >
+                  {selection ? (
+                    <TableCell
+                      data-row-select=""
+                      className={cn(
+                        "w-10 cursor-default px-3 py-0 align-middle",
+                        // With a pinned column, the boxes stay in reach too.
+                        pinnedFieldId && pinnedCellClassName,
+                        pinnedFieldId && "left-0",
+                      )}
+                    >
+                      <RowCheckbox
+                        label={selectionLabel(
+                          tableFields[0]
+                            ? cellValue(row, tableFields[0])
+                            : undefined,
+                        )}
+                        checked={selection.selectedIds.has(row.id)}
+                        selection={selection}
+                        recordId={row.id}
+                      />
+                    </TableCell>
+                  ) : null}
                   {tableFields.map((field, index) => {
                     const value = cellValue(row, field);
                     return (
@@ -279,7 +444,10 @@ export function LiveRecordResults({
                               )
                             : "py-0 whitespace-nowrap",
                           field.id === pinnedFieldId &&
-                            "bg-card sticky left-0 z-10 group-hover:bg-[color-mix(in_oklab,var(--ink)_6%,var(--card))] group-data-[state=selected]:bg-[color-mix(in_oklab,var(--ink)_14%,var(--card))]",
+                            cn(
+                              pinnedCellClassName,
+                              selection ? "left-10" : "left-0",
+                            ),
                         )}
                       >
                         {index === 0 ? (
@@ -304,9 +472,12 @@ export function LiveRecordResults({
                             ) : null}
                           </span>
                         ) : (
-                          <RecordPersonCard row={row} field={field} inline>
-                            <span className="block truncate">{value}</span>
-                          </RecordPersonCard>
+                          (field.type === "select" &&
+                            choiceCell?.(row, field, "cell")) || (
+                            <RecordPersonCard row={row} field={field} inline>
+                              <span className="block truncate">{value}</span>
+                            </RecordPersonCard>
+                          )
                         )}
                       </TableCell>
                     );

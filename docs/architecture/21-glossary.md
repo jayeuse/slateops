@@ -79,6 +79,7 @@ Boards are for communication. The Board scope decides who sees the content. Back
 | Reminder | `event.reminders`, scheduled work kind `event-reminder` | A notification that the event author sets: at the start, 15 minutes before, or 1 day before. | Customer |
 | Widget | `DashboardWidget`, "tile" | A block on a dashboard that shows record data. Use "widget"; "tile" is an older name for the same thing. | Customer |
 | Pin | `pinned` | Keep a post at the top. Pinning needs `manage` on the Board. | Customer |
+| Quick dates | `quickDates`, `helpers/quick-dates.ts`, "Today", "Tomorrow", "Next Monday" | The three buttons under each date of a writer's Kanban card sheet. One press sets the date and saves it once; the days count from the organization's today, as the calendar's Today does. "Next Monday" is the first Monday after today. | Customer |
 
 ## OpenView
 
@@ -98,6 +99,7 @@ OpenView is for reading records and reports. Its content belongs to departments 
 | Report run | `ReportRun`, "Run now" | One unchangeable result of a report. | Customer |
 | Eligible readers | `ReportRunEligibleUser` | The module readers at the time of a report run. To open the run, a person must be an eligible reader and still read the module now. | Internal |
 | Schedule | `ScheduledWork` kind `report-run`, "Create schedule" | A repeated time for a report run. A scheduled run uses the system actor. | Customer |
+| Selection bar | `RecordSelectionBar`, `record-batch-change.ts`, "<n> selected" | The bar that takes the place of a list's toolbar while rows are selected in the table layout: how many are selected, Change (one Choice list or Checkbox field for all of them), and Clear selection. A change reports in the page status with Undo. | Customer |
 
 ## Access
 

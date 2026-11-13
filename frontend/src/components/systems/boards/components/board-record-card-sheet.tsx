@@ -23,6 +23,7 @@ import {
   recordUpdatedDate,
 } from "@/components/systems/shared/components/record-sheet";
 import type { WorkspaceRegion } from "@/lib/date-time";
+import { usePageFileDropGuard } from "@/lib/file-drop";
 import { readCardRecord } from "../adapters/board-card-sheet-api";
 import { kanbanKeys } from "../adapters/board-kanban-queries";
 import type {
@@ -99,6 +100,9 @@ export function RecordCardSheetBody({
   ).get(departmentId);
   const [editing, setEditing] = useState(false);
   const [actionsSlot, setActionsSlot] = useState<HTMLElement | null>(null);
+  // While the card sheet is open, a file dropped beside its Files tab opens
+  // nothing (DR-SI-7.4).
+  usePageFileDropGuard();
   const level = departmentId
     ? openViewLevel(identity.data, departmentId, record.moduleId)
     : null;

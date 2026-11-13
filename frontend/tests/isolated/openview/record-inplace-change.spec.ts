@@ -5,6 +5,7 @@ import type {
   OpenViewRecord,
 } from "../../../src/components/systems/openview/adapters/views-api";
 import {
+  deleteUndoFailure,
   inPlaceChangeMessage,
   inPlaceCommit,
   inPlaceFailure,
@@ -397,5 +398,86 @@ test("UF-C2.6 a 412 is a conflict; a 422 shows under its field or in the meta li
     { kind: "field", message: "Is not an option." },
     { kind: "other-field", message: "Is not an option." },
     { kind: "failed", reference: requestId },
+  ]);
+});
+
+test("SI-C9.4 a refused Undo of a delete: deleted forever, already restored, the named reason, or a failure with its reference", () => {
+  const requestId = "00000000-0000-4000-8000-0000000007fe";
+  const fields = [status, name];
+  expect([
+    // 404: someone deleted the record forever.
+    deleteUndoFailure(new ApiError(404, "Record not found"), fields),
+    // 409 "Record is not deleted": someone restored it first (N-2).
+    deleteUndoFailure(new ApiError(409, "Record is not deleted"), fields),
+    // 422 from a value check names its field in the text.
+    deleteUndoFailure(
+      new ApiError(
+        422,
+        `Field ${statusId} must be one of the configured options`,
+        `Field ${statusId} must be one of the configured options`,
+      ),
+      fields,
+    ),
+    // 409 record_validation_failed names its field in the errors.
+    deleteUndoFailure(
+      new ApiError(
+        409,
+        "Record data is invalid",
+        {
+          code: "record_validation_failed",
+          message: "Record data is invalid",
+          errors: [
+            {
+              code: "closed_field",
+              field_id: nameId,
+              message: `Field ${nameId} is required`,
+            },
+          ],
+        },
+        "record_validation_failed",
+      ),
+      fields,
+    ),
+    // Another 409, and a 503: the generic words with the reference.
+    deleteUndoFailure(
+      new ApiError(
+        409,
+        "Unable to restore record",
+        undefined,
+        undefined,
+        undefined,
+        requestId,
+      ),
+      fields,
+    ),
+    deleteUndoFailure(
+      new ApiError(
+        503,
+        "Unavailable",
+        undefined,
+        undefined,
+        undefined,
+        requestId,
+      ),
+      fields,
+    ),
+  ]).toEqual([
+    { kind: "deleted-forever" },
+    { kind: "already-restored" },
+    {
+      kind: "refused",
+      message: "Status: Must be one of the configured options.",
+    },
+    { kind: "refused", message: "Name: Is required." },
+    {
+      kind: "failed",
+      message: "This item changed. Refresh it and try again.",
+      reference: requestId,
+    },
+    {
+      kind: "failed",
+      message: "This service is temporarily unavailable. Try again.",
+      reference: requestId,
+    },
   ]);
 });

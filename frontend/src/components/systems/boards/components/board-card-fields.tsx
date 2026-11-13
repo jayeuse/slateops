@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Check, Plus } from "lucide-react";
 import { PersonAvatar } from "@/components/person-avatar";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,8 @@ import { Select, SelectItem } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { WorkspaceRegion } from "@/lib/date-time";
+import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
+import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-api";
 import type {
   CardSheet,
   KanbanLabel,
@@ -24,6 +27,7 @@ import type {
 import { shortDate } from "../domain/kanban";
 import type { CardField, CardSheetModel } from "../hooks/use-card-sheet";
 import { useAssigneePicker } from "../hooks/use-assignee-picker";
+import { quickDates } from "../helpers/quick-dates";
 import { LabelChip, type KanbanPerson } from "./board-kanban-card";
 
 const control = "min-h-11 xl:min-h-8";
@@ -35,17 +39,24 @@ const control = "min-h-11 xl:min-h-8";
 export function SheetRow({
   label,
   htmlFor,
+  labelId,
   children,
 }: {
   label: string;
   /** The field's id; a read-only row has none. */
   htmlFor?: string;
+  /** The label's own id, for the row's other controls to point at. */
+  labelId?: string;
   children: ReactNode;
 }) {
   return (
     <div className="grid min-w-0 gap-1 border-b py-2 last:border-b-0 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-center sm:gap-4">
       {htmlFor ? (
-        <label htmlFor={htmlFor} className="text-muted-foreground text-sm">
+        <label
+          id={labelId}
+          htmlFor={htmlFor}
+          className="text-muted-foreground text-sm"
+        >
           {label}
         </label>
       ) : (
@@ -95,13 +106,23 @@ export function DateRow({
         </span>
       </SheetRow>
     );
+  const saving = context.model.saving === field;
   const commit = () => {
     if (draft === null) return;
     if (draft === (value ?? "")) return setDraft(null);
     void onSave(draft || null).finally(() => setDraft(null));
   };
+  // A quick date saves as a changed input does; the current date sends
+  // nothing (DR-SI-8.2).
+  const pick = (date: string) => {
+    if (saving) return;
+    if (date === (value ?? "")) return setDraft(null);
+    setDraft(date);
+    void onSave(date).finally(() => setDraft(null));
+  };
+  const labelId = `${id}-label`;
   return (
-    <SheetRow label={label} htmlFor={id}>
+    <SheetRow label={label} htmlFor={id} labelId={labelId}>
       <Input
         id={id}
         type="date"
@@ -111,7 +132,7 @@ export function DateRow({
         }
         className={cn(control, "max-w-48 tabular-nums")}
         value={draft ?? value ?? ""}
-        disabled={context.model.saving === field}
+        disabled={saving}
         onChange={(event) => setDraft(event.currentTarget.value)}
         onBlur={commit}
         onKeyDown={(event) => {
@@ -120,7 +141,56 @@ export function DateRow({
           commit();
         }}
       />
+      <QuickDates rowLabelId={labelId} saving={saving} onPick={pick} />
     </SheetRow>
+  );
+}
+
+/**
+ * "Today", "Tomorrow" and "Next Monday" under a writer's date input
+ * (DR-SI-8.1). Each names its row through the row label, so a screen reader
+ * tells Start from Due. The days count from the workspace's today, as the
+ * calendar's Today does (DR-SI-8.3); the Boards page has read it already, and
+ * the 30 s freshness of the shared display read keeps an opened card from
+ * reading it again. Until it loads, no quick dates show. While the row saves,
+ * the parent's `onPick` ignores a press.
+ */
+function QuickDates({
+  rowLabelId,
+  saving,
+  onPick,
+}: {
+  rowLabelId: string;
+  saving: boolean;
+  onPick: (date: string) => void;
+}) {
+  const today = useQuery({
+    ...workspaceCalendarQueryOptions(),
+    staleTime: 30_000,
+  }).data?.today;
+  if (!today) return null;
+  return (
+    <div className="flex basis-full flex-wrap gap-1.5">
+      {quickDates(today).map((choice) => (
+        <Button
+          key={choice.label}
+          type="button"
+          variant="outline"
+          size="sm"
+          className={control}
+          aria-describedby={rowLabelId}
+          // Disabled while the row saves (DR-SI-8.2), but as aria-disabled:
+          // `disabled` would drop the focus of the person who pressed it.
+          aria-disabled={saving || undefined}
+          // A pointer press keeps the focus where it is: the input does not
+          // save a typed date on blur first, and the press replaces it.
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => onPick(choice.date)}
+        >
+          {choice.label}
+        </Button>
+      ))}
+    </div>
   );
 }
 
@@ -163,8 +233,25 @@ function AssigneePicker({
 }) {
   const id = useId();
   const picker = useAssigneePicker(context.sheet.card.boardId);
+  const identity = useQuery(authMeOptions()).data;
   const current = context.sheet.card.assigneeId;
   const listed = picker.people.find((choice) => choice.id === current);
+  // "Me (<name>)" comes first, and the person is not listed again. A board
+  // writer can always be the assignee, as they read the board; while a
+  // search is typed, "Me" shows only when the text is in their name, or the
+  // server found them (DR-SI-4.3).
+  const typed = picker.search.trim().toLocaleLowerCase();
+  const meListed = identity
+    ? picker.people.find((choice) => choice.id === identity.id)
+    : undefined;
+  const meName =
+    meListed?.name ?? identity?.displayName ?? identity?.username ?? "";
+  const me =
+    identity &&
+    meName &&
+    (!typed || meListed || meName.toLocaleLowerCase().includes(typed))
+      ? { value: identity.id, label: `Me (${meName})` }
+      : null;
   return (
     <SheetRow label="Assignee" htmlFor={id}>
       <div className="w-full max-w-72 min-w-0">
@@ -177,12 +264,12 @@ function AssigneePicker({
           searchPlaceholder="Search people…"
           emptyMessage="No one by that name can read this board."
           options={[
+            ...(me ? [me] : []),
             // "No one" is a choice only before a search narrows the list.
-            ...(picker.search.trim() ? [] : [{ value: "", label: "No one" }]),
-            ...picker.people.map((choice) => ({
-              value: choice.id,
-              label: choice.name,
-            })),
+            ...(typed ? [] : [{ value: "", label: "No one" }]),
+            ...picker.people
+              .filter((choice) => choice.id !== identity?.id)
+              .map((choice) => ({ value: choice.id, label: choice.name })),
           ]}
           // The placeholder names "No one"; an assignee off the loaded page
           // keeps their name on the trigger.
