@@ -281,7 +281,12 @@ async function openDraftAttachments(page: Page) {
 
 async function openNewPost(page: Page) {
   await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "New post", exact: true }).click();
+  // An empty list also offers New post under its message, so two buttons can
+  // show once the list has loaded; both open the same editor.
+  await page
+    .getByRole("button", { name: "New post", exact: true })
+    .first()
+    .click();
   const editor = page.getByRole("dialog", { name: "New post", exact: true });
   await editor.getByLabel("Title", { exact: true }).fill(title);
   await editor.getByLabel("Message", { exact: true }).fill(message);
