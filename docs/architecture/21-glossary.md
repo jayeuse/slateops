@@ -79,6 +79,7 @@ Boards are for communication. The Board scope decides who sees the content. Back
 | Reminder | `event.reminders`, scheduled work kind `event-reminder` | A notification that the event author sets: at the start, 15 minutes before, or 1 day before. | Customer |
 | Widget | `DashboardWidget`, "tile" | A block on a dashboard that shows record data. Use "widget"; "tile" is an older name for the same thing. | Customer |
 | Pin | `pinned` | Keep a post at the top. Pinning needs `manage` on the Board. | Customer |
+| Quick dates | `quickDates`, `helpers/quick-dates.ts`, "Today", "Tomorrow", "Next Monday" | The three buttons under each date of a writer's Kanban card sheet. One press sets the date and saves it once; the days count from the organization's today, as the calendar's Today does. "Next Monday" is the first Monday after today. | Customer |
 
 ## OpenView
 

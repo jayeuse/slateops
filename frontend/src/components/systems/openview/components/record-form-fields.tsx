@@ -3,7 +3,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { useId, type FocusEvent, type KeyboardEvent } from "react";
 import type { OpenViewDataSourceField } from "../adapters/views-api";
-import { assignableUsersOptions } from "../adapters/openview-queries";
+import {
+  assignableUsersOptions,
+  authMeOptions,
+} from "../adapters/openview-queries";
 import {
   selectOptions,
   type RecordFormErrors,
@@ -52,11 +55,39 @@ function PersonSelect({
   describedBy: string | undefined;
   onChange: (value: string) => void;
 }) {
+  const identity = useQuery(authMeOptions()).data;
   const people = useQuery(assignableUsersOptions(moduleId, ""));
-  const listed = people.data?.items ?? [];
-  const known = !value || listed.some((person) => person.id === value);
+  const firstPage = people.data;
+  const meOnFirstPage = identity
+    ? firstPage?.items.find((person) => person.id === identity.id)
+    : undefined;
+  // "Me" shows only when the assignable read returns the signed-in person.
+  // Off a first page that has more people, one more read by the person's
+  // username, which names only them, finds them (DR-SI-4.2).
+  const lookUp = Boolean(
+    identity && firstPage && !meOnFirstPage && firstPage.pagination.hasMore,
+  );
+  const found = useQuery(
+    assignableUsersOptions(
+      moduleId,
+      identity?.username.slice(0, 100) ?? "",
+      lookUp,
+    ),
+  );
+  const me =
+    meOnFirstPage ??
+    (lookUp
+      ? found.data?.items.find((person) => person.id === identity?.id)
+      : undefined);
+  const listed = (firstPage?.items ?? []).filter(
+    (person) => person.id !== me?.id,
+  );
+  const known =
+    !value || value === me?.id || listed.some((person) => person.id === value);
   const selected = !people.isError
-    ? listed.find((person) => person.id === value)
+    ? me && me.id === value
+      ? me
+      : listed.find((person) => person.id === value)
     : undefined;
   return (
     <>
@@ -64,7 +95,8 @@ function PersonSelect({
         id={id}
         className="min-h-11"
         value={value}
-        disabled={disabled || people.isPending}
+        // While the read by name runs, the options would still move.
+        disabled={disabled || people.isPending || (lookUp && found.isPending)}
         aria-invalid={invalid || undefined}
         aria-describedby={describedBy}
         onValueChange={onChange}
@@ -76,6 +108,13 @@ function PersonSelect({
               ? "People could not be loaded"
               : "No one"}
         </option>
+        {/* First after the empty choice; the person is not listed again
+            (DR-SI-4.1). */}
+        {me ? (
+          <option
+            value={me.id}
+          >{`Me (${me.displayName ?? me.username})`}</option>
+        ) : null}
         {known ? null : <option value={value}>Current person</option>}
         {listed.map((person) => (
           <option key={person.id} value={person.id}>
