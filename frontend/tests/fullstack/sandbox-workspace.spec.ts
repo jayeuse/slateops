@@ -425,9 +425,13 @@ async function exerciseLiveCharts(page: Page, supplier: SeededSupplier) {
   });
 
   const card = page.getByRole("article", { name: chartName, exact: true });
-  await expect(card.getByRole("row", { name: "Net 30 1" })).toBeVisible();
+  await expect(
+    card.getByRole("row", { name: "Open the Net 30 Payment terms records 1" }),
+  ).toBeVisible();
   await page.reload();
-  await expect(card.getByRole("row", { name: "Net 30 1" })).toBeVisible();
+  await expect(
+    card.getByRole("row", { name: "Open the Net 30 Payment terms records 1" }),
+  ).toBeVisible();
   await card.getByRole("button", { name: `${chartName}, actions` }).click();
   await expect(
     page.getByRole("menuitem", { name: "Download data (CSV)" }),
