@@ -81,6 +81,12 @@ export type RecordControls = {
    * status: "Saving…", the change with Undo, or a refusal (DR-2.5 to DR-2.8).
    */
   inPlace?: { onStatus: (status: RecordInPlaceStatus | null) => void };
+  /**
+   * Delete record deletes at once, with "Record deleted." and Undo in the
+   * `inPlace` header status (SI-9.1). Only the OpenView sheet sets it; the
+   * Boards card sheet keeps the delete question (SI-9.5).
+   */
+  deleteWithUndo?: boolean;
 };
 
 type LiveRecordInspectorProps = {
@@ -315,11 +321,13 @@ export function LiveRecordInspector({
                     ? {
                         region,
                         detailsActive: shownTab === "details",
+                        tab: shownTab,
                         onStatus: controls.inPlace.onStatus,
                         renderDetails: detailsRows,
                       }
                     : undefined
                 }
+                deleteWithUndo={controls.deleteWithUndo}
               >
                 {details}
               </RecordDetailsControls>

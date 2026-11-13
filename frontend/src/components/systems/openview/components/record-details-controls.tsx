@@ -49,6 +49,8 @@ import {
 } from "../domain/record-form";
 import {
   canStartInPlace,
+  DELETE_UNDO_WORDS,
+  deleteUndoFailure,
   inPlaceChangeMessage,
   inPlaceCommit,
   inPlaceFailure,
@@ -98,6 +100,8 @@ export type RecordInPlaceOptions = {
   region: WorkspaceRegion | undefined;
   /** The Details tab is the open tab; leaving it ends the Undo offer. */
   detailsActive: boolean;
+  /** The open tab; any tab change ends a delete's Undo (DR-SI-9.4). */
+  tab: string;
   /** The record header's status: "Saving…", the change with Undo, a refusal. */
   onStatus: (status: RecordInPlaceStatus | null) => void;
   /** The Details rows, with the in-place control of a row where one fits. */
@@ -128,7 +132,21 @@ type RecordDetailsControlsProps = {
   onShowDetails?: () => void;
   /** Values change in place on Details; off unless the sheet opts in. */
   inPlace?: RecordInPlaceOptions;
+  /**
+   * Delete record deletes at once, with "Record deleted." and Undo in the
+   * header status (SI-9.1, DR-SI-9.1). It needs `inPlace`, whose status the
+   * header shows; without it, or unset, Delete asks first (SI-9.5).
+   */
+  deleteWithUndo?: boolean;
 };
+
+/** A delete's header status and its Undo (DR-SI-9.2 to DR-SI-9.4). */
+type DeleteNotice =
+  | { kind: "deleted" }
+  | { kind: "restoring" }
+  | { kind: "settled"; message: string }
+  | { kind: "gone" }
+  | { kind: "failed"; message: string; reference: string | undefined };
 
 /** Focuses after React renders the next state. */
 function focusSoon(find: () => HTMLElement | null | undefined) {
@@ -166,10 +184,21 @@ export function RecordDetailsControls({
   menuItems,
   onShowDetails,
   inPlace,
+  deleteWithUndo = false,
 }: RecordDetailsControlsProps) {
   const [editing, setEditing] = useState<Editing | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const editButtonRef = useRef<HTMLButtonElement>(null);
+  const moreActionsRef = useRef<HTMLButtonElement>(null);
+  const undoDeleteMode = deleteWithUndo && inPlace !== undefined;
+  const [deleteNotice, setDeleteNotice] = useState<DeleteNotice | null>(null);
+  // Any tab change ends a delete's Undo and its words (DR-SI-9.4, G8).
+  const openTab = inPlace?.tab;
+  const [wasOpenTab, setWasOpenTab] = useState(openTab);
+  if (wasOpenTab !== openTab) {
+    setWasOpenTab(openTab);
+    setDeleteNotice(null);
+  }
   const id = useId();
   const identity = useQuery(authMeOptions());
   const isAdmin = identity.data?.role === "admin";
@@ -269,8 +298,28 @@ export function RecordDetailsControls({
   const statusReference =
     statusData?.kind === "failed" ? statusData.reference : undefined;
   const statusUndo = statusData?.kind === "saved" && statusData.canUndo;
+  // The delete's Undo keeps one identity; it runs the latest restore rules.
+  const undoDeleteRef = useRef<() => void>(() => undefined);
+  const undoDelete = useCallback(() => undoDeleteRef.current(), []);
   // One object per status, so the page's state changes only when it does.
   const headerStatus = useMemo<RecordInPlaceStatus | null>(() => {
+    // A delete supersedes the last in-place change, whose words it cleared.
+    if (deleteNotice?.kind === "deleted" || deleteNotice?.kind === "restoring")
+      return {
+        kind: "deleted",
+        message: DELETE_UNDO_WORDS.deleted,
+        undo: deleteNotice.kind === "deleted" ? undoDelete : null,
+      };
+    if (deleteNotice?.kind === "settled")
+      return { kind: "saved", message: deleteNotice.message, undo: null };
+    if (deleteNotice?.kind === "gone")
+      return { kind: "gone", message: DELETE_UNDO_WORDS.deletedForever };
+    if (deleteNotice?.kind === "failed")
+      return {
+        kind: "failed",
+        message: deleteNotice.message,
+        reference: deleteNotice.reference,
+      };
     if (statusKind === null) return null;
     if (statusKind === "saving")
       return { kind: "saving", message: statusMessage };
@@ -285,7 +334,15 @@ export function RecordDetailsControls({
       message: statusMessage,
       undo: statusUndo ? undo : null,
     };
-  }, [statusKind, statusMessage, statusReference, statusUndo, undo]);
+  }, [
+    deleteNotice,
+    undoDelete,
+    statusKind,
+    statusMessage,
+    statusReference,
+    statusUndo,
+    undo,
+  ]);
   const onInPlaceStatus = inPlace?.onStatus;
   useEffect(() => {
     onInPlaceStatus?.(headerStatus);
@@ -298,6 +355,7 @@ export function RecordDetailsControls({
       // DR-2.1: the form opens on Details, whichever tab is open.
       onShowDetails?.();
       dispatchInPlace({ type: "clear-status" });
+      setDeleteNotice(null);
     }
     setPending(reload ? "reload" : "open");
     setError("");
@@ -403,6 +461,7 @@ export function RecordDetailsControls({
         )
         ?.focus();
     const seen = seenRecord(record, inPlaceState.latest);
+    setDeleteNotice(null);
     dispatchInPlace({ type: "start", fieldId: field.id, value, undo: isUndo });
     setPending("in-place");
     setError("");
@@ -460,12 +519,22 @@ export function RecordDetailsControls({
   });
 
   const remove = async () => {
+    if (busy) return;
     setPending("delete");
     setError("");
+    // The delete is the next change: the last change's Undo goes (G8).
+    if (undoDeleteMode) {
+      dispatchInPlace({ type: "clear-status" });
+      setDeleteNotice(null);
+    }
     try {
       await deleteOpenViewRecord(record.id);
       setConfirmDelete(false);
-      onChanged("Record deleted. You can restore it from this dialog.");
+      if (undoDeleteMode) {
+        // DR-SI-9.2: the header says it with Undo; the page adds no notice.
+        setDeleteNotice({ kind: "deleted" });
+        onChanged("");
+      } else onChanged("Record deleted. You can restore it from this dialog.");
     } catch (caught) {
       setConfirmDelete(false);
       setError(
@@ -477,7 +546,51 @@ export function RecordDetailsControls({
     }
   };
 
+  // DR-SI-9.3: Undo restores the record; a refusal shows in the header and
+  // the record stays deleted, with Restore.
+  const restoreFromUndo = async () => {
+    if (busy) return;
+    // Undo leaves with its words: focus goes to the record menu first, so it
+    // stays in the sheet (SI-9.2).
+    moreActionsRef.current?.focus();
+    setDeleteNotice({ kind: "restoring" });
+    setPending("restore");
+    setError("");
+    try {
+      await restoreOpenViewRecord(record.id);
+      setDeleteNotice({ kind: "settled", message: DELETE_UNDO_WORDS.restored });
+      onChanged("");
+    } catch (caught) {
+      const failure = deleteUndoFailure(caught, fields);
+      if (failure.kind === "already-restored") {
+        // The sheet reads the record again and shows it as it is now.
+        setDeleteNotice({
+          kind: "settled",
+          message: DELETE_UNDO_WORDS.alreadyRestored,
+        });
+        onChanged("");
+      } else if (failure.kind === "deleted-forever") {
+        // The sheet reads again and shows "Record unavailable"; the page
+        // keeps these words in the sheet header (G7).
+        setDeleteNotice({ kind: "gone" });
+        onChanged("");
+      } else
+        setDeleteNotice({
+          kind: "failed",
+          message: failure.message,
+          reference: failure.kind === "failed" ? failure.reference : undefined,
+        });
+    } finally {
+      setPending(null);
+    }
+  };
+  useEffect(() => {
+    undoDeleteRef.current = () => void restoreFromUndo();
+  });
+
   const restore = async () => {
+    // Restore ends a delete's Undo (DR-SI-9.4).
+    setDeleteNotice(null);
     setPending("restore");
     setError("");
     try {
@@ -502,6 +615,7 @@ export function RecordDetailsControls({
 
   const beginPurgeReview = async () => {
     if (!canPurge || busy) return;
+    setDeleteNotice(null);
     setPending("purge-preview");
     setError("");
     clearPurgeReview();
@@ -669,6 +783,7 @@ export function RecordDetailsControls({
             <DropdownMenuTrigger
               render={
                 <Button
+                  ref={moreActionsRef}
                   type="button"
                   variant="ghost"
                   size="icon"
@@ -688,7 +803,11 @@ export function RecordDetailsControls({
                     variant="destructive"
                     className="min-h-11 xl:min-h-8"
                     disabled={busy}
-                    onClick={() => setConfirmDelete(true)}
+                    // SI-9.1: the OpenView sheet deletes at once with Undo;
+                    // the Boards card sheet asks first (SI-9.5).
+                    onClick={() =>
+                      undoDeleteMode ? void remove() : setConfirmDelete(true)
+                    }
                   >
                     Delete record
                   </DropdownMenuItem>

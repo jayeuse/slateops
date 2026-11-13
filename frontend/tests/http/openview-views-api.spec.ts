@@ -5214,33 +5214,6 @@ test("record details save every active value with the revision the user opened",
   ).toMatchObject({ [serialFieldId]: "SN-AGAIN" });
 });
 
-test("record details delete only after confirmation", async ({ page }) => {
-  await installViewsApi(page, { disableInitialSearch: true });
-  const commands = await installRecordCommands(page);
-  await page.goto(
-    `/openview?section=views&module=${moduleId}&view=${viewId}&record=${recordOneId}`,
-  );
-  const details = page.getByRole("dialog", { name: "Record details" });
-  // Delete is in the record menu of the sheet header (OD7).
-  const openRecordMenu = () =>
-    details.getByRole("button", { name: "More record actions" }).click();
-  await openRecordMenu();
-  await page.getByRole("menuitem", { name: "Delete record" }).click();
-  const confirm = page.getByRole("alertdialog", {
-    name: "Delete this record?",
-  });
-  await confirm.getByRole("button", { name: "Cancel" }).click();
-  expect(commands.calls.some((call) => call.method === "DELETE")).toBe(false);
-
-  await openRecordMenu();
-  await page.getByRole("menuitem", { name: "Delete record" }).click();
-  await confirm.getByRole("button", { name: "Delete record" }).click();
-  await expect(page.getByText(/^Record deleted\./)).toBeVisible();
-  expect(commands.calls.find((call) => call.method === "DELETE")?.path).toBe(
-    `/api/records/${recordOneId}`,
-  );
-});
-
 test("an administrator can preview and confirm deleted-record purging with a fresh password for each attempt", async ({
   page,
 }) => {
@@ -5885,12 +5858,11 @@ test("UF-C6.3: a deleted new record leaves the list", async ({ page }) => {
     page.getByRole("dialog", { name: "Record details" }),
   );
   await sheet.getByRole("button", { name: "More record actions" }).click();
+  // SI-9.1: the OpenView sheet deletes at once, with Undo in its header.
   await page.getByRole("menuitem", { name: "Delete record" }).click();
-  await page
-    .getByRole("alertdialog", { name: "Delete this record?" })
-    .getByRole("button", { name: "Delete record" })
-    .click();
-  await expect(page.getByText(/^Record deleted\./)).toBeVisible();
+  await expect(sheet.locator("header").getByRole("status")).toHaveText(
+    "Record deleted.",
+  );
   await page.keyboard.press("Escape");
   await expect(sheet).toHaveCount(0);
 

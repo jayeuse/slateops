@@ -460,6 +460,41 @@ export default function ServerBackedViewsWorkspace({
   // The record header's in-place status and Undo (item 2, DR-2.5 to DR-2.8).
   const [recordInPlaceStatus, setRecordInPlaceStatus] =
     useState<RecordInPlaceStatus | null>(null);
+  // DR-SI-9.3: an Undo that found the record deleted forever. The sheet
+  // reads again and shows "Record unavailable"; the record's own status goes
+  // with it, so the header keeps these words for that record (G7).
+  const [recordGone, setRecordGone] = useState<{
+    recordId: string;
+    message: string;
+  } | null>(null);
+  const sheetRecordId = isUuid(requestedRecord) ? requestedRecord : null;
+  const onRecordStatus = useCallback(
+    (status: RecordInPlaceStatus | null) => {
+      if (status?.kind === "gone") {
+        if (sheetRecordId)
+          setRecordGone({ recordId: sheetRecordId, message: status.message });
+        setRecordInPlaceStatus(null);
+      } else setRecordInPlaceStatus(status);
+    },
+    [sheetRecordId],
+  );
+  const recordGoneMessage =
+    recordGone && recordGone.recordId === sheetRecordId
+      ? recordGone.message
+      : null;
+  // DR-SI-9.2: after a delete, focus moves to its Undo, one frame after the
+  // record menu gave focus back to its trigger.
+  const recordUndoRef = useRef<HTMLButtonElement>(null);
+  const deleteUndoShown =
+    recordInPlaceStatus?.kind === "deleted" &&
+    recordInPlaceStatus.undo !== null;
+  useEffect(() => {
+    if (!deleteUndoShown) return;
+    const frame = window.requestAnimationFrame(() =>
+      recordUndoRef.current?.focus(),
+    );
+    return () => window.cancelAnimationFrame(frame);
+  }, [deleteUndoShown]);
   const [recordPage, setRecordPage] = useState<RecordPageState | null>(null);
   const [recordPageSize, setRecordPageSize] = useState(
     DEFAULT_RECORD_PAGE_SIZE,
@@ -3164,14 +3199,19 @@ export default function ServerBackedViewsWorkspace({
                   )}
                 </span>
                 {listNotice && !reportsActive && !status ? (
-                  <ListChangeActions
-                    notice={listNotice}
-                    undoDisabled={Boolean(listBusy)}
-                    onUndo={undoListChange}
-                    onOpenRecord={(recordId) =>
-                      openRecordFromResults(recordId, undefined, false)
-                    }
-                  />
+                  // R4-5: with a record sheet open, its header holds the
+                  // only Undo; opening a record from the list ends this one
+                  // (G8), and an address-opened sheet hides it.
+                  sheetRecordId ? null : (
+                    <ListChangeActions
+                      notice={listNotice}
+                      undoDisabled={Boolean(listBusy)}
+                      onUndo={undoListChange}
+                      onOpenRecord={(recordId) =>
+                        openRecordFromResults(recordId, undefined, false)
+                      }
+                    />
+                  )
                 ) : createdOpenShown ? (
                   <Button
                     type="button"
@@ -3948,30 +3988,37 @@ export default function ServerBackedViewsWorkspace({
                                 ? "Loading record…"
                                 : "Record unavailable"}
                           </h2>
-                          {linkedRecord ? (
+                          {linkedRecord || recordGoneMessage ? (
                             <p className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm">
-                              <span>
-                                {[moduleName, departmentName]
-                                  .filter(Boolean)
-                                  .join(" · ")}
-                                {" · Updated "}
-                                <time dateTime={linkedRecord.updatedAt}>
-                                  {recordUpdatedDate(
-                                    linkedRecord.updatedAt,
-                                    displayRegion,
+                              {linkedRecord ? (
+                                <>
+                                  <span>
+                                    {[moduleName, departmentName]
+                                      .filter(Boolean)
+                                      .join(" · ")}
+                                    {" · Updated "}
+                                    <time dateTime={linkedRecord.updatedAt}>
+                                      {recordUpdatedDate(
+                                        linkedRecord.updatedAt,
+                                        displayRegion,
+                                      )}
+                                    </time>
+                                  </span>
+                                  {linkedRecord.isDeleted ? (
+                                    <Badge variant="destructive">Deleted</Badge>
+                                  ) : canWriteRecords ? null : (
+                                    <Badge variant="secondary">Read-only</Badge>
                                   )}
-                                </time>
-                              </span>
-                              {linkedRecord.isDeleted ? (
-                                <Badge variant="destructive">Deleted</Badge>
-                              ) : canWriteRecords ? null : (
-                                <Badge variant="secondary">Read-only</Badge>
-                              )}
+                                </>
+                              ) : null}
                               {/* A value changed in place (DR-2.4 to
-                                DR-2.8): its status, then its Undo. */}
+                                DR-2.8) or a delete (DR-SI-9.2, DR-SI-9.3):
+                                its status, then its Undo. */}
                               {/* Mounted while the sheet shows a record and
                                 empty at rest, so a screen reader announces
-                                each new status; empty, it has no size. */}
+                                each new status; empty, it has no size. It
+                                stays when an Undo finds the record deleted
+                                forever, to say so. */}
                               <span
                                 role="status"
                                 className={
@@ -3980,7 +4027,8 @@ export default function ServerBackedViewsWorkspace({
                                     : "text-foreground"
                                 }
                               >
-                                {recordInPlaceStatus?.message}
+                                {recordGoneMessage ??
+                                  recordInPlaceStatus?.message}
                                 {recordInPlaceStatus?.kind === "failed" ? (
                                   <ErrorReference
                                     id={recordInPlaceStatus.reference}
@@ -3988,9 +4036,11 @@ export default function ServerBackedViewsWorkspace({
                                   />
                                 ) : null}
                               </span>
-                              {recordInPlaceStatus?.kind === "saved" &&
+                              {(recordInPlaceStatus?.kind === "saved" ||
+                                recordInPlaceStatus?.kind === "deleted") &&
                               recordInPlaceStatus.undo ? (
                                 <Button
+                                  ref={recordUndoRef}
                                   type="button"
                                   variant="ghost"
                                   className="text-action-text min-h-11 px-1.5 underline-offset-4 hover:bg-transparent hover:underline xl:h-8 xl:min-h-8"
@@ -4091,7 +4141,10 @@ export default function ServerBackedViewsWorkspace({
                                   setRecordChanges((value) => value + 1);
                                 },
                                 onEditingChange: setRecordEditing,
-                                inPlace: { onStatus: setRecordInPlaceStatus },
+                                inPlace: { onStatus: onRecordStatus },
+                                // SI-9.1: Delete record deletes at once,
+                                // with Undo in this header.
+                                deleteWithUndo: true,
                               }
                             : undefined
                         }
@@ -4121,6 +4174,15 @@ export default function ServerBackedViewsWorkspace({
                       moduleId={moduleId}
                       moduleName={moduleName ?? "this module"}
                       fields={fields}
+                      // SI-2.1: the applied conditions give starting values;
+                      // a User value only for the signed-in person.
+                      definition={appliedDraftDefinition}
+                      identityId={
+                        identity.data?.id === verifiedUserId
+                          ? identity.data.id
+                          : null
+                      }
+                      titleOf={listTitle}
                       onOpenChange={setCreateRecordOpen}
                       onCreated={(made, opened) => {
                         setCreateRecordOpen(false);
@@ -4181,15 +4243,6 @@ export default function ServerBackedViewsWorkspace({
                   }
                   onClose={() => setSaveOpen(false)}
                 />
-                      // SI-2.1: the applied conditions give starting values;
-                      // a User value only for the signed-in person.
-                      definition={appliedDraftDefinition}
-                      identityId={
-                        identity.data?.id === verifiedUserId
-                          ? identity.data.id
-                          : null
-                      }
-                      titleOf={listTitle}
                 {saveConflict ? (
                   <Alert
                     role="alert"
