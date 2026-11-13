@@ -72,6 +72,7 @@ The module page is the umbrella's Views direction (comp `views.html`), with the 
   - Changed by `docs/specs/ux-friction-pass.md` item 1 (APR-0003): "Unsaved changes" and the view leave guard show only to view managers.
 - **Toolbar** (OD3, OD4, OD14): one row with search, the quick filter (the first choice field, with counts), Filters (a popover from 768px, a bottom sheet below) with chips under the toolbar, Sort, Columns, and the Layout select.
 - **Records** (OD6): the table panel fills the page; only its body scrolls; the pager stays at the bottom. 40px one-line rows; the whole row opens the record; people as avatar and name in ink; one date format.
+  - Changed by `docs/specs/subtle-interactions.md` candidate 1 (APR-0003 extension): a Choice list value opens its menu; the rest of the row opens the record.
 - **Record** (OD7): a right sheet with Previous and Next, a quiet Edit, Delete in the "More record actions" menu, a named close, and the tabs Details, Linked records, Files, History. Edit and create use the shared dialog frame.
 - **Layouts** (OD8): Kanban, Calendar, and Timeline show their field picker in their empty state.
 - **Dialogs** (OD12): Columns, New record, Export, and Save view as use the shared dialog frame.

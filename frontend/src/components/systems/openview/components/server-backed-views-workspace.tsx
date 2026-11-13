@@ -140,7 +140,38 @@ import {
   type RecordInspectionContext,
   type RecordInspectionPage,
 } from "@/components/systems/shared/components/record-sheet";
-import { LiveRecordResults } from "./live-record-results";
+import {
+  LiveRecordResults,
+  useNarrowScreen,
+  type ChoiceCellRenderer,
+} from "./live-record-results";
+import { batchUpdateOpenViewRecords } from "../adapters/record-batch-api";
+import type { RecordBatchItem } from "../adapters/record-batch-api";
+import {
+  changeItems,
+  changeOptions,
+  changesFromList,
+  emptySelection,
+  replacedByShowOnly,
+  runListChange,
+  selectedOnPage,
+  showOnlyCondition,
+  showOnlyOffered,
+  toggleAllRows,
+  toggleRow,
+  undoSent,
+  type ListChangeNotice,
+  type RowSelection,
+  type SentRecord,
+} from "../domain/record-batch-change";
+import { selectOptions } from "../domain/record-form";
+import { openViewRecordFieldValue } from "../domain/record-display";
+import { ChoiceCellMenu } from "./choice-cell-menu";
+import {
+  ListChangeActions,
+  ListChangeWords,
+  RecordSelectionBar,
+} from "./record-selection-bar";
 import { useCreatedRecord } from "../hooks/use-created-record";
 import { RecordCreateDialog } from "./record-create-dialog";
 import { ModulePageSwitch } from "./module-page-switch";
@@ -310,6 +341,9 @@ function isAuthorizationDenied(error: unknown): boolean {
 }
 
 /** Replace the temporary View changes without a navigation or history entry. */
+/** The history-state key of the entry a "Show only" left (SI-C1.4). */
+const SHOW_ONLY_MARK = "openviewShowOnly";
+
 function replaceTemporaryChanges(value: string | null) {
   const url = new URL(window.location.href);
   if (value) url.searchParams.set(TEMPORARY_VIEW_PARAM, value);
@@ -395,6 +429,31 @@ export default function ServerBackedViewsWorkspace({
   // invalidation for it may arrive later.
   const [recordChanges, setRecordChanges] = useState(0);
   const recordInvalidation = streamRecordInvalidation + recordChanges;
+  // Candidates 1 and 5 of subtle-interactions.md: the rows a writer
+  // selected, the running list change, its page status with Undo (G7, G8),
+  // and the records its response returned. Each belongs to one list
+  // (`listActionsKey`), so another page, filter, sort, search, or view ends
+  // them (SI-5.7).
+  const [rowSelection, setRowSelection] = useState<{
+    key: string;
+    value: RowSelection;
+  } | null>(null);
+  const [listChange, setListChange] = useState<{
+    key: string;
+    busy: { recordId: string | null; fieldId: string; value: unknown } | null;
+    notice: ListChangeNotice | null;
+  } | null>(null);
+  const [listRowUpdates, setListRowUpdates] = useState<{
+    key: string;
+    rows: ReadonlyMap<string, OpenViewRecord>;
+  } | null>(null);
+  const listChangeRun = useRef(0);
+  // SI-1.2: browser Back takes a "Show only" condition away again. Each
+  // entry names the history entry it left by a mark in its state.
+  const showOnlyHistory = useRef<
+    { draftKey: string; mark: number; draft: SavedDraft | null }[]
+  >([]);
+  const showOnlyMarks = useRef(0);
   const [createRecordOpen, setCreateRecordOpen] = useState(false);
   // An open edit form keeps the record dialog from closing by accident.
   const [recordEditing, setRecordEditing] = useState(false);
@@ -581,6 +640,8 @@ export default function ServerBackedViewsWorkspace({
     (view) => view.isDefault && !view.isDeleted,
   )?.id;
   const identity = useQuery(authMeOptions());
+  // The selection bar opens its Change panel as a bottom sheet on a phone.
+  const narrowList = useNarrowScreen();
   const workspaceCalendar = useQuery(workspaceCalendarQueryOptions());
   const displayRegion = useDisplayRegion(workspaceCalendar.data);
   const queryClient = useQueryClient();
@@ -732,6 +793,24 @@ export default function ServerBackedViewsWorkspace({
       address.get("view") !== requestedView
     )
       return;
+    // SI-C1.4: Back reached the entry a "Show only" left; its draft
+    // returns, and the mirror does not write the condition back.
+    const shownOnly = showOnlyHistory.current.at(-1);
+    const entryState: unknown = window.history.state;
+    if (
+      shownOnly &&
+      typeof entryState === "object" &&
+      entryState !== null &&
+      (entryState as Record<string, unknown>)[SHOW_ONLY_MARK] === shownOnly.mark
+    ) {
+      showOnlyHistory.current = showOnlyHistory.current.slice(0, -1);
+      if (shownOnly.draftKey === draftKey) {
+        setDraftState(
+          shownOnly.draft ? { key: draftKey, value: shownOnly.draft } : null,
+        );
+        return;
+      }
+    }
     // Read the address itself. Next updates the search params after a
     // replaceState, in a transition, so they can still show a value this page
     // has already replaced; that value must not land on the next View.
@@ -1149,6 +1228,34 @@ export default function ServerBackedViewsWorkspace({
       : null
     : ordinaryRecordPage;
   const pageRows = currentRecordPage?.rows ?? [];
+  const listActionsKey = JSON.stringify({
+    draftKey,
+    definition: appliedDraftDefinition,
+    offset: recordOffset,
+    limit: recordPageSize,
+    group: generalSelectedGroup,
+    groupOffset: generalGroupOffset,
+    layout: presentationLayout,
+  });
+  const currentListChange =
+    listChange?.key === listActionsKey ? listChange : null;
+  const listBusy = currentListChange?.busy ?? null;
+  const listNotice = currentListChange?.notice ?? null;
+  // DR-SI-1.7: a changed row shows the server's record until a newer read.
+  const listRows =
+    listRowUpdates?.key === listActionsKey
+      ? pageRows.map((row) => {
+          const updated = listRowUpdates.rows.get(row.id);
+          return updated &&
+            Date.parse(updated.updatedAt) >= Date.parse(row.updatedAt)
+            ? updated
+            : row;
+        })
+      : pageRows;
+  const listRowIds = listRows.map((row) => row.id);
+  const listSelection =
+    rowSelection?.key === listActionsKey ? rowSelection.value : emptySelection;
+  const selectedIds = selectedOnPage(listSelection, listRowIds);
   const renderedRecordOffset = currentRecordPage?.offset ?? 0;
   const activeInspectionContext =
     inspectionContext?.key === inspectionKey &&
@@ -1201,6 +1308,16 @@ export default function ServerBackedViewsWorkspace({
         ...visibleFields.filter((field) => field.id !== pinnedField.id),
       ]
     : visibleFields;
+  // SI-5.1: a writer selects rows in the table, never with the Deleted filter.
+  const selectionAllowed =
+    canWriteRecords &&
+    !isCardPresentation &&
+    draft.definition.deleted === "exclude";
+  const selectedRows = selectionAllowed
+    ? listRows.filter((row) => selectedIds.includes(row.id))
+    : [];
+  const listTitle = (row: OpenViewRecord) =>
+    recordTitle(row, queriedFields, draft.presentation.primaryFieldId);
   const exportContextKey = JSON.stringify({
     moduleId,
     draftKey,
@@ -1337,6 +1454,7 @@ export default function ServerBackedViewsWorkspace({
     fromList = true,
   ) => {
     if (fromList) createdRecord.openedFromList(recordId);
+    endListChange();
     const sourcePage = pageContext ?? currentRecordPage;
     if (
       moduleId &&
@@ -1798,6 +1916,186 @@ export default function ServerBackedViewsWorkspace({
       return { ...current, filters };
     });
   };
+  // DR-SI-1.4: "<Field> is <value>" replaces the field's applied conditions;
+  // on the quick-filter field it is that strip's choice. Back removes it.
+  const applyShowOnly = (field: OpenViewDataSourceField, value: string) => {
+    // Mark the entry this leaves, then add the entry the condition lives
+    // in; the router keeps a mark in the state it copies.
+    const mark = ++showOnlyMarks.current;
+    showOnlyHistory.current = [
+      ...showOnlyHistory.current,
+      { draftKey, mark, draft: dirty ? draft : null },
+    ];
+    window.history.replaceState(
+      { [SHOW_ONLY_MARK]: mark },
+      "",
+      window.location.href,
+    );
+    window.history.pushState(null, "", window.location.href);
+    updateDefinition((current) => {
+      const keys = new Map<object, string>();
+      const filters = current.filters.filter((item, itemIndex) => {
+        if (replacedByShowOnly(item, field.id)) return false;
+        keys.set(item, filterRowKeyFor(item, itemIndex));
+        return true;
+      });
+      const condition = showOnlyCondition(field.id, value);
+      keys.set(
+        condition,
+        `${draftKey}:show-only:${nextFilterRowKey.current++}`,
+      );
+      setFilterRowKeyState({ draftKey, keys });
+      return { ...current, filters: [...filters, condition] };
+    });
+  };
+
+  // One list change at a time: one `batch-update`, then the page status
+  // and its Undo (DR-SI-1.6 to DR-SI-1.9, DR-SI-5.7 to DR-SI-5.10).
+  const startListChange = ({
+    field,
+    sent,
+    items,
+    scope,
+    undo,
+    busyRecordId,
+  }: {
+    field: Parameters<typeof runListChange>[0]["field"];
+    sent: SentRecord[];
+    items: RecordBatchItem[];
+    scope: "cell" | "selection";
+    undo: boolean;
+    busyRecordId: string | null;
+  }) => {
+    if (!moduleId || listBusy || items.length === 0) return;
+    const key = listActionsKey;
+    const run = ++listChangeRun.current;
+    const offered = listNotice?.undo ?? null;
+    setListChange({
+      key,
+      busy: {
+        recordId: busyRecordId,
+        fieldId: field.id,
+        value: items[0].value,
+      },
+      // An Undo keeps the change's words until it settles.
+      notice: undo ? listNotice : null,
+    });
+    void runListChange({
+      field,
+      fields,
+      sent,
+      items,
+      scope,
+      undo,
+      send: (batch) => batchUpdateOpenViewRecords({ moduleId, items: batch }),
+    }).then((outcome) => {
+      if (run !== listChangeRun.current) return;
+      setListChange({
+        key,
+        busy: null,
+        notice: outcome.keepUndo
+          ? { ...outcome.notice, undo: offered }
+          : outcome.notice,
+      });
+      if (outcome.updated.length > 0)
+        setListRowUpdates((current) => {
+          const rows = new Map(current?.key === key ? current.rows : []);
+          for (const record of outcome.updated) rows.set(record.id, record);
+          return { key, rows };
+        });
+      if (scope === "selection" && !undo) {
+        setRowSelection(null);
+        focusToolbarAfterBar(false);
+      }
+      // The list reads again: the stored values, the counts, and whether
+      // each record still matches.
+      if (outcome.updated.length > 0 || outcome.readAgain)
+        setRecordChanges((value) => value + 1);
+    });
+  };
+  const changeRows = (
+    rows: readonly OpenViewRecord[],
+    field: OpenViewDataSourceField,
+    value: unknown,
+    scope: "cell" | "selection",
+  ) => {
+    const items = changeItems(rows, field.id, value);
+    const changing = new Set(items.map((item) => item.recordId));
+    startListChange({
+      field,
+      items,
+      scope,
+      undo: false,
+      busyRecordId: scope === "cell" ? (rows[0]?.id ?? null) : null,
+      sent: rows
+        .filter((row) => changing.has(row.id))
+        .map((row) => ({
+          recordId: row.id,
+          title: listTitle(row),
+          previous: row.data[field.id] ?? null,
+        })),
+    });
+  };
+  const undoListChange = () => {
+    const undo = listNotice?.undo;
+    if (!undo) return;
+    startListChange({
+      field: undo.field,
+      items: undo.items,
+      scope: undo.scope,
+      undo: true,
+      busyRecordId:
+        undo.scope === "cell" ? (undo.items[0]?.recordId ?? null) : null,
+      sent: undoSent(undo),
+    });
+  };
+  // The toolbar row returns where the selection bar was; so does focus,
+  // when the bar took it with it.
+  const focusToolbarAfterBar = (always: boolean) =>
+    window.requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (always || !active || active === document.body)
+        document.getElementById(SEARCH_ID)?.focus();
+    });
+  // G8: the offer to undo ends with the person's next action.
+  const endListChange = () => {
+    if (!listBusy) setListChange(null);
+  };
+  const choiceCell: ChoiceCellRenderer = (row, field, variant) => {
+    const stored = row.data[field.id];
+    const busy = listBusy?.recordId === row.id && listBusy.fieldId === field.id;
+    const value = busy ? listBusy.value : stored;
+    if (value === null || value === undefined || value === "") return null;
+    const label = busy
+      ? (selectOptions(field).find((option) => option.id === value)?.label ??
+        String(value))
+      : String(openViewRecordFieldValue(row, field));
+    return (
+      <ChoiceCellMenu
+        fieldName={field.name}
+        label={label}
+        variant={variant}
+        busy={busy}
+        disabled={Boolean(listBusy) || Boolean(pendingAction)}
+        onShowOnly={
+          typeof stored === "string" &&
+          showOnlyOffered(draft.definition, field.id, stored)
+            ? () => applyShowOnly(field, stored)
+            : null
+        }
+        change={
+          canWriteRecords && !row.isDeleted
+            ? {
+                options: changeOptions(field),
+                current: stored === "" ? null : stored,
+                onPick: (next) => changeRows([row], field, next, "cell"),
+              }
+            : null
+        }
+      />
+    );
+  };
+
   const filterChips: FilterChip[] = [
     // DR-3.4: an unfinished condition gets no chip until it applies.
     ...draft.definition.filters.flatMap((filter, index) =>
@@ -2751,6 +3049,7 @@ export default function ServerBackedViewsWorkspace({
             }
             onClick={() => {
               createdRecord.end();
+              endListChange();
               setCreateRecordOpen(true);
             }}
           >
@@ -2808,7 +3107,8 @@ export default function ServerBackedViewsWorkspace({
     ) : null;
   // Item 6: its status holds the meta text's place while it is active, even
   // while a page status ("Refreshing records…") shows over it for a moment.
-  const createdStatusActive = Boolean(createdRecord.status) && !reportsActive;
+  const createdStatusActive =
+    Boolean(createdRecord.status) && !reportsActive && !listNotice;
   // Its "Open record" shows with its words, not over a page status.
   const createdOpenShown = createdRecord.openable && !reportsActive && !status;
   const isAdmin =
@@ -2853,9 +3153,26 @@ export default function ServerBackedViewsWorkspace({
                 }
               >
                 <span role="status">
-                  {reportsActive ? "" : status || createdRecord.status}
+                  {reportsActive ? (
+                    ""
+                  ) : status ? (
+                    status
+                  ) : listNotice ? (
+                    <ListChangeWords notice={listNotice} />
+                  ) : (
+                    createdRecord.status
+                  )}
                 </span>
-                {createdOpenShown ? (
+                {listNotice && !reportsActive && !status ? (
+                  <ListChangeActions
+                    notice={listNotice}
+                    undoDisabled={Boolean(listBusy)}
+                    onUndo={undoListChange}
+                    onOpenRecord={(recordId) =>
+                      openRecordFromResults(recordId, undefined, false)
+                    }
+                  />
+                ) : createdOpenShown ? (
                   <Button
                     type="button"
                     variant="ghost"
@@ -3143,143 +3460,180 @@ export default function ServerBackedViewsWorkspace({
                 </Empty>
               ) : (
                 <div className="access-fill flex min-w-0 flex-col gap-3">
-                  <AccessToolbar
-                    searchLabel={`Search ${moduleName}`}
-                    searchId={SEARCH_ID}
-                    placeholder={`Search ${moduleName.toLowerCase()}`}
-                    query={draft.definition.search ?? ""}
-                    onQueryChange={(query) =>
-                      updateDefinition((current) => ({
-                        ...current,
-                        search: query || null,
-                      }))
-                    }
-                    searchMaxLength={240}
-                    sort={quickSortValue}
-                    sortOptions={[
-                      ...(!quickSortFields.some(
-                        (field) => field.id === firstSort?.fieldId,
-                      ) && firstSort
-                        ? [
-                            {
-                              value: quickSortValue,
-                              label: "Saved sort field unavailable",
-                              disabled: true,
-                            },
-                          ]
-                        : []),
-                      { value: "", label: "Default order" },
-                      ...quickSortFields.flatMap((field) => [
-                        {
-                          value: `${field.id}:asc`,
-                          label: quickSortLabel(field, "asc"),
-                        },
-                        {
-                          value: `${field.id}:desc`,
-                          label: quickSortLabel(field, "desc"),
-                        },
-                      ]),
-                    ]}
-                    onSortChange={changeQuickSort}
-                    sortDisabled={Boolean(pendingAction)}
-                    filtersDisabled={Boolean(pendingAction)}
-                    chips={filterChips}
-                    filtersOpen={filtersOpen}
-                    onFiltersOpenChange={setFiltersOpen}
-                    onClearFilters={() =>
-                      updateDefinition((current) => ({
-                        ...current,
-                        filters: [],
-                        deleted: "exclude",
-                      }))
-                    }
-                    sortInFiltersBelowXl
-                    quickFilters={
-                      quickField && quickFilterShown ? (
-                        <QuickFilter
-                          field={quickField}
-                          counts={quickFilterCounts}
-                          value={
-                            typeof quickFilterValue === "string"
-                              ? quickFilterValue
-                              : null
+                  {/* DR-SI-5.4: with rows selected, the selection bar takes
+                    the toolbar's place in the same height. The toolbar stays
+                    mounted, invisible and inert, so the rows never move and
+                    its state is there when the bar goes. */}
+                  <div className="relative min-w-0 shrink-0">
+                    {selectedRows.length > 0 ? (
+                      <div className="absolute inset-x-0 top-0 z-10">
+                        <RecordSelectionBar
+                          rows={selectedRows}
+                          fields={queriedFields.filter(changesFromList)}
+                          busy={Boolean(listBusy)}
+                          narrow={narrowList}
+                          onApply={(field, value) =>
+                            changeRows(selectedRows, field, value, "selection")
                           }
-                          disabled={Boolean(pendingAction)}
-                          onChange={setQuickFilter}
-                        />
-                      ) : null
-                    }
-                    actions={
-                      <div className="flex items-center gap-2">
-                        {/* On a phone Columns moves into the view menu. */}
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="min-h-11 max-md:hidden"
-                          disabled={Boolean(pendingAction)}
-                          onClick={() =>
-                            setViewPanel({ kind: "columns", open: true })
-                          }
-                        >
-                          <Columns3 aria-hidden="true" />
-                          Columns
-                        </Button>
-                        <LayoutMenu
-                          layout={presentationLayout}
-                          disabled={Boolean(pendingAction)}
-                          onLayoutChange={changeLayout}
-                          onOpenSettings={() =>
-                            setViewPanel({ kind: "layout", open: true })
-                          }
+                          onClear={() => {
+                            setRowSelection(null);
+                            focusToolbarAfterBar(true);
+                          }}
                         />
                       </div>
-                    }
-                  >
-                    <SavedViewFilterControls
-                      moduleId={moduleId}
-                      logic={draft.definition.logic}
-                      filters={draft.definition.filters}
-                      fields={fields}
-                      activeFields={activeFields}
-                      rowKeyFor={filterRowKeyFor}
-                      onLogicChange={(logic) =>
-                        updateDefinition((current) => ({ ...current, logic }))
-                      }
-                      onUpdateFilter={updateFilter}
-                      onRemoveFilter={removeFilter}
-                      onAddFilter={addFilter}
-                      refusedRowKeys={
-                        refusedFilterRows?.draftKey === draftKey
-                          ? refusedFilterRows.keys
-                          : undefined
-                      }
-                      focusRefusedRow={
-                        refusedFilterRows?.draftKey === draftKey &&
-                        refusedFilterRows.focus
-                      }
-                      onRefusedRowFocused={() =>
-                        setRefusedFilterRows((current) =>
-                          current?.focus
-                            ? { ...current, focus: false }
-                            : current,
-                        )
-                      }
-                    />
-                    <FilterSelect
-                      id="openview-deleted-records"
-                      label="Deleted"
-                      ariaLabel="Deleted records"
-                      value={draft.definition.deleted}
-                      options={[
-                        { value: "exclude", label: "Hide deleted records" },
-                        { value: "include", label: "Show deleted records" },
-                        { value: "only", label: "Show only deleted records" },
-                      ]}
-                      onChange={(deleted) =>
-                        updateDefinition((current) => ({ ...current, deleted }))
-                      }
-                    />
-                  </AccessToolbar>
+                    ) : null}
+                    <div
+                      inert={selectedRows.length > 0}
+                      className={cn(selectedRows.length > 0 && "invisible")}
+                    >
+                      <AccessToolbar
+                        searchLabel={`Search ${moduleName}`}
+                        searchId={SEARCH_ID}
+                        placeholder={`Search ${moduleName.toLowerCase()}`}
+                        query={draft.definition.search ?? ""}
+                        onQueryChange={(query) =>
+                          updateDefinition((current) => ({
+                            ...current,
+                            search: query || null,
+                          }))
+                        }
+                        searchMaxLength={240}
+                        sort={quickSortValue}
+                        sortOptions={[
+                          ...(!quickSortFields.some(
+                            (field) => field.id === firstSort?.fieldId,
+                          ) && firstSort
+                            ? [
+                                {
+                                  value: quickSortValue,
+                                  label: "Saved sort field unavailable",
+                                  disabled: true,
+                                },
+                              ]
+                            : []),
+                          { value: "", label: "Default order" },
+                          ...quickSortFields.flatMap((field) => [
+                            {
+                              value: `${field.id}:asc`,
+                              label: quickSortLabel(field, "asc"),
+                            },
+                            {
+                              value: `${field.id}:desc`,
+                              label: quickSortLabel(field, "desc"),
+                            },
+                          ]),
+                        ]}
+                        onSortChange={changeQuickSort}
+                        sortDisabled={Boolean(pendingAction)}
+                        filtersDisabled={Boolean(pendingAction)}
+                        chips={filterChips}
+                        filtersOpen={filtersOpen}
+                        onFiltersOpenChange={setFiltersOpen}
+                        onClearFilters={() =>
+                          updateDefinition((current) => ({
+                            ...current,
+                            filters: [],
+                            deleted: "exclude",
+                          }))
+                        }
+                        sortInFiltersBelowXl
+                        quickFilters={
+                          quickField && quickFilterShown ? (
+                            <QuickFilter
+                              field={quickField}
+                              counts={quickFilterCounts}
+                              value={
+                                typeof quickFilterValue === "string"
+                                  ? quickFilterValue
+                                  : null
+                              }
+                              disabled={Boolean(pendingAction)}
+                              onChange={setQuickFilter}
+                            />
+                          ) : null
+                        }
+                        actions={
+                          <div className="flex items-center gap-2">
+                            {/* On a phone Columns moves into the view menu. */}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="min-h-11 max-md:hidden"
+                              disabled={Boolean(pendingAction)}
+                              onClick={() =>
+                                setViewPanel({ kind: "columns", open: true })
+                              }
+                            >
+                              <Columns3 aria-hidden="true" />
+                              Columns
+                            </Button>
+                            <LayoutMenu
+                              layout={presentationLayout}
+                              disabled={Boolean(pendingAction)}
+                              onLayoutChange={changeLayout}
+                              onOpenSettings={() =>
+                                setViewPanel({ kind: "layout", open: true })
+                              }
+                            />
+                          </div>
+                        }
+                      >
+                        <SavedViewFilterControls
+                          moduleId={moduleId}
+                          logic={draft.definition.logic}
+                          filters={draft.definition.filters}
+                          fields={fields}
+                          activeFields={activeFields}
+                          rowKeyFor={filterRowKeyFor}
+                          onLogicChange={(logic) =>
+                            updateDefinition((current) => ({
+                              ...current,
+                              logic,
+                            }))
+                          }
+                          onUpdateFilter={updateFilter}
+                          onRemoveFilter={removeFilter}
+                          onAddFilter={addFilter}
+                          refusedRowKeys={
+                            refusedFilterRows?.draftKey === draftKey
+                              ? refusedFilterRows.keys
+                              : undefined
+                          }
+                          focusRefusedRow={
+                            refusedFilterRows?.draftKey === draftKey &&
+                            refusedFilterRows.focus
+                          }
+                          onRefusedRowFocused={() =>
+                            setRefusedFilterRows((current) =>
+                              current?.focus
+                                ? { ...current, focus: false }
+                                : current,
+                            )
+                          }
+                        />
+                        <FilterSelect
+                          id="openview-deleted-records"
+                          label="Deleted"
+                          ariaLabel="Deleted records"
+                          value={draft.definition.deleted}
+                          options={[
+                            { value: "exclude", label: "Hide deleted records" },
+                            { value: "include", label: "Show deleted records" },
+                            {
+                              value: "only",
+                              label: "Show only deleted records",
+                            },
+                          ]}
+                          onChange={(deleted) =>
+                            updateDefinition((current) => ({
+                              ...current,
+                              deleted,
+                            }))
+                          }
+                        />
+                      </AccessToolbar>
+                    </div>
+                  </div>
 
                   <div className="access-fill min-w-0">
                     {generalGroupedView ? (
@@ -3383,7 +3737,7 @@ export default function ServerBackedViewsWorkspace({
                           isUuid(requestedRecord) ? requestedRecord : null
                         }
                         page={{
-                          rows: pageRows,
+                          rows: listRows,
                           offset: renderedRecordOffset,
                           total: currentRecordPage?.total ?? pageRows.length,
                           hasMore: currentRecordPage?.hasMore ?? false,
@@ -3402,6 +3756,36 @@ export default function ServerBackedViewsWorkspace({
                         pending={Boolean(pendingAction)}
                         pageSize={currentRecordPage?.limit ?? recordPageSize}
                         newRecord={createdRecord.pinned}
+                        choiceCell={choiceCell}
+                        chipFieldId={quickField?.id ?? null}
+                        selection={
+                          selectionAllowed
+                            ? {
+                                selectedIds: new Set(selectedIds),
+                                disabled:
+                                  Boolean(listBusy) || Boolean(pendingAction),
+                                onToggle: (recordId, range) =>
+                                  setRowSelection({
+                                    key: listActionsKey,
+                                    value: toggleRow(
+                                      listSelection,
+                                      listRowIds,
+                                      recordId,
+                                      range,
+                                    ),
+                                  }),
+                                onToggleAll: () =>
+                                  setRowSelection({
+                                    key: listActionsKey,
+                                    value: toggleAllRows(
+                                      listSelection,
+                                      listRowIds,
+                                    ),
+                                  }),
+                              }
+                            : null
+                        }
+                        busyRecordId={listBusy?.recordId ?? null}
                         onOpenRecord={openRecordFromResults}
                         onPageIndexChange={(pageIndex) => {
                           if (rowPageLoading || pendingAction) return;

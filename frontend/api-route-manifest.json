@@ -1998,6 +1998,12 @@
     "path": "/api/departments"
   },
   {
+    "adapter": "frontend/src/components/systems/openview/adapters/record-batch-api.ts",
+    "function": "batchUpdateOpenViewRecords",
+    "method": "POST",
+    "path": "/api/records/batch-update"
+  },
+  {
     "adapter": "frontend/src/components/systems/openview/adapters/record-files-api.ts",
     "function": "archiveRecordFile",
     "method": "POST",

@@ -98,6 +98,7 @@ OpenView is for reading records and reports. Its content belongs to departments 
 | Report run | `ReportRun`, "Run now" | One unchangeable result of a report. | Customer |
 | Eligible readers | `ReportRunEligibleUser` | The module readers at the time of a report run. To open the run, a person must be an eligible reader and still read the module now. | Internal |
 | Schedule | `ScheduledWork` kind `report-run`, "Create schedule" | A repeated time for a report run. A scheduled run uses the system actor. | Customer |
+| Selection bar | `RecordSelectionBar`, `record-batch-change.ts`, "<n> selected" | The bar that takes the place of a list's toolbar while rows are selected in the table layout: how many are selected, Change (one Choice list or Checkbox field for all of them), and Clear selection. A change reports in the page status with Undo. | Customer |
 
 ## Access
 

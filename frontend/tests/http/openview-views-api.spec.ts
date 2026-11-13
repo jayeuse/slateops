@@ -3108,7 +3108,7 @@ for (const layout of ["table", "grid", "gallery"] as const) {
         .getByRole("table")
         .getByRole("row")
         .nth(1)
-        .getByRole("button", { name: "In service" })
+        .getByRole("button", { name: "In service", exact: true })
         .click();
       const inspector = page.getByRole("dialog", { name: "Record details" });
       await expect(
@@ -3157,7 +3157,9 @@ test("saved table presentation controls persist and drive the rendered table", a
   await page.setViewportSize({ width: 768, height: 1024 });
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
   const table = page.getByRole("table");
+  // The first column holds a writer's selection boxes (SI-5.1).
   await expect(table.getByRole("columnheader")).toHaveText([
+    "",
     "Equipment name",
     "Status",
     "Serial number",
@@ -3219,6 +3221,7 @@ test("saved table presentation controls persist and drive the rendered table", a
 
   await page.reload();
   await expect(table.getByRole("columnheader")).toHaveText([
+    "",
     "Status",
     "Equipment name",
     "Updated",
@@ -3245,11 +3248,11 @@ test("saved table presentation controls persist and drive the rendered table", a
     .getByRole("row")
     .first()
     .getByRole("cell")
-    .first();
+    .nth(1);
   await expect(pinnedHeader).toHaveCSS("position", "sticky");
-  await expect(pinnedHeader).toHaveCSS("left", "0px");
+  await expect(pinnedHeader).toHaveCSS("left", "40px");
   await expect(pinnedCell).toHaveCSS("position", "sticky");
-  await expect(pinnedCell).toHaveCSS("left", "0px");
+  await expect(pinnedCell).toHaveCSS("left", "40px");
   const initialPinnedLeft = await pinnedHeader.evaluate(
     (element) => element.getBoundingClientRect().left,
   );
@@ -3273,11 +3276,11 @@ test("saved table presentation controls persist and drive the rendered table", a
     .nth(1)
     .getByRole("row")
     .first();
-  await expect(firstDataRow.getByRole("cell").first()).toHaveCSS(
+  await expect(firstDataRow.getByRole("cell").nth(1)).toHaveCSS(
     "padding-top",
     "6px",
   );
-  await expect(firstDataRow.getByRole("cell").nth(1)).toHaveCSS(
+  await expect(firstDataRow.getByRole("cell").nth(2)).toHaveCSS(
     "white-space",
     "normal",
   );
@@ -3556,9 +3559,10 @@ test("a click anywhere on a record's row opens it, though its name cell is pinne
     .nth(1)
     .getByRole("row")
     .first();
-  // A real click on the second cell, outside the pinned name cell.
-  const cell = await firstRow.getByRole("cell").nth(1).boundingBox();
-  if (!cell) throw new Error("The second cell has no box");
+  // A real click on a cell outside the pinned name cell, past the
+  // selection box and the Status value's menu (OD6, SI-1.1).
+  const cell = await firstRow.getByRole("cell").nth(3).boundingBox();
+  if (!cell) throw new Error("The fourth cell has no box");
   await page.mouse.click(cell.x + cell.width / 2, cell.y + cell.height / 2);
   await expect(page).toHaveURL(/[?&]record=/);
   await expect(
