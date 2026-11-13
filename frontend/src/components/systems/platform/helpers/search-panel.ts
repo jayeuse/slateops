@@ -121,36 +121,41 @@ export function showAllHref(text: string): Route {
 
 // FX-SR-8: the search words in the address (`q` on the Search page, `search`
 // in Files) belong to the account and organization that wrote or filled
-// them. The tab remembers that scope, also across a reload, so a page opened
-// for another account or organization drops the words instead of filling its
-// field with them.
+// them. The tab remembers, per name, the owner of each recent value (S3-6:
+// not only the latest), also across a reload, so a page opened for another
+// account or organization drops the words instead of filling its field.
 const ADDRESS_WORDS_KEY = "slateops-search-address-words";
+/** Values kept per name; the oldest go first. */
+const ADDRESS_WORDS_LIMIT = 50;
 type AddressWordsName = "q" | "search";
-type AddressWords = Partial<
-  Record<AddressWordsName, { scope: string; value: string }>
->;
+/** Per name: [value, scope] pairs, oldest first; the last writer owns a value. */
+type AddressWords = Record<AddressWordsName, [string, string][]>;
 
+/** The stored record; an old one-entry shape or a broken value reads as empty. */
 function readAddressWords(): AddressWords {
+  const words: AddressWords = { q: [], search: [] };
   try {
     const parsed: unknown = JSON.parse(
       window.sessionStorage.getItem(ADDRESS_WORDS_KEY) ?? "{}",
     );
-    if (typeof parsed !== "object" || parsed === null) return {};
-    const words: AddressWords = {};
+    if (typeof parsed !== "object" || parsed === null) return words;
     for (const name of ["q", "search"] as const) {
-      const entry: unknown = (parsed as Record<string, unknown>)[name];
-      if (
-        typeof entry === "object" &&
-        entry !== null &&
-        typeof (entry as { scope?: unknown }).scope === "string" &&
-        typeof (entry as { value?: unknown }).value === "string"
-      )
-        words[name] = entry as { scope: string; value: string };
+      const entries: unknown = (parsed as Record<string, unknown>)[name];
+      if (!Array.isArray(entries)) continue;
+      words[name] = entries
+        .filter(
+          (entry): entry is [string, string] =>
+            Array.isArray(entry) &&
+            entry.length === 2 &&
+            typeof entry[0] === "string" &&
+            typeof entry[1] === "string",
+        )
+        .slice(-ADDRESS_WORDS_LIMIT);
     }
-    return words;
   } catch {
-    return {};
+    // A broken record reads as empty.
   }
+  return words;
 }
 
 /** The scope of the search words: the verified account and organization. */
@@ -168,10 +173,12 @@ export function rememberAddressWords(
   value: string,
 ): void {
   try {
-    window.sessionStorage.setItem(
-      ADDRESS_WORDS_KEY,
-      JSON.stringify({ ...readAddressWords(), [name]: { scope, value } }),
-    );
+    const words = readAddressWords();
+    words[name] = [
+      ...words[name].filter(([written]) => written !== value),
+      [value, scope] as [string, string],
+    ].slice(-ADDRESS_WORDS_LIMIT);
+    window.sessionStorage.setItem(ADDRESS_WORDS_KEY, JSON.stringify(words));
   } catch {
     // Without storage the words stay unowned, as on a first visit.
   }
@@ -184,8 +191,8 @@ export function addressWordsOfAnotherScope(
   value: string,
 ): boolean {
   if (typeof window === "undefined") return false;
-  const owner = readAddressWords()[name];
-  return owner !== undefined && owner.value === value && owner.scope !== scope;
+  const owner = readAddressWords()[name].find(([written]) => written === value);
+  return owner !== undefined && owner[1] !== scope;
 }
 
 /**

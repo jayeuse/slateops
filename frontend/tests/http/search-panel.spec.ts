@@ -1157,3 +1157,45 @@ test("FX-SR-8 after an organization change the Search page drops the previous or
   expect(otherReads).toEqual([]);
   expect(reads.length).toBeGreaterThan(0);
 });
+
+test("S6-AC5 an earlier word of the previous account never fills the next account's Search page", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const session = await controlledSession(page, {
+    id: defaultSignedInIdentity.id,
+    role: "admin",
+  });
+  const reads = await installSearch(page);
+  // The first account settles two different words on the Search page.
+  await page.goto("/platform?section=search");
+  await pageField(page).fill("alpha");
+  await expect(page).toHaveURL("/platform?section=search&q=alpha");
+  await pageField(page).fill("beta");
+  await expect(page).toHaveURL("/platform?section=search&q=beta");
+  // Another account signs in on this tab and opens the first words' address.
+  session.identity = {
+    id: "00000000-0000-4000-8000-000000000301",
+    role: "admin",
+  };
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("slateops:session-recheck")),
+  );
+  await expect(pageField(page)).toHaveValue("");
+  const before = reads.length;
+  await page.goto("/platform?section=search&q=alpha");
+  await expect(page).toHaveURL("/platform?section=search");
+  await expect(pageField(page)).toHaveValue("");
+  await expect(card(page, "Records")).toContainText(
+    "Enter a search to find records.",
+  );
+  expect(
+    reads
+      .slice(before)
+      .filter(
+        (url) =>
+          (url.searchParams.get("search") ?? url.searchParams.get("q")) ===
+          "alpha",
+      ),
+  ).toEqual([]);
+});

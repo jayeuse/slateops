@@ -5,11 +5,13 @@ import type { PlatformSearchItem } from "../../../src/components/systems/platfor
 import {
   PANEL_SCOPE,
   activeOrder,
+  addressWordsOfAnotherScope,
   excerptParts,
   groupHeading,
   messageRows,
   moveActive,
   platformRows,
+  rememberAddressWords,
   showAllHref,
 } from "../../../src/components/systems/platform/helpers/search-panel";
 import { ids } from "./fixtures";
@@ -133,4 +135,82 @@ test("UF-C4.5 Show all results opens the Search page with the typed words", () =
   expect(showAllHref("harbor rate & card")).toBe(
     "/platform?section=search&q=harbor%20rate%20%26%20card",
   );
+});
+
+// Security review S3-6: the tab records which account and organization wrote
+// or filled each value of the address words, not only the latest one, so
+// older words of another account never fill the field.
+const ADDRESS_WORDS_KEY = "slateops-search-address-words";
+const A = "account-a:organization-1";
+const B = "account-b:organization-1";
+
+function withTabStorage(run: (storage: Map<string, string>) => void) {
+  const storage = new Map<string, string>();
+  const global = globalThis as { window?: unknown };
+  const previous = global.window;
+  global.window = {
+    sessionStorage: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => void storage.set(key, value),
+    },
+  };
+  try {
+    run(storage);
+  } finally {
+    global.window = previous;
+  }
+}
+
+test("S6-AC1 every value an account wrote stays its own, not only the latest", () => {
+  withTabStorage(() => {
+    rememberAddressWords("q", A, "alpha");
+    rememberAddressWords("q", A, "beta");
+    expect(addressWordsOfAnotherScope("q", B, "alpha")).toBe(true);
+    expect(addressWordsOfAnotherScope("q", B, "beta")).toBe(true);
+  });
+});
+
+test("S6-AC2 another account's later words do not free the earlier words", () => {
+  withTabStorage(() => {
+    rememberAddressWords("q", A, "alpha");
+    rememberAddressWords("q", A, "beta");
+    rememberAddressWords("q", B, "gamma");
+    expect(addressWordsOfAnotherScope("q", B, "alpha")).toBe(true);
+    expect(addressWordsOfAnotherScope("q", B, "beta")).toBe(true);
+    expect(addressWordsOfAnotherScope("q", B, "gamma")).toBe(false);
+    expect(addressWordsOfAnotherScope("q", A, "gamma")).toBe(true);
+  });
+});
+
+test("S6-AC3 words nobody wrote are free, and the last writer of a value owns it", () => {
+  withTabStorage(() => {
+    expect(addressWordsOfAnotherScope("q", B, "pasted link")).toBe(false);
+    rememberAddressWords("q", A, "shared");
+    rememberAddressWords("q", B, "shared");
+    expect(addressWordsOfAnotherScope("q", B, "shared")).toBe(false);
+    expect(addressWordsOfAnotherScope("q", A, "shared")).toBe(true);
+    // Each name keeps its own record.
+    expect(addressWordsOfAnotherScope("search", A, "shared")).toBe(false);
+  });
+});
+
+test("S6-AC4 at most 50 values per name are kept, and an old or broken record reads as empty", () => {
+  withTabStorage((storage) => {
+    for (let index = 1; index <= 51; index += 1)
+      rememberAddressWords("q", A, `word ${index}`);
+    // The oldest value is trimmed; the 50 latest stay.
+    expect(addressWordsOfAnotherScope("q", B, "word 1")).toBe(false);
+    expect(addressWordsOfAnotherScope("q", B, "word 2")).toBe(true);
+    expect(addressWordsOfAnotherScope("q", B, "word 51")).toBe(true);
+
+    storage.set(
+      ADDRESS_WORDS_KEY,
+      JSON.stringify({ q: { scope: A, value: "alpha" } }),
+    );
+    expect(addressWordsOfAnotherScope("q", B, "alpha")).toBe(false);
+    storage.set(ADDRESS_WORDS_KEY, "{not json");
+    expect(addressWordsOfAnotherScope("q", B, "alpha")).toBe(false);
+    rememberAddressWords("q", A, "alpha");
+    expect(addressWordsOfAnotherScope("q", B, "alpha")).toBe(true);
+  });
 });
