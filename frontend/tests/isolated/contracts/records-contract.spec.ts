@@ -82,6 +82,10 @@ describeContracts("Records and relationships", [
           },
         ],
       }),
+    // The server answers each record sent, once, by its id.
+    responses: {
+      "POST /api/records/batch-update": { results: [{ record_id: recordId }] },
+    },
   },
   { name: "deleteOpenViewRecord", run: () => deleteOpenViewRecord(recordId) },
   { name: "restoreOpenViewRecord", run: () => restoreOpenViewRecord(recordId) },

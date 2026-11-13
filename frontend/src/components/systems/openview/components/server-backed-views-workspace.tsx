@@ -3144,6 +3144,15 @@ export default function ServerBackedViewsWorkspace({
   // while a page status ("Refreshing records…") shows over it for a moment.
   const createdStatusActive =
     Boolean(createdRecord.status) && !reportsActive && !listNotice;
+  // G7 (PR4 screen review): a list change's status takes the meta text's
+  // place too, on one line; its words shrink first.
+  const listStatusActive = Boolean(listNotice) && !reportsActive;
+  // FX-SR-2b: the one line lies over the meta text only where it has room:
+  // below 640px (the header stacks) and from 1280px. Between them the
+  // header actions sit beside the title and would cover it, so the status
+  // stays in the line's flow and may wrap; its buttons stay reachable.
+  const statusOverMeta = createdStatusActive || listStatusActive;
+  const overMetaClassName = "max-sm:invisible xl:invisible";
   // Its "Open record" shows with its words, not over a page status.
   const createdOpenShown = createdRecord.openable && !reportsActive && !status;
   const isAdmin =
@@ -3155,13 +3164,14 @@ export default function ServerBackedViewsWorkspace({
           title={moduleName ?? "Records"}
           description={
             <span className="relative flex flex-wrap items-center gap-x-2 gap-y-1">
-              {/* DR-6.1: an item 6 status takes the meta text's place at
-                every width. The meta and the badge keep their boxes,
+              {/* DR-6.1: an item 6 or list status takes the meta text's
+                place below 640px and from 1280px (FX-SR-2b; between, it
+                follows the meta text). The meta and the badge keep their boxes,
                 invisible and out of the accessibility tree, so the line and
                 the toolbar never move. The Records tab keeps the count and
                 the breadcrumb the department. */}
               {meta ? (
-                <span className={cn(createdStatusActive && "invisible")}>
+                <span className={cn(statusOverMeta && overMetaClassName)}>
                   {meta}
                 </span>
               ) : null}
@@ -3171,7 +3181,7 @@ export default function ServerBackedViewsWorkspace({
               {dirty && canManageViews && !reportsActive ? (
                 <Badge
                   variant="outline"
-                  className={cn(createdStatusActive && "invisible")}
+                  className={cn(statusOverMeta && overMetaClassName)}
                 >
                   Unsaved changes
                 </Badge>
@@ -3182,12 +3192,21 @@ export default function ServerBackedViewsWorkspace({
                 place. */}
               <span
                 className={
-                  createdStatusActive
-                    ? "absolute top-0 left-0 flex items-center gap-x-2 whitespace-nowrap"
-                    : "contents"
+                  listStatusActive
+                    ? // The buttons keep their size; the words take an
+                      // ellipsis within the line (a phone) or 42rem.
+                      "flex min-w-0 items-center gap-x-2 max-sm:absolute max-sm:inset-x-0 max-sm:top-0 max-sm:whitespace-nowrap sm:contents xl:absolute xl:top-0 xl:left-0 xl:flex xl:max-w-2xl xl:whitespace-nowrap"
+                    : createdStatusActive
+                      ? "flex items-center gap-x-2 max-sm:absolute max-sm:top-0 max-sm:left-0 max-sm:whitespace-nowrap sm:contents xl:absolute xl:top-0 xl:left-0 xl:flex xl:whitespace-nowrap"
+                      : "contents"
                 }
               >
-                <span role="status">
+                <span
+                  role="status"
+                  className={cn(
+                    listStatusActive && "min-w-0 max-sm:truncate xl:truncate",
+                  )}
+                >
                   {reportsActive ? (
                     ""
                   ) : status ? (
@@ -3234,7 +3253,7 @@ export default function ServerBackedViewsWorkspace({
               </span>
               {/* Holds the status's empty place in the line while its wrapper
                 is lifted, so the line keeps its rest height. */}
-              {createdStatusActive ? <span aria-hidden="true" /> : null}
+              {statusOverMeta ? <span aria-hidden="true" /> : null}
             </span>
           }
           actions={
@@ -3506,7 +3525,14 @@ export default function ServerBackedViewsWorkspace({
                     its state is there when the bar goes. */}
                   <div className="relative min-w-0 shrink-0">
                     {selectedRows.length > 0 ? (
-                      <div className="absolute inset-x-0 top-0 z-10">
+                      <div
+                        className={cn(
+                          "absolute inset-x-0 top-0 z-10",
+                          // A phone: the bar sits on the search row's input line,
+                          // under the row's "Search" label.
+                          narrowList && "pt-[1.625rem]",
+                        )}
+                      >
                         <RecordSelectionBar
                           rows={selectedRows}
                           fields={queriedFields.filter(changesFromList)}
@@ -3522,9 +3548,18 @@ export default function ServerBackedViewsWorkspace({
                         />
                       </div>
                     ) : null}
+                    {/* From 768px the whole toolbar yields. A phone's toolbar
+                      has several rows: only the search row (search and Filters)
+                      yields; Layout and the quick filter stay usable, and a
+                      change there ends the selection (DR-SI-5.4, DR-SI-5.10). */}
                     <div
-                      inert={selectedRows.length > 0}
-                      className={cn(selectedRows.length > 0 && "invisible")}
+                      inert={selectedRows.length > 0 && !narrowList}
+                      className={cn(
+                        selectedRows.length > 0 &&
+                          (narrowList
+                            ? "[&_[aria-describedby$='-filter-count']]:invisible [&_div:has(>[data-slot=field-label])]:invisible"
+                            : "invisible"),
+                      )}
                     >
                       <AccessToolbar
                         searchLabel={`Search ${moduleName}`}

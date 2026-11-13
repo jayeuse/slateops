@@ -5,10 +5,13 @@ import {
   type Locator,
   type Page,
 } from "./helpers/test";
+import { pageOf } from "../helpers/pagination";
+import { wireRecord } from "../helpers/wire";
 import {
   installListApi,
   listIds,
   recordId,
+  statusLabel,
   type Viewer,
 } from "./helpers/openview-list-api";
 
@@ -608,4 +611,226 @@ test("SI-C5.9: on a phone a writer selects two rows with 44 px boxes and changes
   expect(api.stored(0)?.[listIds.paid]).toBe(true);
   expect(api.stored(1)?.[listIds.paid]).toBe(true);
   await expect(page).not.toHaveURL(/[?&]record=/);
+});
+
+test("FX-SR-1: on a phone the bar takes the search row only; Layout and the quick filter stay usable, and a quick-filter press clears the selection", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installListApi(page);
+  await page.goto(contacts);
+  const list = page.getByRole("list", { name: "Records" });
+  const strip = page.getByRole("group", { name: "Status" });
+  await expect(strip).toBeVisible();
+  const restingTop = (await list.boundingBox())?.y;
+
+  await box(page, "Ana Cruz").click();
+
+  const bar = selectionBar(page);
+  await expect(bar).toContainText("1 selected");
+  const layout = page.getByRole("button", { name: /^Layout: / });
+  await expect(layout).toBeVisible();
+  await expect(strip).toBeVisible();
+  await expect(
+    page.getByRole("searchbox", { name: "Search Contacts" }),
+  ).toHaveCount(0);
+  const [barBox, layoutBox, stripBox, listBox] = await Promise.all(
+    [bar, layout, strip, list].map((target) => target.boundingBox()),
+  );
+  if (!barBox || !layoutBox || !stripBox || !listBox)
+    throw new Error("A toolbar part has no box");
+  // The bar covers the search row only: Layout sits below it.
+  expect(layoutBox.y).toBeGreaterThanOrEqual(barBox.y + barBox.height);
+  // No empty band: the list follows the last toolbar row.
+  expect(listBox.y - (stripBox.y + stripBox.height)).toBeLessThan(44);
+  // The rows do not move.
+  expect(listBox.y).toBe(restingTop);
+
+  await strip.getByRole("button", { name: /^Former/ }).click();
+
+  await expect(bar).toHaveCount(0);
+  await expect(page.getByRole("checkbox", { checked: true })).toHaveCount(0);
+});
+
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 390, height: 844 },
+]) {
+  test(`FX-SR-2: at ${viewport.width} px the longest list status stays on the meta line with its link and Undo, and the toolbar does not move`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    const api = await installListApi(page);
+    await page.goto(contacts);
+    const toolbar = page.getByRole("region", {
+      name: "Search Contacts controls",
+    });
+    await expect(toolbar).toBeVisible();
+    // Measured from the title, so a page scroll on a phone does not count.
+    const title = page.getByRole("heading", { level: 1 });
+    const below = async () => {
+      const [titleBox, toolbarBox] = await Promise.all([
+        title.boundingBox(),
+        toolbar.boundingBox(),
+      ]);
+      return (toolbarBox?.y ?? 0) - (titleBox?.y ?? 0);
+    };
+    const restingTop = await below();
+    api.changeElsewhere(1, { [listIds.status]: "prospect" });
+    api.state.forced.set(recordId(2), { status: "forbidden" });
+    api.state.forced.set(recordId(3), {
+      status: "invalid",
+      field_id: listIds.owner,
+      message: "Choose a person who can read this module",
+    });
+    for (const name of [
+      "Ana Cruz",
+      "Ben Ortiz",
+      "Chen Wu",
+      "Dana Lim",
+      "Eli Park",
+    ])
+      await box(page, name).click();
+    await selectionBar(page).getByRole("button", { name: "Change" }).click();
+    await page.getByRole("menuitem", { name: "Paid" }).click();
+    const panel = page.getByRole("dialog", { name: "Change Paid" });
+    await panel.getByRole("radio", { name: "On" }).click();
+    await panel.getByRole("button", { name: "Change 5 records" }).click();
+
+    await expect(pageStatus(page)).toHaveText(
+      "Paid changed on 2 records. 3 not changed.",
+    );
+    await expect(toolbar).toBeVisible();
+    expect(await below()).toBe(restingTop);
+    const link = metaLine(page).getByRole("button", { name: "3 not changed" });
+    await expect(link).toBeVisible();
+    await expect(undo(page)).toBeVisible();
+    const [statusBox, linkBox, undoBox] = await Promise.all(
+      [pageStatus(page), link, undo(page)].map((target) =>
+        target.boundingBox(),
+      ),
+    );
+    if (!statusBox || !linkBox || !undoBox)
+      throw new Error("The status line has no box");
+    // One line: the buttons sit on the words' line, inside the window.
+    expect(Math.abs(linkBox.y - statusBox.y)).toBeLessThan(8);
+    expect(Math.abs(undoBox.y - statusBox.y)).toBeLessThan(8);
+    expect(undoBox.x + undoBox.width).toBeLessThanOrEqual(viewport.width);
+  });
+}
+
+test("FX-SR-2b: at 1024 px with the actions beside the title, the longest list status keeps its link and Undo reachable", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1024, height: 800 });
+  const api = await installListApi(page);
+  await openContacts(page);
+  api.changeElsewhere(1, { [listIds.status]: "prospect" });
+  api.state.forced.set(recordId(2), { status: "forbidden" });
+  api.state.forced.set(recordId(3), {
+    status: "invalid",
+    field_id: listIds.owner,
+    message: "Choose a person who can read this module",
+  });
+  await box(page, "Ana Cruz").click();
+  await box(page, "Eli Park").click({ modifiers: ["Shift"] });
+  await selectionBar(page).getByRole("button", { name: "Change" }).click();
+  await page.getByRole("menuitem", { name: "Paid" }).click();
+  const panel = page.getByRole("dialog", { name: "Change Paid" });
+  await panel.getByRole("radio", { name: "On" }).click();
+  await panel.getByRole("button", { name: "Change 5 records" }).click();
+  await expect(pageStatus(page)).toHaveText(
+    "Paid changed on 2 records. 3 not changed.",
+  );
+
+  // A real click: nothing covers the link or Undo.
+  await metaLine(page).getByRole("button", { name: "3 not changed" }).click();
+  await expect(
+    page
+      .getByRole("dialog", { name: "Records not changed" })
+      .getByRole("listitem"),
+  ).toHaveCount(3);
+  await page.keyboard.press("Escape");
+  await undo(page).click();
+
+  await expect(pageStatus(page)).toHaveText("Paid changed back on 2 records.");
+  expect(api.state.batches).toHaveLength(2);
+});
+
+test("FX-SR-2b: at 1024 px the item 6 status of a hidden new record keeps Open record reachable", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1024, height: 800 });
+  const api = await installListApi(page, {
+    filters: [
+      {
+        field_id: listIds.status,
+        expected_type: "select",
+        operator: "eq",
+        value: "former",
+      },
+    ],
+  });
+  const createdId = "00000000-0000-4000-8000-000000002990";
+  await page.route(
+    `**/api/modules/${listIds.module}/assignable-users**`,
+    (route) => route.fulfill({ json: pageOf([], { limit: 100 }) }),
+  );
+  await page.route("**/api/records", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const body = route.request().postDataJSON() as {
+      data: Record<string, unknown>;
+    };
+    api.state.records.set(createdId, {
+      data: body.data,
+      updated_at: "2026-11-13T09:00:00Z",
+      is_deleted: false,
+    });
+    return route.fulfill({
+      status: 201,
+      json: wireRecord({
+        id: createdId,
+        module_id: listIds.module,
+        data: body.data,
+        display_values: {
+          [listIds.status]: statusLabel(body.data[listIds.status]) ?? "",
+        },
+        created_at: "2026-11-13T09:00:00Z",
+        updated_at: "2026-11-13T09:00:00Z",
+      }),
+    });
+  });
+  // The item 6 match read: an id search under the applied "Status is
+  // Former", which the new Active record does not meet.
+  await page.route("**/api/records/query", async (route) => {
+    const { definition } = route.request().postDataJSON() as {
+      definition: { search: string | null; deleted: string };
+    };
+    if (definition.search !== createdId || definition.deleted === "include")
+      return route.fallback();
+    return route.fulfill({ json: pageOf([], { limit: 1 }) });
+  });
+  await page.goto(contacts);
+  await expect(row(page, "Ben Ortiz")).toBeVisible();
+  await page.getByRole("button", { name: "New record" }).click();
+  const dialog = page.getByRole("dialog", { name: "New record" });
+  await dialog.getByRole("textbox", { name: /^Name/ }).fill("Nia Cole");
+  await dialog
+    .getByRole("combobox", { name: /^Status/ })
+    .selectOption("active");
+  await dialog
+    .getByRole("button", { name: "Create and add another", exact: true })
+    .click();
+  await expect(dialog.getByText("Nia Cole created.")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+
+  await expect(pageStatus(page)).toHaveText("Created, hidden by filters.");
+  const open = metaLine(page).getByRole("button", {
+    name: "Open record",
+    exact: true,
+  });
+  await open.click();
+
+  await expect(page).toHaveURL(new RegExp(`[?&]record=${createdId}`));
 });

@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 
-import type { RecordBatchResult } from "../../../src/components/systems/openview/adapters/record-batch-api";
+import {
+  batchUpdateOpenViewRecords,
+  type RecordBatchResult,
+} from "../../../src/components/systems/openview/adapters/record-batch-api";
 import type {
   OpenViewDataSourceField,
   OpenViewQueryDefinition,
@@ -21,7 +24,7 @@ import {
   undoSent,
   type SentRecord,
 } from "../../../src/components/systems/openview/domain/record-batch-change";
-import { ApiError } from "../../../src/lib/api";
+import { ApiContractError, ApiError } from "../../../src/lib/api";
 
 // List actions of the OpenView table (candidates 1 and 5 of
 // docs/specs/subtle-interactions.md): when "Show only" is offered, which
@@ -643,4 +646,109 @@ test("DR-SI-1.8 and DR-SI-5.9 an Undo reports what went back, offers no further 
   expect(failed.notice.message).toBe("Not undone. Try again.");
   expect(failed.notice.reference).toBe("req-9");
   expect(failed.keepUndo).toBe(true);
+});
+
+/** Answers the next request with this JSON body; returns the restore. */
+function answer(body: unknown) {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => Response.json(body)) as typeof fetch;
+  return () => {
+    globalThis.fetch = original;
+  };
+}
+
+const wireRow = (index: number) => ({
+  id: rowId(index),
+  module_id: moduleId,
+  data: { [statusId]: "former" },
+  display_values: {},
+  created_at: "2026-11-01T08:00:00Z",
+  updated_at: "2026-11-13T09:00:00Z",
+  deleted_at: null,
+  is_deleted: false,
+  performed_by: null,
+});
+
+test("FX-PD4-N1 a batch answer must hold exactly one known-shaped result per record sent", async () => {
+  const items = [1, 2].map((index) => ({
+    recordId: rowId(index),
+    revision: "2026-11-13T08:00:00Z",
+    fieldId: statusId,
+    value: "former",
+  }));
+  const cases: { case: string; body: unknown }[] = [
+    {
+      case: "a result is missing",
+      body: {
+        results: [
+          { status: "updated", record_id: rowId(1), record: wireRow(1) },
+        ],
+      },
+    },
+    {
+      case: "a record the page did not send",
+      body: {
+        results: [
+          { status: "stale", record_id: rowId(1) },
+          { status: "stale", record_id: rowId(9) },
+        ],
+      },
+    },
+    {
+      case: "one record answered twice",
+      body: {
+        results: [
+          { status: "stale", record_id: rowId(1) },
+          { status: "stale", record_id: rowId(1) },
+        ],
+      },
+    },
+    {
+      case: "an unknown key on a result",
+      body: {
+        results: [
+          { status: "stale", record_id: rowId(1), reason: "x" },
+          { status: "stale", record_id: rowId(2) },
+        ],
+      },
+    },
+    {
+      case: "an unknown key on the answer",
+      body: {
+        results: [
+          { status: "forbidden", record_id: rowId(1) },
+          { status: "forbidden", record_id: rowId(2) },
+        ],
+        partial: true,
+      },
+    },
+  ];
+  for (const item of cases) {
+    const restore = answer(item.body);
+    try {
+      await expect(
+        batchUpdateOpenViewRecords({ moduleId, items }),
+        item.case,
+      ).rejects.toBeInstanceOf(ApiContractError);
+    } finally {
+      restore();
+    }
+  }
+
+  // The exact answer, in any order, parses.
+  const restore = answer({
+    results: [
+      { status: "forbidden", record_id: rowId(2) },
+      { status: "updated", record_id: rowId(1), record: wireRow(1) },
+    ],
+  });
+  try {
+    const results = await batchUpdateOpenViewRecords({ moduleId, items });
+    expect(results.map((result) => [result.recordId, result.status])).toEqual([
+      [rowId(2), "forbidden"],
+      [rowId(1), "updated"],
+    ]);
+  } finally {
+    restore();
+  }
 });
