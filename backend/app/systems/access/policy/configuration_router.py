@@ -19,6 +19,7 @@ from app.core.database import get_db
 from app.systems.access.policy.checks import forbidden
 from app.systems.access.policy.delegation import replace_members
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
+from app.systems.access.policy.other_grants import groups_with_other_grants
 from app.systems.access.policy.schemas import (
     GroupAccessReplace,
     GroupAccessResponse,
@@ -181,6 +182,7 @@ def _group_response(
     row: Group,
     member_ids: list[UUID],
     access: list[GroupAccessResponse],
+    has_other_grants: bool,
 ) -> GroupResponse:
     return GroupResponse.model_validate(
         {
@@ -190,6 +192,7 @@ def _group_response(
             "revision": row.revision,
             "member_ids": member_ids,
             "access": access,
+            "has_other_grants": has_other_grants,
             "created_at": row.created_at,
             "updated_at": row.updated_at,
             "deleted_at": row.deleted_at,
@@ -204,6 +207,7 @@ def _single_group_response(db: Session, row: Group) -> GroupResponse:
         row,
         group_member_map(db, (row.id,)).get(row.id, []),
         group_access_map(db, (row.id,)).get(row.id, []),
+        row.id in groups_with_other_grants(db, (row.id,)),
     )
 
 
@@ -236,12 +240,18 @@ def list_groups(
         ids = [row.id for row in result.items]
         member_map = group_member_map(db, ids)
         access_map = group_access_map(db, ids)
+        other_grants = groups_with_other_grants(db, ids)
     except SQLAlchemyError as error:
         raise _database_unavailable(db) from error
     return GroupListResponse.model_validate(
         {
             "items": [
-                _group_response(row, member_map.get(row.id, []), access_map.get(row.id, []))
+                _group_response(
+                    row,
+                    member_map.get(row.id, []),
+                    access_map.get(row.id, []),
+                    row.id in other_grants,
+                )
                 for row in result.items
             ],
             "pagination": result.pagination,

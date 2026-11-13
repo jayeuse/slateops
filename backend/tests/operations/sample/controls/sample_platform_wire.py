@@ -308,7 +308,7 @@ class PlatformWire:
             }
             oracle = self.oracles()[kind]
             assert text == oracle["title"][:100]
-            item = {"kind": kind, **oracle, "can_open": True}
+            item = {"kind": kind, **oracle, "department_id": None, "can_open": True}
             if self.fault == "search_kind":
                 item["kind"] = "person" if kind == "record" else "record"
             if self.fault == "search_private":

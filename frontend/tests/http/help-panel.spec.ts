@@ -230,7 +230,7 @@ test("Help keyboard opening traps focus and Escape returns to the header without
   expect(api.writes).toEqual([]);
 });
 
-test("Help fits a phone and lists the existing Sandbox Build keys, not a new global or Comms dispatcher", async ({
+test("Help fits a phone and lists Search workspace and the Sandbox Build keys, not a Comms dispatcher", async ({
   page,
 }) => {
   const api = await installHelpApi(page);
@@ -255,6 +255,10 @@ test("Help fits a phone and lists the existing Sandbox Build keys, not a new glo
     "Redo",
   ])
     await expect(shortcuts(page)).toContainText(text);
+  // DR-9.6: the header search panel's shortcut, for everyone.
+  await expect(
+    shortcuts(page).getByText("Search workspace", { exact: true }),
+  ).toBeVisible();
   await expect(shortcuts(page)).not.toContainText(
     /new message|search messages/i,
   );
@@ -621,10 +625,22 @@ test("Help never resurrects a full Manage profile through its higher cached revi
   await expect(page.getByLabel("Contact email", { exact: true })).toHaveValue(
     "administrator@example.test",
   );
+  // The header Search opens the search panel; its "Show all results" leaves
+  // for the Search page (DR-4.8).
   await page
-    .getByRole("link", { name: "Search workspace", exact: true })
+    .getByRole("button", { name: "Search workspace", exact: true })
     .click();
-  await expect(page).toHaveURL(/\/platform$/);
+  const searchPanel = page.getByRole("dialog", {
+    name: "Search workspace",
+    exact: true,
+  });
+  await searchPanel
+    .getByRole("combobox", { name: "Search workspace", exact: true })
+    .fill("a");
+  await searchPanel
+    .getByRole("link", { name: /^Show all results for/ })
+    .click();
+  await expect(page).toHaveURL(/\/platform\?section=search/);
   api.workspace = { ...guestWorkspace, revision: 3 };
   await openHelp(page);
   await expect(contact(page)).toContainText(

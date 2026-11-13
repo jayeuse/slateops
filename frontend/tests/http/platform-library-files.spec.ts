@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import {
+  authMeBody,
   controlledSession,
+  defaultOrganization,
   expect,
   expectNoHorizontalScroll,
   heldResponse,
@@ -589,20 +591,8 @@ test("Library files: direct department picker excludes module-only grants and pr
       exact: true,
     }),
   ).toBeVisible();
-  await page
-    .getByRole("link", { name: "Search workspace", exact: true })
-    .click();
-  await expect(
-    page.getByRole("searchbox", { name: "Search workspace" }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "Files", exact: true }).click();
-  await expect(picker).toContainText("Operations");
-  await expect(
-    page.getByRole("button", {
-      name: "Download Operations guide.pdf",
-      exact: true,
-    }),
-  ).toBeVisible();
+  // The header Search is a panel now, so no step leaves Files and keeps the
+  // department (DR-4.1); the address keeps it across a reload.
   await page.reload();
   await expect(picker).toContainText("Operations");
   expect(
@@ -856,8 +846,20 @@ test("Library files: unknown reservation outcome survives department and section
       exact: true,
     }),
   ).toBeVisible();
+  // The header Search opens the search panel; its "Show all results" leaves
+  // for the Search page (DR-4.8).
   await page
-    .getByRole("link", { name: "Search workspace", exact: true })
+    .getByRole("button", { name: "Search workspace", exact: true })
+    .click();
+  const searchPanel = page.getByRole("dialog", {
+    name: "Search workspace",
+    exact: true,
+  });
+  await searchPanel
+    .getByRole("combobox", { name: "Search workspace", exact: true })
+    .fill("a");
+  await searchPanel
+    .getByRole("link", { name: /^Show all results for/ })
     .click();
   await expect(
     page.getByRole("searchbox", { name: "Search workspace" }),
@@ -2225,4 +2227,150 @@ test("department option search preserves an active upload producer", async ({
   } finally {
     gate.release();
   }
+});
+
+// docs/specs/ux-friction-pass.md DR-4.7 (N-3): a picked file search result
+// opens Files with its name in the address, and Files searches by it once.
+test("UF-C4.5 Files opened with a file name in its address searches by it once, and without one opens as today", async ({
+  page,
+}) => {
+  const fixture = await installLibrary(page);
+  await page.goto(
+    `/platform?section=files&department=${LIBRARY_DEPARTMENT}&search=Safety%20guide.pdf`,
+  );
+  const search = page.getByRole("searchbox", { name: "Search files by name" });
+  await expect(search).toHaveValue("Safety guide.pdf");
+  await expect(
+    page
+      .getByRole("button", { name: "Download Safety guide.pdf", exact: true })
+      .first(),
+  ).toBeVisible();
+  // Every read searches by the name: no unfiltered read comes first.
+  expect([
+    ...new Set(
+      fixture.listReads
+        .filter((read) => read.department === LIBRARY_DEPARTMENT)
+        .map((read) => read.parameters.get("search")),
+    ),
+  ]).toEqual(["Safety guide.pdf"]);
+  // The name belongs to that one arrival: another department, and the way
+  // back, start with an empty search.
+  await chooseLibraryDepartment(page, "Operations");
+  await expect(
+    page.getByRole("button", {
+      name: "Download Operations guide.pdf",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(search).toHaveValue("");
+  await chooseLibraryDepartment(page, "Maintenance");
+  await expect(search).toHaveValue("");
+
+  await openLibrary(page);
+  await expect(search).toHaveValue("");
+  expect(fixture.listReads.at(-1)?.parameters.get("search") ?? "").toBe("");
+});
+
+// docs/specs/ux-friction-pass.md DR-4.8 (PR3 screen review): the library's
+// search follows the address, so a reload shows the words on screen.
+test("FX-SR-7 Files writes its settled search to the address with replace, and an empty search removes it", async ({
+  page,
+}) => {
+  await installLibrary(page);
+  await openLibrary(page);
+  const search = page.getByRole("searchbox", { name: "Search files by name" });
+  const entries = await page.evaluate(() => history.length);
+  await search.fill("Safety");
+  await expect(page).toHaveURL(/[?&]search=Safety(&|$)/);
+  // The written search does not fill the box again over later typing.
+  await search.pressSequentially(" guide");
+  await expect(page).toHaveURL(/[?&]search=Safety\+guide(&|$)/);
+  await expect(search).toHaveValue("Safety guide");
+  expect(await page.evaluate(() => history.length)).toBe(entries);
+  await page.reload();
+  await expect(search).toHaveValue("Safety guide");
+  await search.fill("");
+  await expect(page).not.toHaveURL(/[?&]search=/);
+});
+
+// FX-SR-8 (parent decision (a)): one account's or organization's file search
+// never carries to the next; Files opens with an empty search, removes
+// `search`, and reads nothing with the old words.
+test("FX-SR-8 after an account change Files drops the previous account's search and reads nothing with it", async ({
+  page,
+}) => {
+  const fixture = await installLibrary(page);
+  await page.goto(
+    `/platform?section=files&department=${LIBRARY_DEPARTMENT}&search=Safety%20guide.pdf`,
+  );
+  const search = page.getByRole("searchbox", { name: "Search files by name" });
+  await expect(search).toHaveValue("Safety guide.pdf");
+  await expect(
+    page
+      .getByRole("button", { name: "Download Safety guide.pdf", exact: true })
+      .first(),
+  ).toBeVisible();
+  const before = fixture.listReads.length;
+  fixture.session.identity = {
+    ...fixture.session.identity,
+    id: LIBRARY_OTHER_USER,
+  };
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("slateops:session-recheck")),
+  );
+  await expect(page).not.toHaveURL(/[?&]search=/);
+  await expect(search).toHaveValue("");
+  expect(
+    fixture.listReads
+      .slice(before)
+      .filter((read) => read.parameters.get("search") === "Safety guide.pdf"),
+  ).toEqual([]);
+});
+
+test("FX-SR-8 after an organization change Files drops the previous organization's search and reads nothing with it", async ({
+  page,
+}) => {
+  const fixture = await installLibrary(page);
+  const other = {
+    org_id: "00000000-0000-4000-8000-000000000202",
+    name: "Other organization",
+    slug: "other",
+    role: "admin" as const,
+  };
+  const home = { ...defaultOrganization, role: "admin" as const };
+  const identity = (current: typeof home | typeof other) =>
+    authMeBody({
+      id: LIBRARY_USER,
+      role: "admin",
+      memberships: [home, other],
+      current_organization: { ...current, access: [] },
+    });
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: identity(
+        route.request().headers()["x-org"] === other.org_id ? other : home,
+      ),
+    }),
+  );
+  await page.route("**/api/auth/session/organization", (route) =>
+    route.fulfill({ json: identity(other) }),
+  );
+  await page.goto(
+    `/platform?section=files&department=${LIBRARY_DEPARTMENT}&search=Safety%20guide.pdf`,
+  );
+  const search = page.getByRole("searchbox", { name: "Search files by name" });
+  await expect(search).toHaveValue("Safety guide.pdf");
+  await page.getByRole("button", { name: /^Organization: / }).click();
+  await page.getByRole("menuitem", { name: /Other organization/ }).click();
+  await expect(page).toHaveURL(/\/openview/);
+  const before = fixture.listReads.length;
+  // Back brings the address with the first organization's words.
+  await page.goBack();
+  await expect(search).toHaveValue("");
+  await expect(page).not.toHaveURL(/[?&]search=/);
+  expect(
+    fixture.listReads
+      .slice(before)
+      .filter((read) => read.parameters.get("search") === "Safety guide.pdf"),
+  ).toEqual([]);
 });

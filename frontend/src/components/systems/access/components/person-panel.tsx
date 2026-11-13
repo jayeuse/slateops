@@ -36,7 +36,9 @@ type PanelTab = "details" | "access" | "sessions" | "security";
 
 /** The drafts this sheet owns; other Access drafts stay as they are. */
 const personSheet: DraftScope = (id) =>
-  id === "person-editor" || id.startsWith("person-security-");
+  id === "person-editor" ||
+  id === "person-add-access" ||
+  id.startsWith("person-security-");
 
 /**
  * One person, opened from the directory. On a phone it fills the screen.

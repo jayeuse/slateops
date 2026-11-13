@@ -84,6 +84,27 @@ def department_filter(
     return column.in_(sorted(department_ids))
 
 
+def department_level_filter(
+    db: Session, user: User, column: ColumnElement[Any] | Any, level: AccessLevel
+) -> ColumnElement[bool]:
+    """Departments where a department row gives the user ``level``.
+
+    Unlike :func:`department_filter`, a grant on one module of a department does not count.
+    """
+
+    access = effective_levels(db, user)
+    if access.unrestricted:
+        return true()
+    department_ids = sorted(
+        department_id
+        for department_id, granted in access.departments.items()
+        if includes(granted, level)
+    )
+    if not department_ids:
+        return false()
+    return column.in_(department_ids)
+
+
 def require_live_session(db: Session, *, actor_id: UUID, session_id: UUID) -> None:
     """Lock the exact session and require that it still belongs to the actor and is live.
 

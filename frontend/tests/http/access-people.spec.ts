@@ -13,6 +13,8 @@ import {
   addPeople,
   DAY,
   created,
+  fixtureId,
+  group,
   ids,
   listPage,
   mockAccessApi,
@@ -199,6 +201,84 @@ test("inviting a member sends the chosen groups", async ({ page }) => {
       name: /eve_stone/,
     }),
   ).toContainText("Invited");
+});
+
+test("UF-C10.1 Invite says what each group gives under its name on a phone, and still sends group IDs only", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const api = await mockAccessApi(page);
+  const committee = group(
+    fixtureId(171),
+    "Regional operations and finance oversight committee",
+    [],
+    [
+      { department_id: ids.finance, module_id: null, level: "read" },
+      { department_id: ids.inventory, module_id: null, level: "write" },
+      {
+        department_id: fixtureId(201),
+        module_id: null,
+        level: "manage",
+        department_name: "Operations",
+      },
+      {
+        department_id: fixtureId(202),
+        module_id: null,
+        level: "read",
+        department_name: "Sales",
+      },
+    ],
+  );
+  api.groups.set(committee.id, committee);
+  const starters = group(fixtureId(172), "New starters", [], []);
+  api.groups.set(starters.id, starters);
+  await page.goto("/access?view=people");
+
+  await page.getByRole("button", { name: "Invite person" }).click();
+  const dialog = page.getByRole("dialog", { name: "Invite a person" });
+  await dialog.getByLabel("Email").fill("eve.stone@example.com");
+  const readers = dialog.getByRole("checkbox", {
+    name: "Finance readers",
+    exact: true,
+  });
+  await expect(readers).toHaveAccessibleDescription("Finance · Read");
+  const clerks = dialog.getByRole("checkbox", {
+    name: "Inventory clerks",
+    exact: true,
+  });
+  await expect(clerks).toHaveAccessibleDescription("Inventory · Write");
+  await expect(
+    dialog.getByRole("checkbox", { name: "New starters", exact: true }),
+  ).toHaveAccessibleDescription("Gives no access yet");
+  const line = dialog.getByText("Finance · Read, Inventory · Write +2 more", {
+    exact: true,
+  });
+  await expect(
+    dialog.getByRole("checkbox", {
+      name: "Regional operations and finance oversight committee",
+      exact: true,
+    }),
+  ).toHaveAccessibleDescription("Finance · Read, Inventory · Write +2 more");
+  // The long line wraps inside the phone dialog instead of running off it.
+  await line.scrollIntoViewIfNeeded();
+  const box = (await line.boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+  await expectNoHorizontalScroll(page);
+
+  await dialog.getByLabel("Role").selectOption("guest");
+  await expect(clerks).toHaveAccessibleDescription(
+    "Inventory · Read (guest limit)",
+  );
+  await dialog.getByLabel("Role").selectOption("member");
+  await readers.click();
+  await dialog.getByRole("button", { name: "Send invitation" }).click();
+  await expect(dialog).toBeHidden();
+  expect(api.sent("POST", "/api/auth/invitations")[0]?.body).toEqual({
+    email: "eve.stone@example.com",
+    username: "eve_stone",
+    role: "member",
+    group_ids: [ids.readers],
+  });
 });
 
 test("the invitation shows the username rule only with a username error", async ({

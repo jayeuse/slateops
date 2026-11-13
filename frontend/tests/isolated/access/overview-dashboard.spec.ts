@@ -462,6 +462,7 @@ function managers(
     description: "",
     revision: 1,
     member_ids: [],
+    has_other_grants: false,
     access: entries.map((entry) => ({
       department_id: entry.department,
       module_id: entry.module ? id(900 + index) : null,
@@ -564,6 +565,7 @@ function group(
     description: "",
     revision: 1,
     member_ids: members,
+    has_other_grants: false,
     access: access.map((entry, position) => ({
       department_id: entry.department,
       module_id: position % 2 ? id(800 + index) : null,

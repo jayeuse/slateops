@@ -52,6 +52,7 @@ export const group = {
   description: "Keep stock records current.",
   revision: 3,
   member_ids: [ids.guest],
+  has_other_grants: false,
   access: [
     {
       department_id: ids.department,

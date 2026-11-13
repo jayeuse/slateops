@@ -503,3 +503,51 @@ def test_configuration_mappings_reject_incomplete_or_ambiguous_control_tests(
 
     with pytest.raises(SampleVerificationError):
         verification.configuration_mappings(manifest, dataset)
+
+
+@pytest.mark.parametrize(
+    ("kind", "changes", "valid"),
+    (
+        ("file", {"department_id": BOARD_ID}, True),
+        ("file", {"department_id": None}, False),
+        ("record", {"module_id": BOARD_ID, "department_id": None}, True),
+        ("record", {"module_id": BOARD_ID, "department_id": BOARD_ID}, False),
+        ("record", {"module_id": BOARD_ID}, False),
+    ),
+    ids=("file-set", "file-null", "record-null", "record-set", "record-missing"),
+)
+def test_search_shape_requires_department_id_only_on_file_rows(
+    kind: str, changes: dict[str, Any], valid: bool
+) -> None:
+    """BE-UF1-5: department_id is set for a file row and null for every other kind."""
+
+    from operations.sample.controls.platform_verification import search_page_contains_target
+    from operations.sample.phases.actions import SamplePhaseActionError
+
+    row: dict[str, Any] = {
+        "kind": kind,
+        "id": REQUEST_ID,
+        "title": "Owned title",
+        "context_label": "Owned context",
+        "module_id": None,
+        "board_id": None,
+        "can_open": True,
+        **changes,
+    }
+    body = {
+        "items": [row],
+        "pagination": {
+            "limit": 10,
+            "offset": 0,
+            "count": 1,
+            "total": 1,
+            "total_is_capped": False,
+            "has_more": False,
+        },
+    }
+    oracle = (REQUEST_ID, "Owned title", "Owned context", row["module_id"], None)
+    if valid:
+        assert search_page_contains_target(body, kind, oracle, offset=0, step="search") is True
+    else:
+        with pytest.raises(SamplePhaseActionError, match="Search result shape differs"):
+            search_page_contains_target(body, kind, oracle, offset=0, step="search")

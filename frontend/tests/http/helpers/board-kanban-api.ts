@@ -860,6 +860,7 @@ export async function installKanbanApi(
         context_label: "Quotes",
         module_id: recordIds.module,
         board_id: null,
+        department_id: null,
         can_open: true,
       },
     ];

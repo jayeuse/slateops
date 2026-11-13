@@ -247,6 +247,7 @@ test("Person card result with no Open destination is still read-only and cannot 
                 context_label: "Equipment team",
                 module_id: null,
                 board_id: null,
+                department_id: null,
                 can_open: false,
               },
             ]

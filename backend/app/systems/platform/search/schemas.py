@@ -14,6 +14,7 @@ class SearchKind(StrEnum):
     PERSON = "person"
     POST = "post"
     EVENT = "event"
+    FILE = "file"
 
 
 class SearchSort(StrEnum):
@@ -33,6 +34,8 @@ class SearchItem(BaseModel):
     context_label: str
     module_id: UUID | None
     board_id: UUID | None
+    # The library's department for a file; null for every other kind.
+    department_id: UUID | None
     can_open: bool
 
 

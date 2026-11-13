@@ -33,6 +33,7 @@ import {
   COMMS_SHORTCUTS,
   SANDBOX_SHORTCUTS,
   SANDBOX_SHORTCUT_SCOPE,
+  WORKSPACE_SHORTCUTS,
   sandboxShortcutKeys,
 } from "@/lib/shortcuts";
 import { pageGuideForNavigation } from "./page-guides";
@@ -137,6 +138,7 @@ export function HelpPanel() {
   const identity = useQuery(authMeOptions());
   const sandbox = accessNavigationFor(identity.data) === "all";
   const switchConversation = COMMS_SHORTCUTS.switchConversation;
+  const searchWorkspace = WORKSPACE_SHORTCUTS.searchWorkspace;
   return (
     <Sheet open={open && !suspended} onOpenChange={setOpen}>
       <SheetTrigger
@@ -226,6 +228,15 @@ export function HelpPanel() {
             ) : null}
             {enabled ? (
               <dl className="space-y-3 text-sm">
+                {/* For everyone: the header search panel (DR-9.6). */}
+                <div className="space-y-1">
+                  <dt className="font-medium">{searchWorkspace.label}</dt>
+                  <dd className="text-muted-foreground flex flex-wrap items-center gap-1.5">
+                    <kbd className="bg-muted rounded border px-1.5 py-0.5 text-xs">
+                      {`${searchWorkspace.modifier} + ${searchWorkspace.key.toUpperCase()}`}
+                    </kbd>
+                  </dd>
+                </div>
                 <div className="space-y-1">
                   <dt className="font-medium">{switchConversation.label}</dt>
                   <dd className="text-muted-foreground flex flex-wrap items-center gap-1.5">

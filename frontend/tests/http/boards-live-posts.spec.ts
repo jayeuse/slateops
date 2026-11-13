@@ -567,7 +567,8 @@ test("list rows are two lines that open the post, pinned first, with no cards or
   await expect(page.getByRole("button", { name: "More filters" })).toHaveCount(
     0,
   );
-  await expect(page.getByRole("button", { name: "Search" })).toHaveCount(0);
+  // Exact: the header's "Search workspace" button is not a Boards control.
+  await expect(page.getByRole("button", { name: /^Search$/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Manage posts" })).toHaveCount(
     0,
   );

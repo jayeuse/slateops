@@ -167,7 +167,7 @@ async function selectCsv(page: Page, csv: string) {
     .getByLabel("Map column 2 · Quantity", { exact: true })
     .selectOption(QUANTITY);
 }
-test("Search queries four kinds, pages within cards and uses typed destinations", async ({
+test("UF-C4.5 Search queries six kinds, pages within cards and uses typed destinations", async ({
   page,
 }) => {
   await signedInAs(page, {
@@ -192,10 +192,37 @@ test("Search queries four kinds, pages within cards and uses typed destinations"
       context_label: kind === "person" ? "reader" : "Maintenance",
       module_id: kind === "record" ? MODULE : null,
       board_id: kind === "post" || kind === "event" ? BOARD : null,
+      department_id: kind === "file" ? BOARD : null,
       can_open: kind !== "person" || i === 1,
     }));
     return r.fulfill({
       json: list(items, kind === "record" ? 11 : length, offset, 10),
+    });
+  });
+  const messages: URLSearchParams[] = [];
+  await page.route("**/api/comms/search?*", (r) => {
+    const p = new URL(r.request().url()).searchParams;
+    messages.push(p);
+    return r.fulfill({
+      json: list(
+        [
+          {
+            message_id: uuid(41),
+            conversation_id: uuid(42),
+            conversation_name: "maintenance-desk",
+            seq: 3,
+            author_id: "00000000-0000-4000-8000-000000000001",
+            author_name: "Pump author",
+            created_at: "2026-11-10T09:00:00Z",
+            excerpt: "the pump is fixed",
+            matches: [{ start: 4, end: 8 }],
+            parent_id: null,
+          },
+        ],
+        1,
+        0,
+        10,
+      ),
     });
   });
   await page.goto("/platform?section=search");
@@ -225,7 +252,22 @@ test("Search queries four kinds, pages within cards and uses typed destinations"
   await expect(
     page.getByRole("link", { name: "Open person match 2", exact: true }),
   ).toHaveAttribute("href", `/access?view=people&user=${uuid(2)}`);
-  for (const kind of ["record", "person", "post", "event"])
+  await expect(
+    page.getByRole("link", { name: /file match 1/ }),
+  ).toHaveAttribute(
+    "href",
+    `/platform?section=files&department=${BOARD}&search=file%20match%201`,
+  );
+  await expect(
+    page.getByRole("link", { name: /the pump is fixed/ }),
+  ).toHaveAttribute(
+    "href",
+    `/comms?conversation=${uuid(42)}&message=${uuid(41)}`,
+  );
+  expect(
+    messages.some((p) => p.get("q") === "pump" && p.get("limit") === "10"),
+  ).toBe(true);
+  for (const kind of ["record", "person", "post", "event", "file"])
     expect(
       requests.some(
         (p) =>
@@ -239,10 +281,13 @@ test("Search queries four kinds, pages within cards and uses typed destinations"
   await expect(
     records.getByRole("link", { name: /record match 11/ }),
   ).toBeVisible();
-  for (const name of ["Conversations", "Files"])
-    await expect(
-      page.getByRole("region", { name: `${name} search results` }),
-    ).toHaveCount(0);
+  // The six cards are the six kinds; there is no Conversations card.
+  await expect(
+    page.getByRole("region", { name: /search results$/ }),
+  ).toHaveCount(6);
+  await expect(
+    page.getByRole("region", { name: "Conversations search results" }),
+  ).toHaveCount(0);
 });
 test("Administrator people results open the existing People destination and empty groups stay truthful", async ({
   page,
@@ -260,6 +305,7 @@ test("Administrator people results open the existing People destination and empt
                 context_label: "operator",
                 module_id: null,
                 board_id: null,
+                department_id: null,
                 can_open: true,
               },
             ]
@@ -635,8 +681,10 @@ test("Leaving waits for the current import receipt and never starts a later batc
     .getByRole("button", { name: "Import 101 valid rows", exact: true })
     .click();
   await expect.poll(() => writes).toBe(1);
+  // The sidebar Files row leaves the page (the header Search opens a panel).
   await page
-    .getByRole("link", { name: "Search workspace", exact: true })
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Files", exact: true })
     .click();
   const dialog = page.getByRole("dialog", { name: "Stop import and leave?" });
   await expect(dialog).toBeVisible();
@@ -645,8 +693,7 @@ test("Leaving waits for the current import receipt and never starts a later batc
     .click();
   await expect(page).toHaveURL(/section=import-export/);
   await held?.fulfill({ json: importResult(submitted!) });
-  // The header Search opens /platform, which shows Search.
-  await expect(page).toHaveURL(/\/platform$/);
+  await expect(page).toHaveURL(/section=files/);
   expect(writes).toBe(1);
 });
 
@@ -735,6 +782,7 @@ test("Search ignores old replies, hides denial and recovers with explicit retry"
             context_label: "Maintenance",
             module_id: MODULE,
             board_id: null,
+            department_id: null,
             can_open: true,
           },
         ],
@@ -757,7 +805,7 @@ test("Search ignores old replies, hides denial and recovers with explicit retry"
   oldSearch.release();
   await expect(page.getByText("old result", { exact: true })).toHaveCount(0);
   denied = false;
-  await records.getByRole("button", { name: "Retry", exact: true }).click();
+  await records.getByRole("button", { name: "Try again", exact: true }).click();
   await expect(
     records.getByRole("link", { name: /fresh result/ }),
   ).toBeVisible();
@@ -908,8 +956,10 @@ async function queueLeaveDuringSecondBatch(page: Page) {
   await expect(
     page.getByText("Confirmed record IDs (100)", { exact: true }),
   ).toBeVisible();
+  // The sidebar Files row leaves the page (the header Search opens a panel).
   await page
-    .getByRole("link", { name: "Search workspace", exact: true })
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Files", exact: true })
     .click();
   const dialog = page.getByRole("dialog", {
     name: "Stop import and leave?",
@@ -967,11 +1017,12 @@ for (const outcome of [
       page.getByRole("button", { name: "Preview import", exact: true }),
     ).toBeDisabled();
     expect(pending.writes).toBe(2);
-    // The header Search opens /platform, which shows Search.
+    // The sidebar Files row leaves the page (the header Search opens a panel).
     await page
-      .getByRole("link", { name: "Search workspace", exact: true })
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("link", { name: "Files", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/platform$/);
+    await expect(page).toHaveURL(/section=files/);
     expect(pending.writes).toBe(2);
   });
 }
@@ -1019,8 +1070,8 @@ test("Queued leave positive control resumes after the same held second receipt",
 }) => {
   const pending = await queueLeaveDuringSecondBatch(page);
   await pending.held!.fulfill({ json: importResult(pending.submitted!) });
-  // The queued destination is the header Search: /platform, which shows Search.
-  await expect(page).toHaveURL(/\/platform$/);
+  // The queued destination is the sidebar Files row.
+  await expect(page).toHaveURL(/section=files/);
   expect(pending.writes).toBe(2);
 });
 

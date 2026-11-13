@@ -10222,6 +10222,10 @@
             "title": "Description",
             "type": "string"
           },
+          "has_other_grants": {
+            "title": "Has Other Grants",
+            "type": "boolean"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -10272,6 +10276,7 @@
           "revision",
           "member_ids",
           "access",
+          "has_other_grants",
           "created_at",
           "updated_at",
           "deleted_at",
@@ -20469,6 +20474,18 @@
             "title": "Context Label",
             "type": "string"
           },
+          "department_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Department Id"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -20501,6 +20518,7 @@
           "context_label",
           "module_id",
           "board_id",
+          "department_id",
           "can_open"
         ],
         "title": "SearchItem",
@@ -20511,7 +20529,8 @@
           "record",
           "person",
           "post",
-          "event"
+          "event",
+          "file"
         ],
         "title": "SearchKind",
         "type": "string"

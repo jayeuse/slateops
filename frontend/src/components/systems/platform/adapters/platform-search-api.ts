@@ -4,8 +4,24 @@ import { z } from "zod";
 import { apiFetch, apiContractError } from "@/lib/api";
 import { pageEndsWithinTotal, wirePageCounts } from "@/lib/list-pagination";
 
-export const SEARCH_KINDS = ["record", "person", "post", "event"] as const;
+/** Every kind `/api/search` reads. */
+export const SEARCH_KINDS = [
+  "record",
+  "person",
+  "post",
+  "event",
+  "file",
+] as const;
 export type SearchKind = (typeof SEARCH_KINDS)[number];
+export type PlatformSearchKind = SearchKind;
+// The one destination id each kind carries: module, Board, or department.
+const DESTINATION_ID: Record<PlatformSearchKind, number | null> = {
+  record: 0,
+  person: null,
+  post: 1,
+  event: 1,
+  file: 2,
+};
 const itemSchema = z
   .object({
     kind: z.enum(SEARCH_KINDS),
@@ -14,15 +30,14 @@ const itemSchema = z
     context_label: z.string(),
     module_id: z.uuid().nullable(),
     board_id: z.uuid().nullable(),
+    department_id: z.uuid().nullable(),
     can_open: z.boolean(),
   })
   .strict()
   .refine((item) =>
-    item.kind === "record"
-      ? item.module_id !== null && item.board_id === null
-      : item.kind === "person"
-        ? item.module_id === null && item.board_id === null
-        : item.module_id === null && item.board_id !== null,
+    [item.module_id, item.board_id, item.department_id].every(
+      (id, index) => (id !== null) === (index === DESTINATION_ID[item.kind]),
+    ),
   );
 const pageSchema = z
   .object({
@@ -42,14 +57,15 @@ const pageSchema = z
 export type PlatformSearchItem = z.output<typeof itemSchema>;
 export async function readPlatformSearch(
   search: string,
-  kind: SearchKind,
+  kind: PlatformSearchKind,
   offset: number,
   signal?: AbortSignal,
+  limit = 10,
 ) {
   const params = new URLSearchParams({
     search,
     kind,
-    limit: "10",
+    limit: String(limit),
     offset: String(offset),
     sort_by: "relevance",
     sort_order: "desc",
@@ -61,10 +77,10 @@ export async function readPlatformSearch(
   });
   if (
     page.items.some((item) => item.kind !== kind) ||
-    page.pagination.limit !== 10 ||
+    page.pagination.limit !== limit ||
     page.pagination.offset !== offset ||
     page.pagination.count !== page.items.length ||
-    page.items.length > 10 ||
+    page.items.length > limit ||
     (page.items.length > 0 &&
       !pageEndsWithinTotal(wirePageCounts(page.pagination)))
   )
@@ -73,13 +89,15 @@ export async function readPlatformSearch(
 }
 export const platformSearchOptions = (
   search: string,
-  kind: SearchKind,
+  kind: PlatformSearchKind,
   offset: number,
+  limit = 10,
 ) =>
   queryOptions({
-    queryKey: ["platform", "search", { search, kind, offset, limit: 10 }],
+    queryKey: ["platform", "search", { search, kind, offset, limit }],
     enabled: search.length > 0 && search.length <= 100,
-    queryFn: ({ signal }) => readPlatformSearch(search, kind, offset, signal),
+    queryFn: ({ signal }) =>
+      readPlatformSearch(search, kind, offset, signal, limit),
   });
 export function searchDestination(item: PlatformSearchItem): Route | null {
   if (!item.can_open) return null;
@@ -93,5 +111,7 @@ export function searchDestination(item: PlatformSearchItem): Route | null {
       return `/boards?board=${encodeURIComponent(item.board_id!)}&section=posts&post=${id}` as Route;
     case "event":
       return `/boards?board=${encodeURIComponent(item.board_id!)}&section=calendar&event=${id}` as Route;
+    case "file":
+      return `/platform?section=files&department=${encodeURIComponent(item.department_id!)}&search=${encodeURIComponent(item.title)}` as Route;
   }
 }

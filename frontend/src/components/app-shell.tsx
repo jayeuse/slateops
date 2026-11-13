@@ -17,6 +17,8 @@ import {
   X,
 } from "lucide-react";
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -99,6 +101,7 @@ import {
 } from "@/lib/auth-api";
 import { ApiError } from "@/lib/api";
 import { apiErrorReference } from "@/lib/api-errors";
+import { isSearchWorkspaceKey } from "@/lib/shortcuts";
 
 const SIDEBAR_COLLAPSED_KEY = "slateops-sidebar-collapsed";
 const SIDEBAR_WIDTH_KEY = "slateops-sidebar-width";
@@ -637,6 +640,7 @@ export function AppShell({
                 </div>
                 <AppHeaderActions
                   verifiedUserId={verifiedUserId}
+                  organizationId={organizationId}
                   accountOpen={accountOpen}
                   onAccountOpenChange={setAccountOpen}
                   onLogout={logout}
@@ -918,27 +922,52 @@ function AppSidebarFooter({ surface, collapsed }: ShellRowProps) {
   );
 }
 
+// The search panel loads on its first open, so no page's cold load carries
+// it (DR-4.2).
+const SearchPanel = lazy(() =>
+  import("@/components/systems/platform/components/search-panel").then(
+    (module) => ({ default: module.SearchPanel }),
+  ),
+);
+
 function AppHeaderActions({
   verifiedUserId,
+  organizationId,
   accountOpen,
   onAccountOpenChange,
   onLogout,
 }: {
   verifiedUserId: string | null;
+  organizationId: string | null;
   accountOpen: boolean;
   onAccountOpenChange: (open: boolean) => void;
   onLogout: () => Promise<void>;
 }) {
   const requestNavigation = useWorkspaceNavigationRequest();
   const suspended = useWorkspaceInteractionSuspended();
-  // On a /platform page with a chosen department, Search keeps it, so Files
-  // still shows that department after a visit to Search.
-  const pathname = usePathname();
-  const department = useSearchParams().get("department");
-  const searchHref =
-    pathname === "/platform" && department
-      ? `/platform?${new URLSearchParams({ department })}`
-      : "/platform";
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchUsed, setSearchUsed] = useState(false);
+  const searchButton = useRef<HTMLButtonElement>(null);
+  // The same "Use shortcuts" check as Switch conversation in OpenComms.
+  const { keyboardShortcuts, disabled } = useUserPreferences();
+  const shortcut = keyboardShortcuts === true && !disabled;
+  useEffect(() => {
+    if (!shortcut || suspended) return;
+    const handler = (event: KeyboardEvent) => {
+      // In OpenComms, Ctrl or Command K stays Switch conversation (DR-4.1).
+      if (
+        !isSearchWorkspaceKey(event) ||
+        window.location.pathname.startsWith("/comms") ||
+        document.querySelector('[role="dialog"], [role="alertdialog"]')
+      )
+        return;
+      event.preventDefault();
+      setSearchUsed(true);
+      setSearchOpen(true);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [shortcut, suspended]);
   const identity = useQuery({ ...authMeOptions(), enabled: !suspended });
   const self =
     !suspended && identity.data?.id === verifiedUserId
@@ -955,17 +984,37 @@ function AppHeaderActions({
 
   return (
     <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-      {/* A quiet control that opens Platform search; it navigates, so it
-          stays a link (PD21). */}
-      <GuardedWorkspaceLink
-        href={searchHref as Route}
+      {/* A quiet control that opens the search panel over the page (PD21,
+          DR-4.1). */}
+      <button
+        ref={searchButton}
+        type="button"
         aria-label="Search workspace"
+        aria-haspopup="dialog"
+        aria-expanded={searchOpen}
+        aria-keyshortcuts={shortcut ? "Control+K Meta+K" : undefined}
         title="Search workspace"
-        className="text-muted-foreground hover:text-foreground focus-visible:outline-ring flex size-11 shrink-0 items-center justify-center gap-2 rounded-md text-sm transition-colors hover:bg-(--surface-hover) focus-visible:outline-2 focus-visible:outline-offset-2 sm:w-auto sm:bg-(--surface-sunken) sm:px-3 xl:h-8"
+        disabled={suspended}
+        onClick={() => {
+          setSearchUsed(true);
+          setSearchOpen(true);
+        }}
+        className="text-muted-foreground hover:text-foreground focus-visible:outline-ring flex size-11 shrink-0 items-center justify-center gap-2 rounded-md text-sm transition-colors hover:bg-(--surface-hover) focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50 sm:w-auto sm:bg-(--surface-sunken) sm:px-3 xl:h-8"
       >
         <Search className="size-4" aria-hidden="true" />
         <span className="hidden sm:inline">Search</span>
-      </GuardedWorkspaceLink>
+      </button>
+      {searchUsed ? (
+        <Suspense fallback={null}>
+          <SearchPanel
+            open={searchOpen && !suspended}
+            onOpenChange={setSearchOpen}
+            returnFocus={searchButton}
+            userId={verifiedUserId}
+            organizationId={organizationId}
+          />
+        </Suspense>
+      ) : null}
       <NotificationBell accountId={verifiedUserId} />
       <CommsAttention />
       <HelpPanel />

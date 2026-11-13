@@ -56,13 +56,23 @@ test("Platform search describes readable workspace content and its empty prompts
   await openSignedIn(page, "/platform?section=search");
   await expect(
     page.getByRole("searchbox", { name: "Search workspace", exact: true }),
-  ).toBeVisible();
+  ).toHaveAttribute(
+    "placeholder",
+    "Search records, people, posts, events, messages, and files…",
+  );
   await expect(
     page.getByText("Results include workspace content you can read.", {
       exact: true,
     }),
   ).toBeVisible();
-  for (const kind of ["Records", "People", "Posts", "Events"]) {
+  for (const kind of [
+    "Records",
+    "People",
+    "Posts",
+    "Events",
+    "Messages",
+    "Files",
+  ]) {
     const results = page.getByRole("region", {
       name: `${kind} search results`,
       exact: true,

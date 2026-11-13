@@ -245,7 +245,7 @@ test("header controls are 32px from 1280px and 44px on a phone; Search is a quie
   await signInAsHarborAdmin(page);
   await page.goto("/platform");
   const header = page.locator('[data-skin="topbar"]');
-  const search = header.getByRole("link", {
+  const search = header.getByRole("button", {
     name: "Search workspace",
     exact: true,
   });

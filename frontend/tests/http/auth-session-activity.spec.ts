@@ -104,6 +104,7 @@ async function workspaceSession(page: Page, baseURL: string | undefined) {
               context_label: "Owned activity test",
               module_id: null,
               board_id: null,
+              department_id: null,
               can_open: false,
             },
           ]
@@ -310,7 +311,9 @@ test("an API request sharing a pending activity probe still refreshes a live ses
   await expect(
     page.getByText("Concurrent protected search result", { exact: true }),
   ).toBeVisible();
-  await expect(page).toHaveURL(/\/platform\?section=search$/);
+  await expect(page).toHaveURL(
+    "/platform?section=search&q=Concurrent+protected+search",
+  );
   expect(state.renewedUsers).toEqual([userA]);
 });
 

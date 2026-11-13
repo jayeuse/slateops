@@ -9,6 +9,28 @@ export const COMMS_SHORTCUTS = {
   },
 } as const;
 
+/** Outside OpenComms, where Ctrl or Command K stays Switch conversation (DR-4.1). */
+export const WORKSPACE_SHORTCUTS = {
+  searchWorkspace: {
+    key: "k",
+    label: "Search workspace",
+    modifier: "Ctrl / Command",
+  },
+} as const;
+
+/** A deliberate Ctrl or Command K: not repeated, composing, or with Alt or Shift. */
+export function isSearchWorkspaceKey(event: KeyboardEvent): boolean {
+  return (
+    !event.defaultPrevented &&
+    !event.repeat &&
+    !event.isComposing &&
+    !event.altKey &&
+    !event.shiftKey &&
+    (event.ctrlKey || event.metaKey) &&
+    event.key.toLowerCase() === WORKSPACE_SHORTCUTS.searchWorkspace.key
+  );
+}
+
 /** Match only unhandled, deliberate Comms commands; owners gate profile/context. */
 export function commsShortcutAction(
   event: KeyboardEvent,
