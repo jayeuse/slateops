@@ -5695,7 +5695,12 @@ async function createRecord(page: Page) {
   await page.getByRole("button", { name: "New record" }).click();
   const create = page.getByRole("dialog", { name: "New record" });
   await create.getByLabel("Equipment name").fill(createdRecordName);
-  await create.getByRole("button", { name: /^Create / }).click();
+  await create
+    .getByRole("button", {
+      name: "Create Equipment record",
+      exact: true,
+    })
+    .click();
   await expect(page).toHaveURL(new RegExp(`record=${createdRecordId}`));
   await expect(
     page
@@ -6500,12 +6505,22 @@ test("UF-C6.1: New record checks required values, opens the created record, then
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
   await page.getByRole("button", { name: "New record" }).click();
   const create = page.getByRole("dialog", { name: "New record" });
-  await create.getByRole("button", { name: /^Create / }).click();
+  await create
+    .getByRole("button", {
+      name: "Create Equipment record",
+      exact: true,
+    })
+    .click();
   await expect(create.getByText("Enter a value.")).toBeVisible();
   expect(commands.calls.some((call) => call.method === "POST")).toBe(false);
 
   await create.getByLabel("Equipment name").fill("Booster pump 09");
-  await create.getByRole("button", { name: /^Create / }).click();
+  await create
+    .getByRole("button", {
+      name: "Create Equipment record",
+      exact: true,
+    })
+    .click();
   await expect(page).toHaveURL(new RegExp(`record=${recordTwoId}`));
   const created = commands.calls.find((call) => call.method === "POST");
   expect(created?.body).toMatchObject({

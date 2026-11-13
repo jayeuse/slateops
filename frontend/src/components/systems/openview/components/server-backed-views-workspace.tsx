@@ -3755,7 +3755,7 @@ export default function ServerBackedViewsWorkspace({
                         presentation={draft.presentation}
                         pending={Boolean(pendingAction)}
                         pageSize={currentRecordPage?.limit ?? recordPageSize}
-                        newRecord={createdRecord.pinned}
+                        newRecords={createdRecord.pinned}
                         choiceCell={choiceCell}
                         chipFieldId={quickField?.id ?? null}
                         selection={
@@ -4122,13 +4122,20 @@ export default function ServerBackedViewsWorkspace({
                       moduleName={moduleName ?? "this module"}
                       fields={fields}
                       onOpenChange={setCreateRecordOpen}
-                      onCreated={(created) => {
+                      onCreated={(made, opened) => {
                         setCreateRecordOpen(false);
                         // DR-6.1: a status in the meta line, not a banner.
-                        createdRecord.start(created.id);
+                        // SI-3.4: every record made in the dialog; the
+                        // opened one's sheet first (Create, Open record).
+                        createdRecord.start(
+                          made.map((record) => record.id),
+                          opened?.id ?? null,
+                        );
                         setRecordChanges((value) => value + 1);
-                        setInspectionContext(null);
-                        setRoute({ record: created.id });
+                        if (opened) {
+                          setInspectionContext(null);
+                          setRoute({ record: opened.id });
+                        }
                       }}
                     />
                   ) : null}
@@ -4174,6 +4181,15 @@ export default function ServerBackedViewsWorkspace({
                   }
                   onClose={() => setSaveOpen(false)}
                 />
+                      // SI-2.1: the applied conditions give starting values;
+                      // a User value only for the signed-in person.
+                      definition={appliedDraftDefinition}
+                      identityId={
+                        identity.data?.id === verifiedUserId
+                          ? identity.data.id
+                          : null
+                      }
+                      titleOf={listTitle}
                 {saveConflict ? (
                   <Alert
                     role="alert"

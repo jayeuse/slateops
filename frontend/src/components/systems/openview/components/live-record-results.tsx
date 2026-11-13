@@ -64,11 +64,12 @@ type LiveRecordResultsProps = {
   /** The record open in the sheet, tinted in the list. */
   selectedId: string | null;
   /**
-   * A record this page just created that matches the view: shown first with
-   * a "New" tag, once, and never counted by the pager (DR-6.3, DR-6.4).
-   * Off unless the page passes it.
+   * The records this page just created that match the view, in the order
+   * given (newest first, DR-SI-3.6): shown first with a "New" tag, each
+   * once, and never counted by the pager (DR-6.3, DR-6.4, SI-3.4). Off
+   * unless the page passes them.
    */
-  newRecord?: OpenViewRecord | null;
+  newRecords?: readonly OpenViewRecord[];
   /**
    * Candidate 1: a Choice list value as its menu (DR-SI-1.1, DR-SI-1.2).
    * Returns null where the value stays as now. Off unless the page passes it.
@@ -177,7 +178,7 @@ export function LiveRecordResults({
   pending,
   pageSize,
   selectedId,
-  newRecord = null,
+  newRecords = [],
   choiceCell = null,
   chipFieldId = null,
   selection = null,
@@ -200,14 +201,18 @@ export function LiveRecordResults({
     ? page.rows.filter((row) => selection.selectedIds.has(row.id)).length
     : 0;
   // The page's own row is the freshest copy, so it leads when the page has it.
-  const rows = newRecord
-    ? [
-        page.rows.find((row) => row.id === newRecord.id) ?? newRecord,
-        ...page.rows.filter((row) => row.id !== newRecord.id),
-      ]
-    : page.rows;
+  const newIds = new Set(newRecords.map((row) => row.id));
+  const rows =
+    newIds.size > 0
+      ? [
+          ...newRecords.map(
+            (newRow) => page.rows.find((row) => row.id === newRow.id) ?? newRow,
+          ),
+          ...page.rows.filter((row) => !newIds.has(row.id)),
+        ]
+      : page.rows;
   const newTag = (row: OpenViewRecord) =>
-    row.id === newRecord?.id ? <NewRecordTag /> : null;
+    newIds.has(row.id) ? <NewRecordTag /> : null;
   const cellValue = (row: OpenViewRecord, field: OpenViewDataSourceField) =>
     formatOpenViewFieldValue(
       openViewRecordFieldValue(row, field),
@@ -228,7 +233,7 @@ export function LiveRecordResults({
             region={region}
             layout={cardLayout}
             rows={rows}
-            newRecordId={newRecord?.id ?? null}
+            newRecordIds={newIds}
             fields={cardFields}
             primaryFieldId={presentation.primaryFieldId}
             secondaryFieldId={presentation.secondaryFieldId}
@@ -256,10 +261,10 @@ export function LiveRecordResults({
               "data-record-id": row.id,
               "data-state": row.id === selectedId ? "selected" : undefined,
             };
-            // DR-6.3: the new record's tag sits on its title line, so its
+            // DR-6.3: a new record's tag sits on its title line, so its
             // second line follows the title and tag; the button's hit area
             // still covers the row.
-            if (row.id === newRecord?.id)
+            if (newIds.has(row.id))
               return (
                 <li
                   key={row.id}
