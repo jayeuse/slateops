@@ -62,6 +62,7 @@ import {
   seenRecord,
   type RecordInPlaceStatus,
 } from "../domain/record-inplace-change";
+import { focusSoon } from "../domain/focus-soon";
 import { formatOpenViewFieldValue } from "./live-record-cards";
 import { RecordFormFields } from "./record-form-fields";
 import { RecordInPlaceField } from "./record-inplace-field";
@@ -147,11 +148,6 @@ type DeleteNotice =
   | { kind: "settled"; message: string }
   | { kind: "gone" }
   | { kind: "failed"; message: string; reference: string | undefined };
-
-/** Focuses after React renders the next state. */
-function focusSoon(find: () => HTMLElement | null | undefined) {
-  requestAnimationFrame(() => find()?.focus());
-}
 
 function fieldErrors(
   error: unknown,
