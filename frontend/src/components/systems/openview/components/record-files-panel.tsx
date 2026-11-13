@@ -44,6 +44,13 @@ import {
 import { useOpenViewAccessDenied } from "../adapters/openview-access";
 import type { OpenViewRecord } from "../adapters/views-api";
 import { useErrorText } from "@/lib/use-error-text";
+import {
+  checkDroppedFiles,
+  DROP_STATE_CLASS_NAME,
+  FILE_DROP_WORDS,
+  UPLOAD_ACCEPT,
+  useFileDropZone,
+} from "@/lib/file-drop";
 
 // A known reservation survives tab/record unmounts in this account's client.
 // It holds no bytes or history and sits outside SSE-invalidated read keys.
@@ -277,7 +284,7 @@ export function RecordFilesPanel({
   async function upload(file: File) {
     if (!canUpload || denied || !hasFirstPage || operation.current) return;
     if (file.size < 1 || file.size > MAX_FILE_BYTES) {
-      setError("Choose a file larger than 0 bytes and no larger than 25 MB.");
+      setError(FILE_DROP_WORDS.size);
       return;
     }
     if (
@@ -454,6 +461,20 @@ export function RecordFilesPanel({
     }
   }
 
+  // A dropped or pasted file takes the checks of Choose file, then the same
+  // upload (DR-SI-7.1 to 7.3); only where Choose file is offered.
+  function receive(dropped: File[]) {
+    const running = operation.current?.kind;
+    const checked = checkDroppedFiles(
+      dropped,
+      running ? (running === "upload" ? "upload" : "other") : null,
+    );
+    if (!checked) return;
+    if ("message" in checked) setError(checked.message);
+    else void upload(checked.file);
+  }
+  const drop = useFileDropZone(canUpload && !denied, receive);
+
   if (denied)
     return (
       <div className="py-4">
@@ -497,13 +518,16 @@ export function RecordFilesPanel({
     </span>
   );
   return (
-    <div className="flex min-w-0 flex-col gap-4 py-4">
+    <div className="relative flex min-w-0 flex-col gap-4 py-4" {...drop.zone}>
+      {drop.over ? (
+        <div className={DROP_STATE_CLASS_NAME}>Drop to attach</div>
+      ) : null}
       {canUpload ? (
         <Field>
           <FieldLabel htmlFor={inputId}>Upload file</FieldLabel>
           <FilePickerButton
             id={inputId}
-            accept=".pdf,.png,.jpg,.jpeg,.docx,.xlsx,.pptx"
+            accept={UPLOAD_ACCEPT}
             disabled={
               busy ||
               !hasFirstPage ||

@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { Alert } from "@/components/ui/alert";
 import { usePathname, useSearchParams } from "next/navigation";
+import { usePageFileDropGuard } from "@/lib/file-drop";
 import { parseOpenViewUrl } from "../domain/model";
 import { OpenViewQuerySync } from "./openview-query-sync";
 import { OpenViewLoading } from "./openview-skeletons";
@@ -21,6 +22,9 @@ function OpenViewRouteContent() {
     urlState.section === "views" && urlState.record?.startsWith("sample-"),
   );
   const section = isLegacySampleRecordLink ? null : urlState.section;
+  // On the module page a file dropped beside the record Files tab opens
+  // nothing (DR-SI-7.4).
+  usePageFileDropGuard(section === "views");
   let content;
   if (section === "views")
     content = (

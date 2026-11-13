@@ -70,6 +70,14 @@ import {
 } from "../adapters/platform-queries";
 import { useErrorText } from "@/lib/use-error-text";
 import {
+  checkDroppedFiles,
+  DROP_STATE_CLASS_NAME,
+  FILE_DROP_WORDS,
+  UPLOAD_ACCEPT,
+  useFileDropZone,
+  usePageFileDropGuard,
+} from "@/lib/file-drop";
+import {
   useAdmittedWorkspaceScope,
   useVerifiedWorkspaceUserId,
 } from "../../shared/runtime/workspace-identity";
@@ -223,6 +231,8 @@ export default function Files() {
         : choices[0]
       : choices.find((item) => item.id === requested);
   const level = department ? openViewLevel(identity.data, department.id) : null;
+  // A file dropped beside the library opens nothing (DR-SI-7.4).
+  usePageFileDropGuard();
 
   useEffect(() => {
     if (requested !== null || !department) return;
@@ -633,7 +643,7 @@ function LibraryContents({
     if (!canUpload || denied || waiting || !hasFirstPage || operation.current)
       return;
     if (file.size < 1 || file.size > MAX_FILE_BYTES) {
-      setError("Choose a file larger than 0 bytes and no larger than 25 MB.");
+      setError(FILE_DROP_WORDS.size);
       return;
     }
     if (
@@ -842,6 +852,19 @@ function LibraryContents({
       </>
     );
   };
+  // A dropped or pasted file takes the checks of Choose file, then the same
+  // upload (DR-SI-7.1 to 7.3); only where Choose file is offered.
+  function receive(dropped: File[]) {
+    const running = operation.current?.kind;
+    const checked = checkDroppedFiles(
+      dropped,
+      running ? (running === "upload" ? "upload" : "other") : null,
+    );
+    if (!checked) return;
+    if ("message" in checked) setError(checked.message);
+    else void upload(checked.file);
+  }
+  const drop = useFileDropZone(canUpload && !denied, receive);
   const ready = items.filter((file) => file.state === "ready");
   const unfinished = items.filter((file) => file.state !== "ready");
   const canReopen = canManage && !department.is_deleted;
@@ -854,7 +877,10 @@ function LibraryContents({
     : undefined;
 
   return (
-    <div className="min-w-0 space-y-5">
+    <div className="relative min-w-0 space-y-5" {...drop.zone}>
+      {drop.over ? (
+        <div className={DROP_STATE_CLASS_NAME}>Drop to upload</div>
+      ) : null}
       {department.is_deleted ? (
         <p role="note" className="text-muted-foreground text-sm">
           This department is closed. You can still read files and archive them
@@ -915,7 +941,7 @@ function LibraryContents({
               <FieldLabel htmlFor={inputId}>Upload file</FieldLabel>
               <FilePickerButton
                 id={inputId}
-                accept=".pdf,.png,.jpg,.jpeg,.docx,.xlsx,.pptx"
+                accept={UPLOAD_ACCEPT}
                 disabled={
                   busy ||
                   waiting ||
