@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Database, LockKeyhole } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 
 import { SignedOutFrame } from "@/components/signed-out/signed-out-frame";
 import { Button } from "@/components/ui/button";
@@ -12,9 +12,21 @@ import { getSessionStatus } from "@/lib/auth-api";
 import { cn } from "@/lib/utils";
 
 const workflow = [
-  ["01", "Join", "Your administrator sends you an invitation by email."],
-  ["02", "Model", "Shape departments, modules, and fields around your team."],
-  ["03", "Operate", "Work with validated records in one focused workspace."],
+  [
+    "01",
+    "Draw",
+    "Lay out your departments, what each one records, and how work moves between them.",
+  ],
+  [
+    "02",
+    "Test",
+    "Send sample data through the drawing and see where it goes, before anyone relies on it.",
+  ],
+  [
+    "03",
+    "Work",
+    "Your people keep records, boards and messages in one place, each seeing only what they may.",
+  ],
 ] as const;
 
 export default function Home() {
@@ -54,12 +66,11 @@ export default function Home() {
             data-slot="page-title"
             className="text-4xl leading-[1.1] font-bold tracking-[-0.025em] text-balance lg:text-5xl"
           >
-            Make the next action obvious.
+            Draw your organization as it works.
           </h1>
           <p className="text-muted-foreground mt-5 max-w-xl text-base leading-7">
-            Slate Operations gives teams a calm, structured place to design
-            their operational data and keep work moving from setup to everyday
-            records.
+            Slate Operations turns the drawing into one system your people use
+            every day.
           </p>
           <div className={cn("mt-8", checkingSession && "invisible")}>
             <Button asChild size="lg" className="min-h-11">
@@ -68,21 +79,14 @@ export default function Home() {
               </a>
             </Button>
           </div>
-          <div className="text-muted-foreground mt-6 flex flex-wrap gap-x-6 gap-y-3 text-sm">
-            <span className="inline-flex items-center gap-2">
-              <LockKeyhole className="size-4" aria-hidden="true" /> Self-hosted
-              access
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <Database className="size-4" aria-hidden="true" /> Your records
-              stay on your server
-            </span>
-          </div>
+          <p className="text-muted-foreground mt-6 text-sm">
+            Staff join by invitation from their administrator.
+          </p>
         </div>
 
         <Card className="w-full lg:self-center">
           <CardHeader>
-            <CardTitle>A guided start</CardTitle>
+            <CardTitle>How it works</CardTitle>
           </CardHeader>
           <ol className="divide-border divide-y">
             {workflow.map(([number, title, description]) => (
