@@ -115,7 +115,10 @@ test("a pending button locks, says what it is doing, and keeps its name", () => 
     children: "Save triggers",
   });
   expect(busy).toContain('aria-busy="true"');
-  expect(busy).toContain(' disabled=""');
+  // Locked without native disabled, which would drop the keyboard focus:
+  // aria-disabled, and every click is ignored (TASK-0061, rule 4).
+  expect(busy).toContain('aria-disabled="true"');
+  expect(busy).not.toContain(' disabled=""');
   // Both labels stay in the layout; the hidden one is invisible, so the
   // width holds and only the shown label is read.
   expect(busy).toMatch(/class="[^"]*invisible[^"]*">Save triggers/);
