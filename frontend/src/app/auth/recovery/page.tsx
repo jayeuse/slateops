@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowRight, KeyRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 
+import { SignedOutFrame } from "@/components/signed-out/signed-out-frame";
+import { SignedOutPanel } from "@/components/signed-out/signed-out-panel";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -106,30 +107,26 @@ export default function RecoveryPage() {
   const completingRecovery = recoveryToken !== null;
 
   return (
-    <main className="bg-background text-foreground flex min-h-screen items-center justify-center px-6 py-12">
-      <section className="w-full max-w-sm">
-        <a
-          href="/"
-          className="mb-12 inline-flex items-center gap-2 text-sm font-semibold"
-        >
-          <span className="bg-primary text-primary-foreground grid size-8 place-items-center rounded-md text-xs">
-            SO
-          </span>
-          Slate Operations
-        </a>
-        <div className="mb-8">
-          <div className="bg-accent text-accent-foreground mb-5 grid size-11 place-items-center rounded-full">
-            <KeyRound size={20} aria-hidden="true" />
-          </div>
-          <h1 className="text-2xl font-semibold">
-            {completingRecovery ? "Choose a new password" : "Reset password"}
-          </h1>
-          <p className="text-muted-foreground mt-2 text-sm">
-            {completingRecovery
-              ? "Choose a strong password for your Slate Operations account."
-              : "Enter your email to get recovery instructions."}
-          </p>
-        </div>
+    <SignedOutFrame>
+      <SignedOutPanel
+        title={completingRecovery ? "Choose a new password" : "Reset password"}
+        description={
+          completingRecovery
+            ? "Choose a strong password for your Slate Operations account."
+            : "Enter your email to get recovery instructions."
+        }
+        footer={
+          <>
+            Remembered your password?{" "}
+            <a
+              className="text-action-text rounded-sm font-medium underline-offset-4 hover:underline"
+              href="/login"
+            >
+              Return to sign in
+            </a>
+          </>
+        }
+      >
         {!hydrated ? (
           <p className="text-muted-foreground text-sm" role="status">
             Preparing password recovery…
@@ -140,19 +137,20 @@ export default function RecoveryPage() {
               <Alert
                 role="alert"
                 variant="destructive"
-                className="mb-5"
+
                 reference={failureReference}
               >
                 We could not reset your password. Check the requirements and try
                 again.
               </Alert>
             ) : null}
-            <form className="space-y-5" onSubmit={submitCompletion}>
-              <Field className="space-y-2" invalid={passwordLengthInvalid}>
+            <form className="flex flex-col gap-4" onSubmit={submitCompletion}>
+              <Field invalid={passwordLengthInvalid}>
                 <FieldLabel htmlFor="password">New password</FieldLabel>
                 <FieldControl
                   render={
                     <Input
+                      className="min-h-11"
                       id="password"
                       autoFocus
                       aria-invalid={passwordLengthInvalid}
@@ -184,13 +182,14 @@ export default function RecoveryPage() {
                   </FieldError>
                 ) : null}
               </Field>
-              <Field className="space-y-2" invalid={mismatch}>
+              <Field invalid={mismatch}>
                 <FieldLabel htmlFor="confirmation">
                   Confirm new password
                 </FieldLabel>
                 <FieldControl
                   render={
                     <Input
+                      className="min-h-11"
                       id="confirmation"
                       aria-invalid={mismatch}
                       aria-describedby={
@@ -213,19 +212,18 @@ export default function RecoveryPage() {
                 ) : null}
               </Field>
               <Button
-                className="w-full"
-                size="lg"
+                className="min-h-11 w-full"
                 pending={pending}
                 pendingLabel="Saving…"
               >
-                Reset password <ArrowRight aria-hidden="true" />
+                Reset password
               </Button>
             </form>
           </>
         ) : (
           <>
             {requestState === "sent" ? (
-              <Alert role="status" variant="success" className="mb-5">
+              <Alert role="status" variant="success">
                 If an account matches that email, we will send recovery
                 instructions.
               </Alert>
@@ -234,18 +232,19 @@ export default function RecoveryPage() {
               <Alert
                 role="alert"
                 variant="destructive"
-                className="mb-5"
+
                 reference={failureReference}
               >
                 We could not process that request. Try again shortly.
               </Alert>
             ) : null}
-            <form className="space-y-5" onSubmit={submitRequest}>
-              <Field className="space-y-2">
+            <form className="flex flex-col gap-4" onSubmit={submitRequest}>
+              <Field>
                 <FieldLabel htmlFor="email">Email</FieldLabel>
                 <FieldControl
                   render={
                     <Input
+                      className="min-h-11"
                       id="email"
                       type="email"
                       autoFocus
@@ -259,23 +258,16 @@ export default function RecoveryPage() {
                 />
               </Field>
               <Button
-                className="w-full"
-                size="lg"
+                className="min-h-11 w-full"
                 pending={pending}
                 pendingLabel="Requesting…"
               >
-                Request recovery <ArrowRight aria-hidden="true" />
+                Request recovery
               </Button>
             </form>
           </>
         )}
-        <p className="text-muted-foreground mt-8 text-center text-sm">
-          Remembered your password?{" "}
-          <a className="text-primary font-medium hover:underline" href="/login">
-            Return to sign in
-          </a>
-        </p>
-      </section>
-    </main>
+      </SignedOutPanel>
+    </SignedOutFrame>
   );
 }

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowRight, KeyRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 
+import { SignedOutFrame } from "@/components/signed-out/signed-out-frame";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/disabled-reason";
@@ -194,137 +195,137 @@ export default function AuthSetupPage() {
   }
 
   return (
-    <main className="bg-background text-foreground flex min-h-screen items-center justify-center px-6 py-12">
-      <section className="w-full max-w-sm">
-        <a
-          href="/"
-          className="mb-12 inline-flex items-center gap-2 text-sm font-semibold"
-        >
-          <span className="bg-primary text-primary-foreground grid size-8 place-items-center rounded-md text-xs">
-            SO
-          </span>
-          Slate Operations
-        </a>
-        <div className="mb-8">
-          <div className="bg-accent text-accent-foreground mb-5 grid size-11 place-items-center rounded-full">
-            <KeyRound size={20} aria-hidden="true" />
+    <SignedOutFrame>
+      <div className="flex flex-1 flex-col px-4 py-8 sm:py-12">
+        <section className="m-auto w-full max-w-sm">
+          <div className="mb-8">
+            <div className="bg-accent text-accent-foreground mb-5 grid size-11 place-items-center rounded-full">
+              <KeyRound size={20} aria-hidden="true" />
+            </div>
+            <h1 className="text-2xl font-semibold">
+              {account.status === "signed-in"
+                ? "Join an organization"
+                : "Set your password"}
+            </h1>
+            <p className="text-muted-foreground mt-2 text-sm">
+              {account.status === "signed-in"
+                ? "You are signed in. Join an organization that invited this account."
+                : "Finish setting up your invited Slate Operations account."}
+            </p>
           </div>
-          <h1 className="text-2xl font-semibold">
-            {account.status === "signed-in"
-              ? "Join an organization"
-              : "Set your password"}
-          </h1>
-          <p className="text-muted-foreground mt-2 text-sm">
-            {account.status === "signed-in"
-              ? "You are signed in. Join an organization that invited this account."
-              : "Finish setting up your invited Slate Operations account."}
-          </p>
-        </div>
-        {account.status === "signed-in" ? (
-          <div className="space-y-5">
-            {account.invitations.length > 0 ? (
-              <PendingInvitationList
-                invitations={account.invitations}
-                onJoin={join}
-              />
-            ) : (
-              <Alert>No pending invitations for this account.</Alert>
-            )}
-            <Button asChild variant="outline" className="w-full">
-              <a href="/openview">Go to your workspace</a>
-            </Button>
-          </div>
-        ) : (
-          <>
-            {setupError && (
-              <div className="mb-5 space-y-3">
-                <Alert
-                  role="alert"
-                  variant="destructive"
-                  reference={
-                    missingInvitationLink ? undefined : errorFailure?.reference
-                  }
-                >
-                  {setupError}
-                </Alert>
-                {setupFailure === "session" || setupFailure === "uncertain" ? (
-                  <Button asChild variant="outline" className="w-full">
-                    <a href="/login">Return to sign in</a>
+          {account.status === "signed-in" ? (
+            <div className="space-y-5">
+              {account.invitations.length > 0 ? (
+                <PendingInvitationList
+                  invitations={account.invitations}
+                  onJoin={join}
+                />
+              ) : (
+                <Alert>No pending invitations for this account.</Alert>
+              )}
+              <Button asChild variant="outline" className="w-full">
+                <a href="/openview">Go to your workspace</a>
+              </Button>
+            </div>
+          ) : (
+            <>
+              {setupError && (
+                <div className="mb-5 space-y-3">
+                  <Alert
+                    role="alert"
+                    variant="destructive"
+                    reference={
+                      missingInvitationLink
+                        ? undefined
+                        : errorFailure?.reference
+                    }
+                  >
+                    {setupError}
+                  </Alert>
+                  {setupFailure === "session" ||
+                  setupFailure === "uncertain" ? (
+                    <Button asChild variant="outline" className="w-full">
+                      <a href="/login">Return to sign in</a>
+                    </Button>
+                  ) : null}
+                </div>
+              )}
+              <form className="space-y-5" onSubmit={submit}>
+                <Field className="space-y-2">
+                  <FieldLabel htmlFor="password">Password</FieldLabel>
+                  <FieldControl
+                    render={
+                      <Input
+                        id="password"
+                        type="password"
+                        disabled={
+                          !ready ||
+                          pending ||
+                          missingInvitationLink ||
+                          setupFailure === "session" ||
+                          setupFailure === "uncertain"
+                        }
+                        autoComplete="new-password"
+                        minLength={12}
+                        required
+                        value={password}
+                        onChange={(event) => setPassword(event.target.value)}
+                      />
+                    }
+                  />
+                </Field>
+                <Field className="space-y-2" invalid={mismatch}>
+                  <FieldLabel htmlFor="confirmation">
+                    Confirm password
+                  </FieldLabel>
+                  <FieldControl
+                    render={
+                      <Input
+                        id="confirmation"
+                        aria-invalid={mismatch}
+                        aria-describedby={
+                          mismatch ? "confirmation-error" : undefined
+                        }
+                        type="password"
+                        disabled={
+                          !ready ||
+                          pending ||
+                          missingInvitationLink ||
+                          setupFailure === "session" ||
+                          setupFailure === "uncertain"
+                        }
+                        autoComplete="new-password"
+                        minLength={12}
+                        required
+                        value={confirmation}
+                        onChange={(event) =>
+                          setConfirmation(event.target.value)
+                        }
+                      />
+                    }
+                  />
+                  {mismatch && (
+                    <FieldError match id="confirmation-error">
+                      Passwords must match.
+                    </FieldError>
+                  )}
+                </Field>
+                <DisabledReason stable reason={setupBlockedReason}>
+                  <Button
+                    className="w-full"
+                    size="lg"
+                    disabled={setupBlockedReason !== null}
+                    pending={pending}
+                    pendingLabel="Saving…"
+                  >
+                    Set password <ArrowRight aria-hidden="true" />
                   </Button>
-                ) : null}
-              </div>
-            )}
-            <form className="space-y-5" onSubmit={submit}>
-              <Field className="space-y-2">
-                <FieldLabel htmlFor="password">Password</FieldLabel>
-                <FieldControl
-                  render={
-                    <Input
-                      id="password"
-                      type="password"
-                      disabled={
-                        !ready ||
-                        pending ||
-                        missingInvitationLink ||
-                        setupFailure === "session" ||
-                        setupFailure === "uncertain"
-                      }
-                      autoComplete="new-password"
-                      minLength={12}
-                      required
-                      value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                    />
-                  }
-                />
-              </Field>
-              <Field className="space-y-2" invalid={mismatch}>
-                <FieldLabel htmlFor="confirmation">Confirm password</FieldLabel>
-                <FieldControl
-                  render={
-                    <Input
-                      id="confirmation"
-                      aria-invalid={mismatch}
-                      aria-describedby={
-                        mismatch ? "confirmation-error" : undefined
-                      }
-                      type="password"
-                      disabled={
-                        !ready ||
-                        pending ||
-                        missingInvitationLink ||
-                        setupFailure === "session" ||
-                        setupFailure === "uncertain"
-                      }
-                      autoComplete="new-password"
-                      minLength={12}
-                      required
-                      value={confirmation}
-                      onChange={(event) => setConfirmation(event.target.value)}
-                    />
-                  }
-                />
-                {mismatch && (
-                  <FieldError match id="confirmation-error">
-                    Passwords must match.
-                  </FieldError>
-                )}
-              </Field>
-              <DisabledReason stable reason={setupBlockedReason}>
-                <Button
-                  className="w-full"
-                  size="lg"
-                  disabled={setupBlockedReason !== null}
-                  pending={pending}
-                  pendingLabel="Saving…"
-                >
-                  Set password <ArrowRight aria-hidden="true" />
-                </Button>
-              </DisabledReason>
-            </form>
-          </>
-        )}
-      </section>
-    </main>
+                </DisabledReason>
+              </form>
+            </>
+          )}
+        </section>
+      </div>
+    </SignedOutFrame>
   );
 }

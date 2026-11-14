@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { MailCheck } from "lucide-react";
+import { SignedOutFrame } from "@/components/signed-out/signed-out-frame";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/disabled-reason";
@@ -156,86 +157,88 @@ export default function EmailChangePage() {
           : null;
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4 py-12">
-      <section
-        aria-labelledby="email-change-heading"
-        className="border-border bg-card w-full max-w-md rounded-xl border p-6 shadow-sm sm:p-8"
-      >
-        <div className="bg-secondary text-secondary-foreground mb-6 inline-flex size-12 items-center justify-center rounded-xl">
-          <MailCheck className="size-6" aria-hidden="true" />
-        </div>
-        <h1
-          id="email-change-heading"
-          className="text-2xl font-semibold tracking-tight"
+    <SignedOutFrame>
+      <div className="flex flex-1 flex-col px-4 py-8 sm:py-12">
+        <section
+          aria-labelledby="email-change-heading"
+          className="border-border bg-card m-auto w-full max-w-md rounded-xl border p-6 shadow-sm sm:p-8"
         >
-          Confirm email change
-        </h1>
-        <p className="text-muted-foreground mt-2 text-sm">
-          Confirm the links sent to both your current and new email addresses.
-          Opening this page alone does not confirm a change.
-        </p>
-        <div className="mt-6 space-y-4">
-          {context === "checking" && (
-            <p role="status" className="text-muted-foreground text-sm">
-              Checking browser sign-in context…
-            </p>
-          )}
-          {context === "occupied" && (
-            <p className="text-sm">
-              This browser has a signed-in context. Sign out explicitly to
-              continue; no account will be replaced automatically.
-            </p>
-          )}
-          {error && (
-            <Alert
-              variant="destructive"
-              role="alert"
-              reference={errorFailure?.reference}
-            >
-              {error}
-            </Alert>
-          )}
-          {acknowledged && (
-            <p role="status" className="text-sm">
-              This link was accepted. Confirm the link sent to the other email
-              address to finish. You are not signed in by this acknowledgment.
-            </p>
-          )}
-          {context === "occupied" ? (
-            <Button
-              className="min-h-11 w-full"
-              pending={pending}
-              pendingLabel="Signing out…"
-              onClick={() => {
-                void logout();
-              }}
-            >
-              Sign out to continue
-            </Button>
-          ) : (
-            <DisabledReason stable reason={confirmBlockedReason}>
+          <div className="bg-secondary text-secondary-foreground mb-6 inline-flex size-12 items-center justify-center rounded-xl">
+            <MailCheck className="size-6" aria-hidden="true" />
+          </div>
+          <h1
+            id="email-change-heading"
+            className="text-2xl font-semibold tracking-tight"
+          >
+            Confirm email change
+          </h1>
+          <p className="text-muted-foreground mt-2 text-sm">
+            Confirm the links sent to both your current and new email addresses.
+            Opening this page alone does not confirm a change.
+          </p>
+          <div className="mt-6 space-y-4">
+            {context === "checking" && (
+              <p role="status" className="text-muted-foreground text-sm">
+                Checking browser sign-in context…
+              </p>
+            )}
+            {context === "occupied" && (
+              <p className="text-sm">
+                This browser has a signed-in context. Sign out explicitly to
+                continue; no account will be replaced automatically.
+              </p>
+            )}
+            {error && (
+              <Alert
+                variant="destructive"
+                role="alert"
+                reference={errorFailure?.reference}
+              >
+                {error}
+              </Alert>
+            )}
+            {acknowledged && (
+              <p role="status" className="text-sm">
+                This link was accepted. Confirm the link sent to the other email
+                address to finish. You are not signed in by this acknowledgment.
+              </p>
+            )}
+            {context === "occupied" ? (
               <Button
                 className="min-h-11 w-full"
-                aria-label="Confirm email change"
-                disabled={confirmBlockedReason !== null}
                 pending={pending}
-                pendingLabel="Confirming…"
+                pendingLabel="Signing out…"
                 onClick={() => {
-                  void confirm();
+                  void logout();
                 }}
               >
-                Confirm email change
+                Sign out to continue
               </Button>
-            </DisabledReason>
-          )}
-          <a
-            href="/login"
-            className="text-muted-foreground hover:text-foreground focus-visible:outline-ring flex min-h-11 items-center justify-center rounded-md text-sm underline focus-visible:outline-2"
-          >
-            Back to sign in
-          </a>
-        </div>
-      </section>
-    </main>
+            ) : (
+              <DisabledReason stable reason={confirmBlockedReason}>
+                <Button
+                  className="min-h-11 w-full"
+                  aria-label="Confirm email change"
+                  disabled={confirmBlockedReason !== null}
+                  pending={pending}
+                  pendingLabel="Confirming…"
+                  onClick={() => {
+                    void confirm();
+                  }}
+                >
+                  Confirm email change
+                </Button>
+              </DisabledReason>
+            )}
+            <a
+              href="/login"
+              className="text-muted-foreground hover:text-foreground focus-visible:outline-ring flex min-h-11 items-center justify-center rounded-md text-sm underline focus-visible:outline-2"
+            >
+              Back to sign in
+            </a>
+          </div>
+        </section>
+      </div>
+    </SignedOutFrame>
   );
 }

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { ArrowRight, CircleAlert, Terminal } from "lucide-react";
+import { SignedOutFrame } from "@/components/signed-out/signed-out-frame";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,19 +9,14 @@ export const metadata: Metadata = { title: "Setup guide" };
 
 export default function SetupPage() {
   return (
-    <main className="bg-background min-h-screen">
-      <header className="mx-auto flex max-w-5xl items-center justify-between px-6 py-5">
-        <a href="/" className="flex items-center gap-3">
-          <span className="bg-foreground text-background grid size-9 place-items-center rounded-md text-sm font-bold">
-            SO
-          </span>
-          <span className="text-sm font-semibold">Slate Operations</span>
-        </a>
+    <SignedOutFrame
+      actions={
         <Button asChild variant="ghost">
           <a href="/login">Back to sign in</a>
         </Button>
-      </header>
-      <div className="mx-auto max-w-3xl px-6 py-14 sm:py-24">
+      }
+    >
+      <div className="mx-auto w-full max-w-3xl px-6 py-14 sm:py-24">
         <p className="text-primary text-xs font-semibold tracking-[0.18em] uppercase">
           First deployment
         </p>
@@ -75,6 +71,6 @@ export default function SetupPage() {
           </Button>
         </div>
       </div>
-    </main>
+    </SignedOutFrame>
   );
 }
