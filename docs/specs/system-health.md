@@ -88,7 +88,7 @@ Email is a special case. Readiness checks only that email is configured (`readin
 
 **R4. Scope never widens through this page.** Installation-wide figures (disk, database size, workers, other organizations) go to the installation owner only. Readiness parts are shared by every organization and reveal nothing about the others, so everyone sees them.
 
-**R5. Every error message carries a reference.** Format: "Reference 4f9c2e1a" (the last 8 characters of `request_id`), with a Copy button that copies the full ID. A sentence under the reference explains how to use it: "Give this reference to your administrator." Admins can search Audit and Security events by the full ID or the 8-character reference (D7).
+**R5. Every error message carries a reference.** Format: "Reference 4f9c2e1a" (the last 8 characters of `request_id`), with a Copy button that copies the full ID. A sentence under the reference explains how to use it: "Give this reference to your administrator." Admins can search Audit and Security events by the full ID or the 8-character reference (D7). One exception: a sign-in refused for a wrong or malformed email or password (401, 422) says "Invalid email or password." with no reference, because the person fixes it without an administrator (Human Owner, 2026-11-14).
 
 **R6. No raw diagnostics for non-owners.** No graphs for members and admins; sentences and status words only (the reference's "do not frighten an older business owner" rule).
 
@@ -132,6 +132,7 @@ Tests and reviews cite these IDs.
 - **S1-C3.** The frontend `ApiError` keeps the request ID: from the body, else from the `X-Request-ID` header.
 - **S1-C4.** Every error message and toast that shows an API error shows "Reference" with the last 8 characters, a Copy control that copies the full ID, and the R5 sentence. The Copy control has an accessible name, and its confirmation is announced.
 - **S1-C5.** A failure with no response (no request ID) shows no reference and no empty placeholder.
+- **S1-C7.** A sign-in refused for wrong or malformed credentials (401, 422) shows "Invalid email or password." and no reference, also when the response carries a request ID (R5 exception).
 - **S1-C6.** No error message shows a stack trace, SQL, a service name, a host or a port (R1, R6).
 
 **S2 Status now**

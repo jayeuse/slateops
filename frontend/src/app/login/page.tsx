@@ -1,9 +1,10 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import { ArrowRight, LockKeyhole } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 
+import { SignedOutFrame } from "@/components/signed-out/signed-out-frame";
+import { SignedOutPanel } from "@/components/signed-out/signed-out-panel";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,15 +15,13 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { getSessionStatus, signIn } from "@/lib/auth-api";
-import { loginFailureMessage } from "@/lib/login-failure";
+import { loginFailureCause, loginFailureMessage } from "@/lib/login-failure";
 import { useErrorText } from "@/lib/use-error-text";
 
 function PasswordSetNotice() {
   const search = useSearchParams();
   return search.get("completed") === "password" ? (
-    <Alert variant="success" className="mb-5">
-      Password set. Sign in.
-    </Alert>
+    <Alert variant="success">Password set. Sign in.</Alert>
   ) : null;
 }
 
@@ -64,131 +63,90 @@ export default function LoginPage() {
       }
       router.push(await workspaceStartRoute());
     } catch (error) {
-      setError(loginFailureMessage(error), error);
+      setError(loginFailureMessage(error), loginFailureCause(error));
     } finally {
       setPending(false);
     }
   }
   return (
-    <main className="grid min-h-screen lg:grid-cols-[0.9fr_1.1fr]">
-      <section className="bg-sidebar text-sidebar-foreground hidden p-10 lg:flex lg:flex-col lg:justify-between">
-        <div>
-          <a href="/" className="flex items-center gap-3">
-            <span className="bg-foreground text-background grid size-9 place-items-center rounded-md text-sm font-bold">
-              SO
-            </span>
-            <span className="font-semibold">Slate Operations</span>
-          </a>
-          <div className="mt-32 max-w-md">
-            <h1 className="mt-5 text-4xl leading-tight font-semibold tracking-[-0.04em]">
-              A clear view of what comes next.
-            </h1>
-            <p className="text-sidebar-muted mt-6 leading-7">
-              Design your operating model once, then keep every team working
-              from the same source of truth.
-            </p>
-          </div>
-        </div>
-        <p className="text-sidebar-muted text-xs">
-          Self-hosted by default · Slate Operations
-        </p>
-      </section>
-      <section className="bg-background flex items-center justify-center px-6 py-12">
-        <div className="w-full max-w-sm" aria-busy={checkingSession}>
-          <a
-            href="/"
-            className="mb-12 inline-flex items-center gap-2 text-sm font-semibold lg:hidden"
+    <SignedOutFrame busy={checkingSession}>
+      <SignedOutPanel
+        title="Welcome back"
+        description="Sign in to continue to your workspace."
+        contentHidden={checkingSession}
+        footer={
+          <>
+            First deployment?{" "}
+            <a
+              className="text-action-text rounded-sm font-medium underline-offset-4 hover:underline"
+              href="/setup"
+            >
+              Read the setup guide
+            </a>
+          </>
+        }
+      >
+        <Suspense fallback={null}>
+          <PasswordSetNotice />
+        </Suspense>
+        {error && (
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={errorFailure?.reference}
           >
-            <span className="bg-foreground text-background grid size-8 place-items-center rounded-md text-xs">
-              SO
-            </span>
-            Slate Operations
-          </a>
-          <div className="mb-8">
-            <div className="bg-muted text-muted-foreground mb-5 grid size-11 place-items-center rounded-full">
-              <LockKeyhole size={20} />
-            </div>
-            <h2 className="text-2xl font-semibold">Welcome back</h2>
-            <p className="text-muted-foreground mt-2 text-sm">
-              Sign in to continue to your workspace.
-            </p>
-          </div>
-          <div className={checkingSession ? "invisible" : undefined}>
-            <Suspense fallback={null}>
-              <PasswordSetNotice />
-            </Suspense>
-            {error && (
-              <Alert
-                role="alert"
-                variant="destructive"
-                className="mb-5"
-                reference={errorFailure?.reference}
-              >
-                {error}
-              </Alert>
-            )}
-            <form className="space-y-5" onSubmit={submit}>
-              <FormField className="space-y-2">
-                <FieldLabel htmlFor="email">Email</FieldLabel>
-                <FieldControl
-                  render={
-                    <Input
-                      id="email"
-                      type="email"
-                      autoComplete="email"
-                      required
-                      value={email}
-                      onChange={(event) => setEmail(event.target.value)}
-                    />
-                  }
+            {error}
+          </Alert>
+        )}
+        <form className="flex flex-col gap-4" onSubmit={submit}>
+          <FormField>
+            <FieldLabel htmlFor="email">Email</FieldLabel>
+            <FieldControl
+              render={
+                <Input
+                  id="email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  className="min-h-11"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
                 />
-              </FormField>
-              <FormField className="space-y-2">
-                <FieldLabel htmlFor="password">Password</FieldLabel>
-                <FieldControl
-                  render={
-                    <Input
-                      id="password"
-                      type="password"
-                      autoComplete="current-password"
-                      minLength={12}
-                      required
-                      value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                    />
-                  }
+              }
+            />
+          </FormField>
+          <FormField>
+            <FieldLabel htmlFor="password">Password</FieldLabel>
+            <FieldControl
+              render={
+                <Input
+                  id="password"
+                  type="password"
+                  autoComplete="current-password"
+                  minLength={12}
+                  required
+                  className="min-h-11"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
                 />
-                <p className="text-muted-foreground text-xs">
-                  Use the email and password for your Slate Operations account.
-                </p>
-                <a
-                  className="text-primary inline-block text-sm font-medium hover:underline"
-                  href="/auth/recovery"
-                >
-                  Forgot password?
-                </a>
-              </FormField>
-              <Button
-                className="w-full"
-                size="lg"
-                pending={pending}
-                pendingLabel="Signing in…"
-              >
-                Sign in <ArrowRight aria-hidden="true" />
-              </Button>
-            </form>
-            <p className="text-muted-foreground mt-8 text-center text-sm">
-              First deployment?{" "}
-              <a
-                className="text-primary font-medium hover:underline"
-                href="/setup"
-              >
-                Read the setup guide
-              </a>
-            </p>
-          </div>
-        </div>
-      </section>
-    </main>
+              }
+            />
+            <a
+              className="text-action-text inline-flex min-h-11 items-center self-start rounded-sm text-sm font-medium underline-offset-4 hover:underline xl:min-h-6"
+              href="/auth/recovery"
+            >
+              Forgot password?
+            </a>
+          </FormField>
+          <Button
+            className="min-h-11 w-full"
+            pending={pending}
+            pendingLabel="Signing in…"
+          >
+            Sign in
+          </Button>
+        </form>
+      </SignedOutPanel>
+    </SignedOutFrame>
   );
 }

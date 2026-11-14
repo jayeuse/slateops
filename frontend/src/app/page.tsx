@@ -2,23 +2,31 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  ArrowRight,
-  CheckCircle2,
-  Database,
-  LockKeyhole,
-  PanelsTopLeft,
-} from "lucide-react";
+import { ArrowRight } from "lucide-react";
 
+import { SignedOutFrame } from "@/components/signed-out/signed-out-frame";
 import { Button } from "@/components/ui/button";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { workspaceStartRoute } from "@/components/workspace-start";
 import { getSessionStatus } from "@/lib/auth-api";
 import { cn } from "@/lib/utils";
 
 const workflow = [
-  ["01", "Join", "Your administrator sends you an invitation by email."],
-  ["02", "Model", "Shape departments, modules, and fields around your team."],
-  ["03", "Operate", "Work with validated records in one focused workspace."],
+  [
+    "01",
+    "Draw",
+    "Lay out your departments, what each one records, and how work moves between them.",
+  ],
+  [
+    "02",
+    "Test",
+    "Send sample data through the drawing and see where it goes, before anyone relies on it.",
+  ],
+  [
+    "03",
+    "Work",
+    "Your people keep records, boards and messages in one place, each seeing only what they may.",
+  ],
 ] as const;
 
 export default function Home() {
@@ -43,99 +51,60 @@ export default function Home() {
     return () => controller.abort();
   }, [router]);
   return (
-    <main
-      className="bg-background text-foreground min-h-screen"
-      aria-busy={checkingSession}
+    <SignedOutFrame
+      busy={checkingSession}
+      actionsHidden={checkingSession}
+      actions={
+        <Button asChild variant="outline" className="h-8 min-h-11 xl:min-h-8">
+          <a href="/login">Sign in</a>
+        </Button>
+      }
     >
-      <header className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5 lg:px-10">
-        <a className="flex items-center gap-3" href="/">
-          <span className="bg-foreground text-background grid size-9 place-items-center rounded-[var(--radius)] text-sm font-bold">
-            SO
-          </span>
-          <span className="text-sm font-semibold">
-            <span className="sm:hidden">Slate Ops</span>
-            <span className="hidden sm:inline">Slate Operations</span>
-          </span>
-        </a>
-        <nav
-          className={cn(
-            "flex items-center gap-2",
-            checkingSession && "invisible",
-          )}
-        >
-          <Button asChild size="sm">
-            <a href="/login">
-              Sign in <ArrowRight aria-hidden="true" />
-            </a>
-          </Button>
-        </nav>
-      </header>
-
-      <section className="mx-auto grid max-w-7xl gap-14 px-6 py-16 lg:grid-cols-[1.1fr_0.9fr] lg:px-10 lg:py-28">
-        <div className="max-w-3xl self-center">
-          <h1 className="text-4xl leading-tight font-semibold tracking-tight text-balance sm:text-5xl">
-            Make the next action obvious.
-          </h1>
-          <p className="text-muted-foreground mt-7 max-w-2xl text-lg leading-8">
-            Slate Operations gives teams a calm, structured place to design
-            their operational data and keep work moving from setup to everyday
-            records.
-          </p>
-          <div
-            className={cn(
-              "mt-9 flex flex-wrap gap-3",
-              checkingSession && "invisible",
-            )}
+      <div className="mx-auto grid w-full max-w-6xl gap-10 px-4 pt-10 pb-12 sm:px-7 lg:my-auto lg:grid-cols-[minmax(0,1fr)_minmax(0,28rem)] lg:items-center lg:gap-16 lg:py-12">
+        <div className="min-w-0">
+          <h1
+            data-slot="page-title"
+            className="text-4xl leading-[1.1] font-bold tracking-[-0.025em] text-balance lg:text-5xl"
           >
-            <Button asChild size="lg">
+            Draw your organization as it works.
+          </h1>
+          <p className="text-muted-foreground mt-5 max-w-xl text-base leading-7">
+            Slate Operations turns the drawing into one system your people use
+            every day.
+          </p>
+          <div className={cn("mt-8", checkingSession && "invisible")}>
+            <Button asChild size="lg" className="min-h-11">
               <a href="/login">
                 Open workspace <ArrowRight aria-hidden="true" />
               </a>
             </Button>
           </div>
-          <div className="text-muted-foreground mt-10 flex flex-wrap gap-x-6 gap-y-3 text-sm">
-            <span className="inline-flex items-center gap-2">
-              <LockKeyhole size={15} className="text-primary" /> Self-hosted
-              access
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <Database size={15} className="text-primary" /> Your records stay
-              on your server
-            </span>
-          </div>
+          <p className="text-muted-foreground mt-6 text-sm">
+            Staff join by invitation from their administrator.
+          </p>
         </div>
 
-        <div className="border-border bg-card rounded-[calc(var(--radius)*1.5)] border p-5 sm:p-7">
-          <div className="border-border flex items-center justify-between border-b pb-5">
-            <h2 className="text-xl font-semibold">A guided start</h2>
-            <PanelsTopLeft className="text-primary" aria-hidden="true" />
-          </div>
-          <div className="divide-border divide-y">
+        <Card className="w-full lg:self-center">
+          <CardHeader>
+            <CardTitle>How it works</CardTitle>
+          </CardHeader>
+          <ol className="divide-border divide-y">
             {workflow.map(([number, title, description]) => (
-              <div className="flex gap-4 py-5" key={number}>
-                <span className="text-muted-foreground font-mono text-xs">
+              <li className="flex gap-4 px-5 py-4" key={number}>
+                <span className="text-muted-foreground font-mono text-xs leading-5 tabular-nums">
                   {number}
                 </span>
-                <div>
-                  <h3 className="font-medium">{title}</h3>
-                  <p className="text-muted-foreground mt-1 text-sm leading-6">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold">{title}</h3>
+                  <p className="text-muted-foreground text-sm leading-5">
                     {description}
                   </p>
                 </div>
-                <CheckCircle2
-                  className="text-muted-foreground/40 ml-auto shrink-0"
-                  size={18}
-                  aria-hidden="true"
-                />
-              </div>
+              </li>
             ))}
-          </div>
-        </div>
-      </section>
-      <footer className="border-border text-muted-foreground mx-auto flex max-w-7xl flex-col gap-2 border-t px-6 py-6 text-xs sm:flex-row sm:justify-between lg:px-10">
-        <span>Slate Operations</span>
-        <span>Self-hosted by default</span>
-      </footer>
-    </main>
+          </ol>
+        </Card>
+      </div>
+    </SignedOutFrame>
   );
 }

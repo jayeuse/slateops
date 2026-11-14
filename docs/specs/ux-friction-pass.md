@@ -520,6 +520,8 @@ Check each criterion on the live development stack with the Harbor testing accou
 | DR-13.4 | Pending invitations stay reachable: the organization menu shows them as now ("1 invitation"), and the chooser lists them as now. | UF-13.1 | organization menu |
 | DR-13.5 | Landing page (`app/page.tsx`): step 01 reads "Join" over "Your administrator sends you an invitation by email."; the header link "First deployment?" (`:67`) and the hero button "Read setup guide" (`:99`) are removed. The `/login` footer keeps "First deployment? Read the setup guide" (`app/login/page.tsx:182-187`). `/setup` does not change. | UF-13.4; UF-C13.4 | `app/page.tsx` `workflow` list |
 
+The landing words that DR-13.5 fixed (step "Join" and its sentence) are replaced by `docs/specs/signed-out-pages.md` SO-H (Human Owner, 2026-11-14); the invitation line "Staff join by invitation from their administrator." keeps the UF-C13.4 criterion.
+
 | State | Signed in, several organizations |
 | --- | --- |
 | Rest | The last organization opens; the chooser does not show. |
