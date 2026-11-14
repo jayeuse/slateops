@@ -2,10 +2,17 @@ import { expect, test } from "@playwright/test";
 
 import { ApiError } from "../../../src/lib/api";
 import { signIn } from "../../../src/lib/auth-api";
-import { loginFailureMessage } from "../../../src/lib/login-failure";
+import { apiErrorReference } from "../../../src/lib/api-errors";
+import {
+  loginFailureCause,
+  loginFailureMessage,
+} from "../../../src/lib/login-failure";
 import { installFetch } from "../access/fixtures";
 
-// A refused sign-in shows one message and never the server's detail. A 429
+// A refused sign-in shows one message and never the server's detail. Wrong or
+// malformed credentials (401, 422) are the person's own to fix, so they say
+// "Invalid email or password." with no support reference (Human Owner,
+// 2026-11-14); other failures keep the request's reference. A 429
 // names the wait in whole minutes (at least one) only when Retry-After is a
 // whole number of seconds; any other value, or none, says "later". The http
 // journey "login explains ${failure.label} without exposing account details"
@@ -31,13 +38,18 @@ const rows: {
   {
     name: "wrong credentials",
     status: 401,
-    message: "That email or password is not right.",
+    message: "Invalid email or password.",
   },
   {
     name: "a 401 with a network code is still wrong credentials",
     status: 401,
     code: "ip_not_allowed",
-    message: "That email or password is not right.",
+    message: "Invalid email or password.",
+  },
+  {
+    name: "an email the server refuses as malformed (422) is wrong credentials",
+    status: 422,
+    message: "Invalid email or password.",
   },
   {
     name: "a delay of 75 seconds rounds up to 2 minutes",
@@ -173,3 +185,29 @@ test("login failure: an object that only looks like a 401 is not wrong credentia
     "Unable to sign in. Check your connection and try again.",
   );
 });
+
+for (const status of [401, 422])
+  test(`login failure: a ${status} shows no reference, a server error keeps it`, async () => {
+    for (const [code, reference] of [
+      [status, undefined],
+      [500, "01a1da34-2758-7b23-9d1b-e82349d396a7"],
+    ] as const) {
+      const mock = installFetch(() =>
+        Response.json(privateDetail, {
+          status: code,
+          headers: { "X-Request-ID": "01a1da34-2758-7b23-9d1b-e82349d396a7" },
+        }),
+      );
+      try {
+        const error = await signIn("owner@example.test", "secret").catch(
+          (caught: unknown) => caught,
+        );
+        expect(apiErrorReference(error)).toBe(
+          "01a1da34-2758-7b23-9d1b-e82349d396a7",
+        );
+        expect(apiErrorReference(loginFailureCause(error))).toBe(reference);
+      } finally {
+        mock.restore();
+      }
+    }
+  });

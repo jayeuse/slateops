@@ -14,7 +14,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { getSessionStatus, signIn } from "@/lib/auth-api";
-import { loginFailureMessage } from "@/lib/login-failure";
+import { loginFailureCause, loginFailureMessage } from "@/lib/login-failure";
 import { useErrorText } from "@/lib/use-error-text";
 
 function PasswordSetNotice() {
@@ -64,7 +64,7 @@ export default function LoginPage() {
       }
       router.push(await workspaceStartRoute());
     } catch (error) {
-      setError(loginFailureMessage(error), error);
+      setError(loginFailureMessage(error), loginFailureCause(error));
     } finally {
       setPending(false);
     }

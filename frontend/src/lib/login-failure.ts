@@ -1,9 +1,19 @@
 import { ApiError } from "@/lib/api";
 
+/**
+ * Wrong or malformed credentials: a 401, or a 422 when the server refuses the
+ * email's form. The person fixes these themselves.
+ */
+function isCredentialFailure(error: unknown): boolean {
+  return (
+    error instanceof ApiError && (error.status === 401 || error.status === 422)
+  );
+}
+
 /** The sign-in form's message for a refused or failed sign-in. */
 export function loginFailureMessage(error: unknown): string {
-  if (error instanceof ApiError && error.status === 401) {
-    return "That email or password is not right.";
+  if (isCredentialFailure(error)) {
+    return "Invalid email or password.";
   } else if (error instanceof ApiError && error.status === 429) {
     if (error.retryAfter === undefined)
       return "Too many attempts. Try again later.";
@@ -20,4 +30,12 @@ export function loginFailureMessage(error: unknown): string {
   } else {
     return "Unable to sign in. Check your connection and try again.";
   }
+}
+
+/**
+ * The cause the sign-in alert takes its support reference from: none for a
+ * credential failure, which needs no administrator, else the error itself.
+ */
+export function loginFailureCause(error: unknown): unknown {
+  return isCredentialFailure(error) ? undefined : error;
 }

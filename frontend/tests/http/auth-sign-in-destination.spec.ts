@@ -332,7 +332,14 @@ const loginFailures = [
   {
     label: "wrong credentials",
     status: 401,
-    message: "That email or password is not right.",
+    requestId: "01a1da34-2758-7b23-9d1b-e82349d396a7",
+    message: "Invalid email or password.",
+  },
+  {
+    label: "an email the server refuses as malformed",
+    status: 422,
+    requestId: "01a1da34-2745-7745-b02b-372a88a27619",
+    message: "Invalid email or password.",
   },
   {
     label: "rate limit with a delay rounded up to minutes",
@@ -386,10 +393,18 @@ for (const failure of loginFailures) {
         ? route.abort("failed")
         : route.fulfill({
             status: failure.status,
-            headers:
-              "retryAfter" in failure && typeof failure.retryAfter === "string"
+            headers: {
+              ...("retryAfter" in failure &&
+              typeof failure.retryAfter === "string"
                 ? { "Retry-After": failure.retryAfter }
-                : {},
+                : {}),
+              // A credential failure shows no reference even when the
+              // response names its request.
+              ...("requestId" in failure &&
+              typeof failure.requestId === "string"
+                ? { "X-Request-ID": failure.requestId }
+                : {}),
+            },
             json: {
               detail: {
                 code: "code" in failure ? failure.code : "login_failed",
