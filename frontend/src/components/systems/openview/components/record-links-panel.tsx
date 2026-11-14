@@ -34,6 +34,7 @@ import {
 import { openViewRecordTitle } from "../domain/record-display";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 
@@ -479,14 +480,25 @@ function LinkPicker({
             }}
           />
         </Field>
-        <Button
-          type="submit"
-          variant="outline"
-          className="min-h-11"
-          disabled={!targetFields.isSuccess || unresolvedCheck}
+        <DisabledReason
+          stable
+          reason={
+            !targetFields.isSuccess
+              ? "Wait for the fields to load."
+              : unresolvedCheck
+                ? "Wait for the link check to finish."
+                : null
+          }
         >
-          Search
-        </Button>
+          <Button
+            type="submit"
+            variant="outline"
+            className="min-h-11"
+            disabled={!targetFields.isSuccess || unresolvedCheck}
+          >
+            Search records
+          </Button>
+        </DisabledReason>
         <Button
           type="button"
           variant="ghost"

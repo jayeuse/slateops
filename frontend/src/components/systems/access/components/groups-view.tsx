@@ -379,7 +379,9 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
             : `${groupTotal} ${groupTotal === 1 ? "group" : "groups"}`}
         </p>
         {admin ? (
-          <DisabledReason reason={rows === null ? "Loading groups…" : null}>
+          <DisabledReason
+            reason={rows === null ? "Wait for the groups to load." : null}
+          >
             <Button className="min-h-11" onClick={() => setCreateOpen(true)}>
               <Plus aria-hidden="true" />
               Create group

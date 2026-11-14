@@ -234,7 +234,7 @@ export function PersonSessions({
           <ActionError message={error} reference={errorFailure?.reference} />
           <AlertDialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               className="min-h-11"
               disabled={pending}
               onClick={() => setRevoke(null)}
@@ -248,7 +248,11 @@ export function PersonSessions({
               pendingLabel="Signing out…"
               onClick={() => void confirm()}
             >
-              Sign out
+              {revoke?.kind === "one"
+                ? "Sign out session"
+                : self
+                  ? "Sign out other sessions"
+                  : "Sign out everywhere"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

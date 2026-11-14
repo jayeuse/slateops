@@ -166,7 +166,7 @@ export function BoardNewProjectDialog({
             <DialogFooter className="mt-0">
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 className={control}
                 disabled={pending}
                 onClick={requestClose}
@@ -181,9 +181,10 @@ export function BoardNewProjectDialog({
                   type="submit"
                   form={`${id}-form`}
                   className={control}
-                  disabled={pending}
+                  pending={pending}
+                  pendingLabel="Creating…"
                 >
-                  {pending ? "Creating…" : "Create board"}
+                  Create board
                 </Button>
               </DisabledReason>
             </DialogFooter>
@@ -194,7 +195,7 @@ export function BoardNewProjectDialog({
         open={discardOpen}
         title="Discard the new board?"
         description="The name and description you typed will be lost."
-        action="Discard"
+        action="Discard new board"
         onCancel={() => setDiscardOpen(false)}
         onConfirm={() => {
           setDiscardOpen(false);

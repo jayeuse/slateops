@@ -257,7 +257,7 @@ export default function CommsSearch({
               className={`${control} min-w-0 flex-1`}
             />
             <Button type="submit" className={control}>
-              Search
+              Search messages
             </Button>
           </div>
           <div

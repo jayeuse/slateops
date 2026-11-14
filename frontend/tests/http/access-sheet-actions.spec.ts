@@ -95,7 +95,9 @@ test("deleting a person closes the sheet and Undo restores them", async ({
   await ben.getByRole("button", { name: "Delete", exact: true }).click();
   const confirm = page.getByRole("alertdialog", { name: "Delete Ben Cruz?" });
   await expect(confirm).toContainText("signed out everywhere");
-  await confirm.getByRole("button", { name: "Delete", exact: true }).click();
+  await confirm
+    .getByRole("button", { name: "Delete account", exact: true })
+    .click();
   await deletion.entered;
   await expect(
     confirm.getByRole("button", { name: "Deleting…", exact: true }),
@@ -253,7 +255,9 @@ test("controls that wait for a list say why", async ({ page }) => {
   await people.entered;
   const invite = page.getByRole("button", { name: "Invite person" });
   await expect(invite).toHaveAttribute("aria-disabled", "true");
-  await expect(invite).toHaveAccessibleDescription("Loading people…");
+  await expect(invite).toHaveAccessibleDescription(
+    "Wait for the people to load.",
+  );
   people.release();
   await expect(invite).not.toHaveAttribute("aria-disabled", "true");
 
@@ -261,7 +265,9 @@ test("controls that wait for a list say why", async ({ page }) => {
   await groups.entered;
   const create = page.getByRole("button", { name: "Create group" });
   await expect(create).toHaveAttribute("aria-disabled", "true");
-  await expect(create).toHaveAccessibleDescription("Loading groups…");
+  await expect(create).toHaveAccessibleDescription(
+    "Wait for the groups to load.",
+  );
   groups.release();
   await expect(create).not.toHaveAttribute("aria-disabled", "true");
 });
@@ -333,7 +339,9 @@ test("an administrator adds a person to a group and removes them from the person
     page.getByRole("option", { name: /Inventory clerks/ }),
   ).toHaveAttribute("aria-disabled", "true");
   await page.getByRole("option", { name: /Finance readers/ }).click();
-  await panel.getByRole("button", { name: "Add", exact: true }).click();
+  await panel
+    .getByRole("button", { name: "Add to group", exact: true })
+    .click();
   await adding.entered;
   await expect(
     panel.getByRole("button", { name: "Adding…", exact: true }),
@@ -394,7 +402,9 @@ test("an add from the person sheet and a Members tab draft both survive", async 
   const panel = ana.getByRole("group", { name: "Add to group", exact: true });
   await panel.getByRole("combobox", { name: "Group" }).click();
   await page.getByRole("option", { name: /Finance readers/ }).click();
-  await panel.getByRole("button", { name: "Add", exact: true }).click();
+  await panel
+    .getByRole("button", { name: "Add to group", exact: true })
+    .click();
   await expect(
     ana.getByRole("list", { name: "Groups", exact: true }),
   ).toContainText("Finance readers");

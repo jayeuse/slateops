@@ -350,7 +350,7 @@ function WidgetCardFrame(
             onKeyDown={edit.handles.onHandleKeyDown}
             aria-label={`Move or resize ${title}`}
             aria-describedby="dashboard-handle-hint"
-            className="text-muted-foreground hover:bg-muted focus-visible:ring-ring -ml-2 grid size-11 shrink-0 cursor-grab touch-none place-items-center rounded-sm focus-visible:ring-2 focus-visible:outline-none xl:size-6"
+            className="text-muted-foreground hover:bg-tint-hover focus-visible:ring-ring -ml-2 grid size-11 shrink-0 cursor-grab touch-none place-items-center rounded-sm focus-visible:ring-2 focus-visible:outline-none xl:size-6"
           >
             <GripVertical aria-hidden="true" className="size-4" />
           </button>

@@ -77,6 +77,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -882,18 +883,33 @@ export function RecordDetailsControls({
             }
           />
           <div className="bg-card sticky bottom-0 z-10 flex flex-wrap gap-2 border-t py-3">
-            <Button
-              type="submit"
-              className="min-h-11"
-              disabled={
-                busy || editing.stale || fieldsHasMore || fieldsLoadingMore
+            <DisabledReason
+              stable
+              reason={
+                pending === "save"
+                  ? null
+                  : busy
+                    ? "Wait for the current action to finish."
+                    : editing.stale
+                      ? "Load the latest values first."
+                      : fieldsHasMore || fieldsLoadingMore
+                        ? "Wait for all fields to load."
+                        : null
               }
             >
-              {pending === "save" ? "Saving…" : "Save changes"}
-            </Button>
+              <Button
+                type="submit"
+                className="min-h-11"
+                disabled={editing.stale || fieldsHasMore || fieldsLoadingMore}
+                pending={pending === "save"}
+                pendingLabel="Saving…"
+              >
+                Save changes
+              </Button>
+            </DisabledReason>
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               className="min-h-11"
               disabled={busy}
               onClick={() => {
@@ -912,14 +928,24 @@ export function RecordDetailsControls({
           {record.isDeleted && (canWrite || isAdmin) ? (
             <div className="flex flex-wrap gap-2">
               {canWrite ? (
-                <Button
-                  type="button"
-                  className="min-h-11"
-                  disabled={busy}
-                  onClick={() => void restore()}
+                <DisabledReason
+                  stable
+                  reason={
+                    busy && pending !== "restore"
+                      ? "Wait for the current action to finish."
+                      : null
+                  }
                 >
-                  {pending === "restore" ? "Restoring…" : "Restore record"}
-                </Button>
+                  <Button
+                    type="button"
+                    className="min-h-11"
+                    pending={pending === "restore"}
+                    pendingLabel="Restoring…"
+                    onClick={() => void restore()}
+                  >
+                    Restore record
+                  </Button>
+                </DisabledReason>
               ) : null}
               {canPurge ? (
                 <Button
@@ -998,24 +1024,39 @@ export function RecordDetailsControls({
                     />
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="submit"
-                      variant="destructive"
-                      className="min-h-11"
-                      disabled={
-                        busy ||
-                        purgeConfirmationName !==
-                          purgePreview.confirmation_name ||
-                        purgePassword.length === 0
+                    <DisabledReason
+                      stable
+                      reason={
+                        pending === "purge"
+                          ? null
+                          : busy
+                            ? "Wait for the current action to finish."
+                            : purgeConfirmationName !==
+                                purgePreview.confirmation_name
+                              ? "Type the record name to confirm."
+                              : purgePassword.length === 0
+                                ? "Enter your administrator password."
+                                : null
                       }
                     >
-                      {pending === "purge"
-                        ? "Deleting…"
-                        : "Delete record forever"}
-                    </Button>
+                      <Button
+                        type="submit"
+                        variant="destructive"
+                        className="min-h-11"
+                        disabled={
+                          purgeConfirmationName !==
+                            purgePreview.confirmation_name ||
+                          purgePassword.length === 0
+                        }
+                        pending={pending === "purge"}
+                        pendingLabel="Deleting…"
+                      >
+                        Delete record forever
+                      </Button>
+                    </DisabledReason>
                     <Button
                       type="button"
-                      variant="outline"
+                      variant="ghost"
                       className="min-h-11"
                       disabled={busy}
                       onClick={() => {
@@ -1050,22 +1091,32 @@ export function RecordDetailsControls({
           <AlertDialogFooter>
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               className="min-h-11"
               disabled={busy}
               onClick={() => setConfirmDelete(false)}
             >
               Cancel
             </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              className="min-h-11"
-              disabled={busy}
-              onClick={() => void remove()}
+            <DisabledReason
+              stable
+              reason={
+                busy && pending !== "delete"
+                  ? "Wait for the current action to finish."
+                  : null
+              }
             >
-              {pending === "delete" ? "Deleting…" : "Delete record"}
-            </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                className="min-h-11"
+                pending={pending === "delete"}
+                pendingLabel="Deleting…"
+                onClick={() => void remove()}
+              >
+                Delete record
+              </Button>
+            </DisabledReason>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

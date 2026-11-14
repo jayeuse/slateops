@@ -4,6 +4,7 @@ import { Download } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Dialog,
   DialogContent,
@@ -92,7 +93,7 @@ export function AuditExportDialog({
   preview,
   downloadError,
   downloadPending,
-  canDownload,
+  downloadBlockedReason,
   onDownload,
 }: {
   open: boolean;
@@ -109,7 +110,8 @@ export function AuditExportDialog({
   };
   downloadError: unknown;
   downloadPending: boolean;
-  canDownload: boolean;
+  /** Why Download CSV cannot run now (rule 6, TASK-0061), or null. */
+  downloadBlockedReason: string | null;
   onDownload: () => void;
 }) {
   return (
@@ -203,14 +205,17 @@ export function AuditExportDialog({
         ) : null}
         <DialogFrameFooter>
           <DialogFooter className="mt-0">
-            <Button
-              className="min-h-11"
-              onClick={onDownload}
-              aria-busy={downloadPending}
-              disabled={!canDownload}
-            >
-              <Download data-icon="inline-start" /> Download CSV
-            </Button>
+            <DisabledReason stable reason={downloadBlockedReason}>
+              <Button
+                className="min-h-11"
+                onClick={onDownload}
+                disabled={downloadBlockedReason !== null}
+                pending={downloadPending}
+                pendingLabel="Downloading…"
+              >
+                <Download data-icon="inline-start" /> Download CSV
+              </Button>
+            </DisabledReason>
           </DialogFooter>
         </DialogFrameFooter>
       </DialogContent>

@@ -181,11 +181,11 @@ export function DashboardSavedCharts(props: {
   }
 
   const reason = !selected
-    ? "Choose a saved chart"
+    ? "Choose a saved chart first."
     : selected.isDeleted
-      ? "Restore this chart first"
+      ? "Restore this chart first."
       : !size
-        ? "No room for it here"
+        ? "No room for this chart here."
         : null;
   const shownPreview = preview?.id === selected?.id ? preview : null;
 

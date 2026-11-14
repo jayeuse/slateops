@@ -89,7 +89,7 @@ const HOVER = {
     self: "hover:bg-[color-mix(in_oklab,var(--cal)_10%,var(--card))]",
     group: "group-hover:bg-[color-mix(in_oklab,var(--cal)_10%,var(--card))]",
   },
-  ruled: { self: "hover:bg-accent", group: "group-hover:bg-accent" },
+  ruled: { self: "hover:bg-tint-hover", group: "group-hover:bg-tint-hover" },
 } as const;
 
 function markClass(
@@ -254,7 +254,7 @@ export function CalendarRow({
         type="button"
         aria-label={itemAccessibleName(item, calendar, region)}
         onClick={(event) => onOpen(item, event.currentTarget)}
-        className="hover:bg-accent focus-visible:outline-ring grid min-h-14 w-full grid-cols-[6rem_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5 border-b px-4 py-2 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 md:min-h-10 md:grid-cols-[8rem_minmax(0,1fr)_minmax(0,15rem)] md:py-1.5"
+        className="hover:bg-tint-hover focus-visible:outline-ring grid min-h-14 w-full grid-cols-[6rem_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5 border-b px-4 py-2 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 md:min-h-10 md:grid-cols-[8rem_minmax(0,1fr)_minmax(0,15rem)] md:py-1.5"
       >
         <span className="text-muted-foreground text-xs tabular-nums">
           {itemWhen(item, region, date)}

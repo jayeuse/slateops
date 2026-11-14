@@ -477,7 +477,7 @@ test("provider invitation and recovery emails complete through rendered forms", 
       response.url().endsWith("/api/auth/invitations/complete") &&
       response.request().method() === "POST",
   );
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Set password" }).click();
   expect((await invitationCompletion).status()).toBe(204);
   await expect(page).toHaveURL(
     new URL("/login?completed=password", browserOrigin).href,

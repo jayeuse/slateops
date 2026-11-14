@@ -1121,10 +1121,14 @@ export function SecurityView({
       <AccessConfirmationDialog
         confirm={sessionsDenied ? null : shownConfirm}
         pending={livePending}
-        actionsDisabled={
-          sessionsDenied ||
-          sessionsQuery.isError ||
-          (endingAll && remoteCount.isFetching)
+        blockedReason={
+          sessionsDenied
+            ? "You cannot manage these sessions."
+            : sessionsQuery.isError
+              ? "Retry loading the sessions first."
+              : endingAll && remoteCount.isFetching
+                ? "Wait for the session count to load."
+                : null
         }
         error={error}
         errorReference={errorFailure?.reference}

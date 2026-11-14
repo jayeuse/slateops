@@ -169,7 +169,7 @@ test("scheduled messages expose Send Now Edit and Cancel on entry without bypass
   await page.goto("/comms");
   const tool = await openTool(page, "Scheduled messages");
   await expect(
-    tool.getByRole("button", { name: "Send Now", exact: true }),
+    tool.getByRole("button", { name: "Send message now", exact: true }),
   ).toHaveCount(2);
   await expect(
     tool.getByRole("button", { name: /^Edit scheduled message:/ }),
@@ -182,13 +182,13 @@ test("scheduled messages expose Send Now Edit and Cancel on entry without bypass
       name: "Scheduled message: Deliver scheduled update",
       exact: true,
     })
-    .getByRole("button", { name: "Send Now", exact: true })
+    .getByRole("button", { name: "Send message now", exact: true })
     .click();
   await expect(
     tool.getByText("Scheduled message sent.", { exact: true }),
   ).toHaveCount(0);
   await tool
-    .getByRole("button", { name: "Confirm Send Now", exact: true })
+    .getByRole("button", { name: "Send this message now", exact: true })
     .click();
   await expect(
     tool.getByText("Scheduled message sent.", { exact: true }),
@@ -281,7 +281,7 @@ test("scheduled messages edit in the regional timezone then send now and cancel 
     .getByRole("button", { name: "Preview scheduled message", exact: true })
     .click();
   await tool
-    .getByRole("button", { name: "Confirm Send Now", exact: true })
+    .getByRole("button", { name: "Send this message now", exact: true })
     .click();
   await expect(
     tool.getByText("Scheduled message sent.", { exact: true }),

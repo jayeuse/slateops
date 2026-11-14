@@ -170,10 +170,7 @@ export function PersonPanel({
                     aria-label="Person"
                     className="grid w-full grid-cols-4 sm:w-fit"
                   >
-                    <TabsTrigger
-                      className="min-h-11 xl:min-h-8"
-                      value="details"
-                    >
+                    <TabsTrigger value="details">
                       Details
                       {hasUnsavedDraft ? (
                         <>
@@ -185,21 +182,9 @@ export function PersonPanel({
                         </>
                       ) : null}
                     </TabsTrigger>
-                    <TabsTrigger className="min-h-11 xl:min-h-8" value="access">
-                      Access
-                    </TabsTrigger>
-                    <TabsTrigger
-                      className="min-h-11 xl:min-h-8"
-                      value="sessions"
-                    >
-                      Sessions
-                    </TabsTrigger>
-                    <TabsTrigger
-                      className="min-h-11 xl:min-h-8"
-                      value="security"
-                    >
-                      Security
-                    </TabsTrigger>
+                    <TabsTrigger value="access">Access</TabsTrigger>
+                    <TabsTrigger value="sessions">Sessions</TabsTrigger>
+                    <TabsTrigger value="security">Security</TabsTrigger>
                   </TabsList>
                 </div>
                 {/* The editor stays mounted while other tabs show, so a

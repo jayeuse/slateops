@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 
 type EmptyCanvasPanelProps = {
   pending: boolean;
@@ -37,13 +38,20 @@ export function EmptyCanvasPanel({
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
-          <Button
-            className="whitespace-nowrap max-sm:min-h-11"
-            disabled={pending}
-            onClick={onStartFromTemplate}
+          {/* It only opens the templates, so it has no busy state; while
+              another change runs, it says why it waits (TASK-0061 rule 6). */}
+          <DisabledReason
+            stable
+            reason={pending ? "Finish the current change first." : null}
           >
-            Start from a template
-          </Button>
+            <Button
+              className="whitespace-nowrap max-sm:min-h-11"
+              disabled={pending}
+              onClick={onStartFromTemplate}
+            >
+              Start from a template
+            </Button>
+          </DisabledReason>
           <Button
             variant="outline"
             className="whitespace-nowrap max-sm:min-h-11"

@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Dialog,
   DialogContent,
@@ -43,7 +44,8 @@ export type ConfirmState = {
 type AccessConfirmationDialogProps = {
   confirm: ConfirmState | null;
   pending: boolean;
-  actionsDisabled: boolean;
+  /** Why the confirm cannot run now (rule 6, TASK-0061), or null. */
+  blockedReason: string | null;
   error: string;
   /** The failed request behind `error` (D1.4). */
   errorReference?: string;
@@ -57,7 +59,7 @@ type AccessConfirmationDialogProps = {
 export function AccessConfirmationDialog({
   confirm,
   pending,
-  actionsDisabled,
+  blockedReason,
   error,
   errorReference,
   draftAcknowledged,
@@ -66,6 +68,11 @@ export function AccessConfirmationDialog({
   onClose,
   onDraftAcknowledgedChange,
 }: AccessConfirmationDialogProps) {
+  const reason =
+    blockedReason ??
+    (confirm?.requiresDraftAck && !draftAcknowledged
+      ? 'Select "Discard affected unsaved drafts" first.'
+      : null);
   return (
     <AlertDialog
       open={confirm !== null}
@@ -116,30 +123,29 @@ export function AccessConfirmationDialog({
         <AlertDialogFooter>
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             className="min-h-11"
             disabled={pending}
             onClick={onClose}
           >
             Cancel
           </Button>
-          <Button
-            type="button"
-            variant="destructive"
-            className="min-h-11"
-            pending={pending}
-            pendingLabel={confirm?.pendingLabel ?? "Saving…"}
-            disabled={Boolean(
-              actionsDisabled ||
-              (confirm?.requiresDraftAck && !draftAcknowledged),
-            )}
-            onClick={async () => {
-              if (!confirm || pending || actionsDisabled) return;
-              if (await confirm.action()) onClose();
-            }}
-          >
-            {confirm?.confirmLabel ?? "Confirm"}
-          </Button>
+          <DisabledReason stable reason={pending ? null : reason}>
+            <Button
+              type="button"
+              variant="destructive"
+              className="min-h-11"
+              pending={pending}
+              pendingLabel={confirm?.pendingLabel ?? "Saving…"}
+              disabled={reason !== null}
+              onClick={async () => {
+                if (!confirm || pending || blockedReason) return;
+                if (await confirm.action()) onClose();
+              }}
+            >
+              {confirm?.confirmLabel ?? "Confirm action"}
+            </Button>
+          </DisabledReason>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

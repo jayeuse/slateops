@@ -218,6 +218,13 @@ const GROUP_PAGE_SIZE = 12;
 /** The module page's search, where focus returns when nothing else fits. */
 const SEARCH_ID = "openview-search";
 const DEFAULT_RECORD_PAGE_SIZE = 25;
+// The running view action, also the meta line's status. A button that
+// starts one compares against it to show its own busy state (TASK-0061).
+const UPDATING_VIEW = "Updating saved view…";
+const SAVING_VIEW = "Saving saved view…";
+const ARCHIVING_VIEW = "Archiving saved view…";
+// A view action blocks every other view button until it ends.
+const WAIT_FOR_ACTION = "Wait for the current action to finish.";
 
 type RecordPageState = {
   moduleId: string;
@@ -2319,9 +2326,7 @@ export default function ServerBackedViewsWorkspace({
     const submittedRevision = editRevision.current;
     setSaveError("");
     setActionError("");
-    setPendingAction(
-      mode === "update" ? "Updating saved view…" : "Saving saved view…",
-    );
+    setPendingAction(mode === "update" ? UPDATING_VIEW : SAVING_VIEW);
     try {
       const saved =
         mode === "update" && saveTarget
@@ -2478,7 +2483,7 @@ export default function ServerBackedViewsWorkspace({
   const archiveView = async () => {
     if (!activeSaved || !canEditSaved || pendingAction) return;
     setArchiveError("");
-    setPendingAction("Archiving saved view…");
+    setPendingAction(ARCHIVING_VIEW);
     try {
       await archiveOpenViewSavedView({
         id: activeSaved.id,
@@ -2876,10 +2881,13 @@ export default function ServerBackedViewsWorkspace({
   // OD5: one primary. With unsaved changes a manager saves the view;
   // otherwise a writer adds a record.
   const saving = dirty && canManageViews;
-  // A blocked save says why (the Four Moments Rule); a running action
-  // blocks it without a reason, as it ends on its own.
+  // A blocked save says why (the Four Moments Rule), a running action
+  // included (TASK-0061 rule 6); Save view's own update shows as busy.
+  const updatingView = canEditSaved && pendingAction === UPDATING_VIEW;
   const saveBlockedReason = pendingAction
-    ? null
+    ? updatingView
+      ? null
+      : WAIT_FOR_ACTION
     : saveConflict
       ? "Resolve the conflict in the save dialog first."
       : unsafeFilters
@@ -3067,10 +3075,15 @@ export default function ServerBackedViewsWorkspace({
       </DropdownMenu>
       {canWriteRecords ? (
         <DisabledReason
+          stable
           reason={
-            currentWorkspace?.fieldsHasMore
-              ? "Load all fields before creating a record."
-              : null
+            pendingAction
+              ? WAIT_FOR_ACTION
+              : currentWorkspace?.fieldsHasMore
+                ? "Load all fields before creating a record."
+                : metadataLoadingMore
+                  ? "Wait for all fields to load."
+                  : null
           }
         >
           <Button
@@ -3078,9 +3091,7 @@ export default function ServerBackedViewsWorkspace({
             variant={saving ? "outline" : "default"}
             className="min-h-11"
             disabled={
-              Boolean(pendingAction) ||
-              Boolean(currentWorkspace?.fieldsHasMore) ||
-              metadataLoadingMore
+              Boolean(currentWorkspace?.fieldsHasMore) || metadataLoadingMore
             }
             onClick={() => {
               createdRecord.end();
@@ -3107,11 +3118,13 @@ export default function ServerBackedViewsWorkspace({
         </DisabledReason>
       ) : null}
       {saving ? (
-        <DisabledReason reason={saveBlockedReason}>
+        <DisabledReason stable reason={saveBlockedReason}>
           <Button
             type="button"
             className="min-h-11"
-            disabled={savePending}
+            disabled={unsafeFilters || Boolean(saveConflict)}
+            pending={updatingView}
+            pendingLabel="Saving…"
             onClick={canEditSaved ? saveChanges : () => openSaveDialog(true)}
           >
             Save view
@@ -4317,18 +4330,29 @@ export default function ServerBackedViewsWorkspace({
                       >
                         Reload latest
                       </Button>
-                      <Button
-                        type="button"
-                        className="min-h-11"
-                        disabled={
-                          Boolean(pendingAction) ||
-                          !saveName.trim() ||
-                          incompleteFilters
+                      <DisabledReason
+                        stable
+                        reason={
+                          pendingAction
+                            ? null
+                            : !saveName.trim()
+                              ? "Name the view first."
+                              : incompleteFilters
+                                ? "Complete or remove the unfinished filter first."
+                                : null
                         }
-                        onClick={saveMyVersionOverLatest}
                       >
-                        Save my version over latest
-                      </Button>
+                        <Button
+                          type="button"
+                          className="min-h-11"
+                          disabled={!saveName.trim() || incompleteFilters}
+                          pending={Boolean(pendingAction)}
+                          pendingLabel={UPDATING_VIEW}
+                          onClick={saveMyVersionOverLatest}
+                        >
+                          Keep my changes
+                        </Button>
+                      </DisabledReason>
                     </div>
                   </Alert>
                 ) : null}
@@ -4360,7 +4384,7 @@ export default function ServerBackedViewsWorkspace({
                   <DialogFooter className="mt-0">
                     <Button
                       type="button"
-                      variant="outline"
+                      variant="ghost"
                       className="min-h-11"
                       disabled={Boolean(pendingAction) || Boolean(saveConflict)}
                       onClick={() => setSaveOpen(false)}
@@ -4368,24 +4392,36 @@ export default function ServerBackedViewsWorkspace({
                       Cancel
                     </Button>
                     {!saveConflict ? (
-                      <Button
-                        type="button"
-                        className="min-h-11"
-                        disabled={
-                          Boolean(pendingAction) ||
-                          incompleteFilters ||
-                          !saveName.trim()
-                        }
-                        onClick={() =>
-                          void saveView(
-                            renameTarget ? "update" : "create",
-                            saveName,
-                          )
+                      <DisabledReason
+                        stable
+                        reason={
+                          pendingAction
+                            ? null
+                            : !saveName.trim()
+                              ? "Name the view first."
+                              : incompleteFilters
+                                ? "Complete or remove the unfinished filter first."
+                                : null
                         }
                       >
-                        {pendingAction ||
-                          (renameTarget ? "Rename view" : "Save view")}
-                      </Button>
+                        <Button
+                          type="button"
+                          className="min-h-11"
+                          disabled={incompleteFilters || !saveName.trim()}
+                          pending={Boolean(pendingAction)}
+                          pendingLabel={
+                            renameTarget ? UPDATING_VIEW : SAVING_VIEW
+                          }
+                          onClick={() =>
+                            void saveView(
+                              renameTarget ? "update" : "create",
+                              saveName,
+                            )
+                          }
+                        >
+                          {renameTarget ? "Rename view" : "Save view"}
+                        </Button>
+                      </DisabledReason>
                     ) : null}
                   </DialogFooter>
                 </DialogFrameFooter>
@@ -4421,24 +4457,39 @@ export default function ServerBackedViewsWorkspace({
                 <AlertDialogFooter>
                   <Button
                     type="button"
-                    variant="outline"
+                    variant="ghost"
                     className="min-h-11"
                     disabled={Boolean(pendingAction)}
                     onClick={() => setArchiveOpen(false)}
                   >
                     Cancel
                   </Button>
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    className="min-h-11"
-                    disabled={!canEditSaved || Boolean(pendingAction)}
-                    onClick={() =>
-                      confirmDraftDiscard(() => void archiveView())
+                  <DisabledReason
+                    stable
+                    reason={
+                      pendingAction === ARCHIVING_VIEW
+                        ? null
+                        : pendingAction
+                          ? WAIT_FOR_ACTION
+                          : !canEditSaved
+                            ? "You can no longer edit this view."
+                            : null
                     }
                   >
-                    Archive view
-                  </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      className="min-h-11"
+                      disabled={!canEditSaved}
+                      pending={pendingAction === ARCHIVING_VIEW}
+                      pendingLabel="Archiving…"
+                      onClick={() =>
+                        confirmDraftDiscard(() => void archiveView())
+                      }
+                    >
+                      Archive view
+                    </Button>
+                  </DisabledReason>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
@@ -4538,28 +4589,32 @@ export default function ServerBackedViewsWorkspace({
                 <AlertDialogFooter>
                   <Button
                     type="button"
-                    variant="outline"
+                    variant="ghost"
                     className="min-h-11"
                     disabled={Boolean(pendingAction)}
                     onClick={() => setPendingNavigation(null)}
                   >
                     Keep editing
                   </Button>
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    className="min-h-11"
-                    disabled={Boolean(pendingAction)}
-                    onClick={() => {
-                      const transition = pendingNavigation;
-                      if (!transition) return;
-                      if (transition.discardDraft) setDraftState(null);
-                      setPendingNavigation(null);
-                      startNavigation(transition.resume);
-                    }}
+                  <DisabledReason
+                    stable
+                    reason={pendingAction ? WAIT_FOR_ACTION : null}
                   >
-                    Discard and continue
-                  </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      className="min-h-11"
+                      onClick={() => {
+                        const transition = pendingNavigation;
+                        if (!transition) return;
+                        if (transition.discardDraft) setDraftState(null);
+                        setPendingNavigation(null);
+                        startNavigation(transition.resume);
+                      }}
+                    >
+                      Discard and continue
+                    </Button>
+                  </DisabledReason>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>

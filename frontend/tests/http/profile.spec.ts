@@ -273,8 +273,9 @@ test("Profile serializes pending edits and ignores a late old-account completion
       .getByRole("button", { name: "Save profile", exact: true })
       .click();
     await hold.entered;
+    // TASK-0061 rule 4: the running save is busy under its own words.
     await expect(
-      page.getByRole("button", { name: "Save profile", exact: true }),
+      page.getByRole("button", { name: "Saving…", exact: true }),
     ).toBeDisabled();
     await expect(
       page.getByLabel("Upload photo", { exact: true }),
@@ -714,7 +715,7 @@ test("Profile optional member MFA uses the incumbent enrollment verification and
       .getByRole("button", { name: "Remove authenticator", exact: true })
       .click();
     await dialog
-      .getByRole("button", { name: "Confirm removal", exact: true })
+      .getByRole("button", { name: "Remove and sign out", exact: true })
       .click();
     await expect(page).toHaveURL(/\/login$/);
     expect(mfa.actors.get(profileUserA)?.factors).toEqual([]);

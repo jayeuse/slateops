@@ -20,6 +20,7 @@ import { RecordFormFields } from "./record-form-fields";
 import { statusLinkClassName } from "./record-selection-bar";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   DialogFrameFooter,
   DialogFrameHeader,
@@ -230,7 +231,7 @@ function CreateForm({
         <DialogFooter className="mt-0">
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             className="min-h-11"
             disabled={pending !== null}
             onClick={onCancel}
@@ -246,13 +247,23 @@ function CreateForm({
           >
             {pending === "another" ? "Creating…" : "Create and add another"}
           </Button>
-          <Button
-            type="submit"
-            className="min-h-11"
-            disabled={pending !== null}
+          <DisabledReason
+            stable
+            reason={
+              pending === "another"
+                ? "Wait for the current action to finish."
+                : null
+            }
           >
-            {pending === "create" ? "Creating…" : `Create ${moduleName} record`}
-          </Button>
+            <Button
+              type="submit"
+              className="min-h-11"
+              pending={pending === "create"}
+              pendingLabel="Creating…"
+            >
+              {`Create ${moduleName} record`}
+            </Button>
+          </DisabledReason>
         </DialogFooter>
       </DialogFrameFooter>
     </form>

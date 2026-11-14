@@ -177,7 +177,7 @@ export default function AccountSettings() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               className="min-h-11"
               onClick={() => setLeaving(null)}
             >

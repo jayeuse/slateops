@@ -390,7 +390,7 @@ export function KanbanBoard(props: KanbanBoardProps) {
     ) : (
       <button
         type="button"
-        className="text-muted-foreground hover:text-foreground flex h-11 w-full items-center gap-1.5 rounded-md px-2 text-sm hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] focus-visible:outline-2 focus-visible:outline-[var(--focus)] xl:h-8"
+        className="text-muted-foreground hover:text-foreground hover:bg-tint-hover flex h-11 w-full items-center gap-1.5 rounded-md px-2 text-sm focus-visible:outline-2 focus-visible:outline-[var(--focus)] xl:h-8"
         onClick={() => props.onCompose(stage.id)}
       >
         <Plus aria-hidden="true" className="size-4" />

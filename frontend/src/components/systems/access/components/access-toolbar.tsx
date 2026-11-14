@@ -271,7 +271,7 @@ export function FilterChips({
             type="button"
             aria-label={`Remove ${chip.label} filter`}
             disabled={disabled}
-            className="text-muted-foreground hover:text-foreground focus-visible:outline-ring inline-grid size-11 shrink-0 place-items-center rounded-full outline-none hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] focus-visible:outline-2 xl:size-5"
+            className="text-muted-foreground hover:text-foreground focus-visible:outline-ring hover:bg-tint-hover inline-grid size-11 shrink-0 place-items-center rounded-full outline-none focus-visible:outline-2 xl:size-5"
             onClick={() => {
               focusAfter.current =
                 (chips[index + 1] ?? chips[index - 1])?.key ?? "";

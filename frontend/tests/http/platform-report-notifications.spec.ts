@@ -102,6 +102,13 @@ test("connected Report notifications show reference status and refetch after mar
     name: "Notifications",
   });
   await expect(connected.getByText("Scheduled report run")).toBeVisible();
+  // All / Unread is a segmented rail with the shared pill on the chosen
+  // option (the One Pill Rule).
+  await expect(
+    connected
+      .getByRole("group", { name: "Notification filter" })
+      .locator('[aria-pressed="true"] [data-pill]'),
+  ).toHaveCount(1);
   await expect(
     connected
       .getByRole("list", { name: "Notifications" })

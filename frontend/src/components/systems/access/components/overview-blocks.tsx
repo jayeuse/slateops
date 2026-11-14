@@ -289,7 +289,7 @@ function Presence({ data }: { data: Presence }) {
                 >
                   <GuardedWorkspaceLink
                     href={`/access?view=people&user=${person.id}` as Route}
-                    className="hover:bg-muted flex h-11 items-center gap-2 rounded-full border pr-3 pl-1 text-sm whitespace-nowrap xl:h-8"
+                    className="hover:bg-tint-hover flex h-11 items-center gap-2 rounded-full border pr-3 pl-1 text-sm whitespace-nowrap xl:h-8"
                   >
                     <OnlineAvatar name={person.name} url={person.avatarUrl} />
                     <span className="max-w-32 truncate">{person.label}</span>
@@ -356,7 +356,7 @@ function Presence({ data }: { data: Presence }) {
               {href ? (
                 <GuardedWorkspaceLink
                   href={href as Route}
-                  className={cn(item, "hover:bg-muted hover:underline")}
+                  className={cn(item, "hover:bg-tint-hover hover:underline")}
                 >
                   {content}
                 </GuardedWorkspaceLink>
@@ -932,7 +932,7 @@ function DepartmentLine({
     <GuardedWorkspaceLink
       href={`/access?view=people&department=${row.id}` as Route}
       aria-label={`${row.name}, ${people} with access: ${row.read} Read, ${row.write} Write, ${row.manage} Manage`}
-      className="access-department-row grid min-h-12 grid-cols-[minmax(0,1fr)_3rem_7rem] items-center gap-3 px-4 text-sm outline-offset-[-2px] hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] focus-visible:outline-2 focus-visible:outline-[var(--ring)] sm:grid-cols-[minmax(0,1fr)_4rem_7.5rem] xl:min-h-9"
+      className="access-department-row hover:bg-tint-hover grid min-h-12 grid-cols-[minmax(0,1fr)_3rem_7rem] items-center gap-3 px-4 text-sm outline-offset-[-2px] focus-visible:outline-2 focus-visible:outline-[var(--ring)] sm:grid-cols-[minmax(0,1fr)_4rem_7.5rem] xl:min-h-9"
     >
       <span className="flex min-w-0 items-center gap-2.5 font-medium">
         <DepartmentMark departmentIndex={row.index} />

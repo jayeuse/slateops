@@ -2,6 +2,11 @@
 import { Tabs as TabsPrimitive } from "@base-ui/react/tabs";
 import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
+import {
+  pillClass,
+  pillOptionHeightClass,
+  pillRailClass,
+} from "@/components/ui/pill";
 export function Tabs({
   className,
   ...props
@@ -26,7 +31,8 @@ export function TabsList({
     <TabsPrimitive.List
       data-slot="tabs-list"
       className={cn(
-        "text-muted-foreground relative inline-flex w-fit items-center gap-1 rounded-[var(--radius)] bg-[var(--surface-sunken)] p-1 shadow-[inset_0_0_0_1px_var(--rule)]",
+        "text-muted-foreground relative inline-flex w-fit items-center gap-1",
+        pillRailClass,
         className,
       )}
       {...props}
@@ -37,7 +43,10 @@ export function TabsList({
           tab). */}
       <TabsPrimitive.Indicator
         data-slot="tabs-indicator"
-        className="absolute top-(--active-tab-top) left-(--active-tab-left) h-(--active-tab-height) w-(--active-tab-width) rounded-[calc(var(--radius)*0.75)] bg-[var(--surface-raised)] shadow-[var(--lift),inset_0_0_0_1px_var(--rule)] transition-[left,top,width,height] duration-(--motion-base) ease-(--ease-out) motion-reduce:transition-none"
+        className={cn(
+          "absolute top-(--active-tab-top) left-(--active-tab-left) h-(--active-tab-height) w-(--active-tab-width) transition-[left,top,width,height] duration-(--motion-base) ease-(--ease-out) motion-reduce:transition-none",
+          pillClass,
+        )}
       />
     </TabsPrimitive.List>
   );
@@ -52,7 +61,8 @@ export function TabsTrigger({
     <TabsPrimitive.Tab
       data-slot="tabs-trigger"
       className={cn(
-        "focus-visible:outline-ring data-active:text-action-text relative z-[1] inline-flex items-center justify-center rounded-sm px-3 py-1.5 text-sm font-medium transition-colors duration-(--motion-fast) outline-none focus-visible:outline-2 disabled:opacity-50 data-active:font-semibold",
+        pillOptionHeightClass,
+        "focus-visible:outline-ring data-active:text-action-text relative z-[1] inline-flex items-center justify-center rounded-sm px-3 py-1 text-sm font-medium transition-colors duration-(--motion-fast) outline-none focus-visible:outline-2 disabled:opacity-50 data-active:font-semibold",
         className,
       )}
       {...props}

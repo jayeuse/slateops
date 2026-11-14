@@ -5,21 +5,30 @@ import { Toggle as TogglePrimitive } from "@base-ui/react/toggle";
 import { ToggleGroup as ToggleGroupPrimitive } from "@base-ui/react/toggle-group";
 import { type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
+import {
+  pillClass,
+  pillOptionHeightClass,
+  pillRailClass,
+} from "@/components/ui/pill";
 
 import { toggleVariants } from "@/components/ui/toggle";
 
 // A single-select filter: a sunken rail whose pressed item is raised, in the
 // action ink, and bold, so the choice reads in every look; idle items are
-// muted, so pressed differs in brightness as well as hue.
-const segmentedGroup =
-  "flex w-full flex-wrap gap-1 rounded-lg bg-[var(--surface-sunken)] p-1 shadow-[inset_0_0_0_1px_var(--rule)]";
-const segmentedItem =
-  "h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal text-muted-foreground hover:bg-transparent hover:text-foreground aria-pressed:bg-[var(--surface-raised)] aria-pressed:font-semibold aria-pressed:text-action-text aria-pressed:shadow-[var(--lift),inset_0_0_0_1px_color-mix(in_oklab,var(--ink-muted)_60%,transparent)] xl:min-h-9";
+// muted, so pressed differs in brightness as well as hue. The raised pill is
+// one element per group that glides to the chosen item (SegmentedPill). The
+// group is the pill's stacking layer, so on its way it passes under every
+// item's words; a focused item is not lifted (items here never overlap), or
+// the pill inside it would cover its neighbors.
+const segmentedGroup = `isolate flex w-full flex-wrap gap-1 ${pillRailClass}`;
+const segmentedItem = `relative transition-colors focus:z-auto focus-visible:z-auto focus-visible:ring-0 h-auto ${pillOptionHeightClass} min-w-0 flex-1 px-3 py-1 text-sm whitespace-normal text-muted-foreground hover:bg-transparent hover:text-foreground aria-pressed:bg-transparent aria-pressed:font-semibold aria-pressed:text-action-text`;
 
 const ToggleGroupContext = React.createContext<
   VariantProps<typeof toggleVariants> & {
     spacing?: number;
     orientation?: "horizontal" | "vertical";
+    /** The group's own pill name, so pills of two groups never trade places. */
+    pillId?: string;
   }
 >({
   size: "default",
@@ -41,10 +50,12 @@ function ToggleGroup({
     spacing?: number;
     orientation?: "horizontal" | "vertical";
   }) {
+  const pillId = React.useId();
   return (
     <ToggleGroupPrimitive
       data-slot="toggle-group"
       data-variant={variant}
+      data-pill-rail={variant === "segmented" ? "" : undefined}
       data-size={size}
       data-spacing={spacing}
       data-orientation={orientation}
@@ -57,7 +68,7 @@ function ToggleGroup({
       {...props}
     >
       <ToggleGroupContext.Provider
-        value={{ variant, size, spacing, orientation }}
+        value={{ variant, size, spacing, orientation, pillId }}
       >
         {children}
       </ToggleGroupContext.Provider>
@@ -78,6 +89,9 @@ function ToggleGroupItem({
     <TogglePrimitive
       data-slot="toggle-group-item"
       data-variant={context.variant || variant}
+      data-pill-option={
+        (context.variant || variant) === "segmented" ? "" : undefined
+      }
       data-size={context.size || size}
       data-spacing={context.spacing}
       className={cn(
@@ -90,10 +104,56 @@ function ToggleGroupItem({
         className,
       )}
       {...props}
+      render={
+        (context.variant || variant) === "segmented"
+          ? (buttonProps, state) => (
+              <button {...buttonProps}>
+                {state.pressed ? <SegmentedPill /> : null}
+                {buttonProps.children}
+              </button>
+            )
+          : props.render
+      }
     >
       {children}
     </TogglePrimitive>
   );
 }
 
-export { ToggleGroup, ToggleGroupItem };
+const pillClassName = `absolute inset-0 -z-10 ${pillClass}`;
+
+function StillPill() {
+  return (
+    <span
+      aria-hidden="true"
+      data-slot="segmented-pill"
+      data-pill=""
+      className={pillClassName}
+    />
+  );
+}
+
+// If the Motion pill cannot load (an old tab after a deploy), the still pill
+// stays; the choice still reads, it only does not glide.
+const MotionSegmentedPill = React.lazy(() =>
+  import("./segmented-pill").catch(() => ({ default: StillPill })),
+);
+
+/**
+ * The raised pill of a segmented group. Each group has one: choosing another
+ * item moves it there over --motion-base with --ease-in-out (a move, not an
+ * arrival), so the eye follows the choice. Under Reduce motion it jumps. A
+ * control in the group that is not a ToggleGroupItem (the "More" menu button
+ * of a quick filter) renders it while its choice is current. Until Motion
+ * loads, the same pill stands still in place, so nothing flashes.
+ */
+function SegmentedPill() {
+  const { pillId } = React.useContext(ToggleGroupContext);
+  return (
+    <React.Suspense fallback={<StillPill />}>
+      <MotionSegmentedPill id={pillId ?? ""} className={pillClassName} />
+    </React.Suspense>
+  );
+}
+
+export { SegmentedPill, ToggleGroup, ToggleGroupItem };

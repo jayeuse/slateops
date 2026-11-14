@@ -83,7 +83,7 @@ async function disableBen(page: Page) {
     exact: true,
   });
   await confirmation
-    .getByRole("button", { name: "Disable", exact: true })
+    .getByRole("button", { name: "Disable account", exact: true })
     .click();
   await expect(confirmation).toBeHidden();
   await expect(

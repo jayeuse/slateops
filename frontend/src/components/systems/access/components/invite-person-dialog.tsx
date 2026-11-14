@@ -432,7 +432,7 @@ export function InvitePersonDialog({
                       const lineId = `${nameId}-gives`;
                       return (
                         <li key={group.id} className="min-w-0">
-                          <label className="hover:bg-muted flex min-h-11 cursor-pointer items-start gap-3 rounded-md px-2 py-1.5 text-sm">
+                          <label className="hover:bg-tint-hover flex min-h-11 cursor-pointer items-start gap-3 rounded-md px-2 py-1.5 text-sm">
                             <Checkbox
                               className="mt-0.5"
                               aria-labelledby={nameId}
@@ -517,7 +517,7 @@ export function InvitePersonDialog({
             <DialogFooter className="bg-card sticky -bottom-5 z-10 -mx-5 mt-0 -mb-5 border-t px-5 pt-3 pb-8">
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 className="min-h-11"
                 disabled={pending}
                 onClick={requestClose}

@@ -18,6 +18,7 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
@@ -138,6 +139,7 @@ export function OutboxFields({
   preview,
   setPreview,
   onSendNow,
+  sendingNow = false,
   onCancelSchedule,
 }: {
   schedules: Schedule[];
@@ -156,6 +158,8 @@ export function OutboxFields({
   preview: boolean;
   setPreview: Dispatch<SetStateAction<boolean>>;
   onSendNow: () => void;
+  /** The selected schedule's send-now request is running (TASK-0061). */
+  sendingNow?: boolean;
   onCancelSchedule: (id: string) => void;
 }) {
   const region = useWorkspaceDisplayRegion();
@@ -166,7 +170,8 @@ export function OutboxFields({
   return (
     <>
       <p className="text-muted-foreground text-sm">
-        Scheduled messages send at their time. Send Now sends one at once.
+        Scheduled messages send at their time. Send message now sends one at
+        once.
       </p>
       {!schedules.length && (
         <Empty>
@@ -196,15 +201,29 @@ export function OutboxFields({
               {schedule.request.body}
             </p>
             <div className="flex flex-wrap gap-2">
-              <Button
-                disabled={dirty || !region || schedule.status !== "pending"}
-                onClick={() => {
-                  onSelectSchedule(schedule);
-                  setPreview(true);
-                }}
+              {/* TASK-0061 rules 2 and 6. */}
+              <DisabledReason
+                stable
+                reason={
+                  schedule.status !== "pending"
+                    ? "This message is no longer scheduled."
+                    : dirty
+                      ? "Save your changes first."
+                      : !region
+                        ? "Wait for your regional settings to load."
+                        : null
+                }
               >
-                Send Now
-              </Button>
+                <Button
+                  disabled={dirty || !region || schedule.status !== "pending"}
+                  onClick={() => {
+                    onSelectSchedule(schedule);
+                    setPreview(true);
+                  }}
+                >
+                  Send message now
+                </Button>
+              </DisabledReason>
               <Button
                 variant="outline"
                 className="h-auto justify-start text-left whitespace-normal"
@@ -311,12 +330,24 @@ export function OutboxFields({
               <CardContent className="flex flex-col gap-3">
                 <p>{selectedSchedule.request.body}</p>
                 <Separator />
-                <Button
-                  disabled={selectedSchedule.status !== "pending"}
-                  onClick={onSendNow}
+                {/* TASK-0061 rules 2, 4 and 6. */}
+                <DisabledReason
+                  stable
+                  reason={
+                    !sendingNow && selectedSchedule.status !== "pending"
+                      ? "This message is no longer scheduled."
+                      : null
+                  }
                 >
-                  Confirm Send Now
-                </Button>
+                  <Button
+                    pending={sendingNow}
+                    pendingLabel="Sending now…"
+                    disabled={selectedSchedule.status !== "pending"}
+                    onClick={onSendNow}
+                  >
+                    Send this message now
+                  </Button>
+                </DisabledReason>
               </CardContent>
             </Card>
           )}

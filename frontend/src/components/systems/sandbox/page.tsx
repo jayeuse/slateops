@@ -457,6 +457,9 @@ function SandboxWorkspace() {
   // Every Sandbox API refuses anyone but an administrator (403).
   const [loadDenied, setLoadDenied] = useState(false);
   const [pending, setPending] = useState(false);
+  // Reapply my draft's own request, so only it reads "Reapplying…" while the
+  // shared pending flag also holds the other conflict action (TASK-0061).
+  const [reapplying, setReapplying] = useState(false);
   const [versionRecovery, setVersionRecovery] = useState(false);
   const historyAccess = useSandboxHistoryAccess();
   const capacityRead = useQuery({
@@ -1550,6 +1553,7 @@ function SandboxWorkspace() {
   const reapplyConflict = useCallback(async () => {
     if (!conflict) return;
     setPending(true);
+    setReapplying(true);
     try {
       const response = await loadSandboxDocument();
       const reapplied = reapplySandboxDocument(
@@ -1562,6 +1566,7 @@ function SandboxWorkspace() {
       setFeedbackError(commandFailure(error).error, error);
     } finally {
       setPending(false);
+      setReapplying(false);
     }
   }, [conflict, persist]);
   // A request that waited for the save queue runs the page's latest action.
@@ -1635,7 +1640,7 @@ function SandboxWorkspace() {
   // Why Review & Publish cannot open, when it cannot: the header button
   // and the Build summary's Review row say the same thing.
   const reviewReason = savesPending
-    ? "Saving…"
+    ? "Wait for the save to finish."
     : loading || commandBusy || testPending || triggerDraft.pending
       ? null
       : triggerDraft.dirty
@@ -1709,13 +1714,24 @@ function SandboxWorkspace() {
           >
             Reload shared draft
           </Button>
-          <Button
-            size="sm"
-            disabled={pending}
-            onClick={() => void reapplyConflict()}
+          {/* TASK-0061 rules 4 and 6: busy while it reapplies; while
+              another change runs, it says why it waits. */}
+          <DisabledReason
+            stable
+            reason={
+              pending && !reapplying ? "Finish the current change first." : null
+            }
           >
-            Reapply my draft
-          </Button>
+            <Button
+              size="sm"
+              pending={reapplying}
+              pendingLabel="Reapplying…"
+              disabled={pending}
+              onClick={() => void reapplyConflict()}
+            >
+              Reapply my draft
+            </Button>
+          </DisabledReason>
         </Alert>
       ) : null}
       {session &&
@@ -1739,7 +1755,18 @@ function SandboxWorkspace() {
                 ? "Live state and the shared draft changed. Reload before changing this item."
                 : "Live state could not be loaded. Retry before changing this item."}
           </span>
-          <DisabledReason stable reason={savesPending ? "Saving…" : null}>
+          <DisabledReason
+            stable
+            reason={
+              savesPending
+                ? "Wait for the save to finish."
+                : conflict || designerDraftDirty || triggerDraft.dirty
+                  ? "Save or discard your changes first."
+                  : pending || triggerDraft.pending
+                    ? "Wait for the current Sandbox action to finish."
+                    : null
+            }
+          >
             <Button
               size="sm"
               variant="outline"
@@ -1881,7 +1908,7 @@ function SandboxWorkspace() {
                     if (section !== "Triggers") navigate("Triggers");
                   }}
                 >
-                  Restore
+                  Restore trigger changes
                 </Button>
               </DisabledReason>
               <Button
@@ -2014,7 +2041,7 @@ function SandboxWorkspace() {
               bindings={bindingsReady ? bindingsQuery.data!.items : null}
               waitReason={
                 savesPending || triggerDraft.pending
-                  ? "Saving…"
+                  ? "Wait for the save to finish."
                   : triggerDraft.dirty
                     ? "Save trigger changes first."
                     : null

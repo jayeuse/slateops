@@ -168,8 +168,8 @@ function addKey(kind: "module" | "field", parentId: string): string {
 // version lists. Only the selected row is current; its ancestors stay plain.
 function selectedClasses(selected: boolean): string {
   return selected
-    ? "text-foreground bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]"
-    : "text-foreground hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)]";
+    ? "text-foreground bg-tint-selected"
+    : "text-foreground hover:bg-tint-hover";
 }
 
 /** The quiet saving mark at a row end: a small ring in muted ink. */
@@ -658,7 +658,7 @@ export function SandboxInspectorOutline({
               else onAddField(parentId, event.currentTarget);
             }}
             className={cn(
-              "focus-visible:outline-ring flex min-h-11 w-full cursor-pointer items-center gap-1.5 rounded-[var(--radius)] px-2 text-xs outline-hidden hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-solid aria-disabled:cursor-not-allowed aria-disabled:opacity-50 max-xl:pl-5 xl:min-h-9",
+              "focus-visible:outline-ring hover:bg-tint-hover flex min-h-11 w-full cursor-pointer items-center gap-1.5 rounded-[var(--radius)] px-2 text-xs outline-hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-solid aria-disabled:cursor-not-allowed aria-disabled:opacity-50 max-xl:pl-5 xl:min-h-9",
               addItemInk,
             )}
           >

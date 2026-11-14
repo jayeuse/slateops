@@ -177,6 +177,8 @@ export async function installListApi(
     filters?: WireFilter[];
     logic?: "and" | "or";
     deleted?: "exclude" | "include" | "only";
+    /** Pin the Name column, so its cells and the boxes are sticky. */
+    pinned?: boolean;
   } = {},
 ) {
   await installOpenViewEventSource(page);
@@ -267,7 +269,7 @@ export async function installListApi(
       version: 1,
       layout: "table",
       column_field_ids: columnIds,
-      pinned_field_ids: [],
+      pinned_field_ids: options.pinned ? [listIds.name] : [],
       density: "comfortable",
       wrap: false,
       card_size: "comfortable",

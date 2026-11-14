@@ -31,7 +31,9 @@ test("A department Board post is written and published @boards", async ({
     .getByRole("textbox", { name: "Message" })
     .fill("Targets are posted on the shared drive.");
   await editor.getByRole("button", { name: "Save draft" }).click();
-  await editor.getByRole("button", { name: "Publish", exact: true }).click();
+  await editor
+    .getByRole("button", { name: "Publish post", exact: true })
+    .click();
   await expect(page.getByRole("heading", { name: title })).toBeVisible();
 });
 

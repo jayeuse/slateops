@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import { FilterRow } from "@/components/systems/access/components/access-toolbar";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { SearchSelect } from "@/components/ui/search-select";
 import { toast } from "@/components/ui/toast";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
@@ -122,17 +123,20 @@ const MENU_CONFIRM = {
     description:
       "Readers no longer see it, and a scheduled replacement is canceled.",
     action: "Unpublish post",
+    pending: "Unpublishing…",
   },
   archive: {
     title: "Archive post?",
     description: "Readers no longer see it. A board manager can restore it.",
     action: "Archive post",
+    pending: "Archiving…",
   },
   delete: {
     title: "Delete draft?",
     description:
       "It was never published, so it goes with its files and record links.",
     action: "Delete draft",
+    pending: "Deleting…",
   },
 } as const;
 
@@ -432,15 +436,26 @@ function ScopedServerBackedBoardPosts({
   };
 
   const newPost = mayPost ? (
-    <Button
-      type="button"
-      className="min-h-11 xl:min-h-8"
-      disabled={!editor.view.canStart || editor.view.pending}
-      onClick={openNew}
+    <DisabledReason
+      stable
+      reason={
+        editor.view.pending
+          ? "Wait for the post change to finish."
+          : !editor.view.canStart
+            ? "Wait for the board to finish loading."
+            : null
+      }
     >
-      <Plus aria-hidden="true" />
-      New post
-    </Button>
+      <Button
+        type="button"
+        className="min-h-11 xl:min-h-8"
+        disabled={!editor.view.canStart}
+        onClick={openNew}
+      >
+        <Plus aria-hidden="true" />
+        New post
+      </Button>
+    </DisabledReason>
   ) : null;
 
   return (
@@ -656,7 +671,15 @@ function ScopedServerBackedBoardPosts({
             ? MENU_CONFIRM[actions.confirmation.kind].action
             : ""
         }
+        // The confirmed action runs: Cancel and Escape wait, and the button
+        // reads its busy words (TASK-0061 rule 4).
         disabled={actions.pendingPostId !== null}
+        pending={actions.pendingPostId !== null}
+        pendingLabel={
+          actions.confirmation && actions.confirmation.kind !== "restore"
+            ? MENU_CONFIRM[actions.confirmation.kind].pending
+            : undefined
+        }
         onCancel={actions.cancel}
         onConfirm={actions.confirm}
       />

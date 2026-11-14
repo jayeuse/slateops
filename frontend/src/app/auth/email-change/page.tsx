@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { MailCheck } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { consumeActionToken } from "@/lib/action-token";
 import {
   completeEmailChange,
@@ -143,6 +144,17 @@ export default function EmailChangePage() {
     }
   }
 
+  // Rule 6 (TASK-0061): a blocked Confirm email change says why.
+  const confirmBlockedReason = acknowledged
+    ? "This link is already confirmed."
+    : !valid
+      ? "Open the link from your email again."
+      : context === "checking"
+        ? "Wait for this browser check to finish."
+        : context === "unavailable"
+          ? "Reopen the email link when the service is back."
+          : null;
+
   return (
     <main className="flex min-h-screen items-center justify-center px-4 py-12">
       <section
@@ -192,24 +204,29 @@ export default function EmailChangePage() {
           {context === "occupied" ? (
             <Button
               className="min-h-11 w-full"
-              disabled={pending}
+              pending={pending}
+              pendingLabel="Signing out…"
               onClick={() => {
                 void logout();
               }}
             >
-              {pending ? "Signing out…" : "Sign out to continue"}
+              Sign out to continue
             </Button>
           ) : (
-            <Button
-              className="min-h-11 w-full"
-              aria-label="Confirm email change"
-              disabled={!valid || pending || context !== "signed-out"}
-              onClick={() => {
-                void confirm();
-              }}
-            >
-              {pending ? "Confirming…" : "Confirm email change"}
-            </Button>
+            <DisabledReason stable reason={confirmBlockedReason}>
+              <Button
+                className="min-h-11 w-full"
+                aria-label="Confirm email change"
+                disabled={confirmBlockedReason !== null}
+                pending={pending}
+                pendingLabel="Confirming…"
+                onClick={() => {
+                  void confirm();
+                }}
+              >
+                Confirm email change
+              </Button>
+            </DisabledReason>
           )}
           <a
             href="/login"

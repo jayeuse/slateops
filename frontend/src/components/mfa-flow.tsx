@@ -19,6 +19,7 @@ import {
 } from "@/lib/mfa-api";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -37,7 +38,11 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<MfaStatus | null>(null);
   const [credentials, setCredentials] = useState<MfaEnrollment | null>(null);
-  const [pending, setPending] = useState(false);
+  // Which call runs (TASK-0061 rule 4): only its own button shows busy.
+  const [running, setRunning] = useState<
+    "refresh" | "enroll" | "verify" | "remove" | null
+  >(null);
+  const pending = running !== null;
   const [errorFailure, setError] = useErrorText();
   const error = errorFailure?.message ?? "";
   const [cleanup, setCleanup] = useState<OwnedFactor | null>(null);
@@ -90,7 +95,7 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
     owned.current = null;
     setCredentials(null);
     setOpen(false);
-    setPending(false);
+    setRunning(null);
     setError("");
     if (target) void cleanOwned(target);
   }, [cleanOwned]);
@@ -104,7 +109,7 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
         owner.current = userId;
         setCredentials(null);
         setOpen(false);
-        setPending(false);
+        setRunning(null);
         setError("");
         setStatus(current ?? null);
         setCleanup(null);
@@ -126,7 +131,7 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
 
   const refresh = useCallback(async () => {
     const started = generation.current;
-    setPending(true);
+    setRunning("refresh");
     setError("");
     try {
       const current = await getMfaStatus();
@@ -144,7 +149,7 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
           failure,
         );
     } finally {
-      if (mounted.current && started === generation.current) setPending(false);
+      if (mounted.current && started === generation.current) setRunning(null);
     }
   }, [hide]);
 
@@ -157,7 +162,7 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
     const userId = owner.current;
     const started = generation.current;
     enrolling.current = true;
-    setPending(true);
+    setRunning("enroll");
     setError("");
     try {
       const result = await enrollMfa();
@@ -181,7 +186,7 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
         setError("The authenticator could not be set up. Try again.", failure);
     } finally {
       enrolling.current = false;
-      if (mounted.current && started === generation.current) setPending(false);
+      if (mounted.current && started === generation.current) setRunning(null);
     }
   }, [cleanOwned]);
 
@@ -190,7 +195,7 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
       const started = generation.current;
       const userId = owner.current;
       let accepted = false;
-      setPending(true);
+      setRunning("verify");
       setError("");
       try {
         await verifyMfa(factorId, code);
@@ -229,8 +234,7 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
             caught,
           );
       } finally {
-        if (mounted.current && started === generation.current)
-          setPending(false);
+        if (mounted.current && started === generation.current) setRunning(null);
       }
     },
     [hide],
@@ -239,7 +243,7 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
   const removeVerified = useCallback(async (factorId: string) => {
     const started = generation.current;
     const userId = owner.current;
-    setPending(true);
+    setRunning("remove");
     setError("");
     try {
       await removeMfa(factorId);
@@ -255,7 +259,7 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
       if (mounted.current && started === generation.current)
         setError("The authenticator could not be removed. Try again.", failure);
     } finally {
-      if (mounted.current && started === generation.current) setPending(false);
+      if (mounted.current && started === generation.current) setRunning(null);
     }
   }, []);
 
@@ -276,6 +280,7 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
     status,
     credentials,
     pending,
+    running,
     error,
     errorReference: errorFailure?.reference,
     cleanupError,
@@ -463,19 +468,30 @@ export function MfaPresentation({
                 <p>Removing this authenticator signs you out on all devices.</p>
                 <div className="flex flex-wrap gap-2">
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     onClick={() => setConfirmRemoval(false)}
                     disabled={flow.pending}
                   >
                     Keep authenticator
                   </Button>
-                  <Button
-                    variant="destructive"
-                    onClick={() => void flow.removeVerified(verified.id)}
-                    disabled={flow.pending}
+                  <DisabledReason
+                    stable
+                    reason={
+                      flow.pending && flow.running !== "remove"
+                        ? "Wait for two-step settings to load."
+                        : null
+                    }
                   >
-                    Confirm removal
-                  </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={() => void flow.removeVerified(verified.id)}
+                      disabled={flow.pending && flow.running !== "remove"}
+                      pending={flow.running === "remove"}
+                      pendingLabel="Removing…"
+                    >
+                      Remove and sign out
+                    </Button>
+                  </DisabledReason>
                 </div>
               </div>
             ) : (
@@ -489,7 +505,7 @@ export function MfaPresentation({
             ))}
           {!gate && (
             <Button className="min-h-11" onClick={flow.cancel}>
-              Done
+              Close two-step settings
             </Button>
           )}
         </>
@@ -547,13 +563,30 @@ export function MfaPresentation({
                 disabled={flow.pending}
               />
             </Field>
-            <Button
-              className="min-h-11"
-              type="submit"
-              disabled={flow.pending || !/^\d{6}$/.test(code)}
+            {/* Rules 4 and 6 (TASK-0061): the code clears as soon as it is
+                sent, so only a code that is not running says it is missing. */}
+            <DisabledReason
+              stable
+              reason={
+                flow.running === "verify"
+                  ? null
+                  : flow.pending
+                    ? "Wait for two-step settings to load."
+                    : /^\d{6}$/.test(code)
+                      ? null
+                      : "Enter the 6-digit code first."
+              }
             >
-              Verify code
-            </Button>
+              <Button
+                className="min-h-11"
+                type="submit"
+                disabled={flow.pending || !/^\d{6}$/.test(code)}
+                pending={flow.running === "verify"}
+                pendingLabel="Verifying…"
+              >
+                Verify code
+              </Button>
+            </DisabledReason>
           </form>
         </>
       ) : (
@@ -563,13 +596,24 @@ export function MfaPresentation({
             Use an authenticator app to generate a code when you sign in. If you
             lose access, your administrator can help you recover your account.
           </p>
-          <Button
-            className="min-h-11"
-            disabled={flow.pending}
-            onClick={() => void flow.enroll()}
+          <DisabledReason
+            stable
+            reason={
+              flow.pending && flow.running !== "enroll"
+                ? "Wait for two-step settings to load."
+                : null
+            }
           >
-            Set up authenticator
-          </Button>
+            <Button
+              className="min-h-11"
+              disabled={flow.pending && flow.running !== "enroll"}
+              pending={flow.running === "enroll"}
+              pendingLabel="Setting up…"
+              onClick={() => void flow.enroll()}
+            >
+              Set up authenticator
+            </Button>
+          </DisabledReason>
         </>
       )}
       {flow.pending && flow.status !== null && (
@@ -578,7 +622,7 @@ export function MfaPresentation({
       {!ready && !gate && (
         <Button
           className="min-h-11"
-          variant="outline"
+          variant="ghost"
           onClick={() => {
             setCode("");
             flow.cancel();

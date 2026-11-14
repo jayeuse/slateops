@@ -3,6 +3,7 @@
 import { useId, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
@@ -93,7 +94,7 @@ export function ListChangeActions({
                 <li key={record.recordId}>
                   <button
                     type="button"
-                    className="hover:bg-muted focus-visible:outline-ring flex min-h-11 w-full flex-col items-start justify-center rounded-sm px-2 py-1 text-left focus-visible:outline-2 xl:min-h-8"
+                    className="hover:bg-tint-hover focus-visible:outline-ring flex min-h-11 w-full flex-col items-start justify-center rounded-sm px-2 py-1 text-left focus-visible:outline-2 xl:min-h-8"
                     onClick={() => onOpenRecord(record.recordId)}
                   >
                     <span className="font-medium">{record.title}</span>
@@ -162,7 +163,7 @@ function ChangePanel({
         {options.map((option) => (
           <label
             key={optionKey(option.value)}
-            className="hover:bg-muted flex min-h-11 cursor-pointer items-center gap-2.5 rounded-sm px-2 text-sm xl:min-h-8"
+            className="hover:bg-tint-hover flex min-h-11 cursor-pointer items-center gap-2.5 rounded-sm px-2 text-sm xl:min-h-8"
           >
             <RadioGroupItem value={optionKey(option.value)} />
             {option.label}
@@ -172,25 +173,27 @@ function ChangePanel({
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <Button
           type="button"
-          variant="outline"
+          variant="ghost"
           className="min-h-11 xl:min-h-8"
           disabled={busy}
           onClick={onCancel}
         >
           Cancel
         </Button>
-        <Button
-          type="button"
-          className="min-h-11 xl:min-h-8"
-          disabled={!final.enabled}
-          pending={busy}
-          pendingLabel="Changing…"
-          onClick={() => {
-            if (choice) onApply(choice.value);
-          }}
-        >
-          {final.label}
-        </Button>
+        <DisabledReason stable reason={busy ? null : final.reason}>
+          <Button
+            type="button"
+            className="min-h-11 xl:min-h-8"
+            disabled={final.reason !== null}
+            pending={busy}
+            pendingLabel="Changing…"
+            onClick={() => {
+              if (choice) onApply(choice.value);
+            }}
+          >
+            {final.label}
+          </Button>
+        </DisabledReason>
       </div>
     </div>
   );

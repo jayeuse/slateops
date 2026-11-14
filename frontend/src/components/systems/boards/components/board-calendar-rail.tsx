@@ -396,7 +396,7 @@ export function MiniMonth({
             onKeyDown={(event) => moveFocus(event, date)}
             onFocus={() => setFocusDay(date)}
             className={cn(
-              "hover:bg-accent focus-visible:outline-ring grid h-[26px] place-items-center rounded-sm outline-none focus-visible:outline-2",
+              "hover:over-tint-hover focus-visible:outline-ring grid h-[26px] place-items-center rounded-sm outline-none focus-visible:outline-2",
               monthOf(date) !== monthOf(shown) && "text-muted-foreground",
               highlight.includes(date) && "bg-accent rounded-none",
               date === today &&

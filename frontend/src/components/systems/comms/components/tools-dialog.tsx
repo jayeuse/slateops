@@ -474,6 +474,11 @@ function LifecycleTools({
       onClose={onClose}
       dirty={dirty}
       disabled={isPending() || (view === "outbox" && !region)}
+      disabledReason={
+        view === "outbox" && !region
+          ? "Wait for your regional settings to load."
+          : undefined
+      }
       onSave={
         view === "report" ||
         view === "thread" ||
@@ -615,34 +620,52 @@ function LifecycleTools({
                       after={restore.preview.data.after}
                       names={names}
                     />
-                    <Button
-                      disabled={!proofReady || isPending()}
-                      onClick={() => {
-                        void action(
-                          `restore:${restore.entry.id}`,
-                          async (client, signal) => {
-                            await client.restoreConfiguration(
-                              restore.entry.scope,
-                              {
-                                history_id: restore.entry.id,
-                                preview_digest:
-                                  restore.preview.data.preview_digest,
-                              },
-                              {
-                                signal,
-                                if_match: restore.preview.etag,
-                                password,
-                              },
-                            );
-                            setRestore(undefined);
-                          },
-                          "Configuration restored.",
-                          () => setRestore(undefined),
-                        );
-                      }}
+                    {/* TASK-0061 rules 4 and 6: this restore's own request
+                        is its busy state; another running change and a
+                        missing password are reasons. */}
+                    <DisabledReason
+                      stable
+                      reason={
+                        isPending(`restore:${restore.entry.id}`)
+                          ? null
+                          : isPending()
+                            ? "Finish the current change first."
+                            : !proofReady
+                              ? "Enter your current password to restore."
+                              : null
+                      }
                     >
-                      Confirm restoration
-                    </Button>
+                      <Button
+                        pending={isPending(`restore:${restore.entry.id}`)}
+                        pendingLabel="Restoring…"
+                        disabled={!proofReady || isPending()}
+                        onClick={() => {
+                          void action(
+                            `restore:${restore.entry.id}`,
+                            async (client, signal) => {
+                              await client.restoreConfiguration(
+                                restore.entry.scope,
+                                {
+                                  history_id: restore.entry.id,
+                                  preview_digest:
+                                    restore.preview.data.preview_digest,
+                                },
+                                {
+                                  signal,
+                                  if_match: restore.preview.etag,
+                                  password,
+                                },
+                              );
+                              setRestore(undefined);
+                            },
+                            "Configuration restored.",
+                            () => setRestore(undefined),
+                          );
+                        }}
+                      >
+                        Confirm restoration
+                      </Button>
+                    </DisabledReason>
                     <Button
                       variant="outline"
                       onClick={() => setRestore(undefined)}
@@ -679,6 +702,14 @@ function LifecycleTools({
                     : undefined
               }
               disabled={!proofReady || isPending() || !resource.data?.retention}
+              applying={isPending("retention-save")}
+              applyReason={
+                isPending()
+                  ? "Finish the current change first."
+                  : !proofReady
+                    ? "Enter your current password to apply."
+                    : "Wait for the retention settings to load."
+              }
               inherited={retentionTarget !== "workspace" && inheritRetention}
               onPreview={() => {
                 void action("retention-preview", async (client, signal) => {
@@ -818,6 +849,9 @@ function LifecycleTools({
             setDirty={setDirty}
             preview={preview}
             setPreview={setPreview}
+            sendingNow={
+              !!selectedSchedule && isPending(`send-now:${selectedSchedule.id}`)
+            }
             onSendNow={() => {
               if (!selectedSchedule) return;
               void action(

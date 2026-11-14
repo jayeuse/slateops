@@ -652,9 +652,23 @@ export function ServerBoardPostEditorDisplay({
           >
             Schedule…
           </Button>
-          <DisabledReason reason={view.pending ? null : blocked} stable>
-            <Button type="submit" className={control} disabled={view.pending}>
-              {running === "publish" ? "Publishing…" : "Publish"}
+          <DisabledReason
+            reason={
+              running === "publish"
+                ? null
+                : view.pending
+                  ? "Wait for the post change to finish."
+                  : blocked
+            }
+            stable
+          >
+            <Button
+              type="submit"
+              className={control}
+              pending={running === "publish"}
+              pendingLabel="Publishing…"
+            >
+              Publish post
             </Button>
           </DisabledReason>
         </div>
@@ -771,6 +785,7 @@ export function BoardPostEditorDialog({
         description="Your changes to this post will be lost."
         action="Discard changes"
         disabled={view.pending}
+        disabledReason="Wait for the post change to finish."
         onCancel={() => setDiscardOpen(false)}
         onConfirm={close}
       />

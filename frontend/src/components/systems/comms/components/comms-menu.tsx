@@ -180,7 +180,7 @@ export function CommsMenu({
           ref={trigger}
           aria-label="OpenComms menu"
           className={cn(
-            "hover:bg-muted focus-visible:ring-ring grid size-11 shrink-0 place-items-center rounded-md outline-none focus-visible:ring-2",
+            "hover:bg-tint-hover focus-visible:ring-ring grid size-11 shrink-0 place-items-center rounded-md outline-none focus-visible:ring-2",
             compact && "size-7",
           )}
         >

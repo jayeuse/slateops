@@ -487,6 +487,21 @@ export default function ManageAudit({
     !auditConcealed &&
     !dateRangeError &&
     !dateTimezoneUnavailable;
+  // Rule 6 (TASK-0061): a blocked Download CSV says why; its own download
+  // is busy (rule 4), not a reason.
+  const exportDownloadBlockedReason = downloadPending
+    ? null
+    : auditConcealed
+      ? "You cannot export this audit log."
+      : dateRangeError
+        ? "Fix the date range first."
+        : dateTimezoneUnavailable
+          ? "Wait for the workspace time zone to load."
+          : exportQuery.isError
+            ? "Retry the preview first."
+            : canDownloadExport
+              ? null
+              : "Wait for the preview to load.";
   const searching = appliedSearch.trim() !== "";
   const entries = auditListEntries(logs, {
     showSystem,
@@ -714,12 +729,8 @@ export default function ManageAudit({
   const selectedText = selected ? textFor(selected) : null;
   const viewSwitch = securityEventsAdmitted ? (
     <TabsList aria-label="Audit view">
-      <TabsTrigger value="history" className="min-h-11 xl:min-h-8">
-        Activity
-      </TabsTrigger>
-      <TabsTrigger value="security" className="min-h-11 xl:min-h-8">
-        Security events
-      </TabsTrigger>
+      <TabsTrigger value="history">Activity</TabsTrigger>
+      <TabsTrigger value="security">Security events</TabsTrigger>
     </TabsList>
   ) : null;
   const exportButton =
@@ -980,7 +991,7 @@ export default function ManageAudit({
               preview={exportQuery}
               downloadError={downloadError}
               downloadPending={downloadPending}
-              canDownload={canDownloadExport}
+              downloadBlockedReason={exportDownloadBlockedReason}
               onDownload={() => void downloadFilteredCsv()}
             />
           </TabsContent>

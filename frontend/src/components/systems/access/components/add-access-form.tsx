@@ -259,8 +259,9 @@ export function AddAccessForm({
     }
   }
 
+  // Rule 2 (TASK-0061): every label names its object, also before a plan.
   const action = !plan
-    ? "Add"
+    ? "Add access"
     : failure?.partial
       ? "Try again"
       : plan.kind === "join"
@@ -273,7 +274,7 @@ export function AddAccessForm({
       : groups.isError
         ? "The groups could not be read."
         : !plan
-          ? "Reading the groups…"
+          ? "Wait for the groups to load."
           : has
             ? "This person already has this access."
             : null;
@@ -346,7 +347,7 @@ export function AddAccessForm({
           {levels.map((value) => (
             <label
               key={value}
-              className="hover:bg-muted flex min-h-11 cursor-pointer items-start gap-3 rounded-md px-2 py-2 xl:min-h-8 xl:py-1.5"
+              className="hover:bg-tint-hover flex min-h-11 cursor-pointer items-start gap-3 rounded-md px-2 py-2 xl:min-h-8 xl:py-1.5"
             >
               <RadioGroupItem
                 value={value}
@@ -447,7 +448,7 @@ export function AddAccessForm({
           </DisabledReason>
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             className="min-h-11"
             disabled={pending}
             onClick={onCancel}

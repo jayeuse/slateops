@@ -6,6 +6,7 @@ import {
   type Page,
 } from "./helpers/test";
 import { ids, mockAccessApi } from "./helpers/access-api";
+import { settled } from "./helpers/layout";
 
 // The Access filters: a quiet Filters button opens a popover of label-left
 // fields that apply as they are chosen, the rare statuses sit under the
@@ -71,7 +72,9 @@ test("the Filters popover applies a searched group at once, keeps the page still
     name: "Search group",
     exact: true,
   });
-  // The dropdown's own search box takes the slim 32 px size from 1280 px.
+  // The dropdown's own search box takes the slim 32 px size from 1280 px,
+  // read once the dropdown has grown in.
+  await settled(page);
   expect(Math.round((await groupSearch.boundingBox())?.height ?? 0)).toBe(32);
   await groupSearch.fill("fin");
   await expect(page.getByRole("option", { name: /Inventory/ })).toHaveCount(0);
@@ -144,7 +147,10 @@ test("rare statuses sit under the strip's More menu, which shows the chosen one"
   await expect(
     page.getByRole("menuitemradio", { name: "Deleted", exact: true }),
   ).toHaveAttribute("aria-checked", "true");
+  // Escape once the menu has grown in, as a person would; then it is gone.
+  await settled(page);
   await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
   // Status is never a chip and never counts on the Filters button.
   await expect(activeFilters(page)).toHaveCount(0);
   await expect(filtersButton(page)).not.toContainText(/\d/);

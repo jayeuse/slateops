@@ -200,7 +200,7 @@ export function DashboardChartBuilder(props: {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               className="min-h-11"
               onClick={() => setConfirming(false)}
             >
@@ -215,7 +215,7 @@ export function DashboardChartBuilder(props: {
                 props.onClose();
               }}
             >
-              Discard
+              Discard changes
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -323,6 +323,9 @@ function BuilderBody({
   const [reuseName, setReuseName] = useState("");
   const [savedMode, setSavedMode] = useState(request.savedList);
   const [pending, setPending] = useState(false);
+  // Only Apply's own save shows on the button; a preview read also sets
+  // `pending` (TASK-0061 rule 4).
+  const [applying, setApplying] = useState(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<{
     signature: string;
@@ -408,6 +411,7 @@ function BuilderBody({
   async function apply() {
     if (!compiled || !size || pending) return;
     setPending(true);
+    setApplying(true);
     setError("");
     try {
       let source: OpenViewWidgetSource = { ...compiled, chartId: null };
@@ -432,20 +436,23 @@ function BuilderBody({
         ),
       );
       setPending(false);
+      setApplying(false);
     }
   }
 
-  const applyReason = !size
-    ? `No room for a ${SIZE_RULES[kind].label} here`
-    : !compiled
-      ? "Finish the setup first"
-      : saveForReuse && !reuseName.trim()
-        ? "Name the chart to save it for reuse"
-        : pending
-          ? "Saving…"
-          : null;
+  const applyReason = applying
+    ? null
+    : !size
+      ? `No room for a ${SIZE_RULES[kind].label} here.`
+      : !compiled
+        ? "Finish the chart setup first."
+        : saveForReuse && !reuseName.trim()
+          ? "Name the chart to save it for reuse."
+          : pending
+            ? "Wait for the preview to load."
+            : null;
   const applyLabel =
-    request.mode === "edit" ? "Apply changes" : "Add to dashboard";
+    request.mode === "edit" ? "Update chart" : "Add to dashboard";
   const sizeLabel = size ? `${sizeText(size)} space` : "no free space";
 
   return (
@@ -525,7 +532,7 @@ function BuilderBody({
                               "flex h-14 flex-col items-center justify-center gap-1 rounded-md border text-xs",
                               checked
                                 ? "border-primary bg-action-tint text-action-text font-medium"
-                                : "bg-card hover:bg-muted",
+                                : "bg-card hover:over-tint-hover",
                               reason && "text-muted-foreground opacity-55",
                             )}
                           >
@@ -738,6 +745,8 @@ function BuilderBody({
               <Button
                 type="button"
                 className="min-h-11"
+                pending={applying}
+                pendingLabel="Saving…"
                 onClick={() => void apply()}
               >
                 {applyLabel}

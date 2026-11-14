@@ -192,6 +192,8 @@ export function ServerBackedMyCalendar({
   const [sourceToRemove, setSourceToRemove] = useState<CalendarSource | null>(
     null,
   );
+  // Remove source runs: its button reads "Removing…" (TASK-0061 rule 4).
+  const [removingSource, setRemovingSource] = useState(false);
   const [editorBoardId, setEditorBoardId] = useState<string | null>(null);
   // Each board's live changes, so an open draft or sheet rechecks its own.
   const [liveKeys, setLiveKeys] = useState<Record<string, number>>({});
@@ -421,6 +423,7 @@ export function ServerBackedMyCalendar({
     void queryClient.invalidateQueries({ queryKey: myCalendarKeys.sources });
   }
   async function confirmRemoveSource(source: CalendarSource) {
+    setRemovingSource(true);
     try {
       await removeMyCalendarSource(source.id);
       reportDone("Record source removed");
@@ -433,6 +436,7 @@ export function ServerBackedMyCalendar({
         apiErrorReference(failure),
       );
     } finally {
+      setRemovingSource(false);
       setSourceToRemove(null);
       refreshSources();
     }
@@ -780,6 +784,9 @@ export function ServerBackedMyCalendar({
         title="Remove this record source?"
         description="Its records leave My calendar. The records do not change."
         action="Remove source"
+        disabled={removingSource}
+        pending={removingSource}
+        pendingLabel="Removing…"
         onCancel={() => setSourceToRemove(null)}
         onConfirm={() => {
           if (sourceToRemove) void confirmRemoveSource(sourceToRemove);

@@ -94,7 +94,7 @@ export function ServerArchivedBoardEventsDisplay({
                     {
                       type: "button",
                       className:
-                        "border-border bg-card text-foreground hover:bg-muted focus-visible:outline-ring inline-flex min-h-11 items-center rounded-md border px-4 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2",
+                        "border-border bg-card text-foreground hover:over-tint-hover focus-visible:outline-ring inline-flex min-h-11 items-center rounded-md border px-4 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2",
                       onClick: () => onRestoreEvent(event),
                       "aria-label": `Restore ${event.title}`,
                     },

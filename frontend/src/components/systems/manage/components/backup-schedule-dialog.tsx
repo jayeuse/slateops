@@ -255,14 +255,18 @@ export function BackupScheduleDialog({
                   >
                     Discard changes
                   </Button>
-                  <DisabledReason reason={saveReason}>
+                  <DisabledReason
+                    stable
+                    reason={maintenance.pending ? null : saveReason}
+                  >
                     <Button
                       type="submit"
                       form={`${id}-form`}
                       className="min-h-11"
-                      disabled={maintenance.pending}
+                      pending={maintenance.pending}
+                      pendingLabel="Saving…"
                     >
-                      {maintenance.pending ? "Saving…" : "Save schedule"}
+                      Save schedule
                     </Button>
                   </DisabledReason>
                 </>

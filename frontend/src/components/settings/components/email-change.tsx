@@ -9,6 +9,7 @@ import {
 } from "@/components/systems/shared/runtime/workspace-identity";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Dialog,
   DialogContent,
@@ -49,6 +50,22 @@ export default function EmailChange() {
   const operation = useRef<AbortController | null>(null);
   const opener = useRef<HTMLButtonElement | null>(null);
   const blocked = suspended || pending || !self.data || Boolean(self.error);
+  // Rule 6 (TASK-0061): a blocked Send says why; its own send is busy.
+  const sendBlockedReason = pending
+    ? null
+    : accepted
+      ? "Check both inboxes for the confirmation links."
+      : suspended
+        ? "Wait for the session check to finish."
+        : self.error
+          ? "Reload the page to load your account."
+          : !self.data
+            ? "Wait for your account to load."
+            : !email.trim()
+              ? "Enter the new email address first."
+              : !password
+                ? "Enter your current password first."
+                : null;
   useLayoutEffect(() => {
     version.current += 1;
     if (operation.current) {
@@ -232,21 +249,25 @@ export default function EmailChange() {
             <DialogFooter className="mt-0">
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 className="min-h-11"
                 disabled={pending}
                 onClick={close}
               >
                 Cancel
               </Button>
-              <Button
-                type="submit"
-                form="email-change-form"
-                className="min-h-11"
-                disabled={blocked || accepted || !email.trim() || !password}
-              >
-                {pending ? "Sending…" : "Send confirmation emails"}
-              </Button>
+              <DisabledReason stable reason={sendBlockedReason}>
+                <Button
+                  type="submit"
+                  form="email-change-form"
+                  className="min-h-11"
+                  disabled={sendBlockedReason !== null}
+                  pending={pending}
+                  pendingLabel="Sending…"
+                >
+                  Send confirmation emails
+                </Button>
+              </DisabledReason>
             </DialogFooter>
           </DialogFrameFooter>
         </DialogContent>

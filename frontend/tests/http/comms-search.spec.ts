@@ -31,7 +31,9 @@ test("search sends current/all scopes and filter chips to HTTP and safely highli
     await dialog
       .getByRole("textbox", { name: "What", exact: true })
       .fill("comet");
-    await dialog.getByRole("button", { name: "Search", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Search messages", exact: true })
+      .click();
     await expect.poll(() => server.searchRequests.length).toBe(1);
     expect(server.searchRequests[0].searchParams.get("in")).toBe(server.room);
     const result = dialog.getByRole("button", {
@@ -53,7 +55,9 @@ test("search sends current/all scopes and filter chips to HTTP and safely highli
     await dialog.getByRole("button", { name: /^When( filter|:)/ }).click();
     await dialog.getByLabel("After", { exact: true }).fill("2026-10-20");
     await dialog.getByLabel("Before", { exact: true }).fill("2026-10-18");
-    await dialog.getByRole("button", { name: "Search", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Search messages", exact: true })
+      .click();
     await expect(dialog.getByRole("alert")).toContainText(
       /After.*before.*Before/,
     );
@@ -65,7 +69,9 @@ test("search sends current/all scopes and filter chips to HTTP and safely highli
     await dialog.getByLabel("Has", { exact: true }).selectOption("file");
     await dialog.getByRole("button", { name: /^Is( filter|:)/ }).click();
     await dialog.getByLabel("Is", { exact: true }).selectOption("thread");
-    await dialog.getByRole("button", { name: "Search", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Search messages", exact: true })
+      .click();
     await expect.poll(() => server.searchRequests.length).toBe(2);
     expect(
       Object.fromEntries(server.searchRequests[1].searchParams),
@@ -119,7 +125,9 @@ test("search opens another conversation in place, preserves the draft and clears
       .fill("needle");
     await dialog.getByRole("button", { name: /^Where( filter|:)/ }).click();
     await dialog.getByLabel("Where", { exact: true }).selectOption("all");
-    await dialog.getByRole("button", { name: "Search", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Search messages", exact: true })
+      .click();
     await dialog
       .getByRole("button", {
         name: "Open message from Search owner in Search archive",
@@ -179,7 +187,9 @@ test("search pages remain server-bounded and changing filters resets the page", 
   try {
     await page.goto(`/comms?conversation=${server.room}`);
     const dialog = await openSearch(page);
-    await dialog.getByRole("button", { name: "Search", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Search messages", exact: true })
+      .click();
     await expect(
       dialog.getByRole("button", { name: /Open message from/ }),
     ).toHaveCount(25);
@@ -196,7 +206,9 @@ test("search pages remain server-bounded and changing filters resets the page", 
     await expect(
       dialog.getByText("Server result 26", { exact: true }),
     ).toHaveCount(0);
-    await dialog.getByRole("button", { name: "Search", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Search messages", exact: true })
+      .click();
     await expect
       .poll(() => server.searchRequests.at(-1)?.searchParams.get("offset"))
       .toBe("0");
@@ -215,7 +227,9 @@ test("search opens a reply through existing message/thread navigation", async ({
     await dialog
       .getByRole("textbox", { name: "What", exact: true })
       .fill("thread");
-    await dialog.getByRole("button", { name: "Search", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Search messages", exact: true })
+      .click();
     await dialog
       .getByRole("button", {
         name: "Open message from Search owner in Search dispatch",
@@ -246,12 +260,16 @@ test("search refusal hides cached excerpts and distinguishes retry from an empty
     await dialog
       .getByRole("textbox", { name: "What", exact: true })
       .fill("comet");
-    await dialog.getByRole("button", { name: "Search", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Search messages", exact: true })
+      .click();
     await expect(
       dialog.getByRole("button", { name: /Open message from/ }),
     ).toHaveCount(1);
     server.setSearchReply(() => ({ status: 403 }));
-    await dialog.getByRole("button", { name: "Search", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Search messages", exact: true })
+      .click();
     await expect(dialog.getByRole("alert")).toContainText(
       "Search could not be loaded",
     );
@@ -312,12 +330,16 @@ test("a late search response cannot replace newer criteria", async ({
     await dialog
       .getByRole("textbox", { name: "What", exact: true })
       .fill("slow");
-    await dialog.getByRole("button", { name: "Search", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Search messages", exact: true })
+      .click();
     await expect.poll(() => server.searchRequests.length).toBe(1);
     await dialog
       .getByRole("textbox", { name: "What", exact: true })
       .fill("comet");
-    await dialog.getByRole("button", { name: "Search", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Search messages", exact: true })
+      .click();
     await expect(
       dialog.getByText("Comet query result", { exact: true }),
     ).toBeVisible();
@@ -336,7 +358,9 @@ test("a late search response cannot replace newer criteria", async ({
       dialog.getByRole("button", { name: /Open message from/ }),
     ).toHaveCount(0);
     expect(server.searchRequests).toHaveLength(2);
-    await dialog.getByRole("button", { name: "Search", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Search messages", exact: true })
+      .click();
     await expect(
       dialog.getByText("Needle query result", { exact: true }),
     ).toBeVisible();
@@ -378,7 +402,9 @@ for (const boundary of ["account", "organization"] as const)
       await dialog
         .getByRole("textbox", { name: "What", exact: true })
         .fill("old private query");
-      await dialog.getByRole("button", { name: "Search", exact: true }).click();
+      await dialog
+        .getByRole("button", { name: "Search messages", exact: true })
+        .click();
       await expect.poll(() => old.searchRequests.length).toBe(1);
       next = await installCommsSearchApi(page, {
         userId: nextUser,
@@ -443,7 +469,9 @@ test("search keeps shortcut focus, phone Details and readable light/dark results
     await dialog
       .getByRole("textbox", { name: "What", exact: true })
       .fill("comet");
-    await dialog.getByRole("button", { name: "Search", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Search messages", exact: true })
+      .click();
     await expect(
       dialog.getByRole("button", { name: /Open message from/ }),
     ).toBeVisible();

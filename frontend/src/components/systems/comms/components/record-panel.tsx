@@ -85,7 +85,7 @@ export function RecordPanel({
                   <button
                     type="button"
                     onClick={() => onJump(mention.messageId)}
-                    className="hover:bg-muted focus-visible:outline-ring flex min-h-11 w-full flex-col gap-0.5 rounded-[var(--radius)] px-2 py-1.5 text-left outline-none focus-visible:outline-2"
+                    className="hover:bg-tint-hover focus-visible:outline-ring flex min-h-11 w-full flex-col gap-0.5 rounded-[var(--radius)] px-2 py-1.5 text-left outline-none focus-visible:outline-2"
                   >
                     <span className="text-xs font-semibold">
                       {mention.conversationName} · {mention.author}

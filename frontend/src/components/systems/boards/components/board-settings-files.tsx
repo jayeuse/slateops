@@ -3,6 +3,7 @@
 import { useId } from "react";
 import type { WorkspaceRegion } from "@/lib/date-time";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Dialog,
   DialogContent,
@@ -238,7 +239,7 @@ export function BoardFilePurgeDialog({
   region,
   confirmationName,
   password,
-  confirmDisabled,
+  confirmBlocked,
   canReviewAgain,
   onConfirmationName,
   onPassword,
@@ -256,7 +257,8 @@ export function BoardFilePurgeDialog({
   region: WorkspaceRegion | undefined;
   confirmationName: string;
   password: string;
-  confirmDisabled: boolean;
+  /** Why Delete file forever waits, or null when it can run (TASK-0061). */
+  confirmBlocked: string | null;
   canReviewAgain: boolean;
   onConfirmationName: (value: string) => void;
   onPassword: (value: string) => void;
@@ -324,14 +326,18 @@ export function BoardFilePurgeDialog({
                     onChange={(event) => onPassword(event.target.value)}
                   />
                 </label>
-                <Button
-                  variant="destructive"
-                  className={`${control} self-start`}
-                  type="submit"
-                  disabled={confirmDisabled}
-                >
-                  Delete file forever
-                </Button>
+                <DisabledReason stable reason={pending ? null : confirmBlocked}>
+                  <Button
+                    variant="destructive"
+                    className={`${control} self-start`}
+                    type="submit"
+                    disabled={confirmBlocked !== null}
+                    pending={pending}
+                    pendingLabel="Deleting…"
+                  >
+                    Delete file forever
+                  </Button>
+                </DisabledReason>
               </form>
             ) : null}
           </>
@@ -346,7 +352,7 @@ export function BoardFilePurgeDialog({
           </Button>
         ) : null}
         <Button
-          variant="outline"
+          variant="ghost"
           className={`${control} self-start`}
           disabled={pending}
           onClick={onCancel}

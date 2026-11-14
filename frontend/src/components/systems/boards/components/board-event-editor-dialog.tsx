@@ -27,7 +27,7 @@ export type EventConflict = {
 /**
  * The event editor in the shared dialog frame (BR21). Closing with changes
  * asks first. A conflict reads "Someone changed this event first." with
- * Use latest and Keep mine.
+ * Use latest and Keep my changes.
  */
 export function BoardEventEditorDialog({
   draft,
@@ -139,6 +139,7 @@ export function BoardEventEditorDialog({
         description="Your changes to this event will be lost."
         action="Discard changes"
         disabled={busy}
+        disabledReason="Wait for the event to finish saving."
         onCancel={() => setDiscardOpen(false)}
         onConfirm={() => {
           setDiscardOpen(false);
@@ -231,16 +232,17 @@ function ConflictNotice({
               <Button
                 type="button"
                 className="min-h-11 xl:min-h-8"
-                disabled={busy}
+                pending={busy}
+                pendingLabel="Saving…"
                 onClick={onKeepMine}
               >
-                Keep mine
+                Keep my changes
               </Button>
             </div>
             <p className="text-muted-foreground text-sm">
               {latest?.event
-                ? `Keep mine saves your title, details, place, and time over theirs. ${linksChanged ? "Your links replace theirs." : "Their links stay."}`
-                : "Keep mine creates the event on the latest board."}
+                ? `Keep my changes saves your title, details, place, and time over theirs. ${linksChanged ? "Your links replace theirs." : "Their links stay."}`
+                : "Keep my changes creates the event on the latest board."}
             </p>
           </>
         ) : null}

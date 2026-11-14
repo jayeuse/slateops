@@ -36,8 +36,8 @@ export function OrganizationFooter({
   /** The failed save request's ID, shown as its error reference. */
   saveErrorReference?: string;
   /**
-   * A save is running. Save stays focusable (`aria-disabled`, through its
-   * reason) so focus does not drop to the page while it runs (Phase 8).
+   * A save is running. Save is busy (`pending`): it stays focusable and
+   * ignores clicks, so focus does not drop to the page while it runs.
    */
   saving: boolean;
   /** The settings cannot be saved now (loading, a refusal, a pending save). */
@@ -85,22 +85,28 @@ export function OrganizationFooter({
             Discard changes
           </Button>
         ) : null}
+        {/* Rules 4 and 6 (TASK-0061): a running save is pending, never a
+            reason; anything else that blocks Save says why. */}
         <DisabledReason
           stable
           reason={
             saving
-              ? "Saving the settings."
+              ? null
               : checkingSaved
                 ? "Checking the saved changes first."
-                : dirty
-                  ? null
-                  : "No changes to save."
+                : !dirty
+                  ? "No changes to save."
+                  : disabled
+                    ? "Wait for the settings to load."
+                    : null
           }
         >
           <Button
             type="submit"
             className="min-h-11"
             disabled={!dirty || disabled}
+            pending={saving}
+            pendingLabel="Saving…"
           >
             {saveLabel}
           </Button>

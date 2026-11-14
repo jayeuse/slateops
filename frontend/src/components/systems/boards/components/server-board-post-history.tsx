@@ -194,7 +194,9 @@ function PostHistoryContent({
                 onClick={() => setChosen(item.id)}
                 className={
                   "focus-visible:outline-ring flex min-h-11 w-full flex-col items-start rounded-md px-3 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-offset-2 " +
-                  (selected ? "bg-secondary font-medium" : "hover:bg-muted")
+                  (selected
+                    ? "bg-tint-selected font-medium"
+                    : "hover:bg-tint-hover")
                 }
               >
                 <span>

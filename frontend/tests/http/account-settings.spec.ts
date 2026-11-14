@@ -4,7 +4,7 @@ import {
   avatarPng,
   installProfileApi,
 } from "./helpers/profile-api";
-import { smallTargets } from "./helpers/layout";
+import { settled, smallTargets } from "./helpers/layout";
 import { mockMfa } from "./helpers/mfa";
 
 // Account settings layout and saving (docs/specs/profile-sidebar-relayout.md,
@@ -120,7 +120,8 @@ test("from 1280px the page is still, rows are label-left, and Save profile is th
       .locator(
         'button[data-variant="default"]:visible, a[data-variant="default"]:visible',
       ),
-  ).toHaveText(["Save profile"]);
+    // innerText leaves out the hidden busy label ("Saving…").
+  ).toHaveText(["Save profile"], { useInnerText: true });
 });
 
 test("the footer says why Save waits, counts unsaved changes, discards, and saves", async ({
@@ -136,6 +137,11 @@ test("the footer says why Save waits, counts unsaved changes, discards, and save
   });
   await expect(save).toBeDisabled();
   await expect(save).toHaveAccessibleDescription("No changes to save.");
+  // Blocked, only its fill and text fade: the element stays opaque, so a
+  // keyboard focus ring keeps its full strength (TASK-0061, rule 5).
+  expect(await save.evaluate((node) => getComputedStyle(node).opacity)).toBe(
+    "1",
+  );
   await expect(footer(page).getByRole("status")).toHaveText("Saved");
   await expect(
     footer(page).getByRole("button", { name: "Discard changes" }),
@@ -170,6 +176,62 @@ test("the footer says why Save waits, counts unsaved changes, discards, and save
   ]);
 });
 
+// TASK-0061, the primary button rules (Human Owner, 2026-11-14): rule 4, a
+// busy primary shows its pendingLabel while its request runs; rule 6, a
+// blocked primary's reason is its accessible description.
+test("a running Save profile reads Saving… and a blocked Send confirmation emails says what is missing", async ({
+  page,
+}) => {
+  const api = await installProfileApi(page);
+  await page.goto("/settings");
+  const title = page.getByLabel("Job title", { exact: true });
+  await expect(title).toHaveValue("Equipment coordinator");
+  const hold = heldResponse();
+  api.holdPatch = hold;
+  try {
+    await title.fill("Operations lead");
+    await footer(page)
+      .getByRole("button", { name: "Save profile", exact: true })
+      .click();
+    await hold.entered;
+    // Rule 4: busy, not disabled for a reason.
+    const saving = footer(page).getByRole("button", {
+      name: "Saving…",
+      exact: true,
+    });
+    await expect(saving).toHaveAttribute("aria-busy", "true");
+    await expect(saving).toHaveAccessibleDescription("");
+  } finally {
+    hold.release();
+  }
+  await expect(footer(page).getByRole("status")).toHaveText("Profile saved.");
+  await expect(
+    footer(page).getByRole("button", { name: "Save profile", exact: true }),
+  ).toHaveAccessibleDescription("No changes to save.");
+
+  // Rule 6: the dialog's primary says what is missing, one field at a time.
+  await page.getByRole("button", { name: "Change email", exact: true }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "Change email",
+    exact: true,
+  });
+  const send = dialog.getByRole("button", {
+    name: "Send confirmation emails",
+    exact: true,
+  });
+  await expect(send).toHaveAttribute("aria-disabled", "true");
+  await expect(send).toHaveAccessibleDescription(
+    "Enter the new email address first.",
+  );
+  await dialog.getByLabel("New email").fill("new@example.test");
+  await expect(send).toHaveAccessibleDescription(
+    "Enter your current password first.",
+  );
+  await dialog.getByLabel("Current password").fill("generated-test-value");
+  await expect(send).not.toHaveAttribute("aria-disabled", "true");
+  await expect(send).toHaveAccessibleDescription("");
+});
+
 test("the timezone select lists the organization timezone first and saves each choice at once", async ({
   page,
 }) => {
@@ -187,7 +249,8 @@ test("the timezone select lists the organization timezone first and saves each c
   await expect(options.first()).toHaveText(
     "Organization timezone (Asia/Manila)",
   );
-  // The open list covers at most 20rem, wherever it opens.
+  // The open list covers at most 20rem, wherever it opens (read at rest).
+  await settled(page);
   expect(
     (await page.locator('[data-slot="combobox-popup"]').boundingBox())?.height,
   ).toBeLessThanOrEqual(320);

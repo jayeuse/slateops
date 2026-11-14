@@ -48,7 +48,7 @@ export function ConfirmActionDialog({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <Button variant="outline" className="min-h-11" onClick={onClose}>
+            <Button variant="ghost" className="min-h-11" onClick={onClose}>
               Cancel
             </Button>
             <Button

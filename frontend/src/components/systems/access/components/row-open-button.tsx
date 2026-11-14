@@ -85,11 +85,11 @@ export function RowOpenButton({
 
 /** For the row or card that holds a RowOpenButton. */
 export const openRowClassName =
-  "relative cursor-pointer has-[button:focus-visible]:bg-muted/50";
+  "relative cursor-pointer has-[button:focus-visible]:bg-tint-hover";
 
 /**
- * Ink-tint row states (the One Selection Rule): 6% under the pointer, 14%
- * for the open item, and no edge or ring.
+ * Ink-tint row states (the One Selection Rule): --tint-hover under the
+ * pointer, --tint-selected for the open item, and no edge or ring.
  */
 export const tintRowClassName =
-  "hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] data-[state=selected]:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]";
+  "hover:bg-tint-hover data-[state=selected]:bg-tint-selected";

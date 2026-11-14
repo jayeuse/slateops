@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Action, Panel } from "../../shared/components/ui";
 import { Alert } from "@/components/ui/alert";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   notificationCountOptions,
   notificationKeys,
@@ -74,24 +75,19 @@ export default function ConnectedReportNotifications() {
           if you still have access.
         </p>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div
-            className="flex gap-1"
-            role="group"
+          <ToggleGroup
+            variant="segmented"
+            className="w-fit"
             aria-label="Notification filter"
+            value={[status]}
+            onValueChange={(values) => {
+              const next = values[0];
+              if (next === "all" || next === "unread") setStatus(next);
+            }}
           >
-            {(["all", "unread"] as const).map((value) => (
-              <Action
-                key={value}
-                type="button"
-                size="sm"
-                aria-pressed={status === value}
-                className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground aria-pressed:border-secondary"
-                onClick={() => setStatus(value)}
-              >
-                {value === "all" ? "All" : "Unread"}
-              </Action>
-            ))}
-          </div>
+            <ToggleGroupItem value="all">All</ToggleGroupItem>
+            <ToggleGroupItem value="unread">Unread</ToggleGroupItem>
+          </ToggleGroup>
           <div className="flex flex-wrap gap-2">
             <Action
               type="button"

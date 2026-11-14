@@ -226,7 +226,7 @@ export function DiscardChangesDialog({
         </AlertDialogHeader>
         <ActionError message={error} title={null} />
         <AlertDialogFooter>
-          <Button variant="outline" className="min-h-11" onClick={onKeep}>
+          <Button variant="ghost" className="min-h-11" onClick={onKeep}>
             Keep editing
           </Button>
           <Button

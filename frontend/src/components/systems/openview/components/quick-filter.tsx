@@ -9,8 +9,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toggleVariants } from "@/components/ui/toggle";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  SegmentedPill,
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
+import { pillOptionHeightClass } from "@/components/ui/pill";
 import { queryOpenViewAggregates } from "../adapters/analytics-api";
 import { openViewKeys } from "../adapters/openview-queries";
 import type {
@@ -127,7 +132,7 @@ export function QuickFilter({
     >
       <ToggleGroupItem
         value={ALL}
-        className="flex-none gap-1.5 px-2 text-sm whitespace-nowrap"
+        className="flex-none gap-1.5 text-sm whitespace-nowrap"
       >
         All
         {total === null ? null : (
@@ -140,7 +145,7 @@ export function QuickFilter({
         <ToggleGroupItem
           key={choice.id}
           value={choice.id}
-          className="flex-none gap-1.5 px-2 text-sm whitespace-nowrap"
+          className="flex-none gap-1.5 text-sm whitespace-nowrap"
         >
           {choice.label}
           <span className="text-muted-foreground font-normal tabular-nums">
@@ -156,6 +161,7 @@ export function QuickFilter({
               <button
                 type="button"
                 data-slot="toggle-group-item"
+                data-pill-option=""
                 data-current={chosenMore ? "true" : undefined}
                 aria-label={
                   chosenMore
@@ -164,12 +170,14 @@ export function QuickFilter({
                 }
                 className={cn(
                   toggleVariants({ variant: "segmented" }),
-                  "text-muted-foreground hover:text-foreground h-auto min-h-11 flex-none justify-center gap-1 px-2 text-sm whitespace-nowrap hover:bg-transparent xl:min-h-9",
-                  "data-[current=true]:text-action-text data-[current=true]:bg-[var(--surface-raised)] data-[current=true]:font-semibold data-[current=true]:shadow-[var(--lift),inset_0_0_0_1px_color-mix(in_oklab,var(--ink-muted)_60%,transparent)]",
+                  pillOptionHeightClass,
+                  "text-muted-foreground hover:text-foreground h-auto flex-none justify-center gap-1 px-3 text-sm whitespace-nowrap hover:bg-transparent focus-visible:ring-0",
+                  "data-[current=true]:text-action-text relative data-[current=true]:font-semibold",
                 )}
               />
             }
           >
+            {chosenMore ? <SegmentedPill /> : null}
             {chosenMore ? chosenMore.label : "More"}
             <ChevronDown aria-hidden="true" className="size-3.5" />
           </DropdownMenuTrigger>

@@ -16,6 +16,7 @@ import {
   wireCard,
 } from "./helpers/board-kanban-api";
 import { openedSheet } from "./helpers/settled";
+import { settled } from "./helpers/layout";
 
 // Two shortcuts in a writer's Kanban card sheet (candidates 4 and 8 of
 // docs/specs/subtle-interactions.md): "Me (<name>)" first in the assignee
@@ -183,6 +184,7 @@ test("SI-C4.2 at 390 px a writer picks Me first with the keyboard; it is not lis
     "Carla Diaz",
   ]);
   const me = page.getByRole("option", { name: "Me (Ben Reyes)", exact: true });
+  await settled(page);
   expect((await me.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   await expect(
     page.getByRole("combobox", { name: "Search assignee", exact: true }),

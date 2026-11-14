@@ -296,9 +296,12 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
     name: "Delete board forever",
     exact: true,
   });
+  // Blocked until the name is typed, the confirm fades its destructive fill
+  // to half (TASK-0061, rule 6: only fill and text fade, not the focus ring).
   const destructiveColor = await confirm.evaluate((element) => {
     const sample = document.createElement("span");
-    sample.style.color = "var(--destructive)";
+    sample.style.color =
+      "color-mix(in oklab, var(--destructive) 50%, transparent)";
     document.body.append(sample);
     const expected = getComputedStyle(sample).color;
     sample.remove();

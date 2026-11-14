@@ -57,7 +57,7 @@ type Action = PersonSecurityAction;
 const copies = {
   email: {
     title: "Send recovery email?",
-    confirm: "Send email",
+    confirm: "Send recovery email",
     pending: "Sending…",
     description:
       "A recovery link goes to their sign-in email. We cannot confirm the email arrived. They stay signed in on their devices.",
@@ -488,7 +488,7 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               className="min-h-11"
               disabled={pending}
               onClick={() => setAction(null)}
@@ -496,7 +496,12 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
               Cancel
             </Button>
             <DisabledReason
-              reason={!pending && !ready ? "Checking security…" : null}
+              stable
+              reason={
+                !pending && !ready
+                  ? "Wait for the security check to finish."
+                  : null
+              }
             >
               <Button
                 variant={action === "email" ? "default" : "destructive"}
@@ -505,7 +510,7 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
                 pendingLabel={action ? copies[action].pending : undefined}
                 onClick={() => void confirm()}
               >
-                {action ? copies[action].confirm : "Confirm"}
+                {action ? copies[action].confirm : "Confirm security action"}
               </Button>
             </DisabledReason>
           </AlertDialogFooter>

@@ -817,7 +817,18 @@ export function GroupEditor({
                 >
                   Discard changes
                 </Button>
-                <DisabledReason reason={verifying ? verifyingReason : null}>
+                {/* Rule 6 (TASK-0061): a save that waits for another
+                    save says why. */}
+                <DisabledReason
+                  stable
+                  reason={
+                    verifying
+                      ? verifyingReason
+                      : pending !== null && pending !== section
+                        ? "Wait for the other change to save."
+                        : null
+                  }
+                >
                   <Button
                     ref={(element) => {
                       if (element) saveButtons.current.set(section, element);
@@ -876,11 +887,7 @@ export function GroupEditor({
             className="grid w-full grid-cols-3 sm:w-fit"
           >
             {tabs.map((item) => (
-              <TabsTrigger
-                key={item.value}
-                className="min-h-11 xl:min-h-8"
-                value={item.value}
-              >
+              <TabsTrigger key={item.value} value={item.value}>
                 {item.label}
                 {edits[item.value] ? (
                   <>
@@ -1132,14 +1139,23 @@ export function GroupEditor({
           />
           <AlertDialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               className="min-h-11"
               disabled={pending !== null}
               onClick={() => setDeleting(false)}
             >
               Cancel
             </Button>
-            <DisabledReason reason={verifying ? verifyingReason : null}>
+            <DisabledReason
+              stable
+              reason={
+                verifying
+                  ? verifyingReason
+                  : pending !== null && pending !== "delete"
+                    ? "Wait for the other change to save."
+                    : null
+              }
+            >
               <Button
                 variant="destructive"
                 className="min-h-11"
@@ -1148,7 +1164,7 @@ export function GroupEditor({
                 pendingLabel="Deleting…"
                 onClick={() => void confirmDelete()}
               >
-                Delete
+                Delete group
               </Button>
             </DisabledReason>
           </AlertDialogFooter>

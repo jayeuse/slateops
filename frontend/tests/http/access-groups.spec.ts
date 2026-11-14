@@ -178,7 +178,7 @@ test("a rename that meets a newer save asks which name to keep", async ({
   await expect(conflict).toContainText("Warehouse clerks");
   await expect(conflict).toContainText("Stock clerks");
   await conflict.getByRole("button", { name: "Use draft" }).click();
-  await conflict.getByRole("button", { name: "Continue" }).click();
+  await conflict.getByRole("button", { name: "Use these versions" }).click();
 
   await expect(conflict).toBeHidden();
   const patches = api.sent("PATCH", `/api/access/groups/${ids.clerks}`);
@@ -381,7 +381,7 @@ test("a group with members cannot be deleted; an empty one can", async ({
   sheet = panel(page, "New hires");
   await sheet.getByRole("button", { name: "Delete group" }).click();
   const confirm = page.getByRole("alertdialog", { name: "Delete New hires?" });
-  await confirm.getByRole("button", { name: "Delete" }).click();
+  await confirm.getByRole("button", { name: "Delete group" }).click();
   await deletion.entered;
   await expect(
     confirm.getByRole("button", { name: "Deleting…", exact: true }),

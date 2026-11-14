@@ -541,7 +541,7 @@ test("a report dialog's save says why it waits, and leaving asks before it disca
   const dialog = page.getByRole("dialog", { name: "Edit report" });
   const save = dialog.getByRole("button", { name: "Save report" });
   await expect(save).toHaveAttribute("aria-disabled", "true");
-  await expect(save).toHaveAccessibleDescription("No changes to save");
+  await expect(save).toHaveAccessibleDescription("No changes to save.");
 
   await dialog.getByLabel("Name").fill("Weekly assets");
   await expect(save).not.toHaveAttribute("aria-disabled", "true");
@@ -553,7 +553,7 @@ test("a report dialog's save says why it waits, and leaving asks before it disca
   await expect(discard).toBeHidden();
   await expect(dialog.getByLabel("Name")).toHaveValue("Weekly assets");
   await dialog.getByRole("button", { name: "Cancel" }).click();
-  await discard.getByRole("button", { name: "Discard" }).click();
+  await discard.getByRole("button", { name: "Discard changes" }).click();
   await expect(dialog).toBeHidden();
   expect(api.state.updates).toEqual([]);
 });
@@ -920,7 +920,9 @@ for (const failure of [false, true]) {
     await review
       .getByLabel("Administrator password")
       .fill("synthetic-report-password");
-    const confirm = review.getByRole("button", { name: "Delete forever" });
+    const confirm = review.getByRole("button", {
+      name: "Delete report forever",
+    });
     await expect(confirm).toBeDisabled();
     expect(api.state.purges).toBe(0);
     await review.getByLabel("Type the report name").fill("Operations review");

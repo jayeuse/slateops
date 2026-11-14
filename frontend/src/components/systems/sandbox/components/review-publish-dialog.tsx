@@ -176,7 +176,7 @@ function PublishedRecords({
           <li key={link.id}>
             <Link
               href={link.href as Route}
-              className="border-border hover:bg-muted focus-visible:outline-ring grid min-h-11 grid-cols-[0.5rem_minmax(0,1fr)_auto] items-center gap-2.5 rounded-md border px-2.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 xl:min-h-8"
+              className="border-border hover:bg-tint-hover focus-visible:outline-ring grid min-h-11 grid-cols-[0.5rem_minmax(0,1fr)_auto] items-center gap-2.5 rounded-md border px-2.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 xl:min-h-8"
             >
               {link.departmentIndex >= 0 ? (
                 <DepartmentMark departmentIndex={link.departmentIndex} />
@@ -488,20 +488,27 @@ export function ReviewPublishDialog({
       }
     : design;
   const reviewing = busy === "review" || stale;
-  // Why Publish waits: the setup save, then the review it starts, then the
-  // password (DESIGN.md Sandbox "Dialogs").
+  // Why Publish waits: the setup save, then the review it starts, another
+  // change, the blocked items, then the password (DESIGN.md Sandbox
+  // "Dialogs"; TASK-0061 rule 6). Its own publish is busy, not a reason.
   const publishReason = setupSaving
-    ? "Saving…"
+    ? "Wait for the save to finish."
     : preview && reviewing
       ? "Preparing your review…"
-      : !password && !(disabled || pending || blocked)
-        ? "Enter your password to publish."
-        : null;
+      : busy === "publish"
+        ? null
+        : disabled
+          ? "Finish the current change first."
+          : blocked
+            ? "Fix the blocked items first."
+            : !password
+              ? "Enter your password to publish."
+              : null;
   // Cancel stays available while the review loads; only a publish in flight
   // holds the dialog open.
   const cancel = (
     <Button
-      variant="outline"
+      variant="ghost"
       className="min-h-11"
       disabled={busy === "publish"}
       onClick={() => onOpenChange(false)}
@@ -660,7 +667,7 @@ export function ReviewPublishDialog({
             <DialogFooter className="mt-0 sm:flex-row sm:justify-end">
               <Button
                 ref={backRef}
-                variant="outline"
+                variant="ghost"
                 className="min-h-11 w-full sm:w-auto"
                 onClick={() => onOpenChange(false)}
               >
@@ -724,9 +731,11 @@ export function ReviewPublishDialog({
                 <DisabledReason stable reason={publishReason}>
                   <Button
                     className="min-h-11"
+                    pending={busy === "publish"}
+                    pendingLabel="Publishing…"
                     disabled={
                       disabled ||
-                      pending ||
+                      busy === "review" ||
                       blocked ||
                       stale ||
                       setupSaving ||
@@ -734,7 +743,7 @@ export function ReviewPublishDialog({
                     }
                     onClick={() => void publish()}
                   >
-                    {busy === "publish" ? "Publishing…" : "Publish changes"}
+                    Publish changes
                   </Button>
                 </DisabledReason>
               </DialogFooter>

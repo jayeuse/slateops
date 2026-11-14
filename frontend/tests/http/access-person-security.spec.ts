@@ -103,7 +103,7 @@ async function confirmRecovery(page: Page, revoke = false) {
   });
   await dialog
     .getByRole("button", {
-      name: revoke ? "Send and sign out" : "Send email",
+      name: revoke ? "Send and sign out" : "Send recovery email",
       exact: true,
     })
     .click();

@@ -231,7 +231,7 @@ export function LifecycleActions({
             size="sm"
             variant="outline"
             disabled={disabled}
-            // While it waits, the reason alone describes it ("Saving…",
+            // While it waits, the reason alone describes it ("Wait for the save to finish.",
             // DESIGN.md); the standing note below stays visible.
             aria-describedby={
               disabled && reason ? undefined : "sandbox-lifecycle-note"

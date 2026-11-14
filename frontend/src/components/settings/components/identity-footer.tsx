@@ -55,14 +55,17 @@ export function IdentityFooter({ editor }: { editor: IdentityEditor }) {
             Discard changes
           </Button>
         ) : null}
+        {/* Rules 4 and 6 (TASK-0061): busy is pending, never a reason. */}
         <DisabledReason
           stable
           reason={
             editor.pending
-              ? "Saving the profile."
-              : count
-                ? null
-                : "No changes to save."
+              ? null
+              : !count
+                ? "No changes to save."
+                : editor.blocked
+                  ? "Wait for your profile to load."
+                  : null
           }
         >
           <Button
@@ -70,6 +73,8 @@ export function IdentityFooter({ editor }: { editor: IdentityEditor }) {
             form="identity-form"
             className="min-h-11"
             disabled={!count || editor.blocked}
+            pending={editor.pending}
+            pendingLabel="Saving…"
           >
             Save profile
           </Button>

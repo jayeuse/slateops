@@ -691,6 +691,30 @@ test("changed values and their Edited marks stay when another module is chosen a
   await expect(result.getByText("Edited")).toBeVisible();
 });
 
+test("the chosen module keeps its selected tint under the pointer", async ({
+  page,
+}) => {
+  // The One Selection Rule (DESIGN.md): the selected row is --tint-selected
+  // and holds it while hovered; it never falls back to the lighter hover.
+  await openTest(page);
+  const current = page
+    .getByRole("region", { name: "Modules" })
+    .locator('[aria-current="true"]');
+  const tint = () =>
+    current.evaluate((row) => getComputedStyle(row).backgroundColor);
+  const share = await page.evaluate(
+    () =>
+      parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue(
+          "--tint-selected",
+        ),
+      ) / 100,
+  );
+  await expect.poll(tint).toMatch(new RegExp(`/ ${share}\\)$`));
+  await current.hover();
+  await expect.poll(tint).toMatch(new RegExp(`/ ${share}\\)$`));
+});
+
 test("from 640 to 1279 px every Test control keeps a 44 px target", async ({
   page,
 }) => {

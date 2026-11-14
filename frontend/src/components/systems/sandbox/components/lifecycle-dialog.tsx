@@ -11,6 +11,7 @@ import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-a
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Dialog,
   DialogContent,
@@ -325,7 +326,7 @@ export function SandboxLifecycleDialog({
         ) : null}
         <DialogFrameFooter className="flex flex-wrap justify-end gap-2">
           <Button
-            variant="outline"
+            variant="ghost"
             disabled={busy === "command"}
             onClick={cancel}
           >
@@ -339,24 +340,45 @@ export function SandboxLifecycleDialog({
               Review again
             </Button>
           ) : null}
-          <Button
-            variant={operation === "purge" ? "destructive" : "default"}
-            disabled={
-              busy !== null ||
-              blocked ||
-              (operation !== "reopen" &&
-                (!preview ||
-                  confirmation !== preview.confirmation_name ||
-                  !password))
+          {/* TASK-0061 rules 4 and 6: the command is its busy state; the
+              review and each missing step are its reasons. */}
+          <DisabledReason
+            stable
+            reason={
+              busy === "command"
+                ? null
+                : busy === "review"
+                  ? "Wait for the review to finish."
+                  : blocked
+                    ? "Fix the blocked items first."
+                    : operation === "reopen"
+                      ? null
+                      : !preview
+                        ? "Review the change again first."
+                        : confirmation !== preview.confirmation_name
+                          ? `Type the ${binding.kind} name to confirm.`
+                          : !password
+                            ? "Enter your administrator password."
+                            : null
             }
-            onClick={() => void confirm()}
           >
-            {busy === "command"
-              ? "Confirming…"
-              : operation === "purge"
-                ? title
-                : title}
-          </Button>
+            <Button
+              variant={operation === "purge" ? "destructive" : "default"}
+              pending={busy === "command"}
+              pendingLabel="Confirming…"
+              disabled={
+                busy === "review" ||
+                blocked ||
+                (operation !== "reopen" &&
+                  (!preview ||
+                    confirmation !== preview.confirmation_name ||
+                    !password))
+              }
+              onClick={() => void confirm()}
+            >
+              {title}
+            </Button>
+          </DisabledReason>
         </DialogFrameFooter>
       </DialogContent>
     </Dialog>

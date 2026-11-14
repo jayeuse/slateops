@@ -321,7 +321,7 @@ function SampleProviderForUser({
                 setConfirmReset(false);
               }}
             >
-              Reset workspace
+              Reset workspace data
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { PersonAvatar } from "@/components/person-avatar";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Dialog,
   DialogCloseButton,
@@ -34,6 +35,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { pillClass, pillRailClass } from "@/components/ui/pill";
 import { kanbanErrorMessage } from "../adapters/board-kanban-api";
 import {
   CHART_COLORS,
@@ -514,6 +516,8 @@ export function KanbanLabelsDialog({
   const [errorFailure, setError] = useErrorText();
   const error = errorFailure?.message ?? null;
   const [pending, setPending] = useState(false);
+  // Add label's own run, so only it reads "Adding…" (TASK-0061 rule 4).
+  const [adding, setAdding] = useState(false);
   const run = async (action: () => Promise<void>) => {
     setPending(true);
     setError(null);
@@ -565,7 +569,10 @@ export function KanbanLabelsDialog({
             event.preventDefault();
             const next = name.trim();
             if (!next) return;
-            if (await run(() => onAdd(next, nextColor))) setName("");
+            setAdding(true);
+            const added = await run(() => onAdd(next, nextColor));
+            setAdding(false);
+            if (added) setName("");
           }}
         >
           <Input
@@ -578,13 +585,28 @@ export function KanbanLabelsDialog({
             onChange={(event) => setName(event.currentTarget.value)}
           />
           {/* The name field takes the room; the button keeps its one line. */}
-          <Button
-            type="submit"
-            className={cn(control, "shrink-0 whitespace-nowrap")}
-            disabled={pending || !name.trim()}
+          <DisabledReason
+            stable
+            reason={
+              adding
+                ? null
+                : pending
+                  ? "Wait for the label change to finish."
+                  : !name.trim()
+                    ? "Type a label name first."
+                    : null
+            }
           >
-            Add label
-          </Button>
+            <Button
+              type="submit"
+              className={cn(control, "shrink-0 whitespace-nowrap")}
+              disabled={!name.trim()}
+              pending={adding}
+              pendingLabel="Adding…"
+            >
+              Add label
+            </Button>
+          </DisabledReason>
         </form>
         {error ? (
           <div>
@@ -710,7 +732,8 @@ export function StageSwitcher({
     <nav
       ref={row}
       aria-label="Stages"
-      className="bg-muted flex gap-0.5 overflow-x-auto rounded-md p-[3px]"
+      data-pill-rail=""
+      className={cn("isolate flex gap-1 overflow-x-auto", pillRailClass)}
     >
       {stages.map((stage) => (
         <button
@@ -718,13 +741,20 @@ export function StageSwitcher({
           type="button"
           aria-current={stage.id === current ? "true" : undefined}
           aria-label={`${stage.name}, ${stage.label}`}
+          data-pill-option=""
           className={cn(
-            "text-muted-foreground inline-flex h-11 flex-none items-center gap-1.5 rounded-[calc(var(--radius)-2px)] px-3 whitespace-nowrap",
-            stage.id === current &&
-              "text-foreground bg-[var(--surface-raised)] font-medium shadow-[0_0_0_1px_var(--rule)]",
+            "text-muted-foreground relative inline-flex h-11 flex-none items-center gap-1.5 rounded-sm px-3 font-medium whitespace-nowrap",
+            stage.id === current && "text-action-text font-semibold",
           )}
           onClick={() => onSelect(stage.id)}
         >
+          {stage.id === current ? (
+            <span
+              aria-hidden="true"
+              data-pill=""
+              className={cn("absolute inset-0 -z-10", pillClass)}
+            />
+          ) : null}
           <span
             aria-hidden="true"
             className="size-2 rounded-full"

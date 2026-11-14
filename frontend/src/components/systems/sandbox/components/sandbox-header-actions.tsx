@@ -60,7 +60,7 @@ type Props = {
   pending: boolean;
   /**
    * The Build save queue holds the draft (N1 rule 5): each command waits,
-   * and its control says "Saving…". Menu items stay enabled.
+   * and its control says "Wait for the save to finish." Menu items stay enabled.
    */
   saving: boolean;
   /** The page owns the template dialog so the empty canvas can open it too. */
@@ -121,7 +121,7 @@ export function SandboxHeaderActions({
   const input = useRef<HTMLInputElement | null>(null);
   const menuId = useId();
   // Only the save queue gives a reason here; other holds keep none.
-  const savingReason = saving ? "Saving…" : null;
+  const savingReason = saving ? "Wait for the save to finish." : null;
   // A disabled menu item says why on a muted second line.
   const checkpointReason = canCheckpoint
     ? null
@@ -415,7 +415,7 @@ export function SandboxHeaderActions({
           <DialogFrameFooter>
             <DialogFooter className="mt-0">
               <Button
-                variant="outline"
+                variant="ghost"
                 className="min-h-11"
                 disabled={busy}
                 onClick={() => setCheckpointOpen(false)}
@@ -564,7 +564,7 @@ export function SandboxHeaderActions({
           <DialogFrameFooter>
             <DialogFooter className="mt-0">
               <Button
-                variant="outline"
+                variant="ghost"
                 className="min-h-11"
                 disabled={busy}
                 onClick={() => {
@@ -616,7 +616,7 @@ export function SandboxHeaderActions({
           <DialogFrameFooter>
             <DialogFooter className="mt-0">
               <Button
-                variant="outline"
+                variant="ghost"
                 className="min-h-11"
                 disabled={busy}
                 onClick={() => setDiscardOpen(false)}

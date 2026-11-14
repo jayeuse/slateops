@@ -612,9 +612,9 @@ export default function ServerBackedDashboards() {
   );
   const editReason = !wide ? "Edit the layout on a larger screen." : null;
   const saveReason = saving
-    ? "Saving…"
+    ? null
     : unplaced.length
-      ? "Place or remove the widgets that are not on the grid"
+      ? "Place or remove the widgets that are not on the grid."
       : null;
   const title =
     edit && !edit.dashboardId
@@ -679,7 +679,7 @@ export default function ServerBackedDashboards() {
           }
         />
         {canManage && isHome ? (
-          <DisabledReason reason={editReason}>
+          <DisabledReason stable reason={editReason}>
             <Button
               type="button"
               className="min-h-11"
@@ -790,9 +790,11 @@ export default function ServerBackedDashboards() {
             <Button
               type="button"
               className="min-h-11"
+              pending={saving}
+              pendingLabel="Saving…"
               onClick={() => void saveLayout()}
             >
-              {saving ? "Saving…" : "Save layout"}
+              Save layout
             </Button>
           </DisabledReason>
         </div>
@@ -1070,7 +1072,7 @@ export default function ServerBackedDashboards() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               className="min-h-11"
               onClick={() => setPendingNavigation(null)}
             >
@@ -1377,7 +1379,7 @@ function SettingsDialog(props: {
             <DialogFooter className="mt-0">
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 className="min-h-11"
                 onClick={props.onClose}
               >
@@ -1385,15 +1387,20 @@ function SettingsDialog(props: {
               </Button>
               <DisabledReason
                 reason={
-                  !name.trim()
-                    ? "Give the dashboard a name"
-                    : pending
-                      ? "Saving…"
+                  pending
+                    ? null
+                    : !name.trim()
+                      ? "Give the dashboard a name."
                       : null
                 }
                 stable
               >
-                <Button type="submit" className="min-h-11">
+                <Button
+                  type="submit"
+                  className="min-h-11"
+                  pending={pending}
+                  pendingLabel="Saving…"
+                >
                   Save settings
                 </Button>
               </DisabledReason>
@@ -1439,7 +1446,7 @@ function ArchiveDialog(props: {
         ) : null}
         <AlertDialogFooter>
           <Button
-            variant="outline"
+            variant="ghost"
             className="min-h-11"
             disabled={pending}
             onClick={props.onClose}
@@ -1449,7 +1456,8 @@ function ArchiveDialog(props: {
           <Button
             variant="destructive"
             className="min-h-11"
-            disabled={pending}
+            pending={pending}
+            pendingLabel="Archiving…"
             onClick={() => {
               setPending(true);
               setError("");
@@ -1474,7 +1482,7 @@ function ArchiveDialog(props: {
                 });
             }}
           >
-            {pending ? "Archiving…" : "Archive"}
+            Archive dashboard
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

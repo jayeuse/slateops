@@ -1645,8 +1645,9 @@ test("Audit Close, Escape, route leave and another tab's sign-in suppress pendin
         .click();
       await barrier.response.entered;
       expect(started).toBe(before + 1);
+      // TASK-0061 rule 4: the running download is busy under its own words.
       await expect(
-        preview.getByRole("button", { name: "Download CSV", exact: true }),
+        preview.getByRole("button", { name: "Downloading…", exact: true }),
       ).toBeDisabled();
       if (method === "Close")
         await preview

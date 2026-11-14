@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { Route } from "next";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -60,6 +61,7 @@ export function ConfirmAction({
   onConfirm,
   onCancel,
   disabled = false,
+  disabledReason,
   pending = false,
   pendingLabel,
   finalFocus,
@@ -71,7 +73,13 @@ export function ConfirmAction({
   action: string;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Locks the dialog: Cancel, Escape, and the action. */
   disabled?: boolean;
+  /**
+   * Why the action waits while `disabled` and not `pending` (TASK-0061 rule
+   * 6), for example "Wait for the save to finish."
+   */
+  disabledReason?: string;
   /** The action runs: its button says so ("Archiving…") and keeps its width. */
   pending?: boolean;
   pendingLabel?: string;
@@ -98,24 +106,33 @@ export function ConfirmAction({
         <AlertDialogFooter>
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             className="min-h-11 xl:min-h-8"
             disabled={disabled}
             onClick={onCancel}
           >
             Cancel
           </Button>
-          <Button
-            type="button"
-            variant={tone === "destructive" ? "destructive" : "default"}
-            className="min-h-11 xl:min-h-8"
-            onClick={onConfirm}
-            disabled={disabled}
-            pending={pending}
-            pendingLabel={pendingLabel}
+          <DisabledReason
+            stable
+            reason={
+              disabled && !pending
+                ? (disabledReason ?? "Wait for the change to finish.")
+                : null
+            }
           >
-            {action}
-          </Button>
+            <Button
+              type="button"
+              variant={tone === "destructive" ? "destructive" : "default"}
+              className="min-h-11 xl:min-h-8"
+              onClick={onConfirm}
+              disabled={disabled && !pending}
+              pending={pending}
+              pendingLabel={pendingLabel}
+            >
+              {action}
+            </Button>
+          </DisabledReason>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -227,6 +244,7 @@ export function EditSheet({
         }}
         onConfirm={confirmDiscard}
         disabled={pending}
+        disabledReason="Wait for the save to finish."
       />
     </>
   );

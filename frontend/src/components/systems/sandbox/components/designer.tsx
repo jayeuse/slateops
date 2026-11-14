@@ -1551,7 +1551,7 @@ export function Designer({
       >
         <Button
           type="button"
-          variant="outline"
+          variant="ghost"
           disabled={pending}
           onClick={() => {
             setEditor("");
@@ -1763,9 +1763,9 @@ export function Designer({
   );
   // Why a live-state change is unavailable, when it is.
   const lifecycleReason = saving
-    ? "Saving…"
+    ? "Wait for the save to finish."
     : bindings === null
-      ? "Live state is still loading."
+      ? "Wait for live state to load."
       : localDraftDirty
         ? "Save or cancel your edits first."
         : null;
@@ -2914,7 +2914,7 @@ export function Designer({
               pendingLabel="Deleting…"
               onClick={() => void removeSelected()}
             >
-              {currentDeleteImpact?.action ?? "Delete"}
+              {currentDeleteImpact?.action ?? "Delete item"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

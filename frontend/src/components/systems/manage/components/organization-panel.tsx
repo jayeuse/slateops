@@ -201,13 +201,7 @@ export function OrganizationPanel({
               <OrganizationFooter
                 unsavedCount={unsavedCount}
                 checkingSaved={checkingSaved}
-                saveLabel={
-                  saving
-                    ? "Saving…"
-                    : staleRevision
-                      ? "Save again"
-                      : "Save settings"
-                }
+                saveLabel={staleRevision ? "Save again" : "Save settings"}
                 saving={saving}
                 saveError={saveError}
                 saveErrorReference={saveErrorReference}
@@ -339,7 +333,7 @@ function OrganizationPreview({
             <GuardedWorkspaceLink
               key={href}
               href={href}
-              className="hover:bg-muted focus-visible:outline-ring flex min-h-11 items-center gap-2.5 px-4 text-sm outline-none focus-visible:outline-2 focus-visible:-outline-offset-2"
+              className="hover:bg-tint-hover focus-visible:outline-ring flex min-h-11 items-center gap-2.5 px-4 text-sm outline-none focus-visible:outline-2 focus-visible:-outline-offset-2"
             >
               <Icon className="size-4 shrink-0" aria-hidden="true" />
               <span className="min-w-0 flex-1">{label}</span>

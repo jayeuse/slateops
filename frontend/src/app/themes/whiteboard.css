@@ -8,15 +8,17 @@
 :root[data-theme="whiteboard"],
 [data-theme-preview="whiteboard"] {
   --ground: #e4e8eb;
-  --surface: #ffffff;
-  --surface-raised: #ffffff;
+  --surface: #f8f9fa;
+  --surface-raised: #f9fafb;
   --surface-sunken: #eef1f3;
-  --surface-hover: #e7ebee;
+  --surface-hover: #dce1e5;
   --ink: #1b1f23;
   --ink-muted: #434b53;
   --rule: #cbd2d8;
   --rule-strong: #9aa4ad;
   --control-edge: #6f7a83;
+  /* The darker ground needs a stronger selected step. */
+  --tint-selected: 19%;
   --action: #1d5fb8;
   --action-ink: #ffffff;
   --action-text: #1d5fb8;
@@ -42,7 +44,7 @@
   --lift-filter: drop-shadow(0 1px 0 rgb(27 31 35 / 0.3))
     drop-shadow(0 6px 10px rgb(27 31 35 / 0.12));
   --sidebar: #f3f5f6;
-  --canvas-background: #fafbfc;
+  --canvas-background: #f7f8f9;
   --canvas-grid: #e3e7ea;
   --canvas-grid-major: #cfd5da;
   --radius: 0.375rem;
@@ -56,17 +58,17 @@
   --wb-frame: #aeb7bf;
   --wb-frame-hi: #eef1f3;
   /* Canvas skin. */
-  --canvas-dept-fill: #fafbfc;
+  --canvas-dept-fill: #f7f8f9;
   --canvas-dept-frame: #2a2f34;
   --canvas-dept-ink: #1b1f23;
   --canvas-dept-name: var(--canvas-dept-ink);
-  --canvas-module-fill: #ffffff;
+  --canvas-module-fill: #f9fafb;
   --canvas-module-ink: #1b1f23;
   --canvas-row-rule: #e3e7ea;
-  --canvas-row-stripe: #ffffff;
+  --canvas-row-stripe: #f9fafb;
   --canvas-type-ink: #434b53;
   --canvas-edge: #30373d;
-  --canvas-label-fill: #fafbfc;
+  --canvas-label-fill: #f7f8f9;
   --canvas-label-frame: #fafbfc;
   --canvas-label-ink: #1b1f23;
   /* Department colors keep Slate's order (violet, teal, amber, rose) in
@@ -102,8 +104,8 @@
   --dept-2-stripe: var(--dept-2-card);
   --dept-3-stripe: var(--dept-3-card);
   --dept-4-stripe: var(--dept-4-card);
-  --wb-board: #fafbfc;
-  --wb-grid: #eef1f3;
+  --wb-board: #eef1f3;
+  --wb-grid: #e1e5e8;
 }
 
 .dark[data-theme="whiteboard"],
@@ -112,12 +114,14 @@
   --surface: #222a2d;
   --surface-raised: #283135;
   --surface-sunken: #1e2629;
-  --surface-hover: #2c3639;
+  --surface-hover: #354145;
   --ink: #eff2ee;
   --ink-muted: #aeb9b8;
   --rule: #34403f;
   --rule-strong: #4d5b5a;
   --control-edge: #7a8887;
+  --tint-hover: 9%;
+  --tint-selected: 14%;
   --action: #86b5f2;
   --action-ink: #0d1b2e;
   --action-text: #9fc4f6;
@@ -307,22 +311,31 @@
   font-weight: 700;
 }
 
-[data-theme="whiteboard"] [data-slot="tabs-list"] {
+[data-theme="whiteboard"] :is([data-slot="tabs-list"], [data-pill-rail]) {
   background: transparent;
   padding: 0;
   gap: 0.25rem;
 }
 
-[data-theme="whiteboard"] [data-slot="tabs-trigger"] {
+[data-theme="whiteboard"] :is([data-slot="tabs-trigger"], [data-pill-option]) {
   border-radius: 6px 6px 0 0;
 }
 
-[data-theme="whiteboard"] [data-slot="tabs-trigger"][data-active] {
+[data-theme="whiteboard"]
+  :is(
+    [data-slot="tabs-trigger"][data-active],
+    [data-pill-option]:is(
+      [data-pressed],
+      [data-checked],
+      [aria-current="true"],
+      [data-current="true"]
+    )
+  ) {
   font-weight: 700;
 }
 
 /* The open tab is a marker stroke that glides to the next tab. */
-[data-theme="whiteboard"] [data-slot="tabs-indicator"] {
+[data-theme="whiteboard"] :is([data-slot="tabs-indicator"], [data-pill]) {
   background: transparent;
   border-radius: 2px;
   box-shadow: inset 0 -4px 0 var(--action);

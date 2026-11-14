@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Input } from "@/components/ui/input";
 import {
   Field,
@@ -125,6 +126,16 @@ export default function AuthSetupPage() {
   const missingInvitationLink =
     hydrated && !invitationToken && account.status === "signed-out";
   const setupFailure = missingInvitationLink ? "session" : failure;
+  // Rule 6 (TASK-0061): a blocked Set password says why.
+  const setupBlockedReason = !ready
+    ? "Wait for the invitation link check to finish."
+    : missingInvitationLink
+      ? "Open the full link from your invitation email."
+      : setupFailure === "session"
+        ? "Return to sign in and start again."
+        : setupFailure === "uncertain"
+          ? "Return to sign in to check your password."
+          : null;
   const setupError = missingInvitationLink
     ? "This invitation link is invalid or incomplete. Request a new invitation."
     : error;
@@ -299,25 +310,17 @@ export default function AuthSetupPage() {
                   </FieldError>
                 )}
               </Field>
-              <Button
-                className="w-full"
-                size="lg"
-                disabled={
-                  !ready ||
-                  pending ||
-                  missingInvitationLink ||
-                  setupFailure === "session" ||
-                  setupFailure === "uncertain"
-                }
-              >
-                {pending ? (
-                  "Saving…"
-                ) : (
-                  <>
-                    Continue <ArrowRight aria-hidden="true" />
-                  </>
-                )}
-              </Button>
+              <DisabledReason stable reason={setupBlockedReason}>
+                <Button
+                  className="w-full"
+                  size="lg"
+                  disabled={setupBlockedReason !== null}
+                  pending={pending}
+                  pendingLabel="Saving…"
+                >
+                  Set password <ArrowRight aria-hidden="true" />
+                </Button>
+              </DisabledReason>
             </form>
           </>
         )}

@@ -75,7 +75,9 @@ export function DisabledReason({
         open={reason ? open : false}
         onOpenChange={(next) => setOpen(Boolean(reason) && next)}
       >
-        <TooltipTrigger render={control} />
+        {/* A tap opens the reason; it must not also close it, which the
+            shell's tooltip group would do when hover already opened it. */}
+        <TooltipTrigger render={control} closeOnClick={false} />
         <TooltipContent>{reason}</TooltipContent>
       </Tooltip>
       {!reasonId && reason ? (

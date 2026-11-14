@@ -311,7 +311,7 @@ export function TemplateDepartmentForm({
                         "focus-visible:outline-ring flex min-h-11 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-sm outline-none select-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] xl:min-h-9",
                         selected
                           ? "bg-[var(--action-tint)] font-medium text-[var(--action-text)]"
-                          : "hover:bg-muted",
+                          : "hover:bg-tint-hover",
                       )}
                       onClick={() => onChoose(item.key)}
                     >
@@ -443,7 +443,7 @@ export function TemplateDepartmentForm({
             ) : null}
           </div>
           <DialogFooter className="mt-0 sm:ml-auto">
-            <Button variant="outline" onClick={onCancel}>
+            <Button variant="ghost" onClick={onCancel}>
               Cancel
             </Button>
             <DisabledReason

@@ -64,7 +64,13 @@ export function BackupStatusPanel({
             Edit schedule
           </Button>
         </DisabledReason>
-        <DisabledReason reason={reason}>
+        {/* Rule 6 (TASK-0061): also says why while the status loads. */}
+        <DisabledReason
+          stable
+          reason={
+            reason ?? (status ? null : "Wait for the backup status to load.")
+          }
+        >
           <Button
             ref={backUpRef}
             type="button"

@@ -729,7 +729,7 @@ export function VersionsWorkspace({
             <DialogFrameFooter>
               <AlertDialogFooter className="mt-0">
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   disabled={pending}
                   onClick={closeVersionConfirm}
                 >

@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -9,6 +9,7 @@ import {
 import { SearchSelect } from "@/components/ui/search-select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Alert } from "@/components/ui/alert";
 import {
   useCommsCommands,
@@ -54,6 +55,8 @@ export function DirectDialog({
       name: person.display_name,
     })) ?? [];
   const pending = isPending("conversation:create");
+  const guestNoticeId = useId();
+  const guest = actor.data?.membership_role === "guest";
   const canCreate =
     !!actor.data && !actor.error && actor.data.membership_role !== "guest";
   async function submit() {
@@ -136,8 +139,8 @@ export function DirectDialog({
             Group message
           </Button>
         </div>
-        {actor.data?.membership_role === "guest" && (
-          <Alert>Guests cannot start conversations.</Alert>
+        {guest && (
+          <Alert id={guestNoticeId}>Guests cannot start conversations.</Alert>
         )}
         {(choices.error || actor.error) && (
           <Alert
@@ -240,23 +243,46 @@ export function DirectDialog({
         <div className="mt-4 flex justify-end gap-2">
           <Button
             className="min-h-11 sm:min-h-0"
-            variant="outline"
+            variant="ghost"
             onClick={onClose}
             disabled={pending}
           >
             Cancel
           </Button>
-          <Button
-            className="min-h-11 sm:min-h-0"
-            onClick={() => void submit()}
-            disabled={
-              !canCreate ||
-              pending ||
-              (group ? selected.length < 2 : selected.length !== 1)
+          {/* TASK-0061 rules 4 and 6. */}
+          {/* A guest hears the visible notice above, once. */}
+          <DisabledReason
+            stable
+            reasonId={guest && !pending ? guestNoticeId : undefined}
+            reason={
+              pending
+                ? null
+                : !canCreate
+                  ? guest
+                    ? "Guests cannot start conversations."
+                    : actor.error
+                      ? "Your access could not be checked."
+                      : "Your access is still being checked."
+                  : group && selected.length < 2
+                    ? "Choose at least two other people."
+                    : !group && selected.length !== 1
+                      ? "Choose a person to message."
+                      : null
             }
           >
-            {pending ? "Starting…" : "Start conversation"}
-          </Button>
+            <Button
+              className="min-h-11 sm:min-h-0"
+              onClick={() => void submit()}
+              pending={pending}
+              pendingLabel="Starting…"
+              disabled={
+                !canCreate ||
+                (group ? selected.length < 2 : selected.length !== 1)
+              }
+            >
+              Start conversation
+            </Button>
+          </DisabledReason>
         </div>
       </DialogContent>
     </Dialog>

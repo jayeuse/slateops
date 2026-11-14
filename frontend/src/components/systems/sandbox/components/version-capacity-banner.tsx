@@ -11,6 +11,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import type { SandboxCommandResult } from "../state/commands";
 import type { ApiErrorText } from "@/lib/api-errors";
 
@@ -122,20 +123,36 @@ export function VersionCapacityBanner({
           ) : null}
           <AlertDialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               disabled={busy}
               onClick={() => setOpen(false)}
             >
               Cancel
             </Button>
-            <Button
-              variant="destructive"
-              className="min-h-11"
-              disabled={busy || pending || state.status !== "ready"}
-              onClick={() => void prune()}
+            {/* TASK-0061 rules 4 and 6. */}
+            <DisabledReason
+              stable
+              reason={
+                busy
+                  ? null
+                  : pending
+                    ? "Finish the current change first."
+                    : state.status !== "ready"
+                      ? "Version capacity is not loaded yet."
+                      : null
+              }
             >
-              {busy ? "Deleting…" : "Delete old checkpoints"}
-            </Button>
+              <Button
+                variant="destructive"
+                className="min-h-11"
+                pending={busy}
+                pendingLabel="Deleting…"
+                disabled={pending || state.status !== "ready"}
+                onClick={() => void prune()}
+              >
+                Delete old checkpoints
+              </Button>
+            </DisabledReason>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

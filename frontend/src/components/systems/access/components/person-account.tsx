@@ -60,7 +60,7 @@ function actionCopy(action: AccountAction, person: AccessUser): ActionCopy {
         button: "Finish sending invitation",
         title: "Finish sending the invitation?",
         description: `Complete the pending invitation for ${person.email}. They will receive an invitation email.`,
-        confirm: "Finish sending",
+        confirm: "Send invitation",
         pending: "Sending…",
         done: "Invitation sent",
         destructive: false,
@@ -70,7 +70,7 @@ function actionCopy(action: AccountAction, person: AccessUser): ActionCopy {
         button: "Resend invitation",
         title: "Resend the invitation?",
         description: `Renew the invitation for ${person.email}. Existing accounts accept when signed in; new accounts get an email.`,
-        confirm: "Resend",
+        confirm: "Resend invitation",
         pending: "Sending…",
         done: "Invitation sent again",
         destructive: false,
@@ -81,7 +81,7 @@ function actionCopy(action: AccountAction, person: AccessUser): ActionCopy {
         title: "Revoke the invitation?",
         description:
           "This invitation can no longer be accepted, in the app or by email link.",
-        confirm: "Revoke",
+        confirm: "Revoke invitation",
         pending: "Revoking…",
         done: "Invitation revoked",
         destructive: true,
@@ -92,7 +92,7 @@ function actionCopy(action: AccountAction, person: AccessUser): ActionCopy {
         title: `Disable ${name}?`,
         description:
           "They are signed out everywhere and cannot sign in until you enable them again.",
-        confirm: "Disable",
+        confirm: "Disable account",
         pending: "Disabling…",
         done: `${name} is disabled`,
         destructive: true,
@@ -102,7 +102,7 @@ function actionCopy(action: AccountAction, person: AccessUser): ActionCopy {
         button: "Enable",
         title: `Enable ${name}?`,
         description: "They can sign in again with the access they had before.",
-        confirm: "Enable",
+        confirm: "Enable account",
         pending: "Enabling…",
         done: `${name} is enabled`,
         destructive: false,
@@ -113,7 +113,7 @@ function actionCopy(action: AccountAction, person: AccessUser): ActionCopy {
         title: `Delete ${name}?`,
         description:
           "They are signed out everywhere and leave the directory. You can restore them later.",
-        confirm: "Delete",
+        confirm: "Delete account",
         pending: "Deleting…",
         done: `${name} deleted`,
         destructive: true,
@@ -123,7 +123,7 @@ function actionCopy(action: AccountAction, person: AccessUser): ActionCopy {
         button: "Restore",
         title: `Restore ${name}?`,
         description: "They come back to the directory and can sign in again.",
-        confirm: "Restore",
+        confirm: "Restore account",
         pending: "Restoring…",
         done: `${name} is restored`,
         destructive: false,
@@ -417,7 +417,7 @@ export function PersonAccount({
           <ActionError message={error} reference={errorFailure?.reference} />
           <AlertDialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               className="min-h-11"
               disabled={pending}
               onClick={() => setAction(null)}

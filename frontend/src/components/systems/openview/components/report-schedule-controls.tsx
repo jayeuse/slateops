@@ -1,11 +1,12 @@
 "use client";
 
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Input } from "@/components/ui/input";
 import { Select, SelectItem } from "@/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -188,6 +189,7 @@ export function ReportScheduleControls({
   } | null>(null);
   const draft = edit?.key === baselineKey ? edit.draft : baseline;
   const [saving, setSaving] = useState(false);
+  const statusId = useId();
   const savingRef = useRef(false);
   const [errorFailure, setError] = useErrorText();
   const error = errorFailure?.message ?? "";
@@ -418,14 +420,32 @@ export function ReportScheduleControls({
         </Alert>
       ) : null}
       <div className="flex flex-wrap items-center gap-3 md:pl-[8.75rem]">
-        <Button
-          type="submit"
-          variant="outline"
-          className="min-h-11"
-          disabled={!changed || stale || saving}
+        <DisabledReason
+          stable
+          reason={
+            saving
+              ? null
+              : stale
+                ? "Reload the latest schedule first."
+                : changed
+                  ? null
+                  : "No changes to save."
+          }
+          // The status beside the button already says "No changes to save":
+          // point at it, so it is read once.
+          reasonId={!saving && !stale && !changed ? statusId : undefined}
         >
-          {saving ? "Saving schedule…" : "Save schedule"}
-        </Button>
+          <Button
+            type="submit"
+            variant="outline"
+            className="min-h-11"
+            disabled={!changed || stale}
+            pending={saving}
+            pendingLabel="Saving schedule…"
+          >
+            Save schedule
+          </Button>
+        </DisabledReason>
         {stale ? (
           <Button
             type="button"
@@ -437,7 +457,11 @@ export function ReportScheduleControls({
             Reload schedule
           </Button>
         ) : (
-          <span role="status" className="text-muted-foreground text-sm">
+          <span
+            id={statusId}
+            role="status"
+            className="text-muted-foreground text-sm"
+          >
             {notice || (changed ? "" : "No changes to save")}
           </span>
         )}

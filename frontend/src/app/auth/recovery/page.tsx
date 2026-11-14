@@ -212,14 +212,13 @@ export default function RecoveryPage() {
                   </FieldError>
                 ) : null}
               </Field>
-              <Button className="w-full" size="lg" disabled={pending}>
-                {pending ? (
-                  "Saving…"
-                ) : (
-                  <>
-                    Reset password <ArrowRight aria-hidden="true" />
-                  </>
-                )}
+              <Button
+                className="w-full"
+                size="lg"
+                pending={pending}
+                pendingLabel="Saving…"
+              >
+                Reset password <ArrowRight aria-hidden="true" />
               </Button>
             </form>
           </>
@@ -259,14 +258,13 @@ export default function RecoveryPage() {
                   }
                 />
               </Field>
-              <Button className="w-full" size="lg" disabled={pending}>
-                {pending ? (
-                  "Requesting…"
-                ) : (
-                  <>
-                    Request recovery <ArrowRight aria-hidden="true" />
-                  </>
-                )}
+              <Button
+                className="w-full"
+                size="lg"
+                pending={pending}
+                pendingLabel="Requesting…"
+              >
+                Request recovery <ArrowRight aria-hidden="true" />
               </Button>
             </form>
           </>

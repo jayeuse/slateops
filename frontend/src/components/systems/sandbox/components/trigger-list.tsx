@@ -227,7 +227,7 @@ export function TriggerList({
                 // ink, so both read in every look, light and dark; the open
                 // row is the tint only (the One Selection Rule, S26).
                 "border-border grid h-auto min-h-11 w-full min-w-0 grid-cols-[2.75rem_minmax(8rem,1fr)_auto] items-start justify-normal gap-2.5 rounded-none border-b px-3 py-3 pb-[calc(0.75rem-1px)] text-left font-normal whitespace-nowrap max-sm:min-h-13 max-sm:py-4 max-sm:pb-[calc(1rem-1px)] xl:min-h-10 xl:py-2.5 xl:pb-[calc(0.625rem-1px)]",
-                "hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-[current=true]:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]",
+                "hover:bg-tint-hover aria-[current=true]:bg-tint-selected",
               )}
               onClick={() => onOpen(recordTrigger.id)}
             >

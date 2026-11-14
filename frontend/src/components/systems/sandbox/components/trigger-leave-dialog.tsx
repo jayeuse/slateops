@@ -76,7 +76,7 @@ export function TriggerLeaveDialog({
         <DialogFrameFooter>
           <DialogFooter className="mt-0">
             <Button
-              variant="outline"
+              variant="ghost"
               disabled={saving}
               onClick={() => {
                 setError("");
@@ -109,7 +109,7 @@ export function TriggerLeaveDialog({
                 else setError(result.error, result.reference);
               }}
             >
-              Save
+              Save and leave
             </Button>
           </DialogFooter>
         </DialogFrameFooter>

@@ -425,6 +425,11 @@ export function ManagementTools({
       onSave={edited ? saveTemplate : undefined}
       saveLabel="Save template"
       disabled={!canManage || isPending()}
+      disabledReason={
+        canManage
+          ? "Finish the current change first."
+          : "Only a workspace manager can save templates."
+      }
     >
       <FieldGroup className="p-5 sm:p-6">
         {edited && (
@@ -579,12 +584,28 @@ export function ManagementTools({
                 </div>
               ))}
               <Separator />
-              <Button
-                onClick={() => void apply()}
-                disabled={!canManage || isPending()}
+              {/* TASK-0061 rules 4 and 6. */}
+              <DisabledReason
+                stable
+                reason={
+                  isPending("template-apply")
+                    ? null
+                    : !canManage
+                      ? "Only a workspace manager can apply these settings."
+                      : isPending()
+                        ? "Finish the current change first."
+                        : null
+                }
               >
-                Apply selected settings
-              </Button>
+                <Button
+                  onClick={() => void apply()}
+                  pending={isPending("template-apply")}
+                  pendingLabel="Applying…"
+                  disabled={!canManage || isPending()}
+                >
+                  Apply selected settings
+                </Button>
+              </DisabledReason>
             </CardContent>
           </Card>
         )}

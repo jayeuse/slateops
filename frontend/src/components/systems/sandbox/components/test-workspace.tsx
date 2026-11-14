@@ -88,7 +88,7 @@ type Props = {
   administrator: Administrator;
   /** Live bindings; a department with none is new (E6). Null while loading. */
   bindings: ReadonlyArray<{ kind: string; sandbox_id: string }> | null;
-  /** Why a run must wait for the draft ("Saving…"), or null. */
+  /** Why a run must wait for the draft ("Wait for the save to finish."), or null. */
   waitReason: string | null;
   review: { reason: string | null; disabled: boolean; open: () => void };
   onOpenBuild: () => void;
@@ -533,8 +533,8 @@ export function TestWorkspace({
                     type="button"
                     aria-current={item.id === moduleId ? "true" : undefined}
                     className={cn(
-                      "hover:bg-muted focus-visible:ring-ring flex min-h-11 w-full items-center justify-between gap-3 px-6 text-left text-sm outline-none focus-visible:ring-2 xl:min-h-10",
-                      item.id === moduleId && "bg-muted font-medium",
+                      "hover:bg-tint-hover aria-[current=true]:bg-tint-selected focus-visible:ring-ring flex min-h-11 w-full items-center justify-between gap-3 px-6 text-left text-sm outline-none focus-visible:ring-2 xl:min-h-10",
+                      item.id === moduleId && "font-medium",
                     )}
                     onClick={() => chooseModule(item.id)}
                   >
@@ -584,7 +584,7 @@ export function TestWorkspace({
                 <li key={run.id}>
                   <button
                     type="button"
-                    className="hover:bg-muted focus-visible:ring-ring grid min-h-11 w-full gap-0.5 rounded-md px-3 py-2 text-left text-sm outline-none focus-visible:ring-2"
+                    className="hover:bg-tint-hover focus-visible:ring-ring grid min-h-11 w-full gap-0.5 rounded-md px-3 py-2 text-left text-sm outline-none focus-visible:ring-2"
                     onClick={() => openStoredRun(run)}
                   >
                     <span className="font-medium">

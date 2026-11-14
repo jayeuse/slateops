@@ -123,6 +123,50 @@ test("a required account with no recorded episode has immediate enrollment and n
   ).toBeEnabled();
 });
 
+test("inside the gate, Verify code shows why it waits above the gate", async ({
+  page,
+}) => {
+  // Primary buttons (TASK-0061, rule 6): a blocked primary says why, and
+  // the reason shows on top of the gate, where the person can read it.
+  await mockMfa(page, { required: true });
+  await page.route("**/api/auth/mfa", (route) =>
+    route.fulfill({
+      json: {
+        ...requirementStatus(true),
+        required_since: null,
+        enrollment_deadline: null,
+      },
+    }),
+  );
+  await page.goto("/platform?section=search");
+  const gate = page.getByRole("region", {
+    name: "Two-step verification",
+    exact: true,
+  });
+  await gate
+    .getByRole("button", { name: "Set up authenticator", exact: true })
+    .click();
+  const verify = gate.getByRole("button", { name: "Verify code", exact: true });
+  await expect(verify).toHaveAccessibleDescription(
+    "Enter the 6-digit code first.",
+  );
+  await verify.hover();
+  const reason = page.locator('[data-slot="tooltip-content"]');
+  await expect(reason).toHaveText("Enter the 6-digit code first.");
+  await expect
+    .poll(() =>
+      reason.evaluate((node) => {
+        const box = node.getBoundingClientRect();
+        const top = document.elementFromPoint(
+          box.left + box.width / 2,
+          box.top + box.height / 2,
+        );
+        return node.contains(top);
+      }),
+    )
+    .toBe(true);
+});
+
 // The other refused status bodies (a deadline or start without an offset, an
 // unknown field or level) are rows of tests/isolated/auth/mfa-status.spec.ts.
 test("missing policy fact leaves MFA unavailable until a valid fresh Retry", async ({

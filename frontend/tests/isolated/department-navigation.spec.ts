@@ -91,7 +91,7 @@ test("the sidebar has no OpenView group, and a module's Reports view is that mod
   const onDashboard = new URLSearchParams(
     "section=dashboards&department=sales",
   );
-  // Each department's dashboard is its own place, so the fill glides to it.
+  // Each department's dashboard is its own place, so its label is the current one.
   expect(currentNavigationKey("/openview", onDashboard)).toBe(
     "openview:dashboard:sales",
   );
@@ -146,7 +146,7 @@ test("a department's Announcements row opens its board by department and marks t
       params("section=dashboards&department=sales"),
     ),
   ).toBeNull();
-  // Each department's board is its own place, so the fill glides to it.
+  // Each department's board is its own place, so its label is the current one.
   expect(
     currentNavigationKey("/boards", params("department=sales&section=posts")),
   ).toBe("boards:department:sales");
