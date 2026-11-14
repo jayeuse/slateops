@@ -139,7 +139,7 @@ export function StageHeader({
             aria-label={`${stage.name}, ${shown.label}. Stage settings`}
             className={cn(
               headerClass,
-              "group/stage hover:bg-[color-mix(in_oklab,var(--ink)_5%,transparent)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--focus)]",
+              "group/stage hover:bg-tint-hover focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--focus)]",
               canDrag && "cursor-grab",
             )}
             {...listeners}
@@ -501,7 +501,7 @@ export function ArchiveStageDialog({
         <AlertDialogFooter>
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             className="min-h-11 xl:min-h-8"
             disabled={pending}
             onClick={close}
@@ -511,7 +511,8 @@ export function ArchiveStageDialog({
           <Button
             type="button"
             className="min-h-11 xl:min-h-8"
-            disabled={pending}
+            pending={pending}
+            pendingLabel="Archiving…"
             onClick={async () => {
               setPending(true);
               setError(null);
@@ -526,7 +527,7 @@ export function ArchiveStageDialog({
               }
             }}
           >
-            {pending ? "Archiving…" : "Archive stage"}
+            Archive stage
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -669,7 +670,8 @@ export function KanbanSetup({
         <Button
           type="button"
           className="min-h-11 xl:min-h-8"
-          disabled={pending}
+          pending={pending}
+          pendingLabel="Adding stages…"
           onClick={async () => {
             setPending(true);
             setError(null);
@@ -682,7 +684,7 @@ export function KanbanSetup({
             }
           }}
         >
-          {pending ? "Adding stages…" : "Start with To do · Doing · Done"}
+          Start with To do · Doing · Done
         </Button>
         {addStage}
         {error ? (

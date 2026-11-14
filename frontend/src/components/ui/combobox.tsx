@@ -55,7 +55,7 @@ export function ComboboxContent({
         <Primitive.Popup
           {...props}
           data-slot="combobox-popup"
-          className="bg-popover text-popover-foreground border-border flex max-h-[min(20rem,var(--available-height))] w-[var(--anchor-width)] max-w-[var(--available-width)] flex-col gap-2 overflow-y-auto rounded-[var(--radius)] border p-2 shadow-md"
+          className="bg-popover text-popover-foreground border-border overlay-motion flex max-h-[min(20rem,var(--available-height))] w-[var(--anchor-width)] max-w-[var(--available-width)] flex-col gap-2 overflow-y-auto rounded-[var(--radius)] border p-2 shadow-md"
         >
           {children}
         </Primitive.Popup>

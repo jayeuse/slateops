@@ -8,15 +8,18 @@
 :root[data-theme="triplicate"],
 [data-theme-preview="triplicate"] {
   --ground: #f1f1ec;
-  --surface: #fefefc;
-  --surface-raised: #ffffff;
+  --surface: #f8f8f4;
+  --surface-raised: #f9f9f6;
   --surface-sunken: #f4f3ee;
-  --surface-hover: #ecebe4;
+  --surface-hover: #dfddd3;
   --ink: #1e2d55;
   --ink-muted: #4b5675;
   --rule: #c9cdd6;
   --rule-strong: #8e96aa;
   --control-edge: #6e7892;
+  /* The navy ink is lighter than Slate's, so hover and selected take more. */
+  --tint-hover: 11%;
+  --tint-selected: 19%;
   /* Carbon blue, apart from the navy form ink, so links read as links. */
   --action: #1f4fbf;
   --action-ink: #ffffff;
@@ -53,18 +56,18 @@
   --card-edge: var(--rule-strong);
   --card-lift: var(--lift);
   /* Canvas skin. */
-  --canvas-dept-fill: #fefefc;
+  --canvas-dept-fill: #f8f8f4;
   --canvas-dept-frame: #8e96aa;
   --canvas-dept-ink: #1e2d55;
   --canvas-dept-name: var(--canvas-dept-ink);
-  --canvas-module-fill: #fefefc;
+  --canvas-module-fill: #f8f8f4;
   --canvas-module-frame: #1e2d55;
   --canvas-module-ink: #1e2d55;
   --canvas-row-rule: #c9cdd6;
-  --canvas-row-stripe: #fefefc;
+  --canvas-row-stripe: #f8f8f4;
   --canvas-type-ink: #4b5675;
   --canvas-edge: #1e2d55;
-  --canvas-label-fill: #fefefc;
+  --canvas-label-fill: #f8f8f4;
   --canvas-label-frame: #1e2d55;
   --canvas-label-ink: #1e2d55;
   /* Carbon copies keep Slate's department order (violet, teal, amber,
@@ -108,12 +111,14 @@
   --surface: #171c35;
   --surface-raised: #1c223f;
   --surface-sunken: #13182f;
-  --surface-hover: #212846;
+  --surface-hover: #2a3256;
   --ink: #e8eaf2;
   --ink-muted: #a4abc4;
   --rule: #2a3154;
   --rule-strong: #414a73;
   --control-edge: #6d77a1;
+  --tint-hover: 9%;
+  --tint-selected: 14%;
   --action: #9fb3f2;
   --action-ink: #10142a;
   --action-text: #c2cff7;
@@ -337,23 +342,32 @@
 }
 
 /* Tabs are form sections: a printed rule with the open section underlined. */
-[data-theme="triplicate"] [data-slot="tabs-list"] {
+[data-theme="triplicate"] :is([data-slot="tabs-list"], [data-pill-rail]) {
   background: transparent;
   border-radius: 0;
   box-shadow: inset 0 -1px 0 var(--ink);
   padding: 0;
 }
 
-[data-theme="triplicate"] [data-slot="tabs-trigger"] {
+[data-theme="triplicate"] :is([data-slot="tabs-trigger"], [data-pill-option]) {
   border-radius: 0;
 }
 
-[data-theme="triplicate"] [data-slot="tabs-trigger"][data-active] {
+[data-theme="triplicate"]
+  :is(
+    [data-slot="tabs-trigger"][data-active],
+    [data-pill-option]:is(
+      [data-pressed],
+      [data-checked],
+      [aria-current="true"],
+      [data-current="true"]
+    )
+  ) {
   font-weight: 700;
 }
 
 /* The open tab is an ink rule that slides along the form line. */
-[data-theme="triplicate"] [data-slot="tabs-indicator"] {
+[data-theme="triplicate"] :is([data-slot="tabs-indicator"], [data-pill]) {
   background: transparent;
   border-radius: 0;
   box-shadow: inset 0 -3px 0 var(--ink);

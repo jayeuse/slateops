@@ -43,11 +43,7 @@ export function WorkspaceUncertainSaveDialog({
           </p>
         ) : null}
         <AlertDialogFooter>
-          <Button
-            variant="outline"
-            className="min-h-11"
-            onClick={onKeepEditing}
-          >
+          <Button variant="ghost" className="min-h-11" onClick={onKeepEditing}>
             Keep editing
           </Button>
           <Button

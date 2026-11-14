@@ -170,7 +170,7 @@ export function QuickSwitcher({
           </div>
           <Button
             className="min-h-11 sm:min-h-0"
-            variant="outline"
+            variant="ghost"
             onClick={() => setOpen(false)}
           >
             Cancel

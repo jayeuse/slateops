@@ -110,7 +110,7 @@ export function LiveGroupedResults({
                 type="button"
                 aria-pressed={group.selected}
                 aria-label={`${group.label}, ${group.count} records`}
-                className={`focus-visible:ring-ring flex min-h-11 w-full min-w-0 items-center justify-between gap-3 rounded-[var(--radius)] border px-3 py-2 text-left focus-visible:ring-2 ${group.selected ? "border-primary bg-primary/5" : "bg-background hover:bg-muted/50"}`}
+                className={`focus-visible:ring-ring flex min-h-11 w-full min-w-0 items-center justify-between gap-3 rounded-[var(--radius)] border px-3 py-2 text-left focus-visible:ring-2 ${group.selected ? "border-primary bg-primary/5" : "bg-background hover:over-tint-hover"}`}
                 disabled={pending}
                 onClick={() => onSelectGroup(group.selector)}
               >

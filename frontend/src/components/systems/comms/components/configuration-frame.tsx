@@ -13,6 +13,7 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Dialog,
   DialogContent,
@@ -44,6 +45,8 @@ export interface ConfigurationFrameProps {
   closeLabel?: string;
   footer?: ReactNode;
   disabled?: boolean;
+  /** Why Save waits while `disabled` holds, in one short sentence. */
+  disabledReason?: string;
   className?: string;
   embedded?: {
     registerGuard: (guard: WorkspaceNavigationGuard | null) => void;
@@ -62,6 +65,7 @@ export function ConfigurationFrame({
   closeLabel = "Close settings",
   footer,
   disabled = false,
+  disabledReason = "Finish the current change first.",
   className,
   embedded,
 }: ConfigurationFrameProps) {
@@ -228,14 +232,23 @@ export function ConfigurationFrame({
             {onSave ? "Cancel" : "Close"}
           </Button>
           {onSave && (
-            <Button
-              type="button"
-              className="min-h-11"
-              onClick={() => void save()}
-              disabled={saving || disabled}
+            // TASK-0061 rules 4 and 6: Save keeps its width while it saves,
+            // and says why it waits.
+            <DisabledReason
+              stable
+              reason={!saving && disabled ? disabledReason : null}
             >
-              {saving ? "Saving…" : saveLabel}
-            </Button>
+              <Button
+                type="button"
+                className="min-h-11"
+                onClick={() => void save()}
+                pending={saving}
+                pendingLabel="Saving…"
+                disabled={disabled}
+              >
+                {saveLabel}
+              </Button>
+            </DisabledReason>
           )}
         </footer>
       )}
@@ -260,7 +273,7 @@ export function ConfigurationFrame({
             <Button
               ref={keepEditing}
               type="button"
-              variant="outline"
+              variant="ghost"
               onClick={cancelDiscard}
             >
               Keep editing

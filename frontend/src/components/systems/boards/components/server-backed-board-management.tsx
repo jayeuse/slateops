@@ -944,11 +944,7 @@ function SettingsInstance(props: Props) {
                 className="grid w-full grid-cols-3 sm:w-fit"
               >
                 {BOARD_SETTINGS_TABS.map((tab) => (
-                  <TabsTrigger
-                    key={tab}
-                    value={tab}
-                    className="min-h-11 xl:min-h-8"
-                  >
+                  <TabsTrigger key={tab} value={tab}>
                     {TAB_LABEL[tab]}
                     {tab === "details" && dirty ? (
                       <>
@@ -1116,15 +1112,19 @@ function SettingsInstance(props: Props) {
         region={region.data}
         confirmationName={purgeConfirmationName}
         password={purgePassword}
-        confirmDisabled={
-          pending ||
-          fileLoading ||
-          fileError !== null ||
-          filePage?.key !== filesKey ||
-          !purgePreview ||
-          purgeConfirmationName !== purgePreview.confirmation_name ||
-          !purgePassword ||
+        confirmBlocked={
           !purgeEnabled
+            ? "Deleting forever is turned off for this workspace."
+            : fileLoading || filePage?.key !== filesKey
+              ? "Wait for the file list to load."
+              : fileError !== null
+                ? "Reload the file list first."
+                : !purgePreview ||
+                    purgeConfirmationName !== purgePreview.confirmation_name
+                  ? "Type the file name to confirm."
+                  : !purgePassword
+                    ? "Enter your administrator password."
+                    : null
         }
         canReviewAgain={purgeFile !== null && !purgePreviewLoading}
         onConfirmationName={setPurgeConfirmationName}

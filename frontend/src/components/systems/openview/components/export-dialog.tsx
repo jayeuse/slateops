@@ -11,6 +11,7 @@ import { ArrowDown, ArrowUp } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { requestSessionRecheck } from "@/lib/auth-api";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -402,20 +403,44 @@ export function ExportDialog({
             <DialogFooter className="mt-0">
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 className="min-h-11"
                 onClick={cancel}
               >
                 Cancel
               </Button>
-              <Button
-                type="submit"
-                className="min-h-11"
-                disabled={pending || empty || suspended || denied}
-                aria-describedby={empty ? `${id}-columns-error` : undefined}
+              {/* TASK-0061 rules 2, 4, 6: the label names the result, a
+                  busy export keeps its width, and a blocked one says why
+                  (the empty-columns reason is the visible error text). */}
+              <DisabledReason
+                stable
+                reason={
+                  pending
+                    ? null
+                    : denied
+                      ? "You no longer have access to these records."
+                      : suspended
+                        ? "Wait for the session check to finish."
+                        : empty
+                          ? "Choose at least one column or include Record ID."
+                          : null
+                }
+                reasonId={
+                  !pending && !denied && !suspended && empty
+                    ? `${id}-columns-error`
+                    : undefined
+                }
               >
-                {pending ? "Downloading…" : "Download"}
-              </Button>
+                <Button
+                  type="submit"
+                  className="min-h-11"
+                  disabled={empty || suspended || denied}
+                  pending={pending}
+                  pendingLabel="Downloading…"
+                >
+                  Download records
+                </Button>
+              </DisabledReason>
             </DialogFooter>
           </DialogFrameFooter>
         </form>

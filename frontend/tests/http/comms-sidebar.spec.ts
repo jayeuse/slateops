@@ -3,6 +3,7 @@ import {
   answeredReference,
   expect,
   expectNoHorizontalScroll,
+  heldResponse,
   signedInAs,
   defaultOrganization,
   test,
@@ -1074,6 +1075,14 @@ test("Comms starts a group from visible people, keeps the actor, and persists ca
   await expect(
     dialog.getByRole("button", { name: "Start conversation", exact: true }),
   ).toBeDisabled();
+  const start = dialog.getByRole("button", {
+    name: "Start conversation",
+    exact: true,
+  });
+  // TASK-0061 rule 6: a blocked primary says why, as its description.
+  await expect(start).toHaveAccessibleDescription(
+    "Choose at least two other people.",
+  );
   for (const name of ["Noah Tan", "Sofia Garcia"]) {
     await dialog
       .getByRole("combobox", { name: "Add person", exact: true })
@@ -1083,9 +1092,32 @@ test("Comms starts a group from visible people, keeps the actor, and persists ca
       .fill(name);
     await page.getByRole("option", { name, exact: true }).click();
   }
-  await dialog
-    .getByRole("button", { name: "Start conversation", exact: true })
-    .click();
+  await expect(start).not.toHaveAccessibleDescription(
+    "Choose at least two other people.",
+  );
+  // TASK-0061 rule 4: while the create request runs, the button says it is
+  // busy in place and keeps the keyboard focus.
+  const create = heldResponse();
+  await page.route(
+    (url) => url.pathname.endsWith("/api/comms/groups"),
+    async (route) => {
+      if (route.request().method() === "POST") {
+        create.enter();
+        await create.released;
+      }
+      await route.fallback();
+    },
+  );
+  await start.click();
+  await create.entered;
+  const starting = dialog.getByRole("button", {
+    name: "Starting…",
+    exact: true,
+  });
+  await expect(starting).toHaveAttribute("aria-busy", "true");
+  await expect(starting).toBeDisabled();
+  await expect(starting).toBeFocused();
+  create.release();
   await expect(dialog).toBeHidden();
   await expect(
     page.getByRole("heading", { name: "Dispatch planning", exact: true }),

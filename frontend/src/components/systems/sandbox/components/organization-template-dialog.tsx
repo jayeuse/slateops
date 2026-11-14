@@ -34,7 +34,7 @@ import { DisabledReason } from "@/components/ui/disabled-reason";
 type OrganizationTemplateDialogProps = {
   open: boolean;
   pending: boolean;
-  /** The Build save queue holds the draft: Apply waits and says "Saving…". */
+  /** The Build save queue holds the draft: Apply waits and says "Wait for the save to finish." */
   saving: boolean;
   onOpenChange: (open: boolean) => void;
   onApply: (
@@ -236,15 +236,31 @@ export function OrganizationTemplateDialog({
           </p>
           <DialogFooter className="mt-0">
             <Button
-              variant="outline"
+              variant="ghost"
               disabled={pending}
               onClick={() => onOpenChange(false)}
             >
               Cancel
             </Button>
-            <DisabledReason stable reason={saving ? "Saving…" : null}>
+            {/* TASK-0061 rules 4 and 6: its own apply is its busy state. */}
+            <DisabledReason
+              stable
+              reason={
+                applying
+                  ? null
+                  : saving
+                    ? "Wait for the save to finish."
+                    : pending
+                      ? "Finish the current change first."
+                      : !selectedTemplate
+                        ? "Choose a template first."
+                        : null
+              }
+            >
               <Button
-                disabled={pending || saving || applying || !selectedTemplate}
+                pending={applying}
+                pendingLabel="Applying…"
+                disabled={pending || saving || !selectedTemplate}
                 onClick={async () => {
                   if (!selectedTemplate) return;
                   setError("");
@@ -258,9 +274,7 @@ export function OrganizationTemplateDialog({
                   onOpenChange(false);
                 }}
               >
-                {applying
-                  ? "Applying…"
-                  : `Use ${selectedTemplate?.name ?? "template"}`}
+                {`Use ${selectedTemplate?.name ?? "template"}`}
               </Button>
             </DisabledReason>
           </DialogFooter>

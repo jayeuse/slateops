@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
@@ -120,7 +121,8 @@ export function ServerBoardRecordLinks(props: Props) {
   >("idle");
   const [search, setSearch] = useState("");
   const [recordId, setRecordId] = useState("");
-  const [pending, setPending] = useState(false);
+  // Which change runs, so only Link record reads "Linking…" (TASK-0061).
+  const [pending, setPending] = useState<"add" | "remove" | null>(null);
   const [errorFailure, setError] = useErrorText();
   const error = errorFailure?.message ?? null;
   const [notice, setNotice] = useState<string | null>(null);
@@ -156,7 +158,7 @@ export function ServerBoardRecordLinks(props: Props) {
       versionsRef.current = { boardRevision, contentRevision };
   }, [boardRevision, contentRevision]);
   useEffect(() => {
-    busyChangeRef.current?.(pending);
+    busyChangeRef.current?.(pending !== null);
     return () => busyChangeRef.current?.(false);
   }, [pending]);
   useEffect(() => {
@@ -279,9 +281,9 @@ export function ServerBoardRecordLinks(props: Props) {
   }, [props.access, moduleId, recordOffset, search, sources]);
 
   async function mutate(action: "add" | "remove", linkId?: string) {
-    if (!editable || editable.locked || pending) return;
+    if (!editable || editable.locked || pending !== null) return;
     if (action === "add" && !recordId) return;
-    setPending(true);
+    setPending(action);
     setError(null);
     setNotice(null);
     try {
@@ -297,7 +299,7 @@ export function ServerBoardRecordLinks(props: Props) {
     } catch (operationError) {
       setError(errorText(operationError), operationError);
     } finally {
-      setPending(false);
+      setPending(null);
     }
   }
 
@@ -358,7 +360,7 @@ export function ServerBoardRecordLinks(props: Props) {
                     type="button"
                     variant="outline"
                     className="min-h-11"
-                    disabled={pending || editable.locked}
+                    disabled={pending !== null || editable.locked}
                     onClick={() => void mutate("remove", item.id)}
                     aria-label={`Remove ${item.label} record link`}
                   >
@@ -496,14 +498,31 @@ export function ServerBoardRecordLinks(props: Props) {
               )}
             </>
           )}
-          <Button
-            type="button"
-            className="min-h-11"
-            disabled={!selectedRecord || pending}
-            onClick={() => void mutate("add")}
-          >
-            Link record
-          </Button>
+          {/* A plain box: in the space-y stack, the reason's text after the
+              button must not give the button a bottom margin. */}
+          <div>
+            <DisabledReason
+              stable
+              reason={
+                pending === "remove"
+                  ? "Wait for the record link to be removed."
+                  : pending === null && !selectedRecord
+                    ? "Choose a record to link first."
+                    : null
+              }
+            >
+              <Button
+                type="button"
+                className="min-h-11"
+                disabled={!selectedRecord}
+                pending={pending === "add"}
+                pendingLabel="Linking…"
+                onClick={() => void mutate("add")}
+              >
+                Link record
+              </Button>
+            </DisabledReason>
+          </div>
         </div>
       )}
       {error && (

@@ -196,7 +196,10 @@ function records(count: number): string {
   return count === 1 ? "1 record" : `${count} records`;
 }
 
-/** DR-SI-5.6, DR-SI-5.7: the popover's final button. */
+/**
+ * DR-SI-5.6, DR-SI-5.7: the popover's final button. The label always names
+ * the action; a blocked button says why in `reason` (TASK-0061 rules 2, 6).
+ */
 export function finalChangeLabel({
   selected,
   picked,
@@ -206,16 +209,20 @@ export function finalChangeLabel({
   picked: boolean;
   /** k: the selected rows that do not hold the picked value. */
   changing: number;
-}): { label: string; enabled: boolean } {
+}): { label: string; reason: string | null } {
   if (selected > RECORD_BATCH_LIMIT)
     return {
-      label: `Select at most ${RECORD_BATCH_LIMIT} records`,
-      enabled: false,
+      label: "Change records",
+      reason: `Select at most ${RECORD_BATCH_LIMIT} records.`,
     };
-  if (!picked) return { label: "Change records", enabled: false };
+  if (!picked)
+    return { label: "Change records", reason: "Choose a value first." };
   if (changing === 0)
-    return { label: `All ${selected} already have this value`, enabled: false };
-  return { label: `Change ${records(changing)}`, enabled: true };
+    return {
+      label: "Change records",
+      reason: `All ${selected} already have this value.`,
+    };
+  return { label: `Change ${records(changing)}`, reason: null };
 }
 
 /** One record a change sent, kept for its words and its Undo. */

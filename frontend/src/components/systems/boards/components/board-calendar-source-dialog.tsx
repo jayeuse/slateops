@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   DialogFrameFooter,
@@ -193,20 +194,35 @@ export function BoardCalendarSourceDialog({
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 className="min-h-11 xl:min-h-8"
                 disabled={pending}
                 onClick={close}
               >
                 Cancel
               </Button>
-              <Button
-                type="submit"
-                className="min-h-11 xl:min-h-8"
-                disabled={pending || !moduleId || !dateFieldId}
+              <DisabledReason
+                stable
+                reason={
+                  pending
+                    ? null
+                    : !moduleId
+                      ? "Choose a module first."
+                      : !dateFieldId
+                        ? "Choose a date field first."
+                        : null
+                }
               >
-                {pending ? "Adding…" : "Add source"}
-              </Button>
+                <Button
+                  type="submit"
+                  className="min-h-11 xl:min-h-8"
+                  disabled={!moduleId || !dateFieldId}
+                  pending={pending}
+                  pendingLabel="Adding…"
+                >
+                  Add source
+                </Button>
+              </DisabledReason>
             </div>
           </DialogFrameFooter>
         </form>

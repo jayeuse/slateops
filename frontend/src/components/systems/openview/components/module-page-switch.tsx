@@ -31,7 +31,9 @@ export function ModulePageSwitch({
 }) {
   const count = (value: number | null) =>
     value === null ? null : (
-      <span className="font-normal tabular-nums">{value}</span>
+      <span className="text-muted-foreground font-normal tabular-nums">
+        {value}
+      </span>
     );
   const tab = (
     label: string,

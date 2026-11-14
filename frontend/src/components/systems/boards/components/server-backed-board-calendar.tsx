@@ -225,6 +225,8 @@ export function ServerBackedBoardCalendar({
   const [sourceToRemove, setSourceToRemove] = useState<CalendarSource | null>(
     null,
   );
+  // Remove source runs: its button reads "Removing…" (TASK-0061 rule 4).
+  const [removingSource, setRemovingSource] = useState(false);
   const [access, setAccess] = useState<{
     key: string;
     status: "loading" | "ready" | "denied" | "error";
@@ -571,6 +573,7 @@ export function ServerBackedBoardCalendar({
   }
 
   async function confirmRemoveSource(source: CalendarSource) {
+    setRemovingSource(true);
     try {
       await removeBoardCalendarSource(boardId, source.id);
       reportDone("Record source removed");
@@ -584,6 +587,7 @@ export function ServerBackedBoardCalendar({
         apiErrorReference(failure),
       );
     } finally {
+      setRemovingSource(false);
       setSourceToRemove(null);
       refreshSources();
     }
@@ -1050,6 +1054,9 @@ export function ServerBackedBoardCalendar({
         title="Remove this record source?"
         description="Its records leave this calendar for everyone who reads the board. The records do not change."
         action="Remove source"
+        disabled={removingSource}
+        pending={removingSource}
+        pendingLabel="Removing…"
         onCancel={() => setSourceToRemove(null)}
         onConfirm={() => {
           if (sourceToRemove) void confirmRemoveSource(sourceToRemove);

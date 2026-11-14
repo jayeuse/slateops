@@ -314,7 +314,9 @@ test("UF-C8.1 Choose file saves a new post as a draft, attaches the file, and Pu
     `PUT /api/boards/${boardId}/files/${fileId(0)}/content`,
     `POST /api/boards/${boardId}/posts/${postId}/attachments`,
   ]);
-  await editor.getByRole("button", { name: "Publish", exact: true }).click();
+  await editor
+    .getByRole("button", { name: "Publish post", exact: true })
+    .click();
   await expect(editor).toBeHidden();
   expect(api.mutations.at(-1)?.path).toBe(
     `/api/boards/${boardId}/posts/${postId}/publish`,

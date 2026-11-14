@@ -106,7 +106,10 @@ function HeaderReasonChip({
   return (
     <>
       <Tooltip open={open} onOpenChange={setOpen}>
+        {/* A tap opens the reason and must not close it again (the shell's
+            tooltip group may already have opened it on hover). */}
         <TooltipTrigger
+          closeOnClick={false}
           render={
             <button
               type="button"

@@ -9,6 +9,7 @@ import {
 import type { SandboxDocumentV4 } from "../../src/components/systems/sandbox/domain/document";
 import type { Design } from "../../src/components/systems/sandbox/domain/model";
 import { configuredSandboxDesign } from "../helpers/sandbox-fixtures";
+import { settled } from "./helpers/layout";
 
 // Phase 4 of the Sandbox UI/UX pass (docs/specs/sandbox-ui-ux-pass.md):
 // TRG-1 to TRG-5. The list and When/If/Then rail come from the Sandbox
@@ -135,7 +136,9 @@ test("leaving with unsaved triggers asks Save, Discard, or Stay", async ({
   await expect(page.getByLabel("Trigger name")).toHaveValue("Stay with me");
 
   await build.click();
-  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await dialog
+    .getByRole("button", { name: "Save and leave", exact: true })
+    .click();
   await expect(page).toHaveURL(/section=build/);
   expect(sandbox.documentWrites()).toBe(1);
   expect(sandbox.document().triggers[0]!.name).toBe("Stay with me");
@@ -177,7 +180,9 @@ test("a reload offers to restore unsaved trigger edits", async ({ page }) => {
   await expect(
     page.getByRole("switch", { name: "Trigger status" }),
   ).toBeDisabled();
-  await prompt.getByRole("button", { name: "Restore", exact: true }).click();
+  await prompt
+    .getByRole("button", { name: "Restore trigger changes", exact: true })
+    .click();
   await expect(prompt).toHaveCount(0);
   await expect(name).toBeEnabled();
   await expect(name).toHaveValue("Survives reload");
@@ -222,7 +227,10 @@ test("Undo of a discarded prompt never replaces newer trigger edits", async ({
   await expect(prompt).toBeVisible();
   await expect(name).toHaveValue("Newer edit");
   await expect(
-    prompt.getByRole("button", { name: "Restore", exact: true }),
+    prompt.getByRole("button", {
+      name: "Restore trigger changes",
+      exact: true,
+    }),
   ).toHaveAccessibleDescription(
     "Save or discard your current trigger edits first.",
   );
@@ -231,11 +239,16 @@ test("Undo of a discarded prompt never replaces newer trigger edits", async ({
   await page.getByRole("button", { name: "Discard changes" }).click();
   await expect(name).toBeDisabled();
   await expect(
-    prompt.getByRole("button", { name: "Restore", exact: true }),
+    prompt.getByRole("button", {
+      name: "Restore trigger changes",
+      exact: true,
+    }),
   ).toBeEnabled();
   // The kept edit is still stored: a reload offers it, and Restore applies it.
   await page.reload();
-  await prompt.getByRole("button", { name: "Restore", exact: true }).click();
+  await prompt
+    .getByRole("button", { name: "Restore trigger changes", exact: true })
+    .click();
   await expect(name).toHaveValue("Older edit");
 });
 
@@ -442,7 +455,9 @@ test(
       .getByRole("button", { name: "New trigger", exact: true })
       .click();
     await page.getByRole("link", { name: "Build", exact: true }).click();
-    await dialog.getByRole("button", { name: "Save", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Save and leave", exact: true })
+      .click();
     await expect(dialog).toContainText(
       "1 trigger is incomplete; choose a module.",
     );
@@ -614,6 +629,7 @@ test(
     // operator) hold options of their own.
     const options = page.getByRole("listbox").getByRole("option");
     await expect(options).toHaveCount(4);
+    await settled(page);
     for (const option of await options.all())
       expect((await option.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   },

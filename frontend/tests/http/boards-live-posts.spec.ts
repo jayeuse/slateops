@@ -1743,7 +1743,8 @@ test("a list refresh keeps a held Unpublish and its confirmation", async ({
       }),
     ).toHaveCount(1);
     await expect(
-      confirmation.getByRole("button", { name: "Unpublish post", exact: true }),
+      // Busy, the confirm says so at the same width (TASK-0061, rule 4).
+      confirmation.getByRole("button", { name: "Unpublishing…", exact: true }),
     ).toBeDisabled();
     release();
     await expect(
@@ -2059,7 +2060,9 @@ test.describe("workspace-zone post times", () => {
     ).toBeVisible();
     expect(api.writes).toHaveLength(0);
     api.setFailure(422);
-    await editor.getByRole("button", { name: "Publish", exact: true }).click();
+    await editor
+      .getByRole("button", { name: "Publish post", exact: true })
+      .click();
     await expect(editor.getByRole("alert").first()).toBeVisible();
     await openAdvanced(editor);
     await expect(editor.getByLabel("Expires on", { exact: true })).toHaveValue(
@@ -2191,7 +2194,8 @@ for (const replacement of ["draft", "scheduled"] as const) {
       .click();
     await entered;
     await expect(
-      confirmation.getByRole("button", { name: "Unpublish post", exact: true }),
+      // Busy, the confirm says so at the same width (TASK-0061, rule 4).
+      confirmation.getByRole("button", { name: "Unpublishing…", exact: true }),
     ).toBeDisabled();
     release();
     await expect(
@@ -2516,7 +2520,9 @@ test("New post publishes from the editor dialog with one consequence line and a 
     },
   );
   try {
-    await editor.getByRole("button", { name: "Publish", exact: true }).click();
+    await editor
+      .getByRole("button", { name: "Publish post", exact: true })
+      .click();
     await expect(
       editor.getByRole("button", { name: "Publishing…", exact: true }),
     ).toBeVisible();

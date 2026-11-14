@@ -84,7 +84,9 @@ test("MFA enrollment verifies the provider factor, retries invalid codes, and re
     dialog.getByRole("img", { name: "Authenticator QR code" }),
   ).toHaveCount(0);
   expect(state.actors.get(mfaUserA)?.assurance).toBe("aal2");
-  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await dialog
+    .getByRole("button", { name: "Close two-step settings", exact: true })
+    .click();
   await ownTwoStep(page).click();
   await expect(dialog).toContainText("Authenticator verified");
   await dialog
@@ -107,7 +109,7 @@ test("MFA enrollment verifies the provider factor, retries invalid codes, and re
     accessDraftStorageKey(mfaUserA, "identity"),
   );
   await dialog
-    .getByRole("button", { name: "Confirm removal", exact: true })
+    .getByRole("button", { name: "Remove and sign out", exact: true })
     .click();
   await expect(
     page
@@ -1228,7 +1230,9 @@ test("a refused all-role MFA save retains the future draft and offers the viewer
     exact: true,
   });
   await expect(mfa).toContainText("Authenticator verified");
-  await mfa.getByRole("button", { name: "Done", exact: true }).click();
+  await mfa
+    .getByRole("button", { name: "Close two-step settings", exact: true })
+    .click();
   await expect(
     page.getByRole("heading", { level: 1, name: "Security" }),
   ).toBeVisible();

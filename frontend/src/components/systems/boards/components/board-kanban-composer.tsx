@@ -146,15 +146,16 @@ export function KanbanComposer({
       {errorLine}
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
         <DisabledReason
-          reason={title.trim() ? null : "Type a title first."}
+          reason={title.trim() || pending ? null : "Type a title first."}
           stable
         >
           <Button
             type="submit"
             className="min-h-11 xl:min-h-8"
-            disabled={pending}
+            pending={pending}
+            pendingLabel="Adding…"
           >
-            {pending ? "Adding…" : "Add card"}
+            Add card
           </Button>
         </DisabledReason>
         <Button
@@ -262,7 +263,7 @@ function RecordFinder({
               <button
                 type="button"
                 aria-label={`${item.title}, ${item.context_label}`}
-                className="hover:bg-muted flex min-h-11 w-full min-w-0 items-center gap-2 rounded-sm px-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-[var(--focus)] xl:min-h-8"
+                className="hover:bg-tint-hover flex min-h-11 w-full min-w-0 items-center gap-2 rounded-sm px-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-[var(--focus)] xl:min-h-8"
                 onClick={() => setPicked(item)}
               >
                 <FileText
@@ -333,6 +334,8 @@ function RecordDates({
   const dateOf = (fieldId: string | null) =>
     choices.find((choice) => choice.fieldId === fieldId)?.date ?? null;
   const loading = fields.isPending || values.isPending;
+  // The visible date note is the reason Add card waits (TASK-0061 rule 6).
+  const invalidId = `${id}-dates-note`;
   const startOn = dateOf(startId);
   const dueOn = dateOf(dueId);
   const invalid = startOn !== null && dueOn !== null && startOn > dueOn;
@@ -400,6 +403,7 @@ function RecordDates({
         </>
       ) : null}
       <p
+        id={invalidId}
         className={cn(
           "text-muted-foreground text-xs",
           invalid && "text-danger-text",
@@ -412,14 +416,35 @@ function RecordDates({
       </p>
       {error}
       <div className="flex flex-wrap items-center gap-1.5">
-        <Button
-          type="submit"
-          className="min-h-11 xl:min-h-8"
-          disabled={pending || loading || invalid}
+        <DisabledReason
+          stable
+          reason={
+            pending
+              ? null
+              : loading
+                ? "Wait for the record’s dates to load."
+                : invalid
+                  ? "The start must not be after the due date."
+                  : null
+          }
+          reasonId={!pending && !loading && invalid ? invalidId : undefined}
         >
-          <Plus aria-hidden="true" />
-          {pending ? "Adding…" : "Add card"}
-        </Button>
+          <Button
+            type="submit"
+            className="min-h-11 xl:min-h-8"
+            disabled={loading || invalid}
+            pending={pending}
+            pendingLabel={
+              <>
+                <Plus aria-hidden="true" />
+                Adding…
+              </>
+            }
+          >
+            <Plus aria-hidden="true" />
+            Add card
+          </Button>
+        </DisabledReason>
         <Button
           type="button"
           variant="ghost"

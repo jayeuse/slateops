@@ -287,9 +287,7 @@ function PanelBody({
   );
   return (
     <>
-      {/* The field's focus shows as a 2 px line along the bottom of the row,
-          inside the panel, so the panel edge never cuts it (DR-4.2). */}
-      <div className="has-[input:focus]:after:bg-ring relative flex h-14 shrink-0 items-center gap-2.5 border-b pr-1.5 pl-4 after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 md:h-13">
+      <div className="flex h-14 shrink-0 items-center gap-2.5 border-b pr-1.5 pl-4 md:h-13">
         <SearchIcon
           aria-hidden="true"
           className="text-muted-foreground size-4 shrink-0"
@@ -320,7 +318,11 @@ function PanelBody({
               if (row) open(row);
             }
           }}
-          className="placeholder:text-muted-foreground h-full min-w-0 flex-1 bg-transparent text-base outline-none"
+          // Focus stays in this field while the panel is open (the arrow
+          // keys move the active row), so the caret marks it: no outline,
+          // also over the global input focus rule. Forced colors keep the
+          // system outline (DR-4.2).
+          className="placeholder:text-muted-foreground h-full min-w-0 flex-1 bg-transparent text-base not-forced-colors:outline-none!"
         />
         <DialogClose
           render={

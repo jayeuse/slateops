@@ -319,3 +319,110 @@ test("a module page with no readable module says why, and only an administrator 
     target.getByRole("link", { name: "Open Sandbox", exact: true }),
   ).toHaveCount(0);
 });
+
+// A group's pages hang on a guide line, as a tree line marks children. The
+// current page is its blue, bold label, with no fill and no bar (Human
+// Owner, 2026-11-13). A closed group shows that label colour on its own row.
+async function guide(target: Page) {
+  return sidebar(target).evaluate((nav) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--action-text)";
+    nav.append(probe);
+    const ink = getComputedStyle(probe).color;
+    probe.remove();
+    const list = nav.querySelector('[aria-label="Sales pages"]');
+    const items = list ? [...list.querySelectorAll(":scope > li")] : [];
+    const lines = items.map((item) => {
+      const line = getComputedStyle(item, "::before");
+      return {
+        width: line.width,
+        edge: line.borderLeftWidth,
+        radius: line.borderBottomLeftRadius,
+      };
+    });
+    const current = nav.querySelector<HTMLElement>('[aria-current="page"]');
+    const header = [...nav.querySelectorAll("button")].find(
+      (button) => button.getAttribute("aria-label") === "Sales",
+    );
+    const look = (element: HTMLElement | undefined | null) =>
+      element
+        ? {
+            fill: getComputedStyle(element).backgroundColor,
+            color: getComputedStyle(element).color,
+            weight: getComputedStyle(element).fontWeight,
+            mark: getComputedStyle(element, "::before").backgroundColor,
+          }
+        : null;
+    return {
+      ink,
+      lines,
+      bars: nav.querySelectorAll('[data-slot="sidebar-active-indicator"]')
+        .length,
+      current: current
+        ? { text: current.textContent?.trim(), ...look(current) }
+        : null,
+      header: look(header),
+    };
+  });
+}
+
+test("the current page is its blue label on its group's guide line, with no fill and no bar", async ({
+  page: target,
+}) => {
+  await target.setViewportSize({ width: 1440, height: 900 });
+  await installCatalog(target, [
+    { id: ids.quotes, name: "Quotes", department: ids.sales },
+    { id: ids.contacts, name: "Contacts", department: ids.sales },
+  ]);
+  await target.goto(`/openview?section=views&module=${ids.contacts}`);
+  const nav = sidebar(target);
+  await expect(
+    nav
+      .getByRole("list", { name: "Sales pages" })
+      .getByRole("link", { name: "Contacts", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  const shown = await guide(target);
+  // A 1 px guide line runs down the group; the last page turns into it.
+  expect(shown.lines.length).toBeGreaterThan(1);
+  for (const line of shown.lines.slice(0, -1)) expect(line.width).toBe("1px");
+  expect(shown.lines.at(-1)?.edge).toBe("1px");
+  expect(shown.lines.at(-1)?.radius).not.toBe("0px");
+  // The current page: blue and bold, no fill, no bar.
+  expect(shown.bars).toBe(0);
+  expect(shown.current).toMatchObject({
+    text: "Contacts",
+    fill: "rgba(0, 0, 0, 0)",
+    color: shown.ink,
+    weight: "600",
+  });
+  // Its open group takes no fill and no ink.
+  expect(shown.header?.fill).toBe("rgba(0, 0, 0, 0)");
+  expect(shown.header?.color).not.toBe(shown.ink);
+});
+
+test("a closed group shows the current page's label colour on its own row", async ({
+  page: target,
+}) => {
+  await target.setViewportSize({ width: 1440, height: 900 });
+  await installCatalog(target, [
+    { id: ids.contacts, name: "Contacts", department: ids.sales },
+  ]);
+  await target.goto(`/openview?section=views&module=${ids.contacts}`);
+  const nav = sidebar(target);
+  const header = nav.getByRole("button", { name: "Sales", exact: true });
+  await expect(header).toHaveAttribute("aria-expanded", "true");
+  await header.click();
+  await expect(header).toHaveAttribute("aria-expanded", "false");
+  await expect
+    .poll(async () => {
+      const shown = await guide(target);
+      return shown.header?.color === shown.ink;
+    })
+    .toBe(true);
+  const shown = await guide(target);
+  expect(shown.header).toMatchObject({
+    fill: "rgba(0, 0, 0, 0)",
+    weight: "600",
+    mark: "rgba(0, 0, 0, 0)",
+  });
+});

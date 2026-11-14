@@ -7,10 +7,10 @@
 :root[data-theme="stockroom"],
 [data-theme-preview="stockroom"] {
   --ground: #f2f2ee;
-  --surface: #ffffff;
-  --surface-raised: #ffffff;
+  --surface: #f8f8f5;
+  --surface-raised: #f9f9f7;
   --surface-sunken: #eeeeea;
-  --surface-hover: #e8e8e3;
+  --surface-hover: #e2e2dc;
   --ink: #1c1e21;
   --ink-muted: #474c53;
   --rule: #cdd0d2;
@@ -41,7 +41,7 @@
   --lift-filter: drop-shadow(0 2px 0 rgb(28 30 33 / 0.16))
     drop-shadow(0 8px 12px rgb(28 30 33 / 0.12));
   --sidebar: #dee2e5;
-  --sidebar-accent: #eceeef;
+  --sidebar-accent: #c8cdd2;
   --canvas-background: #e6e5e0;
   --canvas-grid: #dad9d3;
   --canvas-grid-major: #cbcac3;
@@ -65,7 +65,7 @@
   --canvas-row-stripe: #d4b588;
   --canvas-type-ink: #553819;
   --canvas-edge: #6f757c;
-  --canvas-label-fill: #ffffff;
+  --canvas-label-fill: #f8f8f5;
   --canvas-label-frame: #8d959d;
   --canvas-label-ink: #1c1e21;
   /* Identity marks keep Slate's department order (violet, teal, amber,
@@ -82,10 +82,10 @@
   --button-edge: var(--ink-muted);
   --button-ink: var(--ink);
   --canvas-field-ink: var(--canvas-module-ink);
-  --dept-1-card: #ffffff;
-  --dept-2-card: #ffffff;
-  --dept-3-card: #ffffff;
-  --dept-4-card: #ffffff;
+  --dept-1-card: #f8f8f5;
+  --dept-2-card: #f8f8f5;
+  --dept-3-card: #f8f8f5;
+  --dept-4-card: #f8f8f5;
   --dept-1-sheet: var(--canvas-dept-fill);
   --dept-2-sheet: var(--canvas-dept-fill);
   --dept-3-sheet: var(--canvas-dept-fill);
@@ -111,7 +111,7 @@
   --surface: #1e2124;
   --surface-raised: #24282c;
   --surface-sunken: #191b1e;
-  --surface-hover: #272b2f;
+  --surface-hover: #33383d;
   --ink: #ecedea;
   --ink-muted: #a9aeb3;
   --rule: #30353a;
@@ -326,18 +326,27 @@
   font-weight: 700;
 }
 
-[data-theme="stockroom"] [data-slot="tabs-list"] {
+[data-theme="stockroom"] :is([data-slot="tabs-list"], [data-pill-rail]) {
   background: var(--sr-steel-lite);
   border-radius: 2px;
   box-shadow: inset 0 -2px 0 var(--sr-steel);
 }
 
-[data-theme="stockroom"] [data-slot="tabs-trigger"][data-active] {
+[data-theme="stockroom"]
+  :is(
+    [data-slot="tabs-trigger"][data-active],
+    [data-pill-option]:is(
+      [data-pressed],
+      [data-checked],
+      [aria-current="true"],
+      [data-current="true"]
+    )
+  ) {
   font-weight: 700;
 }
 
 /* The open tab is a steel tab with an action edge that slides on its rail. */
-[data-theme="stockroom"] [data-slot="tabs-indicator"] {
+[data-theme="stockroom"] :is([data-slot="tabs-indicator"], [data-pill]) {
   border-radius: 1px;
   box-shadow:
     inset 0 -3px 0 var(--action),

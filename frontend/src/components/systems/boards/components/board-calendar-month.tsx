@@ -241,7 +241,7 @@ function MonthWeekRow({
             onFocus={() => onDayFocus(date)}
             style={{ gridColumn: column + 1, gridRow: 1 }}
             className={cn(
-              "hover:bg-accent focus-visible:outline-ring ml-1 grid h-6 min-w-6 place-items-center justify-self-start rounded-full px-1.5 text-xs font-medium tabular-nums outline-none focus-visible:outline-2 focus-visible:-outline-offset-2",
+              "hover:bg-tint-hover focus-visible:outline-ring ml-1 grid h-6 min-w-6 place-items-center justify-self-start rounded-full px-1.5 text-xs font-medium tabular-nums outline-none focus-visible:outline-2 focus-visible:-outline-offset-2",
               monthOf(date) !== month && "text-muted-foreground",
               date === today &&
                 "bg-foreground text-background hover:bg-foreground font-semibold",
@@ -309,7 +309,7 @@ function MonthWeekRow({
                 gridColumn: cell.column + 1,
                 gridRow: cell.more.lane + 2,
               }}
-              className="text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-ring mx-[3px] h-6 justify-self-start rounded-sm px-1.5 text-xs leading-6 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2"
+              className="text-muted-foreground hover:bg-tint-hover hover:text-foreground focus-visible:outline-ring mx-[3px] h-6 justify-self-start rounded-sm px-1.5 text-xs leading-6 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2"
             >
               +{cell.more.count} more
             </button>

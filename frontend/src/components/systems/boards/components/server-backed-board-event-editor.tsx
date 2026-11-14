@@ -5,6 +5,7 @@ import { Temporal } from "@js-temporal/polyfill";
 import { Check } from "lucide-react";
 import { AdvancedSection } from "@/components/ui/advanced-section";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { DialogFrameFooter } from "@/components/ui/dialog-frame";
 import {
   Field,
@@ -901,20 +902,29 @@ export function ServerBoardEventEditorForm({
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             className="min-h-11 xl:min-h-8"
             disabled={busy}
             onClick={onCancel}
           >
             Cancel
           </Button>
-          <Button
-            type="submit"
-            className="min-h-11 xl:min-h-8"
-            disabled={busy || saveBlocked}
+          {/* A conflict blocks the save; its own save (Keep my changes) runs
+              from the notice, so this button does not read busy then. */}
+          <DisabledReason
+            stable
+            reason={saveBlocked ? "Review the latest version first." : null}
           >
-            {busy ? "Saving…" : draft.eventId ? "Save event" : "Create event"}
-          </Button>
+            <Button
+              type="submit"
+              className="min-h-11 xl:min-h-8"
+              disabled={saveBlocked}
+              pending={busy && !saveBlocked}
+              pendingLabel="Saving…"
+            >
+              {draft.eventId ? "Save event" : "Create event"}
+            </Button>
+          </DisabledReason>
         </div>
       </DialogFrameFooter>
     </form>

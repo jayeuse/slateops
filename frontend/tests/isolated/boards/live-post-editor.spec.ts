@@ -85,7 +85,7 @@ function markup(view: PostEditorView, scheduleOpen = false): string {
 
 test("the editor's footer holds Publish, Schedule and Save draft beside one consequence line", () => {
   const html = markup(baseView);
-  expect(html).toContain(">Publish<");
+  expect(html).toContain(">Publish post<");
   expect(html).toContain("Schedule…");
   expect(html).toContain("Save draft");
   expect(html).toContain("Everyone who reads Sales sees this post.");
@@ -204,7 +204,7 @@ test("denial and an archived Board render no private draft or action", () => {
     const html = markup(view);
     expect(html).not.toContain("Private change");
     expect(html).not.toContain("Keep this draft private.");
-    expect(html).not.toContain(">Publish<");
+    expect(html).not.toContain(">Publish post<");
     expect(html).not.toContain("Schedule…");
   }
 });

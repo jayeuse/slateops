@@ -19,9 +19,14 @@ import {
   SearchSelect,
   type SearchSelectOption,
 } from "@/components/ui/search-select";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  SegmentedPill,
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@/components/ui/toggle-group";
 import { toggleVariants } from "@/components/ui/toggle";
 import { cn } from "@/lib/utils";
+import { pillOptionHeightClass } from "@/components/ui/pill";
 
 import {
   catalogDepartments,
@@ -67,7 +72,7 @@ export function StatusStrip({
       value={[status]}
       // On a phone the strip scrolls sideways; its right edge fades so the
       // hidden items are hinted, and end padding lets More clear the fade.
-      className="w-full max-w-full flex-nowrap overflow-x-auto max-md:[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] max-md:pr-8 md:w-fit [&>*]:shrink-0"
+      className="w-full max-w-full flex-nowrap overflow-x-auto overflow-y-hidden max-md:[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] max-md:pr-8 md:w-fit [&>*]:shrink-0"
       onValueChange={(selection) => {
         const next = quickStatusFilters.find(
           (filter) => filter.status === selection[0],
@@ -81,7 +86,7 @@ export function StatusStrip({
           <ToggleGroupItem
             key={filter.status}
             value={filter.status}
-            className="flex-none gap-1.5 px-2 text-sm whitespace-nowrap"
+            className="flex-none gap-1.5 text-sm whitespace-nowrap"
           >
             {filter.label}
             {total === undefined ? null : (
@@ -98,19 +103,22 @@ export function StatusStrip({
             <button
               type="button"
               data-slot="toggle-group-item"
+              data-pill-option=""
               data-current={rare ? "true" : undefined}
               // The trigger names the rare status it shows.
               aria-label={rare ? `Status: ${rare.label}` : "More statuses"}
               className={cn(
                 toggleVariants({ variant: "segmented" }),
+                pillOptionHeightClass,
                 // Wide enough for "Expired" and "Deleted"; the longer
                 // "Everyone, including deleted" widens it when chosen.
-                "text-muted-foreground hover:text-foreground h-auto min-h-11 min-w-[6.5rem] flex-none justify-center gap-1 px-2 text-sm whitespace-nowrap hover:bg-transparent xl:min-h-9",
-                "data-[current=true]:text-action-text data-[current=true]:bg-[var(--surface-raised)] data-[current=true]:font-semibold data-[current=true]:shadow-[var(--lift),inset_0_0_0_1px_color-mix(in_oklab,var(--ink-muted)_60%,transparent)]",
+                "text-muted-foreground hover:text-foreground h-auto min-w-[6.5rem] flex-none justify-center gap-1 px-3 text-sm whitespace-nowrap hover:bg-transparent focus-visible:ring-0",
+                "data-[current=true]:text-action-text relative data-[current=true]:font-semibold",
               )}
             />
           }
         >
+          {rare ? <SegmentedPill /> : null}
           {rare ? rare.label : "More"}
           <ChevronDown aria-hidden="true" className="size-3.5" />
         </DropdownMenuTrigger>

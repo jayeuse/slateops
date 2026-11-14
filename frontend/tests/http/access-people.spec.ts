@@ -421,7 +421,7 @@ test("a role change that meets a newer save asks which value to keep", async ({
   await expect(conflict).toContainText("Lead");
   expect(api.sent("PATCH", `/api/users/${ids.ben}`)).toHaveLength(0);
   await conflict.getByRole("button", { name: "Use draft" }).click();
-  await conflict.getByRole("button", { name: "Continue" }).click();
+  await conflict.getByRole("button", { name: "Use these versions" }).click();
 
   await expect(conflict).toBeHidden();
   expect(api.sent("PATCH", `/api/users/${ids.ben}`)[0]?.body).toEqual({
@@ -458,7 +458,7 @@ test("a save refused as stale re-reads the person before asking again", async ({
   const conflict = page.getByRole("dialog", { name: "This person changed" });
   await expect(conflict).toContainText("Manager");
   await conflict.getByRole("button", { name: "Keep current" }).click();
-  await conflict.getByRole("button", { name: "Continue" }).click();
+  await conflict.getByRole("button", { name: "Use these versions" }).click();
   await expect(conflict).toBeHidden();
   // Keeping the saved value leaves nothing to send.
   expect(api.sent("PATCH", `/api/users/${ids.ben}`)).toHaveLength(1);
@@ -486,7 +486,7 @@ test("disabling sends the status and a refusal shows the server's reason", async
   await openAdvanced(sheet);
   await sheet.getByRole("button", { name: "Disable" }).click();
   const confirm = page.getByRole("alertdialog", { name: "Disable Ben Cruz?" });
-  await confirm.getByRole("button", { name: "Disable" }).click();
+  await confirm.getByRole("button", { name: "Disable account" }).click();
   // The dialog names what is running until the server answers.
   await disabling.entered;
   await expect(
@@ -504,7 +504,7 @@ test("disabling sends the status and a refusal shows the server's reason", async
   await openPerson(page, "Dee Lim");
   await panel(page, "Dee Lim").getByRole("button", { name: "Disable" }).click();
   const refused = page.getByRole("alertdialog", { name: "Disable Dee Lim?" });
-  await refused.getByRole("button", { name: "Disable" }).click();
+  await refused.getByRole("button", { name: "Disable account" }).click();
   await expect(refused.getByRole("alert")).toContainText(
     "At least one active administrator must remain.",
   );
@@ -1046,7 +1046,7 @@ test("offpage deleted deep link survives bounded ID loading and Restore", async 
     exact: true,
   });
   await confirmation
-    .getByRole("button", { name: "Restore", exact: true })
+    .getByRole("button", { name: "Restore account", exact: true })
     .click();
   await expect(sheet).toContainText("Disabled");
   await expect(
@@ -1182,7 +1182,7 @@ test("person sessions show sign-in addresses and accepted revocation refreshes t
     .click();
   await page
     .getByRole("alertdialog", { name: "Sign out this session?" })
-    .getByRole("button", { name: "Sign out", exact: true })
+    .getByRole("button", { name: "Sign out session", exact: true })
     .click();
   await expect(sessions).not.toContainText("198.51.100.101");
   await expect(sessions).toContainText("Sign-in address: 2001:db8::102");
@@ -1212,7 +1212,7 @@ test("person sessions show sign-in addresses and accepted revocation refreshes t
     .click();
   await page
     .getByRole("alertdialog", { name: "Sign out everywhere?" })
-    .getByRole("button", { name: "Sign out", exact: true })
+    .getByRole("button", { name: "Sign out everywhere", exact: true })
     .click();
   await expect(
     sheet.getByRole("list", { name: "Sessions", exact: true }),
@@ -1342,7 +1342,7 @@ for (const failure of [0, 503]) {
       (request) => new URL(request.url()).pathname === path,
     );
     await confirmation
-      .getByRole("button", { name: "Finish sending", exact: true })
+      .getByRole("button", { name: "Send invitation", exact: true })
       .click();
     await requested;
     await expect(

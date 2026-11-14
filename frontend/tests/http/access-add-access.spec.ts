@@ -314,7 +314,7 @@ test("P3F3-1 an administrator gets Add access for a member or guest, a guest onl
   // On a phone each level row and both buttons are 44px targets.
   for (const target of [
     ...(await form.getByRole("radiogroup").locator("label").all()),
-    form.getByRole("button", { name: "Add", exact: true }),
+    form.getByRole("button", { name: "Add access", exact: true }),
     form.getByRole("button", { name: "Cancel" }),
   ])
     expect((await target.boundingBox())!.height).toBeGreaterThanOrEqual(44);

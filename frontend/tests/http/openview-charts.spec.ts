@@ -136,7 +136,7 @@ test("Edit chart on a saved chart uses a copy here unless it is changed everywhe
     }),
   ).not.toBeChecked();
   await builder.getByRole("radio", { name: "Pie" }).click();
-  await builder.getByRole("button", { name: "Apply changes" }).click();
+  await builder.getByRole("button", { name: "Update chart" }).click();
   await page.getByRole("button", { name: "Save layout" }).click();
   await expect(page.getByRole("toolbar", { name: "Edit layout" })).toHaveCount(
     0,
@@ -177,6 +177,6 @@ test("Show as is one Tab stop chosen with the arrow keys, and a changed setup su
   await confirm.getByRole("button", { name: "Keep editing" }).click();
   await expect(line).toHaveAttribute("aria-checked", "true");
   await page.keyboard.press("Escape");
-  await confirm.getByRole("button", { name: "Discard" }).click();
+  await confirm.getByRole("button", { name: "Discard changes" }).click();
   await expect(builder).toHaveCount(0);
 });

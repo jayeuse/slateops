@@ -147,7 +147,11 @@ test("Save changes says there is nothing to save until the draft changes", () =>
     draft: { name: board.name, description: board.description ?? "" },
   });
   expect(html).toContain("No changes to save.");
-  expect(html).toMatch(/disabled=""[^>]*>Save changes/);
+  // Save changes waits and stays focusable, so it can say why (TASK-0061
+  // rule 6).
+  expect(html).toMatch(
+    /aria-disabled="true"[^>]*>(?:<span[^>]*>)*Save changes</,
+  );
   expect(markup({ ...baseView, board, draft })).not.toContain(
     "No changes to save.",
   );
@@ -247,7 +251,11 @@ test("revision conflict retains the draft and blocks unreviewed overwrite", () =
   expect(html).toContain("Keep my draft");
   expect(html).toContain("Someone changed this board first.");
   expect(html).toContain("Refresh board");
-  expect(html).toMatch(/disabled=""[^>]*>Save changes/);
+  // Save changes waits and stays focusable, so it can say why (TASK-0061
+  // rule 6).
+  expect(html).toMatch(
+    /aria-disabled="true"[^>]*>(?:<span[^>]*>)*Save changes</,
+  );
 });
 
 test("conflict retry reapplies only locally changed fields onto the latest Board", () => {

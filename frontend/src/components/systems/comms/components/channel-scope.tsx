@@ -328,7 +328,7 @@ export function ChannelScopeChoice({
                     "h-auto min-h-11 w-full items-start justify-start gap-3 rounded-md border p-3 text-left",
                     selected
                       ? "border-primary bg-action-tint text-action-text"
-                      : "border-border text-foreground hover:bg-muted",
+                      : "border-border text-foreground hover:bg-tint-hover",
                     reason &&
                       "text-muted-foreground cursor-not-allowed hover:bg-transparent",
                   )}

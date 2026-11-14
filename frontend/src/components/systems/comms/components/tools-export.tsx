@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Alert } from "@/components/ui/alert";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -215,17 +216,43 @@ export function ExportTools({
             current password are required.
           </p>
         )}
-        <Button
-          onClick={() => void start()}
-          disabled={
-            !allowed ||
-            isPending() ||
-            !selected.length ||
-            (protectedSelection && (!reason.trim() || !confirmed || !password))
+        {/* TASK-0061 rules 4 and 6: the start request is its busy state;
+            what is still missing is its reason. */}
+        <DisabledReason
+          stable
+          reason={
+            isPending("export-start")
+              ? null
+              : !allowed
+                ? "Only an organization administrator can export."
+                : isPending()
+                  ? "Finish the current change first."
+                  : !selected.length
+                    ? "Choose at least one channel to export."
+                    : protectedSelection && !reason.trim()
+                      ? "Enter a reason for the private sources."
+                      : protectedSelection && !confirmed
+                        ? "Check the private sources confirmation first."
+                        : protectedSelection && !password
+                          ? "Enter your current password to export."
+                          : null
           }
         >
-          Start export
-        </Button>
+          <Button
+            onClick={() => void start()}
+            pending={isPending("export-start")}
+            pendingLabel="Starting…"
+            disabled={
+              !allowed ||
+              isPending() ||
+              !selected.length ||
+              (protectedSelection &&
+                (!reason.trim() || !confirmed || !password))
+            }
+          >
+            Start export
+          </Button>
+        </DisabledReason>
         {resource.data?.map((job) => (
           <section
             key={job.id}

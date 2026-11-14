@@ -352,7 +352,7 @@ export function PersonGroups({
                 pendingLabel="Adding…"
                 onClick={() => void add()}
               >
-                Add
+                Add to group
               </Button>
             </DisabledReason>
           </div>

@@ -386,7 +386,7 @@ test("Comms keeps an older-reading anchor when the existing client delivers anot
     .getByRole("button", { name: "Preview scheduled message", exact: true })
     .click();
   await outbox
-    .getByRole("button", { name: "Confirm Send Now", exact: true })
+    .getByRole("button", { name: "Send this message now", exact: true })
     .click();
   await expect(
     outbox.getByText("Scheduled message sent.", { exact: true }),

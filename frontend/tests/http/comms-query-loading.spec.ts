@@ -910,7 +910,7 @@ test("the composer waits neutrally for the open conversation's access and retrie
       );
     });
     await expect(composer.getByRole("alert")).toHaveText(
-      "Wait until your access loads, then add the file again.",
+      "Wait for your access to load, then add the file again.",
     );
     check.release();
     await expect(
@@ -919,7 +919,7 @@ test("the composer waits neutrally for the open conversation's access and retrie
     // The refusal clears once access has loaded.
     await expect(
       composer.getByText(
-        "Wait until your access loads, then add the file again.",
+        "Wait for your access to load, then add the file again.",
       ),
     ).toHaveCount(0);
   } finally {

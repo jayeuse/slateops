@@ -277,7 +277,7 @@ function ChangeRow({
               aria-expanded={open}
               aria-controls={entriesId}
               aria-label={`${label}, ${entries.length} change ${entries.length === 1 ? "entry" : "entries"}`}
-              className="hover:bg-muted focus-visible:outline-ring flex min-h-11 w-full cursor-pointer items-center gap-1.5 rounded-md px-2 text-left font-medium outline-offset-2 focus-visible:outline-2 xl:min-h-9"
+              className="hover:bg-tint-hover focus-visible:outline-ring flex min-h-11 w-full cursor-pointer items-center gap-1.5 rounded-md px-2 text-left font-medium outline-offset-2 focus-visible:outline-2 xl:min-h-9"
               onClick={() => setOpen((value) => !value)}
             >
               {open ? (

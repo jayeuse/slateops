@@ -2,16 +2,16 @@
 name: Slate Operations
 description: A slate each organization themes. Four looks, one layout, the same words.
 colors:
-  ground: "#f7f8fa"
-  surface: "#ffffff"
-  surface-raised: "#ffffff"
-  surface-sunken: "#f1f3f5"
-  surface-hover: "#eef0f3"
+  ground: "#eceef1"
+  surface: "#f7f8fa"
+  surface-raised: "#f9fafb"
+  surface-sunken: "#e2e5e9"
+  surface-hover: "#d3d8de"
   ink: "#0f1115"
-  ink-muted: "#555e6c"
-  rule: "#e4e7ec"
-  rule-strong: "#d0d5dd"
-  control-edge: "#858e9b"
+  ink-muted: "#454d59"
+  rule: "#d9dde3"
+  rule-strong: "#c2c9d1"
+  control-edge: "#7b8491"
   action: "#2563eb"
   action-ink: "#ffffff"
   action-text: "#1d4ed8"
@@ -24,7 +24,7 @@ colors:
   warn: "#a36600"
   warn-ink: "#ffffff"
   warn-text: "#8a5300"
-  warn-tint: "#fff7e8"
+  warn-tint: "#fcf2de"
   warn-rule: "#f2d3a0"
   danger: "#d92d20"
   danger-ink: "#ffffff"
@@ -32,9 +32,9 @@ colors:
   danger-tint: "#fef3f2"
   danger-rule: "#fecdca"
   focus: "#2563eb"
-  canvas-background: "#f5f6f8"
-  canvas-grid: "#dde1e7"
-  canvas-grid-major: "#c3c9d2"
+  canvas-background: "#e8eaee"
+  canvas-grid: "#d2d7dd"
+  canvas-grid-major: "#b9c0c9"
   canvas-edge: "#7d8694"
   dept-1: "#8e79b8"
   dept-2: "#3e8f8a"
@@ -225,7 +225,7 @@ components:
     rounded: "{rounded.lg}"
     padding: "16px"
   nav-item-active:
-    backgroundColor: "{colors.surface-hover}"
+    backgroundColor: "transparent"
     textColor: "{colors.action-text}"
     typography: "{typography.control}"
     height: "32px"
@@ -290,7 +290,7 @@ Density is calm and practical: 14px body text, 36px buttons, hairline rules, and
 | Look            | Selector and file                 | Type (`--font-ui` / `--font-code`)      | Radius (`--radius`) | Material                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | --------------- | --------------------------------- | --------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Slate (default) | `:root`, `.dark` in `globals.css` | Geist / Geist Mono, Schibsted Grotesk titles | 8px            | The same look as the website and the film: calm neutral surfaces (neutral grays in dark, not blue-leaning ones), precise hairlines, flat cards with a rule edge, titles in Schibsted Grotesk. On the canvas: a 3px department-color top edge, mono field types, dashed action-blue relationships and solid handoffs with arrowheads. No page pattern and no canvas frame.                                                                                                                                                                                                                                                                                                                                                                                                    |
-| Whiteboard      | `themes/whiteboard.css`           | Atkinson Hyperlegible Next / Geist Mono | 6px                 | The planning board. The page is a white board with a faint 24px marker grid inside an aluminium frame; the same frame surrounds the canvas and each dialog. Marker weights everywhere: bold type, 2px field and outline-button edges, a rounded marker underline under the page title, open tabs with a 4px marker underline. Edgeless raised cards. On the canvas: taped department frames, frameless modules in their department's pastel tint, bold round-capped marker lines. Dark is a slate chalkboard.  |
+| Whiteboard      | `themes/whiteboard.css`           | Atkinson Hyperlegible Next / Geist Mono | 6px                 | The planning board. The page is a soft grey board with a faint 24px marker grid inside an aluminium frame; the same frame surrounds the canvas and each dialog. Marker weights everywhere: bold type, 2px field and outline-button edges, a rounded marker underline under the page title, open tabs with a 4px marker underline. Edgeless raised cards. On the canvas: taped department frames, frameless modules in their department's pastel tint, bold round-capped marker lines. Dark is a slate chalkboard.  |
 | Triplicate      | `themes/triplicate.css`           | Archivo (width axis) / Geist Mono       | 2px                 | The carbon-copy business form. The page is ruled paper; the top bar is a printed header with a double rule. Navy printed structure, ballpoint blue for what people typed, condensed tracked labels, perforated card headers and dialog tops, rubber-stamp chips, numbered ledger rows, double-ruled notices. On the canvas: each department is a tinted carbon copy, modules share their department's paper, field names are in ballpoint blue, dashed carbon relationships with solid handoffs. Dark is carbon paper. |
 | Stockroom       | `themes/stockroom.css`            | Archivo (width axis) / Martian Mono     | 2px                 | Steel shelving and kraft boxes. A flat wall-colored page, a painted steel sidebar, a top bar on a steel rail, stencilled uppercase page titles, a heavy shelf rule under card headers, label-maker tape chips, steel table-head bands, steel-topped dialogs. On the canvas: steel uprights on the frame and on each department bay, kraft module boxes with a white paper end label and a steel shelf lip.                                                                                                     |
 
@@ -348,7 +348,7 @@ Correct: The If step of a trigger with no conditions shows "Always".
 
 Wrong: "No condition filter is configured." shown twice, once in the flow and once in the summary.
 
-**The One Selection Rule.** Selection reads the same everywhere in the Sandbox: the selected row or step takes the 14% ink tint and hover the 6% tint, with no blue edge or ring. Where a selection links two panels (a trigger step and its settings), the settings section adds a thin `--ink-muted` rule. Blue stays for focus rings and primary actions.
+**The One Selection Rule.** Selection reads the same everywhere in the Sandbox: the selected row or step takes the selected ink tint (`bg-tint-selected`) and hover the hover tint (`bg-tint-hover`), with no blue edge or ring. Where a selection links two panels (a trigger step and its settings), the settings section adds a thin `--ink-muted` rule. Blue stays for focus rings and primary actions.
 
 Correct: Condition 1 in the flow is tinted, and its settings block has a thin grey rule.
 
@@ -384,7 +384,7 @@ Wrong: a private channel shows "You need access to #payroll" and a Request acces
 2. Classify each control as essential, conditional (shown only in its case), menu, or Advanced; lifecycle actions go to Advanced.
 3. Give every data-changing action its four moments: a consequence or a disabled reason before, a pending label during, the lowest visible channel after, and the error beside the control or in the open dialog.
 4. Cut every helper sentence that explains a control, repeats a fact, or restates a heading; move first-visit guidance to the empty state.
-5. Reuse the shared parts: `AdvancedSection`, `DisabledReason`, the segmented `ToggleGroup`, the Button pending label, Cancel-first dialog footers, `DialogCloseButton` for large dialogs only, and ink-tint row states (6% hover, 14% selected).
+5. Reuse the shared parts: `AdvancedSection`, `DisabledReason`, the segmented `ToggleGroup`, the Button pending label, Cancel-first dialog footers, `DialogCloseButton` for large dialogs only, and ink-tint row states (`bg-tint-hover`, `bg-tint-selected`).
 6. Apply the Still Page Rule on desktop and keep phones scrolling; give a phone a list-or-detail view with Back where a desktop shows panels side by side.
 7. Verify at 1440 and 390, light and dark, in all four looks; add one HTTP journey per criterion and a 390 sweep; measure again on the same data.
 
@@ -412,7 +412,11 @@ The palette is a set of semantic roles, not a hue list. Each look supplies its o
 ### Neutral
 
 - **Ground** (`--ground`): the page behind everything; also the stripe on alternate field rows.
-- **Surface family** (`--surface`, `--surface-raised`, `--surface-sunken`, `--surface-hover`): cards and inputs, popovers and menus, tab rails and secondary fills, and hover fills.
+- **Surface family** (`--surface`, `--surface-raised`, `--surface-sunken`, `--surface-hover`): cards and inputs, popovers and menus, tab rails and secondary fills, and menu highlights.
+- **No white in light mode** (Human Owner, 2026-11-13): no light fill is brighter than `#f9fafb`, in every look. Cards are off-white on a darker ground, popovers a step lighter than cards. A page fill (the ground, the Whiteboard board, the Stockroom wall) and the signal tints are never lighter than the card. The contrast guard (`tooling/check-theme-contrast.mjs`) enforces it.
+- **Hover and selected tints** (`--tint-hover`, `--tint-selected`): rows, list items, and quiet controls (ghost and outline buttons, toggles, icon buttons) hover with `--ink` at `--tint-hover` over whatever fill is under them (`bg-tint-hover`), and take `--tint-selected` when selected or open (`bg-tint-selected`). The shares are 10% and 18% in light (Triplicate 11% and 19%, Whiteboard 10% and 19%) and 9% and 14% in dark. A control with its own fill (an outline or secondary button, the sunken Search button, a highlighted day) takes `over-tint-hover`, which lays the tint over that fill, so it darkens a step and keeps its fill. A selected or open state uses a state variant (`aria-current`, `aria-pressed`, `aria-expanded`, `data-[state=selected]`), so it holds under the pointer. Menus highlight with `--accent`, and the sidebar with `--sidebar-accent`. In every mode each hover is at least 1.2:1 against the fill under it and each selected fill at least 1.4:1; `--ink-muted` keeps AA on them. In light mode a hover always darkens: no lighter "pearl" hover. Never hover with the sunken fill: it is a resting fill, and on the ground it is almost the same color.
+  Correct: `<li className="hover:bg-tint-hover">` (a clear step on the card, the ground, or a well).
+  Wrong: `<li className="hover:bg-muted">` (the sunken fill: about 1.09:1 on the Slate light ground, so the hover is not seen).
 - **Ink** (`--ink`, `--ink-muted`): body text and secondary text. `--ink-muted` passes AA on ground, surface, and the sunken fill in every look.
 - **Data ink** (`--data-ink`): the text that people type into an input. It is `--ink` in every look except Triplicate, where it is ballpoint blue (the pen on a printed form). Input and Textarea read it. Table cells stay `--ink` on purpose, so stored data never looks like a link.
 - **Outline button material** (`--button-edge`, `--button-ink`): the outline button's border and text. Slate uses `--rule-strong` for the edge, as on the website, and the foreground for the ink; Whiteboard uses a marker grey edge; Triplicate uses `--action` for both; Stockroom uses a `--ink-muted` edge with `--ink` text.
@@ -607,7 +611,7 @@ State strokes (selected, moving, drop target, pressed) stay heavier than idle st
 
 The canvas frame (`data-skin="canvas-frame"`) draws its look on a pointer-transparent layer above the canvas: a 4px aluminium frame with a 1px highlight (Whiteboard), a 1px ink form rule (Triplicate), or 6px steel uprights on both sides (Stockroom). Slate has no frame.
 
-The page ground (`data-skin="page"`) carries a look's surface: a white board with a 24px marker grid of 1px lines inside the same aluminium frame (Whiteboard), ruled form paper with a 1px rule every 28px (Triplicate), or a flat wall color (Stockroom). Slate keeps the plain ground.
+The page ground (`data-skin="page"`) carries a look's surface: a soft grey board (never brighter than the cards) with a 24px marker grid of 1px lines inside the same aluminium frame (Whiteboard), ruled form paper with a 1px rule every 28px (Triplicate), or a flat wall color (Stockroom). Slate keeps the plain ground.
 
 ### Named Rules
 
@@ -643,8 +647,13 @@ Motion answers what a person did; it never decorates and never makes them wait. 
 ### Navigation
 
 - **Instant swap.** A sidebar move, crumb, or link replaces the page body at once, with no view transition. A view transition makes the page body ignore clicks while it runs and makes React hold the next navigation, so rapid moves felt stuck (measured: 380–514ms per move with the old handoff, 25–27ms without).
-- **Active item.** The active section's fill is one element under the list (`data-slot="sidebar-active-indicator"`) that moves to the active link over `--motion-base` and follows groups as they open and close. It stays under the labels and inside the sidebar's scroll clipping.
+- **Active item.** A group's pages hang on a 1px guide line (`--sidebar-border`) that turns into the last page, as a tree line does. The current page is its label in `--action-text` at weight 600, with no fill and no bar; a closed group shows that ink on its own row, and a current top-level row on its label. The collapsed rail keeps its fill (owner, 2026-11-13).
 - **Groups and panels.** Sidebar groups open and close by height over `--motion-base`, with the chevron turning; the sidebar collapses over `--motion-base`; the phone menu sheet enters over `--motion-slow` and leaves over `--motion-base`.
+- **Menus, popovers, pickers and tooltips** (Human Owner, 2026-11-13). They grow from their trigger (Base UI's `--transform-origin`), starting clear at 95%, over `--motion-overlay` (`--motion-base` held to 150 to 250ms) with `--ease-out`. They leave toward the trigger 20% faster with `--ease-in`. A keyboard open, an Escape close and a focus-opened tooltip are instant, as Base UI marks them, so focus moves at once; a tooltip leaves at once. One `TooltipProvider` in the root layout groups every tooltip: the first waits 600ms, and the next one under the pointer appears at once. The `overlay-motion` utility in `globals.css` carries this; no bounce, and none under Reduce motion.
+- **Segmented filters.** One raised pill per group moves to the chosen option over `--motion-base` with `--ease-in-out`: a move, not an arrival. It is Motion's shared layout (`layoutId`). Under Reduce motion it jumps.
+- **Motion library.** Use Motion (`motion`) only where CSS cannot do the job: shared layout, crossfades between states, and drag physics. Render `m` components inside `MotionScope` (`components/motion-scope.tsx`), which carries Motion's features and follows Reduce motion: the Appearance switch forces it, otherwise the device decides. Load a Motion component lazily from a shared primitive, so a page that does not show one loads no Motion. The cold Comms budget (`comms-js-budget.spec.ts`) checks this.
+  Correct: `const MotionSegmentedPill = React.lazy(() => import("./segmented-pill"))` with the same pill, still, as the Suspense fallback.
+  Wrong: `import * as m from "motion/react-m"` at the top of `toggle-group.tsx`, so the Comms thread filter (no pill) loads Motion too.
 - **Signatures.** Each look's title signature plays once when Publish succeeds (`data-signature="play"` on the Sandbox page title), never on load or navigation.
 
 ### Loading
@@ -661,7 +670,7 @@ Motion answers what a person did; it never decorates and never makes them wait. 
 
 **The No Choreography Rule.** Never animate a navigation. Motion belongs to the element a person acted on or to the state that changed, and it never blocks the next click.
 
-Correct: the sidebar fill glides to the clicked item while the new page body is already in place.
+Correct: the clicked page's label turns `--action-text` while the new page body is already in place.
 
 Wrong: wrapping the page body in a `ViewTransition` so every sidebar click slides the page.
 
@@ -673,7 +682,7 @@ Appearance has a **Reduce motion** switch saved to the person's account and cach
 
 Correct: under reduced motion, the sidebar fill jumps to the new item.
 
-Wrong: hiding the active fill under reduced motion, so a move gives no sign of where you are.
+Wrong: dropping the current page's ink under reduced motion, so a move gives no sign of where you are.
 
 ## Components
 
@@ -683,9 +692,21 @@ Quiet and direct. A button is text first, with a 16px icon when it helps.
 
 - **Shape:** gently curved corners (large radius).
 - **Primary:** `--action` fill, `--action-ink` text, 14px weight 500, 36px tall with 16px sides. Small is 32px with 12px sides and 12px text; large is 44px.
-- **Hover / Focus:** the primary and destructive fills drop to 90% opacity; secondary fades to 80%; outline and ghost take the sunken fill. Focus is a 2px `--focus` outline with a 2px offset in every look. In the Sandbox, a press adds a 10% action wash and a 1px inner outline, and color changes take 120ms.
+- **Hover / Focus:** the primary and destructive fills drop to 90% opacity; secondary, outline and ghost take the hover tint (`--tint-hover`) over their own fill. Focus is a 2px `--focus` outline with a 2px offset in every look. In the Sandbox, a press adds a 10% action wash and a 1px inner outline, and color changes take 120ms.
 - **Secondary / Outline / Ghost / Destructive:** secondary on the sunken fill; outline on the card surface with a `--button-edge` border and `--button-ink` text; ghost with no fill; destructive on `--danger`. Disabled is 50% opacity with no pointer events.
 - **Looks:** Whiteboard sets every button at weight 700 and the outline edge at 2px. Triplicate sets weight 650 with 0.01em tracking and draws the outline button as a 1.5px pen rule in `--action`. Stockroom condenses buttons to 88% width at weight 700, with a `--ink-muted` outline edge.
+
+**The Primary Button Rules** (Human Owner, 2026-11-14). Every primary and destructive button:
+
+1. **Tap area.** On a touch screen (`pointer: coarse`) a transparent `::after` makes the target at least 44px tall and 4px wider on each side; the button itself keeps its size (`ui/button.tsx`). A mouse gets no `::after`: it would reach past the button and widen a scrolling list. Below 1280px the 44px floor holds anyway.
+2. **Says the action.** The label is a verb and its object, at most four words, named by the result: "Save view", "Delete file forever", "Send invitation". Never a bare "OK", "Done", "Continue", "Submit", "Save", "Yes" or "Confirm". "Try again" stays on error recovery.
+3. **Cancel is ghost.** A Cancel beside a primary is the ghost variant, first in the footer, so the eye lands on the primary.
+4. **Busy keeps its place.** A running action uses `pending` with `pendingLabel` ("Saving…"): the button keeps its width and color, says it is busy (`aria-busy`), and ignores every click, also a form's Enter submit. Busy outranks `disabled`, and busy is never a disabled reason.
+5. **Visible focus.** Keyboard focus is a 2px `--focus` outline with a 2px offset; a busy button keeps the focus unless its form disables a whole fieldset.
+6. **Disabled says why.** A primary that cannot run is wrapped in `DisabledReason` with one short sentence that says what is missing: "No changes to save.", "Choose a record to link first." A wait reads "Wait for … to load." or "Wait for … to finish." The reason is the button's accessible description and opens on hover, focus and tap. A blocked button stays focusable and fades only its fill and text, so its focus ring keeps full strength. Dismiss buttons beside a primary ("Cancel", "Keep editing", "Stay", "Back to Build") are ghost.
+
+Correct: `<DisabledReason stable reason={count ? null : "No changes to save."}><Button pending={saving} pendingLabel="Saving…">Save profile</Button></DisabledReason>`
+Wrong: `<Button disabled={saving || !count}>{saving ? "Saving…" : "Save"}</Button>` (the width jumps, the reason is hidden, and "Save" names no object).
 
 ### Chips (Badge)
 
@@ -706,7 +727,7 @@ Quiet and direct. A button is text first, with a 16px icon when it helps.
 ### Inputs / Fields
 
 - **Style:** `--surface` fill, `--control-edge` border, large radius, 40px tall, 12px sides, 14px text. Typed text is `--data-ink` (ballpoint blue in Triplicate, ink elsewhere). The caret is `--action`; placeholders are muted ink at 80%.
-- **Focus:** the border turns `--action` and a 2px `--focus` outline sits 1px outside.
+- **Focus:** the border turns `--action` and a 2px `--focus` outline sits 1px outside, for keyboard focus only. After a pointer press a field shows no focus mark; Tab shows it again (`lib/focus-source.ts`; owner, 2026-11-13). Forced colors keep the system outline.
 - **Labels:** FieldLabel is 14px weight 500 (`data-slot="field-label"`); each look restyles it per the type skin places.
 - **Looks:** Whiteboard draws inputs, selects, and text areas with a 2px marker edge. Triplicate keeps a 1px form box on `--surface`.
 - **Access and Sandbox:** inside `slim-ui`, fields follow the slim controls below.
@@ -715,8 +736,8 @@ Quiet and direct. A button is text first, with a 16px icon when it helps.
 
 Access tested a slimmer, quieter control set before any other page (owner, 2026-10-23); the Sandbox adopted it next (S1, `docs/specs/sandbox-relayout.md`), then Manage (MD1, `docs/specs/manage-relayout.md`). On 2026-10-25 the owner made the slim grammar the product identity (`docs/specs/profile-sidebar-relayout.md`): slim 32px controls from 1280px, 40px one-line rows, label-left rows, still pages, quiet actions with one primary action, framed dialogs, and 44px targets on phones. The shell, Profile, and Account settings carry it now. A page without its relayout keeps its old layout inside the slim shell, and its pass adopts the grammar. The controls apply only inside the `slim-ui` class: on the Access page root, the Sandbox control areas, the Manage page, the Profile details, and the Account settings panel, and on the content of every sheet, dialog, popover, and menu of those pages, because they render in portals. The shell rows carry their own slim sizes instead of the class (Navigation). The canvas toolbar takes the slim sizes (S16); the canvas drawing itself (nodes, lines, labels, Key content, and minimap) never carries the class. `access-ui` keeps only the Access page layout.
 
-- **Sizes, every look, from 1280px:** fields, selects, search, and input groups are 32px tall with 10px sides; buttons are 32px with 12px sides, icon buttons 32×32; segmented items 28px; checkboxes 14px; switches 28×16; field labels 12px weight 500; sheet tabs 32px. Text stays 14px. The primary button differs by its fill, not its height. Below 1280px nothing changes and the 44px floor holds.
-- **Slate skin (no `data-theme`):** a field is a sunken well (`--surface-sunken`) with clear sides and top and a 1px bottom rule, small top corners and a square bottom. The rule is the field's 3:1 edge: `--control-edge` in dark, `--ink-muted` in light (where `--control-edge` reaches only 2.98:1 against the well). Hover shows the full edge and keeps the rule. Focus draws a 2px `--action` rule (the rule plus an inset line) and the standard focus outline. An error draws the rule in `--danger`, with the message under the field. Disabled fields drop the fill and dash the rule. Read-only values are plain text, never a disabled field. Outline buttons become quiet buttons: no border, the sunken fill, the hover fill on hover.
+- **Sizes, every look, from 1280px:** fields, selects, search, and input groups are 32px tall with 10px sides; buttons are 32px with 12px sides, icon buttons 32×32; tabs, segmented items, and every other pill option 28px; checkboxes 14px; switches 28×16; field labels 12px weight 500. Text stays 14px. The primary button differs by its fill, not its height. Below 1280px nothing changes and the 44px floor holds.
+- **Slate skin (no `data-theme`):** a field is a sunken well (`--surface-sunken`) with clear sides and top and a 1px bottom rule, small top corners and a square bottom. The rule is the field's 3:1 edge: `--control-edge` in dark, `--ink-muted` in light (where `--control-edge` reaches only 2.98:1 against the well). Hover shows the full edge and keeps the rule. Keyboard focus draws a 2px `--action` rule (the rule plus an inset line) and the standard focus outline; after a pointer press the field keeps its resting look. An error draws the rule in `--danger`, with the message under the field. Disabled fields drop the fill and dash the rule. Read-only values are plain text, never a disabled field. Outline buttons become quiet buttons: no border, the sunken fill, the hover fill on hover.
 - **Other looks:** Whiteboard, Triplicate, and Stockroom keep their own field and button skins at the slim sizes.
 - **On a sunken panel:** a field inside an inline panel on the sunken fill (for example Add to group) takes the surface as its well (`--slim-well: var(--surface)`, set by a data attribute on the panel), so the well still steps away from its ground. The bottom rule stays the 3:1 edge.
 - **Advanced in a sheet:** the closed Advanced header names what is inside instead of a set count when the block holds actions, not settings: "Advanced · Disable, Delete", "Advanced · Delete group".
@@ -726,9 +747,16 @@ Correct: the person sheet shows "Job title" in the muted label column and "Servi
 
 Wrong: a disabled, boxed "Email" field that the person cannot change (it is read-only, so it is plain text), or a 44px bordered box at 1440px inside Access.
 
-### Tabs
+### Tabs and every other pill
 
-The open-tab mark is one element, `data-slot="tabs-indicator"` (Base UI's tab indicator), that glides between tabs over `--motion-base`; the open tab itself only changes its ink and weight. Each look styles the indicator:
+**The One Pill Rule** (Human Owner, 2026-11-14). Every rail of choices looks like the tabs: tabs, link tabs (Records and Reports, the Boards views), segmented filters (also Active and Resolved threads in Comms, All and Unread notifications, and Keep current or Use draft in Access conflicts), the phone stage switcher on a Kanban board, and Color mode. Counts in an option stay `--ink-muted` at normal weight. Focus draws a 2px outline inside the option's edge. They share one rail, one pill, one chosen label (`--action-text`, weight 600), and one option height (28px from 1280px, 44px below), from `components/ui/pill.ts`. A rail, pill or option that is not a Tabs part carries `data-pill-rail`, `data-pill` or `data-pill-option`, so each look below restyles it with its tabs.
+
+A rail or toolbar that scrolls sideways on a narrow screen sets `overflow-y-hidden` with its `overflow-x-auto`: alone, `overflow-x-auto` also scrolls up and down, and a 1px rounding then shows a vertical scrollbar (Human Owner, 2026-11-14; `tests/isolated/shell/sideways-strips.spec.ts` checks the source).
+
+Correct: a new view switch uses `pillRailClass` and `pillClass`, and its chosen option shows the shared pill.
+Wrong: a switch with its own fill and ring (`bg-card shadow-[0_0_0_1px_var(--rule)]`), or a darker outline on its pill.
+
+The open-tab mark is one element, `data-slot="tabs-indicator"` (Base UI's tab indicator), that glides between tabs over `--motion-base`; the open tab itself only changes its ink and weight. A segmented filter's pill glides the same way (see Motion). Each look styles the indicator and every pill:
 
 - **Slate:** a sunken rail (`--surface-sunken`, 4px pad, inset `--rule` hairline); the indicator is the lifted `--surface-raised` pill with an inset `--rule` hairline, and the open tab takes `--action-text`.
 - **Whiteboard:** no rail (transparent, no pad, 4px gaps). Tabs have a 6px top-only corner; the indicator is a 4px inset `--action` marker stroke, and the open tab is weight 700.
@@ -832,7 +860,7 @@ The sidebar holds workspaces and their sections. From 1280px each workspace row 
 
 The sidebar header holds the 24px organization mark (a link to the workspace home), the organization menu with the full name (it wraps to two lines before it truncates; 40px tall from 1280px), and the collapse control, a quiet `--sidebar-muted` icon button ("Collapse sidebar"), 32px from 1280px. In the rail the mark is the organization menu trigger ("Organization: <name>"), and the menu's first item is "Workspace home". The footer, above a `--sidebar-border` rule, holds OpenComms with its unread count, then the account row: a 24px avatar, the name, and the role as a muted second line that is also the row's `aria-description`. The account row is a link to `/profile`, named "Your profile, <name>", 40px tall from 1280px (48px in the drawer), and current only on the person's own profile.
 
-The current section is `--action-text` at weight 600 on the gliding `--sidebar-accent` fill (Motion, Active item). OpenComms and the account row, when current, take the same ink on their own `--sidebar-accent` fill. The active workspace row keeps its own `--sidebar-accent` fill in sidebar ink. The sidebar's scroll area follows the Quiet Scrollbar Rule with a `--sidebar-muted` thumb.
+The current section is `--action-text` at weight 600 on its group's guide line, with no fill (Motion, Active item). OpenComms and the account row, when current, take the same ink, with no fill. The active workspace row keeps its own `--sidebar-accent` fill in sidebar ink. The sidebar's scroll area follows the Quiet Scrollbar Rule with a `--sidebar-muted` thumb.
 
 The header stays 56px. From 1280px its controls are 32px (Search, the notification bell, Help, and the account menu); below 1280px they are 44px. Search is a quiet link to Platform search, named "Search workspace": from 640px it shows the word "Search" on the sunken fill, and below 640px it is an icon. The account menu holds Your profile, Account settings, and Sign out. The breadcrumbs read Workspace › workspace › section.
 

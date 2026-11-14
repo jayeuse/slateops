@@ -168,7 +168,7 @@ test("session pages expose later devices and retain global revocation", async ({
     .click();
   await page
     .getByRole("alertdialog")
-    .getByRole("button", { name: "Sign out", exact: true })
+    .getByRole("button", { name: "Sign out everywhere", exact: true })
     .click();
   await expect(
     sheet.getByText("No active sessions.", { exact: true }),

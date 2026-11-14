@@ -923,7 +923,7 @@ test("FX-S3-3 a file name with & # and markup stays one search value and shows a
 
 // PR3 screen review (docs/specs/ux-friction-pass.md DR-4.2, DR-4.6, DR-4.8).
 
-test("FX-SR-1 the field row shows a 2 px focus line inside the panel while the field has focus", async ({
+test("FX-SR-1 the field shows no focus ring or line in the panel; Close keeps its ring, and forced colors keep the field's outline", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -931,39 +931,27 @@ test("FX-SR-1 the field row shows a 2 px focus line inside the panel while the f
   await openStart(page);
   await searchButton(page).click();
   await expect(field(page)).toBeFocused();
-  const line = () =>
+  const marks = () =>
     field(page).evaluate((input) => {
       const row = input.parentElement as HTMLElement;
-      const after = getComputedStyle(row, "::after");
-      const probe = document.createElement("span");
-      probe.style.color = "var(--ring)";
-      row.append(probe);
-      const ring = getComputedStyle(probe).color;
-      probe.remove();
-      const panel = row.closest('[role="dialog"]') as HTMLElement;
       return {
-        color: after.backgroundColor,
-        ring,
-        height: after.height,
-        bottom: after.bottom,
-        inside:
-          row.getBoundingClientRect().bottom <=
-          panel.getBoundingClientRect().bottom,
+        outline: getComputedStyle(input).outlineStyle,
+        line: getComputedStyle(row, "::after").backgroundColor,
       };
     });
-  // The line: the focus colour, 2 px high, at the bottom of the row, inside
-  // the panel.
-  const focused = await line();
-  expect(focused.color).toBe(focused.ring);
-  expect(focused.height).toBe("2px");
-  expect(focused.bottom).toBe("0px");
-  expect(focused.inside).toBe(true);
-  // Close has its own focus ring; the line shows only for the field.
+  // Focus stays in the field while the panel is open (the arrow keys move
+  // the active row), so the caret marks it: no outline, no line under the row
+  // (Human Owner, 2026-11-13; DR-4.2).
+  expect(await marks()).toEqual({ outline: "none", line: "rgba(0, 0, 0, 0)" });
+  // Close keeps its own focus ring.
   await page.keyboard.press("Tab");
-  await expect(
-    panel(page).getByRole("button", { name: "Close", exact: true }),
-  ).toBeFocused();
-  expect((await line()).color).toBe("rgba(0, 0, 0, 0)");
+  const close = panel(page).getByRole("button", { name: "Close", exact: true });
+  await expect(close).toBeFocused();
+  await expect(close).toHaveCSS("outline-style", "solid");
+  // Forced colors (high contrast) keep the system focus outline on the field.
+  await page.emulateMedia({ forcedColors: "active" });
+  await field(page).focus();
+  expect((await marks()).outline).not.toBe("none");
 });
 
 test("FX-SR-2 pointer hover moves the active row, so only one row is highlighted", async ({

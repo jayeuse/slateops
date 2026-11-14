@@ -589,7 +589,7 @@ export function FieldSettings({
             >
               <Button
                 size="sm"
-                variant="outline"
+                variant="ghost"
                 disabled={pending || saving}
                 onClick={() => {
                   setDraft(draftForField(field));
@@ -598,25 +598,33 @@ export function FieldSettings({
               >
                 Cancel
               </Button>
-              <Button
-                size="sm"
-                pending={saving}
-                pendingLabel="Saving…"
-                disabled={pending}
-                onClick={async () => {
-                  const result = buildField(field, draft);
-                  if (typeof result === "string") {
-                    setError(result);
-                    return;
-                  }
-                  setSaving(true);
-                  const saved = await onSave(result);
-                  setSaving(false);
-                  if (!saved.ok) setError(saved.error, saved.reference);
-                }}
+              {/* TASK-0061 rule 6: another running change is its reason. */}
+              <DisabledReason
+                stable
+                reason={
+                  !saving && pending ? "Finish the current change first." : null
+                }
               >
-                Save field changes
-              </Button>
+                <Button
+                  size="sm"
+                  pending={saving}
+                  pendingLabel="Saving…"
+                  disabled={pending}
+                  onClick={async () => {
+                    const result = buildField(field, draft);
+                    if (typeof result === "string") {
+                      setError(result);
+                      return;
+                    }
+                    setSaving(true);
+                    const saved = await onSave(result);
+                    setSaving(false);
+                    if (!saved.ok) setError(saved.error, saved.reference);
+                  }}
+                >
+                  Save field changes
+                </Button>
+              </DisabledReason>
             </div>
           ) : null}
         </div>
@@ -857,7 +865,7 @@ export function FieldRow({
         if (next) setOpened(true);
       }}
     >
-      <CollapsibleTrigger className="hover:bg-surface-hover focus-visible:outline-ring group-data-[selected=true]:bg-accent flex min-h-11 w-full items-center gap-2.5 rounded-sm px-2 text-left text-sm outline-none focus-visible:outline-2 focus-visible:outline-offset-2 xl:min-h-9">
+      <CollapsibleTrigger className="hover:bg-tint-hover focus-visible:outline-ring group-data-[selected=true]:bg-tint-selected group-data-[selected=true]:hover:bg-tint-selected flex min-h-11 w-full items-center gap-2.5 rounded-sm px-2 text-left text-sm outline-none focus-visible:outline-2 focus-visible:outline-offset-2 xl:min-h-9">
         <span
           aria-hidden="true"
           className={cn(

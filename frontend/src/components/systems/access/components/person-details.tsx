@@ -660,7 +660,7 @@ export function PersonDetails({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               className="min-h-11"
               onClick={() => setConfirmOwnRole(false)}
             >

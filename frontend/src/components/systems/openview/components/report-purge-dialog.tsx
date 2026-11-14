@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Dialog,
   DialogContent,
@@ -210,7 +211,7 @@ export function ReportPurgeDialog({
           <DialogFooter className="mt-0">
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               className="min-h-11"
               disabled={pending}
               onClick={onClose}
@@ -218,17 +219,30 @@ export function ReportPurgeDialog({
               Cancel
             </Button>
             {preview && preview.impact.blockers.length === 0 ? (
-              <Button
-                type="submit"
-                form="report-purge-form"
-                variant="destructive"
-                className="min-h-11"
-                disabled={
-                  pending || name !== preview.confirmation_name || !password
+              <DisabledReason
+                stable
+                reason={
+                  pending
+                    ? null
+                    : name !== preview.confirmation_name
+                      ? "Type the report name to confirm."
+                      : !password
+                        ? "Enter your administrator password."
+                        : null
                 }
               >
-                {pending ? "Deleting…" : "Delete forever"}
-              </Button>
+                <Button
+                  type="submit"
+                  form="report-purge-form"
+                  variant="destructive"
+                  className="min-h-11"
+                  disabled={name !== preview.confirmation_name || !password}
+                  pending={pending}
+                  pendingLabel="Deleting…"
+                >
+                  Delete report forever
+                </Button>
+              </DisabledReason>
             ) : (
               <Button
                 type="button"

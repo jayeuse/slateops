@@ -47,6 +47,7 @@ export function CommsThreadList({
   return (
     <>
       <ToggleGroup
+        variant="segmented"
         className={filterClassName}
         value={[filter]}
         onValueChange={(values) => {

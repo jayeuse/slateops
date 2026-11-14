@@ -1,4 +1,4 @@
-import { expect, test } from "./helpers/test";
+import { expect, heldResponse, test, type Page } from "./helpers/test";
 import {
   calendarHref,
   installCalendarApi,
@@ -8,6 +8,68 @@ import {
 } from "./helpers/board-calendar-api";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
+
+/** The Quotes module and its two date fields, for Add record source. */
+async function routeQuotesModule(page: Page): Promise<void> {
+  await page.route("**/api/views/data-sources?**", (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: quotesModuleId,
+            name: "Quotes",
+            department_id: "00000000-0000-4000-8000-000000000a05",
+            title_field_id: "00000000-0000-4000-8000-000000000a07",
+          },
+        ],
+        pagination: {
+          limit: 100,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+          total_is_capped: false,
+        },
+      },
+    }),
+  );
+  await page.route(
+    `**/api/views/data-sources/${quotesModuleId}/fields?**`,
+    (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            {
+              id: validUntilFieldId,
+              module_id: quotesModuleId,
+              name: "Valid until",
+              type: "date",
+              required: false,
+              position: 1,
+              config: {},
+            },
+            {
+              id: "00000000-0000-4000-8000-000000000a11",
+              module_id: quotesModuleId,
+              name: "Sent on",
+              type: "datetime",
+              required: false,
+              position: 2,
+              config: {},
+            },
+          ],
+          pagination: {
+            limit: 100,
+            offset: 0,
+            count: 2,
+            total: 2,
+            has_more: false,
+            total_is_capped: false,
+          },
+        },
+      }),
+  );
+}
 
 test("record sources and due cards show on their dates, a hidden calendar stays hidden after a reload", async ({
   page,
@@ -71,64 +133,7 @@ test("a manager adds a record source, reads the limit as a sentence, opens undat
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const api = await installCalendarApi(page);
-  await page.route("**/api/views/data-sources?**", (route) =>
-    route.fulfill({
-      json: {
-        items: [
-          {
-            id: quotesModuleId,
-            name: "Quotes",
-            department_id: "00000000-0000-4000-8000-000000000a05",
-            title_field_id: "00000000-0000-4000-8000-000000000a07",
-          },
-        ],
-        pagination: {
-          limit: 100,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-          total_is_capped: false,
-        },
-      },
-    }),
-  );
-  await page.route(
-    `**/api/views/data-sources/${quotesModuleId}/fields?**`,
-    (route) =>
-      route.fulfill({
-        json: {
-          items: [
-            {
-              id: validUntilFieldId,
-              module_id: quotesModuleId,
-              name: "Valid until",
-              type: "date",
-              required: false,
-              position: 1,
-              config: {},
-            },
-            {
-              id: "00000000-0000-4000-8000-000000000a11",
-              module_id: quotesModuleId,
-              name: "Sent on",
-              type: "datetime",
-              required: false,
-              position: 2,
-              config: {},
-            },
-          ],
-          pagination: {
-            limit: 100,
-            offset: 0,
-            count: 2,
-            total: 2,
-            has_more: false,
-            total_is_capped: false,
-          },
-        },
-      }),
-  );
+  await routeQuotesModule(page);
   await page.goto(calendarHref());
   const rail = page.getByRole("complementary", { name: "Calendars" });
   await rail.getByRole("button", { name: "Add record source" }).click();
@@ -248,4 +253,71 @@ test("a source the viewer cannot read stays hidden, with no placeholder and no r
   ).toHaveCount(0);
   await expect(page.getByText("Quotes")).toHaveCount(0);
   expect(api.recordReads).toEqual([]);
+});
+
+// TASK-0061 rule 6 (Human Owner, 2026-11-14): a primary button that waits
+// says why, as its accessible description.
+test("Add source says why it waits until a module and a date field are chosen", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installCalendarApi(page);
+  await routeQuotesModule(page);
+  await page.goto(calendarHref());
+  const rail = page.getByRole("complementary", { name: "Calendars" });
+  await rail.getByRole("button", { name: "Add record source" }).click();
+  const dialog = page.getByRole("dialog", { name: "Add record source" });
+  const add = dialog.getByRole("button", { name: "Add source" });
+  await expect(add).toHaveAccessibleDescription("Choose a module first.");
+  await dialog.getByLabel("Module").selectOption(quotesModuleId);
+  await expect(add).toHaveAccessibleDescription("Choose a date field first.");
+  await dialog.getByLabel("Date field").selectOption({ label: "Sent on" });
+  await expect(add).toHaveAccessibleDescription("");
+  await expect(add).toBeEnabled();
+});
+
+// TASK-0061 rule 4 (Human Owner, 2026-11-14): a busy primary button keeps its
+// width and its focus, shows its pendingLabel, and ignores another press.
+test("Add source keeps its width and focus and sends one request while it adds", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const api = await installCalendarApi(page);
+  await routeQuotesModule(page);
+  const hold = heldResponse();
+  await page.route("**/api/boards/*/calendar-sources", async (route) => {
+    if (route.request().method() === "POST") {
+      hold.enter();
+      await hold.released;
+    }
+    await route.fallback();
+  });
+  await page.goto(calendarHref());
+  const rail = page.getByRole("complementary", { name: "Calendars" });
+  await rail.getByRole("button", { name: "Add record source" }).click();
+  const dialog = page.getByRole("dialog", { name: "Add record source" });
+  await dialog.getByLabel("Module").selectOption(quotesModuleId);
+  await dialog.getByLabel("Date field").selectOption({ label: "Sent on" });
+  const add = dialog.getByRole("button", { name: "Add source" });
+  await expect(add).toBeEnabled();
+  const idle = await add.boundingBox();
+  expect(idle).not.toBeNull();
+
+  try {
+    // The keyboard press keeps the test free of engine focus-on-click rules.
+    await add.focus();
+    await page.keyboard.press("Enter");
+    await hold.entered;
+    const busy = dialog.getByRole("button", { name: "Adding…", exact: true });
+    await expect(busy).toHaveAttribute("aria-busy", "true");
+    await expect(busy).toBeFocused();
+    expect((await busy.boundingBox())?.width).toBe(idle?.width);
+    await page.keyboard.press("Enter");
+  } finally {
+    hold.release();
+  }
+  await expect(dialog).toBeHidden();
+  expect(
+    api.sourceWrites.filter(({ method }) => method === "POST"),
+  ).toHaveLength(1);
 });

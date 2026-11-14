@@ -434,7 +434,7 @@ const TimelineRow = memo(function TimelineRow({
         id={domId}
         highlighted={highlightedId === message.id}
         className={cn(
-          "hover:bg-muted/40 px-3 max-sm:pr-14",
+          "hover:bg-tint-hover px-3 max-sm:pr-14",
           preferences.density === "compact" ? "py-0.5" : "py-1.5",
           !grouped && "mt-3",
         )}
@@ -759,7 +759,7 @@ const TimelineRow = memo(function TimelineRow({
                       <button
                         type="button"
                         onClick={() => onOpenRecord?.(message.recordId!)}
-                        className="hover:bg-muted focus-visible:outline-ring flex min-h-11 min-w-0 flex-1 flex-col items-start gap-1 px-3 py-2 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 sm:flex-row sm:items-center sm:gap-2"
+                        className="hover:bg-tint-hover focus-visible:outline-ring flex min-h-11 min-w-0 flex-1 flex-col items-start gap-1 px-3 py-2 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 sm:flex-row sm:items-center sm:gap-2"
                       >
                         <span className="sr-only">Open record: </span>
                         <span className="text-muted-foreground flex items-center gap-2 text-xs sm:shrink-0">

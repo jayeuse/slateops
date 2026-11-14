@@ -346,6 +346,156 @@ for (const [mode, tokens] of Object.entries(modes))
         `${ok ? "ok  " : "FAIL"} ${mode.padEnd(16)} ${pair}: ${ratio.toFixed(2)} (needs 3)`,
       );
   }
+// Light fills (Human Owner, 2026-11-13): no fill is white or near-white, so
+// a light page is easy on the eyes. The cap is #f9fafb's luminance.
+const LIGHT_FILLS = [
+  "background",
+  "card",
+  "popover",
+  "muted",
+  "accent",
+  "sidebar",
+  "sidebar-accent",
+  "canvas-background",
+  "canvas-dept-fill",
+  "canvas-module-fill",
+  "canvas-row-stripe",
+  "canvas-label-fill",
+  "action-tint",
+  "flow-tint",
+  "warn-tint",
+  "danger-tint",
+  ...[1, 2, 3, 4].flatMap((n) =>
+    ["band", "card", "sheet", "module", "stripe"].map((p) => `dept-${n}-${p}`),
+  ),
+];
+const FILL_CAP = 0.96;
+// Fills a look paints on its own page (the Whiteboard board, the Stockroom
+// wall). They are under the cap too, and never lighter than the card, so a
+// card still reads as the lighter sheet on the page.
+const LOOK_PAGE_FILLS = ["wb-board", "sr-wall"];
+// A signal tint is a fill of its own: it is never lighter than the card.
+const SIGNAL_TINTS = ["action-tint", "flow-tint", "warn-tint", "danger-tint"];
+// Hover and selected fills (every mode): each one is a clear step from the
+// fill under it. Rows, list items and quiet controls take the ink tint
+// (`bg-tint-hover`, `bg-tint-selected`: --ink at --tint-hover or
+// --tint-selected over the base); menus take --accent and the sidebar
+// --sidebar-accent. The browser composites the translucent tint in sRGB.
+function overSrgb(ink, percent, base) {
+  const channels = (hex) =>
+    [0, 2, 4].map((i) => parseInt(hex.slice(1 + i, 3 + i), 16));
+  const [a, b] = [channels(ink), channels(base)];
+  return `#${a
+    .map((value, index) =>
+      Math.round((value * percent) / 100 + b[index] * (1 - percent / 100))
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")}`;
+}
+const percentOf = (tokens, name) => {
+  const value = resolve(tokens, name).match(/^(\d+(?:\.\d+)?)%$/);
+  if (!value) throw new Error(`Expected --${name} as a percentage`);
+  return Number(value[1]);
+};
+const HOVER_STEP = 1.2;
+const SELECTED_STEP = 1.4;
+for (const [mode, tokens] of Object.entries(modes)) {
+  const light = mode.endsWith("light");
+  const check = (ok, line) => {
+    if (!ok) failures += 1;
+    if (!ok || process.argv.includes("--verbose"))
+      console.log(`${ok ? "ok  " : "FAIL"} ${mode.padEnd(16)} ${line}`);
+  };
+  const card = resolve(tokens, "card");
+  for (const fill of light ? LIGHT_FILLS : []) {
+    const y = luminance(resolve(tokens, fill));
+    check(
+      y <= FILL_CAP,
+      `--${fill} luminance ${y.toFixed(3)} (cap ${FILL_CAP})`,
+    );
+  }
+  for (const fill of light ? ["background", ...LOOK_PAGE_FILLS] : []) {
+    if (!(fill in tokens)) continue;
+    const y = luminance(resolve(tokens, fill));
+    check(
+      y <= FILL_CAP && y <= luminance(card),
+      `--${fill} is under the cap and not lighter than --card: ${y.toFixed(3)} vs ${luminance(card).toFixed(3)}`,
+    );
+  }
+  for (const tint of light ? SIGNAL_TINTS : []) {
+    const y = luminance(resolve(tokens, tint));
+    check(
+      y <= luminance(card),
+      `--${tint} is not lighter than --card: ${y.toFixed(3)} vs ${luminance(card).toFixed(3)}`,
+    );
+  }
+  const ink = resolve(tokens, "ink");
+  const hover = percentOf(tokens, "tint-hover");
+  const selected = percentOf(tokens, "tint-selected");
+  const steps = [
+    [
+      "--accent on --popover (menu highlight)",
+      resolve(tokens, "accent"),
+      resolve(tokens, "popover"),
+      HOVER_STEP,
+    ],
+    [
+      "--sidebar-accent on --sidebar (navigation hover)",
+      resolve(tokens, "sidebar-accent"),
+      resolve(tokens, "sidebar"),
+      HOVER_STEP,
+    ],
+    ...["card", "background", "muted", "popover", "sidebar"].flatMap((base) => [
+      [
+        `tint-hover over --${base}`,
+        overSrgb(ink, hover, resolve(tokens, base)),
+        resolve(tokens, base),
+        HOVER_STEP,
+      ],
+      [
+        `tint-selected over --${base}`,
+        overSrgb(ink, selected, resolve(tokens, base)),
+        resolve(tokens, base),
+        SELECTED_STEP,
+      ],
+    ]),
+  ];
+  for (const [label, fill, base, minimum] of steps) {
+    const ratio = contrast(fill, base);
+    check(ratio >= minimum, `${label}: ${ratio.toFixed(2)} (needs ${minimum})`);
+    // In light mode a hover darkens; a lighter "pearl" hover reads as a glare.
+    if (light)
+      check(
+        luminance(fill) < luminance(base),
+        `${label} is darker than its base`,
+      );
+  }
+  // Muted words stay AA on every hovered or selected fill.
+  for (const base of ["card", "background", "muted"])
+    for (const [name, percent] of [
+      ["tint-hover", hover],
+      ["tint-selected", selected],
+    ]) {
+      const ratio = contrast(
+        resolve(tokens, "muted-foreground"),
+        overSrgb(ink, percent, resolve(tokens, base)),
+      );
+      check(
+        ratio >= 4.5,
+        `--muted-foreground on ${name} over --${base}: ${ratio.toFixed(2)} (needs 4.5)`,
+      );
+    }
+  for (const fill of ["accent", "sidebar-accent"]) {
+    const fg = fill === "accent" ? "muted-foreground" : "sidebar-muted";
+    const ratio = contrast(resolve(tokens, fg), resolve(tokens, fill));
+    check(
+      ratio >= 4.5,
+      `--${fg} on --${fill}: ${ratio.toFixed(2)} (needs 4.5)`,
+    );
+  }
+}
+
 if (process.argv.includes("--verbose"))
   for (const { ratio, mode, pair } of lowest.values())
     console.log(`lowest ${pair}: ${ratio.toFixed(2)} (${mode})`);

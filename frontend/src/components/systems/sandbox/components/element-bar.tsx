@@ -73,10 +73,8 @@ export function ElementBarControls({
       aria-haspopup="dialog"
       aria-expanded={open === action}
       className={cn(
-        "gap-1.5 px-2.5 text-[13px] font-medium",
+        "aria-expanded:bg-tint-selected gap-1.5 px-2.5 text-[13px] font-medium",
         pinned ? "h-11 px-3" : "h-11 xl:h-7",
-        open === action &&
-          "bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]",
       )}
       onClick={(event: MouseEvent<HTMLButtonElement>) =>
         run(event.currentTarget)

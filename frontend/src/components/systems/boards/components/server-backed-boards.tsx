@@ -513,6 +513,7 @@ function ServerBackedBoardsContent() {
           description="Your unsaved event or post changes will be lost."
           action="Discard changes"
           disabled={currentDraftState?.pending ?? false}
+          disabledReason="Wait for the save to finish."
           onCancel={() => setPendingNavigation(null)}
           onConfirm={() => {
             const resume = pendingNavigation;
@@ -749,6 +750,7 @@ function ServerBackedBoardsContent() {
         }
         action="Discard changes"
         disabled={currentDraftState?.pending ?? false}
+        disabledReason="Wait for the save to finish."
         onCancel={() => setPendingNavigation(null)}
         onConfirm={() => {
           const resume = pendingNavigation;

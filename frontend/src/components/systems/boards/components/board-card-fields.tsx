@@ -427,7 +427,8 @@ export function DescriptionField({ context }: { context: CardFieldContext }) {
               <Button
                 type="button"
                 className={control}
-                disabled={context.model.saving === "description"}
+                pending={context.model.saving === "description"}
+                pendingLabel="Saving…"
                 onClick={() =>
                   void context.model
                     .save(
@@ -440,13 +441,11 @@ export function DescriptionField({ context }: { context: CardFieldContext }) {
                     })
                 }
               >
-                {context.model.saving === "description"
-                  ? "Saving…"
-                  : "Save description"}
+                Save description
               </Button>
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 className={control}
                 onClick={() => setDraft(null)}
               >

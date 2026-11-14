@@ -3,6 +3,7 @@ import { useId, useState, type ReactNode } from "react";
 import { User, Users } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   NativeSelect,
   NativeSelectOption,
@@ -487,14 +488,24 @@ function GiveAccessPanel({
       )}
       <ErrorReference id={errorFailure?.reference} className="mt-0" />
       <div className="flex flex-wrap gap-2">
-        <Action
-          variant="default"
-          disabled={!chosen || pending}
-          aria-describedby={error ? errorId : undefined}
-          onClick={() => void give()}
+        {/* TASK-0061 rules 4 and 6. */}
+        <DisabledReason
+          stable
+          reason={
+            !pending && !chosen ? "Choose a group or person first." : null
+          }
         >
-          {pending ? "Giving access…" : "Give access"}
-        </Action>
+          <Action
+            variant="default"
+            pending={pending}
+            pendingLabel="Giving access…"
+            disabled={!chosen}
+            aria-describedby={error ? errorId : undefined}
+            onClick={() => void give()}
+          >
+            Give access
+          </Action>
+        </DisabledReason>
         <Action variant="ghost" onClick={onClose} disabled={pending}>
           Cancel
         </Action>

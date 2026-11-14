@@ -7,6 +7,7 @@ import { Alert } from "@/components/ui/alert";
 import { AdvancedSection } from "@/components/ui/advanced-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -827,7 +828,7 @@ export function SecurityPolicyForm({
             </span>
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               className="min-h-11"
               onClick={onCancel}
             >
@@ -844,15 +845,20 @@ export function SecurityPolicyForm({
                 Discard changes
               </Button>
             ) : null}
-            <Button
-              type="submit"
-              className="min-h-11"
-              disabled={!dirty}
-              pending={saving}
-              pendingLabel="Saving…"
+            <DisabledReason
+              stable
+              reason={!dirty && !saving ? "No changes to save." : null}
             >
-              Save settings
-            </Button>
+              <Button
+                type="submit"
+                className="min-h-11"
+                disabled={!dirty}
+                pending={saving}
+                pendingLabel="Saving…"
+              >
+                Save settings
+              </Button>
+            </DisabledReason>
           </>
         )}
       </div>

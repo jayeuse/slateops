@@ -262,7 +262,7 @@ export function MessageComposer({
     mentionError ||
     uploads.error ||
     (early && !capabilities
-      ? "Wait until your access loads, then add the file again."
+      ? "Wait for your access to load, then add the file again."
       : error);
   // Only a failed send has a request behind it (D1.4).
   const noticeReference =

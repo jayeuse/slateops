@@ -324,15 +324,21 @@ export function ReportDetail({
         {/* On a phone the primary takes its own row under the name. */}
         {archived ? null : (
           <div className="flex shrink-0 max-md:w-full">
-            <DisabledReason reason={copyBlockedReason}>
+            <DisabledReason stable reason={copyBlockedReason}>
               <Button
                 type="button"
                 className="min-h-11 max-md:flex-1"
-                disabled={making}
+                pending={making}
+                pendingLabel={
+                  <>
+                    <Plus aria-hidden="true" />
+                    Making a copy…
+                  </>
+                }
                 onClick={() => void makeCopy()}
               >
                 <Plus aria-hidden="true" />
-                {making ? "Making a copy…" : "Make a copy now"}
+                Make a copy now
               </Button>
             </DisabledReason>
           </div>

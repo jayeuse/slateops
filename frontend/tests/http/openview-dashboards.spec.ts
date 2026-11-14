@@ -515,7 +515,7 @@ test("a widget the grid migration could not place must be placed before the layo
   const save = page.getByRole("button", { name: "Save layout" });
   await expect(save).toHaveAttribute("aria-disabled", "true");
   await expect(save).toHaveAccessibleDescription(
-    "Place or remove the widgets that are not on the grid",
+    "Place or remove the widgets that are not on the grid.",
   );
   await page
     .getByRole("region", { name: "Not on the grid" })
@@ -614,7 +614,7 @@ test("archiving the home dashboard hands the department to the next one, and it 
   await page.getByRole("menuitem", { name: "Archive this dashboard…" }).click();
   await page
     .getByRole("alertdialog", { name: "Archive Field service dashboard?" })
-    .getByRole("button", { name: "Archive" })
+    .getByRole("button", { name: "Archive dashboard" })
     .click();
   await expect(
     page.getByRole("heading", { level: 1, name: "Night shift" }),
@@ -702,7 +702,7 @@ test("after archiving the only dashboard a manager restores it from the setup st
   await page.getByRole("menuitem", { name: "Archive this dashboard…" }).click();
   await page
     .getByRole("alertdialog", { name: "Archive Field service dashboard?" })
-    .getByRole("button", { name: "Archive" })
+    .getByRole("button", { name: "Archive dashboard" })
     .click();
   await expect(
     page.getByRole("heading", { name: "Set up the Field service dashboard" }),

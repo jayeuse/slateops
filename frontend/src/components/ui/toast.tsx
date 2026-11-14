@@ -183,14 +183,14 @@ function ToastList() {
                   </span>
                 )}
                 {item.actionProps && (
-                  <Toast.Action className="text-action-text hover:bg-muted focus-visible:outline-ring -my-1 min-h-8 shrink-0 rounded-[var(--radius)] px-2.5 text-sm font-semibold outline-none focus-visible:outline-2" />
+                  <Toast.Action className="text-action-text hover:bg-tint-hover focus-visible:outline-ring -my-1 min-h-8 shrink-0 rounded-[var(--radius)] px-2.5 text-sm font-semibold outline-none focus-visible:outline-2" />
                 )}
                 {/* Base UI hides Close from assistive technology but keeps it
                     focusable; a focusable control must keep its name. */}
                 <Toast.Close
                   aria-hidden={false}
                   aria-label="Dismiss notification"
-                  className="text-muted-foreground hover:bg-muted focus-visible:outline-ring rounded-sm p-1 outline-none focus-visible:outline-2"
+                  className="text-muted-foreground hover:bg-tint-hover focus-visible:outline-ring rounded-sm p-1 outline-none focus-visible:outline-2"
                 >
                   <X className="size-4" />
                 </Toast.Close>

@@ -78,6 +78,8 @@ async function chooseRegionalOption(
   await page
     .getByRole("option", { name: option, exact: typeof option === "string" })
     .click();
+  // The picker leaves toward its field before the next one opens.
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 }
 
 function installWorkspaceRoute(

@@ -4,6 +4,7 @@ import type { Ref } from "react";
 import { AlertCircle, ShieldCheck } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Dialog,
   DialogContent,
@@ -189,6 +190,8 @@ export function ConflictDialog({
                   </div>
                 </div>
                 <ToggleGroup
+                  variant="segmented"
+                  className="w-fit"
                   aria-label={`Resolve ${conflict.label}`}
                   value={choice ? [choice] : []}
                   onValueChange={(values) => {
@@ -197,28 +200,33 @@ export function ConflictDialog({
                       onChoice(conflict.id, value);
                   }}
                 >
-                  <ToggleGroupItem className="min-h-11" value="current">
+                  <ToggleGroupItem value="current">
                     Keep current
                   </ToggleGroupItem>
-                  <ToggleGroupItem className="min-h-11" value="draft">
-                    Use draft
-                  </ToggleGroupItem>
+                  <ToggleGroupItem value="draft">Use draft</ToggleGroupItem>
                 </ToggleGroup>
               </FieldSet>
             );
           })}
         </div>
         <DialogFooter>
-          <Button variant="outline" className="min-h-11" onClick={onCancel}>
+          <Button variant="ghost" className="min-h-11" onClick={onCancel}>
             Back to editor
           </Button>
-          <Button
-            className="min-h-11"
-            disabled={!resolved}
-            onClick={onContinue}
+          <DisabledReason
+            stable
+            reason={
+              resolved ? null : "Choose a version for each conflict first."
+            }
           >
-            Continue
-          </Button>
+            <Button
+              className="min-h-11"
+              disabled={!resolved}
+              onClick={onContinue}
+            >
+              Use these versions
+            </Button>
+          </DisabledReason>
         </DialogFooter>
       </DialogContent>
     </Dialog>

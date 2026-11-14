@@ -227,8 +227,7 @@ export function SetupControl({
         aria-haspopup="dialog"
         aria-expanded={open}
         className={cn(
-          "h-11 gap-1.5 px-2.5 text-[13px] font-medium sm:h-7",
-          open && "bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]",
+          "aria-expanded:bg-tint-selected h-11 gap-1.5 px-2.5 text-[13px] font-medium sm:h-7",
         )}
         onClick={(event) => {
           setAnchor(event.currentTarget);

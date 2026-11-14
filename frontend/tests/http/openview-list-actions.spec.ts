@@ -834,3 +834,83 @@ test("FX-SR-2b: at 1024 px the item 6 status of a hidden new record keeps Open r
 
   await expect(page).toHaveURL(new RegExp(`[?&]record=${createdId}`));
 });
+
+// A hovered or open row is one tint from edge to edge: its sticky cells lay
+// the row's own translucent tint over the card the row sits on, so they match
+// the cells that scroll (Human Owner, 2026-11-13).
+test("a hovered or open row is one tint across its sticky and scrolling cells", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installListApi(page, { pinned: true });
+  await page.goto(contacts);
+  const row = page.locator("main tbody tr").nth(2);
+  await expect(row).toBeVisible();
+  const tints = () =>
+    row.evaluate((tr) => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--card)";
+      document.body.append(probe);
+      const card = getComputedStyle(probe).color;
+      probe.remove();
+      const sticky = [...tr.children].filter(
+        (cell) => getComputedStyle(cell).position === "sticky",
+      );
+      return {
+        row: getComputedStyle(tr).backgroundColor,
+        card,
+        sticky: sticky.map((cell) => ({
+          color: getComputedStyle(cell).backgroundColor,
+          image: getComputedStyle(cell).backgroundImage,
+        })),
+      };
+    });
+  // The cells ease in with the row; compare once the row has settled.
+  const matches = async () => {
+    const shown = await tints();
+    return (
+      shown.row !== "rgba(0, 0, 0, 0)" &&
+      shown.sticky.length === 2 &&
+      shown.sticky.every(
+        (cell) =>
+          cell.color === shown.card &&
+          cell.image === `linear-gradient(${shown.row}, ${shown.row})`,
+      )
+    );
+  };
+  await row.hover();
+  // The row's tint has settled at the mode's --tint-hover share; the sticky
+  // cells show the same.
+  const share = await page.evaluate(
+    () =>
+      parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue(
+          "--tint-hover",
+        ),
+      ) / 100,
+  );
+  await expect
+    .poll(async () => (await tints()).row)
+    .toMatch(new RegExp(`/ ${share}\\)$`));
+  expect(await matches()).toBe(true);
+  // The open record's row takes the stronger tint the same way.
+  const id = await row.getAttribute("data-record-id");
+  await page.goto(`${contacts}&record=${id}`);
+  await page.mouse.move(4, 4);
+  const open = page.locator(`main tbody tr[data-record-id="${id}"]`);
+  await expect(open).toHaveAttribute("data-state", "selected");
+  await expect
+    .poll(() =>
+      open.evaluate((tr) => {
+        const tint = getComputedStyle(tr).backgroundColor;
+        return [...tr.children]
+          .filter((cell) => getComputedStyle(cell).position === "sticky")
+          .every(
+            (cell) =>
+              getComputedStyle(cell).backgroundImage ===
+              `linear-gradient(${tint}, ${tint})`,
+          );
+      }),
+    )
+    .toBe(true);
+});

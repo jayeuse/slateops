@@ -51,7 +51,7 @@ import { ServerBoardAttachments } from "./server-backed-board-attachments";
 import { ServerBoardRecordLinks } from "./server-backed-board-record-links";
 
 const control = "min-h-11 xl:min-h-8";
-const tab = "min-h-11 shrink-0 xl:min-h-8";
+const tab = "shrink-0";
 
 export type KanbanCardSheetProps = {
   boardId: string;
@@ -399,7 +399,7 @@ function ReadySheet({
         <div className="shrink-0 border-b px-5 py-3">
           <TabsList
             aria-label="Card sections"
-            className="max-w-full flex-nowrap justify-start overflow-x-auto"
+            className="max-w-full flex-nowrap justify-start overflow-x-auto overflow-y-hidden"
           >
             <TabsTrigger value="details" className={tab}>
               Details

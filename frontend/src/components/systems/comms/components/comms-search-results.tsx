@@ -78,7 +78,7 @@ export function CommsSearchResults({
                 type="button"
                 aria-label={`Open message from ${hit.author_name} in ${hit.conversation_name}`}
                 onClick={() => onOpen(hit)}
-                className="hover:bg-muted focus-visible:outline-ring flex min-h-11 w-full flex-col gap-1.5 px-3 py-3 text-left outline-offset-[-2px] focus-visible:outline-2"
+                className="hover:bg-tint-hover focus-visible:outline-ring flex min-h-11 w-full flex-col gap-1.5 px-3 py-3 text-left outline-offset-[-2px] focus-visible:outline-2"
               >
                 <span className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-xs">
                   <span className="min-w-0 truncate font-medium">

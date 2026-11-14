@@ -2033,7 +2033,9 @@ test("an empty Sandbox authors and persists a complete connected organization", 
   await connect
     .getByRole("textbox", { name: "Name" })
     .fill("Supplier inventory coverage");
-  await connect.getByRole("button", { name: "Connect" }).click();
+  await connect
+    .getByRole("button", { name: "Connect modules", exact: true })
+    .click();
   await expect(connect).toBeHidden();
 
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
@@ -2390,7 +2392,7 @@ test("Build adds during a pending save join the next one; other actions wait", a
   // Q-5: Review & Publish and a section move wait for the queue.
   await expect(
     page.getByRole("button", { name: "Review & Publish" }),
-  ).toHaveAccessibleDescription("Saving…");
+  ).toHaveAccessibleDescription("Wait for the save to finish.");
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
   // Q-7: leaving the page with queued adds is guarded.
   await expect.poll(() => exitGuarded(page)).toBe(true);
@@ -2560,7 +2562,9 @@ test("a Build edit made while adds save waits, then saves after them", async ({
 });
 
 // C5 to C10 (Product Designer review rows; Q-5)
-test("controls that wait for the save queue say Saving…", async ({ page }) => {
+test("controls that wait for the save queue say to wait for the save", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const closedOperations = liveBinding(
     "department",
@@ -2585,13 +2589,17 @@ test("controls that wait for the save queue say Saving…", async ({ page }) => 
     .getByRole("group", { name: "Department lifecycle" })
     .getByRole("button", { name: "Close department" });
   await expect(close).toHaveAttribute("aria-disabled", "true");
-  await expect(close).toHaveAccessibleDescription("Saving…");
+  await expect(close).toHaveAccessibleDescription(
+    "Wait for the save to finish.",
+  );
 
   // C5: the checkpoint primary stays in place and says why.
   const dialog = await openCheckpointDialog(page);
   const save = dialog.getByRole("button", { name: "Save checkpoint" });
   await expect(save).toHaveAttribute("aria-disabled", "true");
-  await expect(save).toHaveAccessibleDescription("Saving…");
+  await expect(save).toHaveAccessibleDescription(
+    "Wait for the save to finish.",
+  );
   await page.keyboard.press("Escape");
 
   // C7: the template primary says why; the queue never locks Cancel.
@@ -2602,7 +2610,7 @@ test("controls that wait for the save queue say Saving…", async ({ page }) => 
   });
   await expect(
     templates.getByRole("button", { name: /^Use / }),
-  ).toHaveAccessibleDescription("Saving…");
+  ).toHaveAccessibleDescription("Wait for the save to finish.");
   await expect(templates.getByRole("button", { name: "Cancel" })).toBeEnabled();
   await templates.getByRole("button", { name: "Cancel" }).click();
   await expect(templates).toHaveCount(0);
@@ -2611,7 +2619,7 @@ test("controls that wait for the save queue say Saving…", async ({ page }) => 
   const backup = await openImportExport(page);
   await expect(
     backup.getByRole("button", { name: "Load a backup", exact: true }),
-  ).toHaveAccessibleDescription("Saving…");
+  ).toHaveAccessibleDescription("Wait for the save to finish.");
   await page.keyboard.press("Escape");
 
   // C8: the discard primary says why.
@@ -2621,20 +2629,22 @@ test("controls that wait for the save queue say Saving…", async ({ page }) => 
     page
       .getByRole("dialog", { name: "Discard draft changes?" })
       .getByRole("button", { name: "Discard draft" }),
-  ).toHaveAccessibleDescription("Saving…");
+  ).toHaveAccessibleDescription("Wait for the save to finish.");
   await page.keyboard.press("Escape");
 
   // C9: the live-state retry says why.
   await expect(
     page.getByRole("button", { name: "Retry live state" }),
-  ).toHaveAccessibleDescription("Saving…");
+  ).toHaveAccessibleDescription("Wait for the save to finish.");
 
   sandbox.confirmBindings([closedOperations]);
   saves.answer(0, "confirm");
   await expect(page.locator("[data-sandbox-save-state]")).toHaveText(
     /· Saved$/,
   );
-  await expect(close).not.toHaveAccessibleDescription("Saving…");
+  await expect(close).not.toHaveAccessibleDescription(
+    "Wait for the save to finish.",
+  );
 
   // C10: "Delete … forever" says why too. An Undo queues one more save.
   await page
@@ -2656,7 +2666,9 @@ test("controls that wait for the save queue say Saving…", async ({ page }) => 
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect.poll(saves.count).toBe(2);
   await expect(purge).toHaveAttribute("aria-disabled", "true");
-  await expect(purge).toHaveAccessibleDescription("Saving…");
+  await expect(purge).toHaveAccessibleDescription(
+    "Wait for the save to finish.",
+  );
   saves.answer(1, "confirm");
   await expect(purge).toBeEnabled();
 });
@@ -2903,7 +2915,9 @@ test("UF-C11.2 a relationship can target a module in another department and publ
   ).toHaveText(["Customers"]);
   await target.getByRole("option", { name: "Customers" }).click();
   await dialog.getByRole("textbox", { name: "Name" }).fill("Bills customer");
-  await dialog.getByRole("button", { name: "Connect" }).click();
+  await dialog
+    .getByRole("button", { name: "Connect modules", exact: true })
+    .click();
   await expect(dialog).toBeHidden();
 
   await expect
@@ -3774,6 +3788,8 @@ test("unsaved Service request follow-up trigger draft fits the original viewport
   const choose = async (picker: string, option: string) => {
     await settings.getByRole("combobox", { name: picker, exact: true }).click();
     await page.getByRole("option", { name: option, exact: true }).click();
+    // The picker leaves toward its field before the next one opens.
+    await expect(page.getByRole("listbox")).toHaveCount(0);
   };
   await choose("Event module", "Service requests, 4 fields");
   await choose("Event field", "Status, Choice list");

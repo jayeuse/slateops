@@ -424,8 +424,13 @@ export function ConnectPopoverBody({
           Cancel
         </Button>
         <DisabledReason stable reason={connectReason}>
-          <Button type="submit" className="h-11" disabled={pending}>
-            Connect
+          <Button
+            type="submit"
+            className="h-11"
+            pending={pending}
+            pendingLabel="Connecting…"
+          >
+            Connect modules
           </Button>
         </DisabledReason>
       </div>

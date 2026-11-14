@@ -33,7 +33,9 @@ for (const entry of ["/auth/setup", "/auth/setup?temporary=1"] as const) {
       page.getByRole("link", { name: "Return to sign in" }),
     ).toHaveAttribute("href", "/login");
     await expect(page.getByLabel("Temporary password")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Continue" })).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Set password" }),
+    ).toBeDisabled();
   });
 }
 
@@ -54,7 +56,7 @@ test("invitation setup clears the fragment and waits for explicit submission", a
     .getByLabel("Password", { exact: true })
     .fill("a long invited password");
   await page.getByLabel("Confirm password").fill("a long invited password");
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Set password" }).click();
   await expect(page).toHaveURL(/\/login\?completed=password$/);
   await expect(
     page.getByRole("status").filter({ hasText: "Password set. Sign in." }),
@@ -78,11 +80,13 @@ test("a new invitation link clears an expired-link failure before retry", async 
     .getByLabel("Password", { exact: true })
     .fill("first password choice");
   await page.getByLabel("Confirm password").fill("first password choice");
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Set password" }).click();
   await expect(
     page.getByRole("alert").filter({ hasText: "Your invitation session" }),
   ).toContainText("expired");
-  await expect(page.getByRole("button", { name: "Continue" })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Set password" }),
+  ).toBeDisabled();
 
   await page.goto("/auth/setup#token_hash=fresh&type=invite");
   await expect(page).toHaveURL(/\/auth\/setup$/);
@@ -90,12 +94,14 @@ test("a new invitation link clears an expired-link failure before retry", async 
     page.getByRole("alert").filter({ hasText: "Your invitation session" }),
   ).toHaveCount(0);
   await expect(page.getByLabel("Password", { exact: true })).toHaveValue("");
-  await expect(page.getByRole("button", { name: "Continue" })).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "Set password" }),
+  ).toBeEnabled();
   await page
     .getByLabel("Password", { exact: true })
     .fill("fresh password choice");
   await page.getByLabel("Confirm password").fill("fresh password choice");
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Set password" }).click();
   await expect(page).toHaveURL(/\/login\?completed=password$/);
   expect(submittedTokens).toEqual(["expired", "fresh"]);
 });
@@ -120,12 +126,14 @@ test("an old invitation response cannot replace a newer link", async ({
       .getByLabel("Password", { exact: true })
       .fill("first password choice");
     await page.getByLabel("Confirm password").fill("first password choice");
-    await page.getByRole("button", { name: "Continue" }).click();
+    await page.getByRole("button", { name: "Set password" }).click();
     await oldResponse.entered;
     await page.goto("/auth/setup#token_hash=new&type=invite");
     await expect(page).toHaveURL(/\/auth\/setup$/);
     await expect(page.getByLabel("Password", { exact: true })).toHaveValue("");
-    await expect(page.getByRole("button", { name: "Continue" })).toBeEnabled();
+    await expect(
+      page.getByRole("button", { name: "Set password" }),
+    ).toBeEnabled();
     // Deliver the old response and let React commit whatever it schedules
     // before checking that the newer link still owns the page.
     const oldDelivered = page.waitForResponse(
@@ -143,7 +151,7 @@ test("an old invitation response cannot replace a newer link", async ({
       .getByLabel("Password", { exact: true })
       .fill("second password choice");
     await page.getByLabel("Confirm password").fill("second password choice");
-    await page.getByRole("button", { name: "Continue" }).click();
+    await page.getByRole("button", { name: "Set password" }).click();
     await expect(page).toHaveURL(/\/login\?completed=password$/);
     expect(submittedTokens).toEqual(["old", "new"]);
   } finally {

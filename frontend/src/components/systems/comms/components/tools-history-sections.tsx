@@ -129,6 +129,8 @@ export function RetentionPreviewFields({
   inherited,
   proof,
   previewReason,
+  applying = false,
+  applyReason,
 }: {
   days: number;
   setDays: (days: number) => void;
@@ -137,6 +139,10 @@ export function RetentionPreviewFields({
   proof?: ReactNode;
   /** Why Preview impact cannot run yet, when the user can fix it. */
   previewReason?: string;
+  /** The retention save is running (TASK-0061 rule 4). */
+  applying?: boolean;
+  /** Why Apply retention policy waits (TASK-0061 rule 6). */
+  applyReason?: string;
   onPreview: () => void;
   onApply: () => void;
   disabled: boolean;
@@ -173,9 +179,19 @@ export function RetentionPreviewFields({
             {preview.message_count} messages and {preview.file_count} files
             would be affected.
           </Alert>
-          <Button disabled={disabled} onClick={onApply}>
-            Apply retention policy
-          </Button>
+          <DisabledReason
+            stable
+            reason={applying || !disabled ? null : applyReason}
+          >
+            <Button
+              pending={applying}
+              pendingLabel="Applying…"
+              disabled={disabled}
+              onClick={onApply}
+            >
+              Apply retention policy
+            </Button>
+          </DisabledReason>
         </>
       )}
     </>

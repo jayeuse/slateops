@@ -1902,6 +1902,55 @@ test("UF-C3.3: switching scalar and membership View filters clears incompatible 
   );
 });
 
+// TASK-0061 rules 4 and 6 (Human Owner, 2026-11-14): a disabled primary
+// says why; a busy primary keeps its width, shows its pending label, and
+// ignores presses.
+test("Save view in the save dialog says why it waits, then shows its busy label at the same width while the save runs", async ({
+  page,
+}) => {
+  await installViewsApi(page);
+  const held = gate();
+  let creates = 0;
+  await page.route("**/api/views", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    creates += 1;
+    held.signalStarted();
+    await held.wait;
+    await route.fallback();
+  });
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await page.getByRole("searchbox", { name: "Search Equipment" }).fill("valve");
+  await expect(page).toHaveURL(/[?&]changes=/);
+  await page.getByRole("button", { name: "Save as new view" }).click();
+  const dialog = page.getByRole("dialog", { name: "Save view" });
+  const save = dialog.getByRole("button", { name: "Save view", exact: true });
+  // Rule 6: a blocked primary stays focusable and says why. Soft, so a red
+  // run also reports the busy assertions below.
+  await expect(save).toBeDisabled();
+  await expect.soft(save).toHaveAccessibleDescription("Name the view first.");
+  await dialog.getByLabel("View name").fill("Valves");
+  await expect(save).toBeEnabled();
+  const restingWidth = await save.evaluate(
+    (element) => (element as HTMLElement).offsetWidth,
+  );
+  await save.click();
+  await held.started;
+  // Rule 4: while the save runs, the same button reads its pending label,
+  // is busy, ignores presses, and keeps its width.
+  const busy = dialog.getByRole("button", {
+    name: "Saving saved view…",
+    exact: true,
+  });
+  await expect(busy).toHaveAttribute("aria-busy", "true");
+  await expect(busy).toBeDisabled();
+  expect(
+    await busy.evaluate((element) => (element as HTMLElement).offsetWidth),
+  ).toBe(restingWidth);
+  held.release();
+  await expect(dialog).toHaveCount(0);
+  expect(creates).toBe(1);
+});
+
 test("changing a Views filter field with the keyboard retains focus", async ({
   page,
 }) => {
@@ -2257,14 +2306,10 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   expect(api.saved().definition.search).toBe("external edit");
 
   api.makeNextPatchStale();
-  await conflictDialog
-    .getByRole("button", { name: "Save my version over latest" })
-    .click();
+  await conflictDialog.getByRole("button", { name: "Keep my changes" }).click();
   await expect(conflictDialog).toBeVisible();
   expect(api.saved().definition.search).toBe("external edit");
-  await conflictDialog
-    .getByRole("button", { name: "Save my version over latest" })
-    .click();
+  await conflictDialog.getByRole("button", { name: "Keep my changes" }).click();
   await expect(
     page
       .getByRole("status")
@@ -4237,8 +4282,10 @@ for (const localAction of ["revert", "save"] as const) {
         .click();
       await expect.poll(() => api.saved().definition.search).toBe("compressor");
     }
+    // While it saves, Save view reads its pending label (TASK-0061 rule 4),
+    // so wait until neither name is left.
     await expect(
-      page.getByRole("button", { name: "Save view", exact: true }),
+      page.getByRole("button", { name: /^(Save view|Saving…)$/ }),
     ).toHaveCount(0);
 
     api.changeSavedViewElsewhere("panel");
@@ -6833,7 +6880,9 @@ test.describe("export journeys", () => {
         .getByRole("checkbox", { name: "Equipment name", exact: true })
         .click();
       const file = await s16DownloadedBytes(page, () =>
-        dialog.getByRole("button", { name: "Download", exact: true }).click(),
+        dialog
+          .getByRole("button", { name: "Download records", exact: true })
+          .click(),
       );
       expect(file.filename).toBe("Equipment-register-2026-09-20.csv");
       expect(file.bytes.toString("utf8")).toBe(chosenCsv);
@@ -6937,7 +6986,9 @@ test.describe("export journeys", () => {
       },
     });
     const file = await s16DownloadedBytes(page, () =>
-      dialog.getByRole("button", { name: "Download", exact: true }).click(),
+      dialog
+        .getByRole("button", { name: "Download records", exact: true })
+        .click(),
     );
     expect(file.bytes).toEqual(s16Workbook);
     expect(file.filename).toBe("Equipment.xlsx");
@@ -6963,7 +7014,7 @@ test.describe("export journeys", () => {
     for (const name of ["Status", "Equipment name", "Serial number"])
       await dialog.getByRole("checkbox", { name, exact: true }).uncheck();
     await expect(
-      dialog.getByRole("button", { name: "Download", exact: true }),
+      dialog.getByRole("button", { name: "Download records", exact: true }),
     ).toBeDisabled();
     await expect(
       dialog.getByText("Choose at least one column or include Record ID."),
@@ -6974,7 +7025,9 @@ test.describe("export journeys", () => {
       .check();
     api.reply({ body: `Record ID\r\n${recordOneId}\r\n` });
     const file = await s16DownloadedBytes(page, () =>
-      dialog.getByRole("button", { name: "Download", exact: true }).click(),
+      dialog
+        .getByRole("button", { name: "Download records", exact: true })
+        .click(),
     );
     expect(file.bytes.toString("utf8")).toBe(`Record ID\r\n${recordOneId}\r\n`);
     expect(api.requests[0]).toMatchObject({
@@ -6997,7 +7050,9 @@ test.describe("export journeys", () => {
     await dialog
       .getByRole("checkbox", { name: "Serial number", exact: true })
       .uncheck();
-    await dialog.getByRole("button", { name: "Download", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Download records", exact: true })
+      .click();
     await expect(dialog.getByRole("alert")).toContainText(
       "could not be downloaded",
     );
@@ -7007,7 +7062,9 @@ test.describe("export journeys", () => {
     ).not.toBeChecked();
     api.reply({});
     await s16DownloadedBytes(page, () =>
-      dialog.getByRole("button", { name: "Download", exact: true }).click(),
+      dialog
+        .getByRole("button", { name: "Download records", exact: true })
+        .click(),
     );
     expect(api.requests).toHaveLength(2);
   });
@@ -7041,7 +7098,7 @@ test.describe("export journeys", () => {
       const address = page.url();
       const dialog = await openS16Export(page);
       await dialog
-        .getByRole("button", { name: "Download", exact: true })
+        .getByRole("button", { name: "Download records", exact: true })
         .click();
       await expect(dialog.getByRole("alert")).toContainText(failure.expected);
       await expect(page.getByText("PRIVATE_EXPORT_SENTINEL")).toHaveCount(0);
@@ -7049,7 +7106,9 @@ test.describe("export journeys", () => {
       expect(page.url()).toBe(address);
       api.reply({});
       await s16DownloadedBytes(page, () =>
-        dialog.getByRole("button", { name: "Download", exact: true }).click(),
+        dialog
+          .getByRole("button", { name: "Download records", exact: true })
+          .click(),
       );
       expect(api.writes).toEqual([]);
     });
@@ -7069,7 +7128,9 @@ test.describe("export journeys", () => {
       `/openview?section=views&module=${moduleId}&view=${viewId}`,
     );
     const dialog = await openS16Export(page);
-    await dialog.getByRole("button", { name: "Download", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Download records", exact: true })
+      .click();
     await expect(
       page.getByText("Equipment register", { exact: true }),
     ).toHaveCount(0);
@@ -7093,7 +7154,9 @@ test.describe("export journeys", () => {
     await expect(dialog).toHaveCount(0);
     const fresh = await openS16Export(page);
     await s16DownloadedBytes(page, () =>
-      fresh.getByRole("button", { name: "Download", exact: true }).click(),
+      fresh
+        .getByRole("button", { name: "Download records", exact: true })
+        .click(),
     );
     expect(api.requests).toHaveLength(2);
   });
@@ -7110,7 +7173,7 @@ test.describe("export journeys", () => {
       const dialog = await openS16Export(page);
       const held = api.hold();
       await dialog
-        .getByRole("button", { name: "Download", exact: true })
+        .getByRole("button", { name: "Download records", exact: true })
         .dblclick();
       await held.began;
       await expect(
@@ -7253,13 +7316,13 @@ test.describe("export journeys", () => {
       await checkLayout(true);
       api.reply({ status: 503, json: { detail: "PRIVATE_EXPORT_SENTINEL" } });
       await dialog
-        .getByRole("button", { name: "Download", exact: true })
+        .getByRole("button", { name: "Download records", exact: true })
         .click();
       await expect(dialog.getByRole("alert")).toBeVisible();
       await checkLayout(false);
       const held = api.hold();
       await dialog
-        .getByRole("button", { name: "Download", exact: true })
+        .getByRole("button", { name: "Download records", exact: true })
         .click();
       await held.began;
       await checkLayout(false);
@@ -7284,7 +7347,9 @@ test.describe("export journeys", () => {
       .check();
     await dialog.getByLabel("Format", { exact: true }).selectOption("csv");
     await s16DownloadedBytes(page, () =>
-      dialog.getByRole("button", { name: "Download", exact: true }).click(),
+      dialog
+        .getByRole("button", { name: "Download records", exact: true })
+        .click(),
     );
     const request = api.requests[0] as Record<string, unknown>;
     expect(request.format).toBe("csv");
@@ -7315,7 +7380,9 @@ test.describe("export journeys", () => {
     );
     const dialog = await openS16Export(page);
     await s16DownloadedBytes(page, () =>
-      dialog.getByRole("button", { name: "Download", exact: true }).click(),
+      dialog
+        .getByRole("button", { name: "Download records", exact: true })
+        .click(),
     );
     expect(api.requests).toHaveLength(1);
     expect(api.requests[0]).toMatchObject({

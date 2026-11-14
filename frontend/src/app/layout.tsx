@@ -3,7 +3,9 @@ import { Toaster } from "@/components/ui/toast";
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import { ThemeProvider } from "@/components/theme-provider";
+import { FocusSource } from "@/components/focus-source";
 import { OrganizationThemeProvider } from "@/components/organization-theme-provider";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
 // Fonts are self-hosted from src/app/fonts so a build never downloads them.
@@ -101,11 +103,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       </head>
       <body className="flex min-h-full flex-col">
         <ThemeProvider />
+        <FocusSource />
         <CSPProvider disableStyleElements>
-          <OrganizationThemeProvider>
-            {children}
-            <Toaster />
-          </OrganizationThemeProvider>
+          {/* One tooltip group: once a tooltip shows, the next one under the
+              pointer opens at once. 600ms is Base UI's own first delay. */}
+          <TooltipProvider delay={600}>
+            <OrganizationThemeProvider>
+              {children}
+              <Toaster />
+            </OrganizationThemeProvider>
+          </TooltipProvider>
         </CSPProvider>
       </body>
     </html>

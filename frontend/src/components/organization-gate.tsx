@@ -6,6 +6,7 @@ import { Building2, ChevronRight, MailOpen } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { apiErrorReference, type ApiErrorText } from "@/lib/api-errors";
 import {
   openRefusalMessage,
@@ -79,15 +80,32 @@ export function PendingInvitationList({
                 {expiryLabel(invitation.expiresAt)}
               </p>
             </div>
-            <Button
-              type="button"
-              className="min-h-11"
-              aria-label={`Join ${invitation.name}`}
-              disabled={disabled || joining !== null}
-              onClick={() => void join(invitation)}
+            {/* Rule 6 (TASK-0061): a Join that waits for another action
+                says why; its own join is busy (rule 4), not disabled. */}
+            <DisabledReason
+              stable
+              reason={
+                joining !== null && joining !== invitation.id
+                  ? "Wait for the other join to finish."
+                  : disabled && joining === null
+                    ? "Wait for the organization to open."
+                    : null
+              }
             >
-              {joining === invitation.id ? "Joining…" : "Join"}
-            </Button>
+              <Button
+                type="button"
+                className="min-h-11"
+                aria-label={`Join ${invitation.name}`}
+                disabled={
+                  (joining !== null && joining !== invitation.id) || disabled
+                }
+                pending={joining === invitation.id}
+                pendingLabel="Joining…"
+                onClick={() => void join(invitation)}
+              >
+                Join
+              </Button>
+            </DisabledReason>
           </div>
           {failed?.id === invitation.id ? (
             <Alert variant="destructive" reference={failed.reference}>
@@ -192,7 +210,7 @@ export function OrganizationGate({
                   type="button"
                   disabled={opening !== null}
                   onClick={() => void choose(organization)}
-                  className="hover:bg-muted focus-visible:outline-ring flex min-h-14 w-full items-center gap-3 px-4 py-2 text-left focus-visible:outline-2 focus-visible:-outline-offset-2 disabled:opacity-50"
+                  className="hover:bg-tint-hover focus-visible:outline-ring flex min-h-14 w-full items-center gap-3 px-4 py-2 text-left focus-visible:outline-2 focus-visible:-outline-offset-2 disabled:opacity-50"
                 >
                   <span className="min-w-0 flex-1">
                     <span className="block font-medium wrap-anywhere">

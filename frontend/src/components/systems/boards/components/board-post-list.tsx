@@ -265,7 +265,7 @@ export function BoardPostList({
             variant="segmented"
             multiple={false}
             value={[state]}
-            className="w-full overflow-x-auto"
+            className="w-full overflow-x-auto overflow-y-hidden"
             onValueChange={(selection) => {
               const next = states.find((item) => item === selection[0]);
               if (next) onStateChange(next);

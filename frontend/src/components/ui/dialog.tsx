@@ -58,7 +58,7 @@ export function DialogCloseButton({ disabled }: { disabled?: boolean }) {
     <DialogPrimitive.Close
       aria-label="Close"
       disabled={disabled}
-      className="text-muted-foreground hover:text-foreground hover:bg-muted focus-visible:outline-ring absolute top-3 right-3 z-10 inline-flex size-11 items-center justify-center rounded-md outline-none focus-visible:outline-2 disabled:opacity-50 xl:size-8"
+      className="text-muted-foreground hover:text-foreground hover:bg-tint-hover focus-visible:outline-ring absolute top-3 right-3 z-10 inline-flex size-11 items-center justify-center rounded-md outline-none focus-visible:outline-2 disabled:opacity-50 xl:size-8"
     >
       <X aria-hidden="true" className="size-4" />
     </DialogPrimitive.Close>

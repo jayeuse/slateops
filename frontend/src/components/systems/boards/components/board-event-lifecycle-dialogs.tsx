@@ -11,6 +11,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Dialog,
   DialogContent,
@@ -71,28 +72,37 @@ export function BoardEventLifecycleDialog({
         <AlertDialogFooter>
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             className="min-h-11 xl:min-h-8"
             disabled={pending}
             onClick={onCancel}
           >
             Cancel
           </Button>
-          <Button
-            type="button"
-            variant={target?.kind === "archive" ? "destructive" : "default"}
-            className="min-h-11 xl:min-h-8"
-            disabled={pending || !canConfirm}
-            onClick={onConfirm}
+          <DisabledReason
+            stable
+            reason={
+              pending || canConfirm
+                ? null
+                : target?.kind === "archive"
+                  ? "This event changed, or you can no longer archive it."
+                  : "This event changed, or you can no longer restore it."
+            }
           >
-            {target?.kind === "archive"
-              ? pending
-                ? "Archiving…"
-                : "Archive event"
-              : pending
-                ? "Restoring…"
-                : "Restore event"}
-          </Button>
+            <Button
+              type="button"
+              variant={target?.kind === "archive" ? "destructive" : "default"}
+              className="min-h-11 xl:min-h-8"
+              disabled={!canConfirm}
+              pending={pending}
+              pendingLabel={
+                target?.kind === "archive" ? "Archiving…" : "Restoring…"
+              }
+              onClick={onConfirm}
+            >
+              {target?.kind === "archive" ? "Archive event" : "Restore event"}
+            </Button>
+          </DisabledReason>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -188,19 +198,34 @@ export function BoardEventPurgeDialog({
                     onChange={(event) => onPassword(event.target.value)}
                   />
                 </label>
-                <Button
-                  type="submit"
-                  variant="destructive"
-                  className="min-h-11 xl:min-h-8"
-                  disabled={
-                    pending ||
-                    !enabled ||
-                    name !== preview.confirmation_name ||
-                    !password
-                  }
-                >
-                  Delete event forever
-                </Button>
+                {/* A plain box: in the space-y form, the reason's text after
+                    the button must not give the button a bottom margin. */}
+                <div>
+                  <DisabledReason
+                    stable
+                    reason={
+                      pending
+                        ? null
+                        : !enabled
+                          ? "Deleting forever is turned off for this workspace."
+                          : name !== preview.confirmation_name
+                            ? "Type the event name to confirm."
+                            : !password
+                              ? "Enter your administrator password."
+                              : null
+                    }
+                  >
+                    <Button
+                      type="submit"
+                      variant="destructive"
+                      className="min-h-11 xl:min-h-8"
+                      pending={pending}
+                      pendingLabel="Deleting…"
+                    >
+                      Delete event forever
+                    </Button>
+                  </DisabledReason>
+                </div>
               </form>
             ) : null}
           </div>
@@ -215,7 +240,7 @@ export function BoardEventPurgeDialog({
         ) : null}
         <Button
           className="mt-4 min-h-11 xl:min-h-8"
-          variant="outline"
+          variant="ghost"
           disabled={pending}
           onClick={onClose}
         >

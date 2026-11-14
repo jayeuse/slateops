@@ -5,6 +5,7 @@ import type { WorkspaceRegion } from "@/lib/date-time";
 import { AdvancedSection } from "@/components/ui/advanced-section";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { LifecyclePurgeReview } from "@/components/systems/shared/lifecycle-purge-review";
@@ -161,12 +162,17 @@ export function ServerBoardManagementDisplay({
   const project = board.scope === "project";
   const nameFixed = board.scope === "department";
   const dirty = boardUpdateForDraft(board, view.draft) !== null;
-  const canSave =
-    !archived &&
-    !view.pending &&
-    !view.conflict &&
-    validDraft(view.draft) &&
-    dirty;
+  // Why Save changes waits (TASK-0061 rule 6); "No changes to save." is
+  // already on screen, so the button points at that text.
+  const saveReason = view.pending
+    ? null
+    : !dirty
+      ? "No changes to save."
+      : view.conflict
+        ? "Review the latest board details first."
+        : !validDraft(view.draft)
+          ? "Name the board first."
+          : null;
   const showPurge = archived && isAdmin && purgeEnabled;
   const lifecycleError = view.lifecycleError ?? null;
   // A result line beside an action; kept mounted so only its words change.
@@ -304,14 +310,21 @@ export function ServerBoardManagementDisplay({
             />
           </Row>
           <div className="flex flex-wrap items-center gap-2 pt-2 sm:pl-36">
-            <Button
-              type="submit"
-              className={control}
-              disabled={!canSave}
-              aria-describedby={dirty ? undefined : `${id}-save-reason`}
+            <DisabledReason
+              stable
+              reason={saveReason}
+              reasonId={dirty ? undefined : `${id}-save-reason`}
             >
-              {view.pending ? "Saving…" : "Save changes"}
-            </Button>
+              <Button
+                type="submit"
+                className={control}
+                disabled={saveReason !== null}
+                pending={view.pending}
+                pendingLabel="Saving…"
+              >
+                Save changes
+              </Button>
+            </DisabledReason>
             {dirty && !view.conflict ? (
               <Button
                 type="button"
@@ -483,22 +496,32 @@ export function ServerBoardManagementDisplay({
                       />
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <Button
-                        type="submit"
-                        variant="destructive"
-                        className={control}
-                        disabled={
-                          view.pending ||
-                          purgeConfirmationName !==
-                            purgePreview.confirmation_name ||
-                          purgePassword.length === 0
+                      <DisabledReason
+                        stable
+                        reason={
+                          view.pending
+                            ? null
+                            : purgeConfirmationName !==
+                                purgePreview.confirmation_name
+                              ? "Type the board name to confirm."
+                              : purgePassword.length === 0
+                                ? "Enter your administrator password."
+                                : null
                         }
                       >
-                        {view.pending ? "Deleting…" : "Delete board forever"}
-                      </Button>
+                        <Button
+                          type="submit"
+                          variant="destructive"
+                          className={control}
+                          pending={view.pending}
+                          pendingLabel="Deleting…"
+                        >
+                          Delete board forever
+                        </Button>
+                      </DisabledReason>
                       <Button
                         type="button"
-                        variant="outline"
+                        variant="ghost"
                         className={control}
                         disabled={view.pending}
                         onClick={onCancelPurge}

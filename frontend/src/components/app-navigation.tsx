@@ -29,7 +29,6 @@ import {
   accessNavigationFor,
   auditDepartmentsFor,
   installationOwnerFor,
-  currentNavigationKey,
   getWorkspaceNavigation,
   getWorkspaceTools,
   isWorkspaceNavigationGroupActive,
@@ -108,9 +107,6 @@ const rowIcons = {
 
 const PREFETCH_INTENT_DELAY_MS = 120;
 const MAX_PREFETCHED_ROUTES = 12;
-// How long after a change of place the fill keeps gliding (covers a group
-// opening in the same move); outside it, the fill tracks its label directly.
-const INDICATOR_GLIDE_WINDOW_MS = 450;
 
 /**
  * Where the navigation renders. The sidebar shows one-line rows that carry
@@ -138,6 +134,25 @@ export const navigationActiveInk =
 
 /** Line icons in the shell's rows. */
 export const navigationIconStroke = "[&_svg]:stroke-[1.65]";
+
+// The current place is its label in `--action-text` at weight 600, never a
+// fill or a bar (Human Owner, 2026-11-13). The collapsed rail shows icons
+// only, so it keeps its fill.
+const noActiveFill =
+  "data-active:bg-transparent group-data-[collapsible=icon]:data-active:bg-sidebar-accent";
+
+/** A top-level row (workspace rows, OpenComms, the account row): no fill when current. */
+export const navigationNoActiveFill = noActiveFill;
+
+/** A group row takes the current place's ink only while closed; open, its page carries it. */
+const groupActiveInk = `${noActiveFill} data-active:not-data-panel-open:text-action-text data-active:not-data-panel-open:font-semibold`;
+
+/**
+ * The guide line of a group's pages: 1px down the left, turning into the last
+ * page, as a tree line does. The gap between pages (2px) is bridged.
+ */
+const guideLine =
+  "before:pointer-events-none before:absolute before:top-0 before:-bottom-0.5 before:-left-2.5 before:w-px before:bg-(--sidebar-border) last:before:bottom-auto last:before:h-[calc(50%+0.5px)] last:before:w-2 last:before:rounded-bl-md last:before:border-b last:before:border-l last:before:border-(--sidebar-border) last:before:bg-transparent";
 
 interface AppNavigationProps {
   pathname: string;
@@ -256,72 +271,7 @@ export function AppNavigation({
     !collapsed &&
     (expanded.boards ?? activeGroupId === "boards") &&
     groups.some((group) => group.id === "boards");
-  const currentKey = currentNavigationKey(pathname, searchParams, hash);
   const navRef = useRef<HTMLElement>(null);
-  const indicatorRef = useRef<HTMLSpanElement>(null);
-
-  // The active section's fill is one element under the list. It lives in the
-  // page (not in a view-transition layer), so it stays under the labels and
-  // inside the sidebar's scroll clipping. It glides when the place changes;
-  // when groups open or close around it, it moves with its label frame by
-  // frame, and a closing group clips it like it clips the label.
-  const placedKey = useRef<string | null>(null);
-  const glideUntil = useRef(0);
-  const lastTarget = useRef("");
-  useEffect(() => {
-    const nav = navRef.current;
-    const indicator = indicatorRef.current;
-    if (!nav || !indicator) return;
-    if (placedKey.current !== null && placedKey.current !== currentKey)
-      glideUntil.current = performance.now() + INDICATOR_GLIDE_WINDOW_MS;
-    placedKey.current = currentKey;
-    const place = () => {
-      const active = nav.querySelector<HTMLElement>(
-        '[data-slot="sidebar-menu-sub-button"][aria-current="page"]',
-      );
-      if (!active || collapsed) {
-        indicator.style.opacity = "0";
-        lastTarget.current = "";
-        return;
-      }
-      const navBox = nav.getBoundingClientRect();
-      const box = active.getBoundingClientRect();
-      const panel = active
-        .closest('[data-slot="collapsible-content"]')
-        ?.getBoundingClientRect();
-      const top = Math.max(box.top, panel?.top ?? box.top);
-      const height = Math.max(
-        0,
-        Math.min(box.bottom, panel?.bottom ?? box.bottom) - top,
-      );
-      const x = box.left - navBox.left;
-      const y = top - navBox.top;
-      const target = `${x},${y},${box.width},${height}`;
-      // ResizeObserver also reports the size it starts with; an unchanged
-      // target must not restart (or cut short) a glide.
-      if (target === lastTarget.current) return;
-      lastTarget.current = target;
-      const glide =
-        indicator.dataset.ready === "true" &&
-        performance.now() < glideUntil.current;
-      indicator.style.transition = glide ? "" : "none";
-      indicator.style.opacity = height > 0 ? "1" : "0";
-      indicator.style.transform = `translate(${x}px, ${y}px)`;
-      indicator.style.width = `${box.width}px`;
-      indicator.style.height = `${height}px`;
-    };
-    place();
-    // Glide only after the first placement, so it never flies in on load.
-    const frame = requestAnimationFrame(() => {
-      indicator.dataset.ready = "true";
-    });
-    const observer = new ResizeObserver(place);
-    observer.observe(nav);
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-    };
-  }, [currentKey, collapsed]);
 
   useEffect(() => {
     const syncHash = () => setHash(window.location.hash);
@@ -434,6 +384,7 @@ export function AppNavigation({
               className={cn(
                 navigationRowSize(surface),
                 navigationIconStroke,
+                groupActiveInk,
                 showDescription && "h-auto py-1.5",
               )}
             />
@@ -464,11 +415,11 @@ export function AppNavigation({
         </CollapsibleTrigger>
         <CollapsibleContent className="h-(--collapsible-panel-height) overflow-clip transition-[height] duration-(--motion-base) ease-(--ease-out) data-ending-style:h-0 data-starting-style:h-0 motion-reduce:transition-none">
           <SidebarMenuSub
-            className="mr-0 gap-0.5 pr-0"
+            className="mr-0 gap-0.5 border-l-0 pr-0"
             aria-label={group.listLabel}
           >
             {group.items.map((item) => (
-              <SidebarMenuSubItem key={item.id}>
+              <SidebarMenuSubItem key={item.id} className={guideLine}>
                 <SidebarMenuSubButton
                   render={
                     <Link
@@ -483,8 +434,8 @@ export function AppNavigation({
                   }
                   isActive={item.active}
                   aria-current={item.active ? "page" : undefined}
-                  // The active fill is the nav's indicator, so it can
-                  // glide from item to item.
+                  // The nav's one bar marks this page on the guide line, so
+                  // it can glide from page to page.
                   className={cn(
                     surface === "drawer" ? "min-h-11" : "min-h-11 xl:min-h-8",
                     navigationActiveInk,
@@ -547,6 +498,7 @@ export function AppNavigation({
             navigationRowSize(surface),
             navigationActiveInk,
             navigationIconStroke,
+            navigationNoActiveFill,
             showDescription && "h-auto py-1.5",
           )}
         >
@@ -574,12 +526,6 @@ export function AppNavigation({
         aria-label="Main navigation"
         className="relative isolate"
       >
-        <span
-          ref={indicatorRef}
-          aria-hidden="true"
-          data-slot="sidebar-active-indicator"
-          className="bg-sidebar-accent pointer-events-none absolute top-0 left-0 -z-10 rounded-md opacity-0 data-ready:transition-[transform,width,height,opacity] data-ready:duration-(--motion-base) data-ready:ease-(--ease-out) motion-reduce:transition-none"
-        />
         {departments.length > 0 && collapsed ? (
           // One rail button for every department (DA6); it opens the sidebar.
           <SidebarMenu className="gap-0.5">

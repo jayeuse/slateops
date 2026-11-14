@@ -168,8 +168,7 @@ export function structureButtonLabel(
   return sandboxModule ? `${sandboxModule.name} fields` : "Structure";
 }
 
-const rowTint =
-  "bg-[color-mix(in_oklab,var(--ink)_14%,transparent)] text-foreground";
+const rowTint = "bg-tint-selected text-foreground";
 
 function SectionHeading({ label, count }: { label: string; count: number }) {
   return (

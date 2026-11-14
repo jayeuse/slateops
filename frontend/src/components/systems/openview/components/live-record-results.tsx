@@ -34,9 +34,14 @@ import {
 } from "@/components/systems/access/components/row-open-button";
 
 const headClassName = "text-muted-foreground h-9 px-4 text-xs font-medium";
-/** A sticky cell keeps the row's tint over the cells scrolling under it. */
+/**
+ * A sticky cell keeps the row's tint over the cells scrolling under it: the
+ * card it hides, with the row's own translucent tint laid on top, so it is the
+ * exact colour of the rest of the row (an opaque mix in oklab came out a shade
+ * darker). The tint eases with the row's own (`@property --row-tint`).
+ */
 const pinnedCellClassName =
-  "bg-card sticky z-10 group-hover:bg-[color-mix(in_oklab,var(--ink)_6%,var(--card))] group-data-[state=selected]:bg-[color-mix(in_oklab,var(--ink)_14%,var(--card))]";
+  "bg-card sticky z-10 bg-[image:linear-gradient(var(--row-tint),var(--row-tint))] transition-[--row-tint] motion-reduce:transition-none group-hover:[--row-tint:color-mix(in_oklab,var(--ink)_var(--tint-hover),transparent)] group-data-[state=selected]:[--row-tint:color-mix(in_oklab,var(--ink)_var(--tint-selected),transparent)]";
 
 type RecordPage = {
   rows: readonly OpenViewRecord[];

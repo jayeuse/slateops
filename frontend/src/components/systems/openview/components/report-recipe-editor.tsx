@@ -445,13 +445,15 @@ export function ReportRecipeEditor({
 
   const title = baselineReport ? "Edit report" : "New report";
   // A save that cannot run says why (the Four Moments Rule).
-  const saveBlocked = fieldsError
-    ? "Fields could not be loaded"
-    : fieldsLoading
-      ? "Fields are loading"
-      : baselineReport && !dirty
-        ? "No changes to save"
-        : null;
+  const saveBlocked = pending
+    ? null
+    : fieldsError
+      ? "Fields could not be loaded."
+      : fieldsLoading
+        ? "Wait for the fields to load."
+        : baselineReport && !dirty
+          ? "No changes to save."
+          : null;
   return (
     <>
       <Dialog
@@ -1280,7 +1282,7 @@ export function ReportRecipeEditor({
               <DialogFooter className="mt-0">
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="ghost"
                   className="min-h-11"
                   disabled={pending}
                   onClick={close}
@@ -1288,12 +1290,13 @@ export function ReportRecipeEditor({
                   Cancel
                 </Button>
                 <DisabledReason reason={saveBlocked} stable>
-                  <Button type="submit" className="min-h-11" disabled={pending}>
-                    {pending
-                      ? "Saving…"
-                      : baselineReport
-                        ? "Save report"
-                        : "Create report"}
+                  <Button
+                    type="submit"
+                    className="min-h-11"
+                    pending={pending}
+                    pendingLabel="Saving…"
+                  >
+                    {baselineReport ? "Save report" : "Create report"}
                   </Button>
                 </DisabledReason>
               </DialogFooter>
@@ -1311,7 +1314,7 @@ export function ReportRecipeEditor({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               className="min-h-11"
               onClick={() => setConfirmDiscard(false)}
             >
@@ -1325,7 +1328,7 @@ export function ReportRecipeEditor({
                 onClose();
               }}
             >
-              Discard
+              Discard changes
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

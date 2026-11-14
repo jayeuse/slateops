@@ -7,6 +7,7 @@ import {
   signedInSession,
   test,
   type Page,
+  type Locator,
 } from "./helpers/test";
 import { mockManageSecurity } from "./helpers/manage-security";
 
@@ -135,19 +136,35 @@ test("the policy dialog shows the common settings and keeps the rare ones in a c
   ).toBeVisible();
 
   const write = heldResponse();
+  let writes = 0;
   await page.route("**/api/workspace/security", async (route) => {
     if (route.request().method() === "PATCH") {
+      writes += 1;
       write.enter();
       await write.released;
     }
     await route.fallback();
   });
   try {
-    await footer.getByRole("button", { name: "Save settings" }).click();
-    await write.entered;
+    // Primary buttons (Human Owner, 2026-11-14): the Cancel beside Save is
+    // ghost, so the eye lands on Save.
+    const save = footer.getByRole("button", { name: "Save settings" });
     await expect(
-      footer.getByRole("button", { name: "Saving…", exact: true }),
-    ).toBeDisabled();
+      footer.getByRole("button", { name: "Cancel", exact: true }),
+    ).toHaveAttribute("data-variant", "ghost");
+    const width = (await save.boundingBox())!.width;
+    await save.click();
+    await write.entered;
+    const busy = footer.getByRole("button", { name: "Saving…", exact: true });
+    await expect(busy).toBeDisabled();
+    // Busy, it keeps its width and its color, and a second click sends
+    // nothing.
+    expect((await busy.boundingBox())!.width).toBe(width);
+    expect(await busy.evaluate((node) => getComputedStyle(node).opacity)).toBe(
+      "1",
+    );
+    await busy.evaluate((node) => (node as HTMLButtonElement).click());
+    expect(writes).toBe(1);
   } finally {
     write.release();
   }
@@ -688,4 +705,38 @@ test("Discard in the policy offers Undo in the footer until the next edit", asyn
   await timeout.selectOption("8 hours");
   await expect(undo).toHaveCount(0);
   expect(state.writes).toEqual([]);
+});
+
+/** How tall a button's tap area is: the button plus its ::after reach. */
+const tapHeight = (button: Locator) =>
+  button.evaluate((node) => {
+    const box = node.getBoundingClientRect();
+    const hit = getComputedStyle(node, "::after");
+    if (hit.position !== "absolute") return Math.round(box.height);
+    return Math.round(
+      box.height - parseFloat(hit.top) - parseFloat(hit.bottom),
+    );
+  });
+
+test.describe("on a touch screen from 1280 px", () => {
+  test.use({ hasTouch: true });
+
+  test("a 32 px primary button has a 44 px tap area without growing", async ({
+    page,
+  }) => {
+    // Primary buttons (Human Owner, 2026-11-14), rule 1: a slightly bigger
+    // tap area, not a bigger button. A mouse keeps the button's own box.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await mockManageSecurity(page);
+    await page.goto("/access?view=security");
+    await page
+      .getByRole("button", { name: "Edit policy", exact: true })
+      .click();
+    const save = policyDialog(page)
+      .getByRole("group", { name: "Policy actions", exact: true })
+      .getByRole("button", { name: "Save settings" });
+    const box = (await save.boundingBox())!;
+    expect(Math.round(box.height)).toBeLessThan(44);
+    expect(await tapHeight(save)).toBeGreaterThanOrEqual(44);
+  });
 });

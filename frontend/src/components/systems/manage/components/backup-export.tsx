@@ -6,6 +6,7 @@ import { Download, Eye, EyeOff } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Dialog,
   DialogContent,
@@ -295,6 +296,14 @@ export function PrepareExportDialog({
     confirmation.length > 0 &&
     confirmation !== passphrase &&
     !passphrase.startsWith(confirmation);
+  // Rule 6 (TASK-0061): a blocked Prepare says what is missing.
+  const prepareBlockedReason = passphrasesMatch
+    ? null
+    : !passphrase
+      ? "Enter a passphrase first."
+      : !confirmation
+        ? "Enter the passphrase again to confirm it."
+        : "Make both passphrases match first.";
   return (
     <Dialog
       open={open}
@@ -396,21 +405,28 @@ export function PrepareExportDialog({
           <DialogFooter className="mt-0">
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               className="min-h-11"
               disabled={pending}
               onClick={onCancel}
             >
               Cancel
             </Button>
-            <Button
-              type="submit"
-              form={`${id}-export-form`}
-              className="min-h-11"
-              disabled={pending || !passphrasesMatch}
+            <DisabledReason
+              stable
+              reason={pending ? null : prepareBlockedReason}
             >
-              {pending ? "Preparing…" : "Prepare encrypted backup"}
-            </Button>
+              <Button
+                type="submit"
+                form={`${id}-export-form`}
+                className="min-h-11"
+                disabled={!passphrasesMatch}
+                pending={pending}
+                pendingLabel="Preparing…"
+              >
+                Prepare encrypted backup
+              </Button>
+            </DisabledReason>
           </DialogFooter>
         </DialogFrameFooter>
       </DialogContent>
@@ -511,7 +527,7 @@ export function ConfirmPasswordDialog({
           <DialogFooter className="mt-0">
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               className="min-h-11"
               disabled={pending}
               onClick={onCancel}
@@ -522,9 +538,10 @@ export function ConfirmPasswordDialog({
               type="submit"
               form={`${id}-password-form`}
               className="min-h-11"
-              disabled={pending}
+              pending={pending}
+              pendingLabel="Confirming…"
             >
-              {pending ? "Confirming…" : "Confirm password"}
+              Confirm password
             </Button>
           </DialogFooter>
         </DialogFrameFooter>

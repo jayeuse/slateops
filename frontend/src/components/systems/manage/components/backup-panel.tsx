@@ -469,7 +469,7 @@ export function BackupPanel({
             <DialogFooter className="mt-0">
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 className="min-h-11"
                 disabled={maintenance.pending}
                 onClick={() => setCreateOpen(false)}
@@ -480,9 +480,10 @@ export function BackupPanel({
                 type="submit"
                 form={`${id}-backup-form`}
                 className="min-h-11"
-                disabled={maintenance.pending}
+                pending={maintenance.pending}
+                pendingLabel="Queueing…"
               >
-                {maintenance.pending ? "Queueing…" : "Back up now"}
+                Back up now
               </Button>
             </DialogFooter>
           </DialogFrameFooter>

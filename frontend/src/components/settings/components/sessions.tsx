@@ -288,27 +288,38 @@ function SessionConfirmation({ security }: { security: AccountSecurity }) {
         <AlertDialogFooter>
           <Button
             ref={cancel}
-            variant="outline"
+            variant="ghost"
             className="min-h-11"
             onClick={security.cancelConfirmation}
             disabled={busy}
           >
             Cancel
           </Button>
-          <Button
-            variant="destructive"
-            className="min-h-11"
-            disabled={busy}
-            onClick={security.confirm}
+          {/* Rules 4 and 6 (TASK-0061): its own end is busy; a password
+              change that still runs is a reason, not a busy state. */}
+          <DisabledReason
+            stable
+            reason={
+              busy && !security.ending
+                ? "Wait for the password change to finish."
+                : null
+            }
           >
-            {security.ending
-              ? "Ending…"
-              : confirmation?.type === "other-sessions"
+            <Button
+              variant="destructive"
+              className="min-h-11"
+              disabled={busy && !security.ending}
+              pending={security.ending}
+              pendingLabel="Ending…"
+              onClick={security.confirm}
+            >
+              {confirmation?.type === "other-sessions"
                 ? "Sign out other sessions"
                 : confirmation?.session.current
                   ? "End session and sign out"
                   : "End session"}
-          </Button>
+            </Button>
+          </DisabledReason>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

@@ -168,14 +168,13 @@ export default function LoginPage() {
                   Forgot password?
                 </a>
               </FormField>
-              <Button className="w-full" size="lg" disabled={pending}>
-                {pending ? (
-                  "Signing in…"
-                ) : (
-                  <>
-                    Sign in <ArrowRight aria-hidden="true" />
-                  </>
-                )}
+              <Button
+                className="w-full"
+                size="lg"
+                pending={pending}
+                pendingLabel="Signing in…"
+              >
+                Sign in <ArrowRight aria-hidden="true" />
               </Button>
             </form>
             <p className="text-muted-foreground mt-8 text-center text-sm">

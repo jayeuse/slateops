@@ -904,7 +904,7 @@ async function exerciseConnectedBoard(
           `/api/boards/${boardId}/posts/${postId}/publish` &&
         response.request().method() === "POST",
     ),
-    page.getByRole("button", { name: "Publish", exact: true }).click(),
+    page.getByRole("button", { name: "Publish post", exact: true }).click(),
   ]);
   expect(published.status()).toBe(200);
   await expect(page.getByText("Post published").first()).toBeVisible();
@@ -948,7 +948,9 @@ async function exerciseConnectedBoard(
           `/api/boards/${boardId}/posts/${secondPostId}/publish` &&
         response.request().method() === "POST",
     ),
-    postManager.getByRole("button", { name: "Publish", exact: true }).click(),
+    postManager
+      .getByRole("button", { name: "Publish post", exact: true })
+      .click(),
   ]);
   expect(secondPostPublished.status()).toBe(200);
   await page.reload();

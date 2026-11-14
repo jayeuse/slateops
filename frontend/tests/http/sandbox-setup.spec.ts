@@ -287,7 +287,7 @@ test("turning the channel back on in the review saves the draft, reviews again i
   // R4: while the save runs, the list stays and Publish says why it waits.
   await expect(
     dialog.getByRole("button", { name: "Publish changes" }),
-  ).toHaveAccessibleDescription("Saving…");
+  ).toHaveAccessibleDescription("Wait for the save to finish.");
   await expect(salesSetup.getByRole("listitem")).toHaveCount(6);
   releaseSave();
   // R2: the draft takes the value through one save, and the new review

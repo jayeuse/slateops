@@ -91,7 +91,7 @@ export function MembersPanel({
                     presence={presenceLabel(presence, person.id)}
                     onMessage={onDirect}
                     className={cn(
-                      "hover:bg-muted min-h-12 w-full gap-3 px-1.5 py-1",
+                      "hover:bg-tint-hover min-h-12 w-full gap-3 px-1.5 py-1",
                       status === "Offline" && "text-muted-foreground",
                     )}
                   >

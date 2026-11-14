@@ -565,10 +565,13 @@ test("Backup opens on one status panel of facts, with Back up now as the one pri
   expect(backup.lastGoodReads.at(-1)?.get("sort_order")).toBe("desc");
   await expect(panel.getByTestId("backup-service-warning")).toHaveCount(0);
   // Back up now is the section's one primary action; Edit schedule is quiet.
+  // A primary that can say why it waits sits in a tooltip trigger, whose
+  // data-slot it takes; the variant still marks it.
   const primary = page
     .getByRole("main")
-    .locator('[data-slot="button"][data-variant="default"]');
-  await expect(primary).toHaveText(["Back up now"]);
+    .locator('button[data-variant="default"]');
+  // innerText leaves out the hidden busy label ("Queueing…").
+  await expect(primary).toHaveText(["Back up now"], { useInnerText: true });
   await expect(
     panel.getByRole("button", { name: "Edit schedule", exact: true }),
   ).toHaveAttribute("data-variant", "ghost");
@@ -748,10 +751,11 @@ test("the schedule dialog shows only Close at rest, and its Save bar after an ed
   await dialog
     .getByLabel("Backup schedule", { exact: true })
     .selectOption("weekly");
-  await expect(footer.getByRole("button")).toHaveText([
-    "Discard changes",
-    "Save schedule",
-  ]);
+  // innerText leaves out the hidden busy label ("Saving…").
+  await expect(footer.getByRole("button")).toHaveText(
+    ["Discard changes", "Save schedule"],
+    { useInnerText: true },
+  );
   await expect(
     footer.getByText("Unsaved changes", { exact: true }),
   ).toBeVisible();

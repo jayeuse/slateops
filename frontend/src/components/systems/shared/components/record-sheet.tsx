@@ -254,39 +254,24 @@ export function LiveRecordInspector({
             <div className="shrink-0 border-b px-5 py-3">
               <TabsList
                 aria-label="Record sections"
-                className="max-w-full flex-nowrap justify-start overflow-x-auto"
+                className="max-w-full flex-nowrap justify-start overflow-x-auto overflow-y-hidden"
               >
                 {leadingTab ? (
-                  <TabsTrigger
-                    value={leadingTab.value}
-                    className="min-h-11 shrink-0 xl:min-h-8"
-                  >
+                  <TabsTrigger value={leadingTab.value} className="shrink-0">
                     {leadingTab.label}
                   </TabsTrigger>
                 ) : null}
-                <TabsTrigger
-                  value="details"
-                  className="min-h-11 shrink-0 xl:min-h-8"
-                >
+                <TabsTrigger value="details" className="shrink-0">
                   Details
                 </TabsTrigger>
-                <TabsTrigger
-                  value="links"
-                  className="min-h-11 shrink-0 xl:min-h-8"
-                >
+                <TabsTrigger value="links" className="shrink-0">
                   Linked records
                 </TabsTrigger>
-                <TabsTrigger
-                  value="files"
-                  className="min-h-11 shrink-0 xl:min-h-8"
-                >
+                <TabsTrigger value="files" className="shrink-0">
                   Files
                 </TabsTrigger>
                 {controls.canReadHistory ? (
-                  <TabsTrigger
-                    value="history"
-                    className="min-h-11 shrink-0 xl:min-h-8"
-                  >
+                  <TabsTrigger value="history" className="shrink-0">
                     History
                   </TabsTrigger>
                 ) : null}

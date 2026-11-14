@@ -232,23 +232,31 @@ test("SI-C5.2 the final action counts only the rows that change, and SI-5.5 caps
   const cases = [
     {
       input: { selected: 10, picked: false, changing: 0 },
-      label: { label: "Change records", enabled: false },
+      label: { label: "Change records", reason: "Choose a value first." },
     },
     {
       input: { selected: 10, picked: true, changing: 8 },
-      label: { label: "Change 8 records", enabled: true },
+      label: { label: "Change 8 records", reason: null },
     },
     {
       input: { selected: 10, picked: true, changing: 1 },
-      label: { label: "Change 1 record", enabled: true },
+      label: { label: "Change 1 record", reason: null },
     },
+    // TASK-0061 rules 2 and 6: a blocked button keeps its action label and
+    // says why in its reason.
     {
       input: { selected: 10, picked: true, changing: 0 },
-      label: { label: "All 10 already have this value", enabled: false },
+      label: {
+        label: "Change records",
+        reason: "All 10 already have this value.",
+      },
     },
     {
       input: { selected: 101, picked: true, changing: 101 },
-      label: { label: "Select at most 100 records", enabled: false },
+      label: {
+        label: "Change records",
+        reason: "Select at most 100 records.",
+      },
     },
   ];
   for (const item of cases)

@@ -447,7 +447,7 @@ function VersionRow({
         // lines on a phone. Hover and open tints come from the look's ink;
         // the open row is the tint only (the One Selection Rule, S26).
         "border-border grid h-auto w-full min-w-0 items-center justify-normal gap-x-2.5 rounded-none border-b px-3 text-left font-normal whitespace-nowrap",
-        "hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-[current=true]:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]",
+        "hover:bg-tint-hover aria-[current=true]:bg-tint-selected",
         phone
           ? "min-h-13 grid-cols-[1rem_minmax(0,1fr)] py-2"
           : "min-h-11 grid-cols-[1rem_minmax(0,1fr)_auto_2.75rem] py-0 xl:h-10 xl:min-h-10",

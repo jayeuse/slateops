@@ -41,6 +41,7 @@ import {
 } from "@/components/systems/comms/components/comms-attention";
 import {
   AppNavigation,
+  navigationNoActiveFill,
   navigationActiveInk,
   navigationIconStroke,
   navigationRowSize,
@@ -810,10 +811,10 @@ function AppCommsLink({ surface, collapsed }: ShellRowProps) {
                 : commsDescription
           }
           className={cn(
-            "relative",
             navigationRowSize(surface),
             navigationActiveInk,
             navigationIconStroke,
+            navigationNoActiveFill,
             drawer && "h-auto py-1.5",
           )}
         >
@@ -884,6 +885,7 @@ function AppAccountRow({ surface, collapsed }: ShellRowProps) {
             drawer ? "min-h-12" : navigationRowSize(surface),
             !drawer && "xl:min-h-10 xl:group-data-[collapsible=icon]:min-h-8",
             navigationActiveInk,
+            navigationNoActiveFill,
           )}
         >
           {self ? (
@@ -999,7 +1001,7 @@ function AppHeaderActions({
           setSearchUsed(true);
           setSearchOpen(true);
         }}
-        className="text-muted-foreground hover:text-foreground focus-visible:outline-ring flex size-11 shrink-0 items-center justify-center gap-2 rounded-md text-sm transition-colors hover:bg-(--surface-hover) focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50 sm:w-auto sm:bg-(--surface-sunken) sm:px-3 xl:h-8"
+        className="text-muted-foreground hover:text-foreground focus-visible:outline-ring hover:over-tint-hover flex size-11 shrink-0 items-center justify-center gap-2 rounded-md text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50 sm:w-auto sm:bg-(--surface-sunken) sm:px-3 xl:h-8"
       >
         <Search className="size-4" aria-hidden="true" />
         <span className="hidden sm:inline">Search</span>

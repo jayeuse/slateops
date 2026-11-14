@@ -642,7 +642,9 @@ async function chooseFollowUp(page: Page) {
     name: "Find a record in Service visits",
   });
   await search.fill("Loading Bay");
-  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Search records", exact: true })
+    .click();
   return {
     search,
     link: page.getByRole("button", {
@@ -767,7 +769,9 @@ test("Cancel after a missing-link retry releases other Add and Remove controls",
 
   await addHandover.click();
   await handover.getByRole("textbox").fill("Loading Bay");
-  await handover.getByRole("button", { name: "Search", exact: true }).click();
+  await handover
+    .getByRole("button", { name: "Search records", exact: true })
+    .click();
   await handover
     .getByRole("button", {
       name: "Link Loading Bay follow-up visit",
@@ -1036,7 +1040,9 @@ test("a single-source picker checks current candidates without crawling field li
   await openLinksPanel(page);
   const followUp = linkField(page, "Follow-up visit");
   await followUp.getByRole("button", { name: "Add link" }).click();
-  await followUp.getByRole("button", { name: "Search", exact: true }).click();
+  await followUp
+    .getByRole("button", { name: "Search records", exact: true })
+    .click();
   await expect(
     followUp.getByText(
       "No records to link. Records already linked from another record are not listed. Try another search.",
@@ -1058,7 +1064,9 @@ test("link target search exposes an explicit continuation", async ({
   await openLinksPanel(page);
   const followUp = linkField(page, "Follow-up visit");
   await followUp.getByRole("button", { name: "Add link" }).click();
-  await followUp.getByRole("button", { name: "Search", exact: true }).click();
+  await followUp
+    .getByRole("button", { name: "Search records", exact: true })
+    .click();
   await expect(followUp.getByRole("listitem")).toHaveCount(50);
   expect(api.state.targetRequests).toEqual([0]);
   await followUp

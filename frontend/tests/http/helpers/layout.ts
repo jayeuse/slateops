@@ -1,8 +1,29 @@
-import type { Locator } from "./test";
+import type { Locator, Page } from "./test";
 
 // Layout probes for the phone and tablet journeys (Manage relayout MD19):
 // targets under the 44px floor, text an ellipsis cuts, and toolbar controls
 // that wrapped alone.
+
+/**
+ * Waits until finite animations end, so geometry is read at rest: menus,
+ * popovers and pickers grow in from 95% (the overlay-motion utility). Two
+ * frames first, so a transition that starts on the next frame is included.
+ */
+export async function settled(page: Page) {
+  await page.evaluate(async () => {
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve)),
+    );
+    await Promise.all(
+      document
+        .getAnimations()
+        .filter(
+          (animation) => animation.effect?.getTiming().iterations !== Infinity,
+        )
+        .map((animation) => animation.finished.catch(() => undefined)),
+    );
+  });
+}
 
 /**
  * The visible interactive targets under 44px on their shorter side. A
@@ -12,6 +33,7 @@ import type { Locator } from "./test";
  * open menu whose items are not buttons or links.
  */
 export async function smallTargets(scope: Locator, extra?: string) {
+  await settled(scope.page());
   return scope.evaluate(
     (root, more) =>
       [

@@ -8,6 +8,11 @@ import { Switch } from "@/components/ui/switch";
 import { useUserPreferences } from "@/components/theme-provider";
 import type { DeviceTextSize, PageDensity } from "@/lib/appearance-preferences";
 import { cn } from "@/lib/utils";
+import {
+  pillClass,
+  pillOptionHeightClass,
+  pillRailClass,
+} from "@/components/ui/pill";
 import { useQuery } from "@tanstack/react-query";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import { accessNavigationFor } from "@/components/workspace-navigation";
@@ -62,17 +67,28 @@ export function AppearanceSection({
               preference.setMode(value);
             }
           }}
-          className="bg-muted flex w-fit max-w-full gap-0.5 rounded-[var(--radius)] p-0.5"
+          data-pill-rail=""
+          className={cn("isolate flex w-fit max-w-full gap-1", pillRailClass)}
         >
           {modes.map(([id, label, Icon]) => (
             <RadioGroupItem
               key={id}
               value={id}
+              data-pill-option=""
               className={cn(
-                "text-muted-foreground hover:text-foreground size-auto min-h-11 gap-1.5 rounded-md border-0 px-3 text-sm whitespace-nowrap xl:min-h-7",
-                "data-checked:text-foreground data-checked:bg-card data-checked:font-medium data-checked:shadow-[0_0_0_1px_var(--rule)]",
+                "text-muted-foreground hover:text-foreground relative size-auto gap-1.5 rounded-sm border-0 px-3 text-sm font-medium whitespace-nowrap",
+                pillOptionHeightClass,
+                "data-checked:text-action-text data-checked:font-semibold",
               )}
             >
+              <span
+                aria-hidden="true"
+                data-pill=""
+                className={cn(
+                  "absolute inset-0 -z-10 hidden in-data-checked:block",
+                  pillClass,
+                )}
+              />
               <Icon aria-hidden="true" className="size-3.5" />
               {label}
             </RadioGroupItem>

@@ -2,6 +2,7 @@
 
 import { LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Dialog,
   DialogContent,
@@ -36,6 +37,17 @@ export function PasswordDialog({
 }) {
   const password = security.password;
   const busy = security.busy;
+  // Rule 6 (TASK-0061): its own change is busy (rule 4); anything else that
+  // blocks it says why.
+  const blockedReason = password.pending
+    ? null
+    : !security.accountId
+      ? "Wait for your account to load."
+      : security.ending
+        ? "Wait for the session to end."
+        : busy
+          ? "Wait for your sessions to refresh."
+          : null;
   return (
     <Dialog
       open={password.open}
@@ -175,21 +187,25 @@ export function PasswordDialog({
           <DialogFooter className="mt-0">
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               className="min-h-11"
               disabled={password.pending}
               onClick={() => password.setOpen(false)}
             >
               Cancel
             </Button>
-            <Button
-              type="submit"
-              form="password-change-form"
-              className="min-h-11"
-              disabled={busy || !security.accountId}
-            >
-              {password.pending ? "Changing password…" : "Change password"}
-            </Button>
+            <DisabledReason stable reason={blockedReason}>
+              <Button
+                type="submit"
+                form="password-change-form"
+                className="min-h-11"
+                disabled={blockedReason !== null}
+                pending={password.pending}
+                pendingLabel="Changing password…"
+              >
+                Change password
+              </Button>
+            </DisabledReason>
           </DialogFooter>
         </DialogFrameFooter>
       </DialogContent>

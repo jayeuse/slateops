@@ -184,7 +184,7 @@ export function BackupHistoryList({
               variant="segmented"
               multiple={false}
               value={[request.state]}
-              className="w-full max-w-full flex-nowrap overflow-x-auto max-md:[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] max-md:pr-8 md:w-fit [&>*]:shrink-0"
+              className="w-full max-w-full flex-nowrap overflow-x-auto overflow-y-hidden max-md:[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] max-md:pr-8 md:w-fit [&>*]:shrink-0"
               onValueChange={(selection) => {
                 const next = STATUS_FILTERS.find(
                   (option) => option.value === selection[0],

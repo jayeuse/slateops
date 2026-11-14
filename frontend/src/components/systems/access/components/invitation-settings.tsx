@@ -349,7 +349,7 @@ export function InvitationSettings({
             {onCancel ? (
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 className="min-h-11"
                 disabled={pending}
                 onClick={onCancel}
@@ -380,6 +380,7 @@ export function InvitationSettings({
               </Button>
             ) : null}
             <DisabledReason
+              stable
               reason={!dirty && !pending ? "No changes to save." : null}
             >
               <Button

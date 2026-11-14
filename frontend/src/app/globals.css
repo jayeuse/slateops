@@ -2,6 +2,20 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Focus marks show for keyboard focus only: after a pointer press,
+   <html data-focus-source="pointer"> hides them (lib/focus-source.ts; Human
+   Owner, 2026-11-13). A pointer press does not make a button or link
+   focus-visible, so in practice this hides the marks of fields. */
+@custom-variant focus-visible (&:focus-visible:where(:not(:root[data-focus-source="pointer"] *)));
+
+/* The tint a sticky table cell lays over its card (live-record-results.tsx).
+   Registered as a colour so it eases with its row's own tint. */
+@property --row-tint {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: transparent;
+}
+
 /* Reduced motion comes from the device setting or from Appearance, which
    sets data-motion="reduced" on <html> (lib/appearance-preferences.ts). */
 @custom-variant motion-reduce {
@@ -29,16 +43,16 @@
  */
 :root,
 [data-theme-preview="slate"] {
-  --ground: #f7f8fa;
-  --surface: #ffffff;
-  --surface-raised: #ffffff;
-  --surface-sunken: #f1f3f5;
-  --surface-hover: #eef0f3;
+  --ground: #eceef1;
+  --surface: #f7f8fa;
+  --surface-raised: #f9fafb;
+  --surface-sunken: #e2e5e9;
+  --surface-hover: #d3d8de;
   --ink: #0f1115;
-  --ink-muted: #555e6c;
-  --rule: #e4e7ec;
-  --rule-strong: #d0d5dd;
-  --control-edge: #858e9b;
+  --ink-muted: #454d59;
+  --rule: #d9dde3;
+  --rule-strong: #c2c9d1;
+  --control-edge: #7b8491;
   --action: #2563eb;
   --action-ink: #ffffff;
   --action-text: #1d4ed8;
@@ -50,7 +64,7 @@
   --warn: #a36600;
   --warn-ink: #ffffff;
   --warn-text: #8a5300;
-  --warn-tint: #fff7e8;
+  --warn-tint: #fcf2de;
   --danger: #d92d20;
   --flow-rule: #b7dfd9;
   --warn-rule: #f2d3a0;
@@ -98,11 +112,11 @@
   --sidebar-foreground: var(--ink);
   --sidebar-muted: var(--ink-muted);
   --sidebar-accent: var(--surface-hover);
-  --canvas-background: #f5f6f8;
+  --canvas-background: #e8eaee;
   --canvas-moving: var(--warn-tint);
   --canvas-drop: var(--action-tint);
-  --canvas-grid: #dde1e7;
-  --canvas-grid-major: #c3c9d2;
+  --canvas-grid: #d2d7dd;
+  --canvas-grid-major: #b9c0c9;
   --sandbox-node-border: var(--rule-strong);
   --radius: 0.5rem;
   /* Motion. Durations name the job, not a speed: fast for feedback, base
@@ -111,6 +125,9 @@
   --motion-fast: 140ms;
   --motion-base: 220ms;
   --motion-slow: 360ms;
+  /* Menus, popovers, selects and tooltips: the routine duration, held in
+     150 to 250ms so every look opens them briskly. */
+  --motion-overlay: clamp(150ms, var(--motion-base), 250ms);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
@@ -180,6 +197,11 @@
   --button-ink: var(--foreground);
   --button-edge: var(--rule-strong);
   --sidebar-border: var(--rule);
+  /* Hover and selected rows, list items and quiet controls: --ink at these
+     shares over whatever fill is under them (bg-tint-hover,
+     bg-tint-selected), so the step is the same on every base. */
+  --tint-hover: 10%;
+  --tint-selected: 18%;
 }
 
 .dark,
@@ -190,9 +212,9 @@
   --surface: #1b1b1b;
   --surface-raised: #222222;
   --surface-sunken: #1e1e1e;
-  --surface-hover: #2a2a2a;
+  --surface-hover: #313131;
   --ink: #ededed;
-  --ink-muted: #a3a3a3;
+  --ink-muted: #a6a6a6;
   --rule: #2d2d2d;
   --rule-strong: #424242;
   --control-edge: #6e6e6e;
@@ -234,6 +256,8 @@
   --dept-4: #d88aa0;
   --canvas-grid: color-mix(in srgb, #3b3b3b 45%, transparent);
   --canvas-grid-major: color-mix(in srgb, #525252 55%, transparent);
+  --tint-hover: 9%;
+  --tint-selected: 14%;
 }
 
 @theme inline {
@@ -261,6 +285,18 @@
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-muted: var(--sidebar-muted);
   --color-sidebar-accent: var(--sidebar-accent);
+  /* Inline, so --ink resolves where the class is used (a look preview
+     keeps its own ink). */
+  --color-tint-hover: color-mix(
+    in oklab,
+    var(--ink) var(--tint-hover),
+    transparent
+  );
+  --color-tint-selected: color-mix(
+    in oklab,
+    var(--ink) var(--tint-selected),
+    transparent
+  );
   --color-card-edge: var(--card-edge, var(--border));
   --shadow-card: var(--card-lift);
   --color-action-text: var(--action-text);
@@ -304,6 +340,16 @@
 }
 
 /* Layered so border-color utilities (border-input, border-primary, …) win. */
+/* The hover tint laid over an element's own fill (a card-colored button, a
+   sunken Search button, a highlighted day), so the fill darkens a step
+   instead of being replaced by the bare tint. */
+@utility over-tint-hover {
+  background-image: linear-gradient(
+    color-mix(in oklab, var(--ink) var(--tint-hover), transparent),
+    color-mix(in oklab, var(--ink) var(--tint-hover), transparent)
+  );
+}
+
 @layer base {
   * {
     border-color: var(--border);
@@ -372,13 +418,30 @@ textarea {
   outline-color: var(--ring);
 }
 
-button:focus-visible,
-a:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
+:is(button, a, input, select, textarea):focus-visible:where(
+    :not(:root[data-focus-source="pointer"] *)
+  ) {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
+}
+
+/* Pill options (tabs, link tabs, segmented filters, Color mode, the stage
+   switcher) draw the focus outline inside their own edge: a look may set the
+   rail's pad to 0, and a scrolling rail would clip an outer outline. */
+:is([data-slot="tabs-trigger"], [data-pill-option]):focus-visible:where(
+    :not(:root[data-focus-source="pointer"] *)
+  ) {
+  outline-offset: -2px;
+}
+
+/* After a pointer press a focused field shows no mark, also not the
+   browser's own outline (lib/focus-source.ts). Zero specificity, so forced
+   colors keep their outline. */
+:where(
+  :root[data-focus-source="pointer"]
+    :is(input, select, textarea, [contenteditable="true"]):focus-visible
+) {
+  outline: none;
 }
 
 ::placeholder {
@@ -450,7 +513,9 @@ textarea {
     select,
     textarea,
     [role="separator"]
-  ):not(:disabled):not([aria-disabled="true"]):focus-visible {
+  ):not(:disabled):not([aria-disabled="true"]):focus-visible:where(
+    :not(:root[data-focus-source="pointer"] *)
+  ) {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
@@ -549,6 +614,43 @@ textarea {
 .sandbox-flow .sandbox-port[data-visible="true"],
 .sandbox-flow[data-connecting="true"] .sandbox-port {
   opacity: 1;
+}
+
+/* Menus, popovers, selects and tooltips (Human Owner, 2026-11-13): they grow
+   from their trigger, starting at 95% and clear, and ease out; they leave
+   20% faster toward the trigger with ease-in. Base UI sets the start and end
+   states and --transform-origin (the trigger side). Base UI marks a keyboard
+   open, an Escape close, a focus-opened tooltip and a tooltip hand-off
+   (data-instant); those are instant, so focus moves at once. */
+@utility overlay-motion {
+  transform-origin: var(--transform-origin);
+  transition-property: opacity, scale;
+  transition-duration: var(--motion-overlay);
+  transition-timing-function: var(--ease-out);
+  &[data-starting-style],
+  &[data-ending-style] {
+    opacity: 0;
+    scale: 0.95;
+  }
+  &[data-ending-style] {
+    transition-duration: calc(var(--motion-overlay) * 0.8);
+    transition-timing-function: var(--ease-in);
+  }
+  &[data-instant] {
+    transition-duration: 0ms;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+  &:where([data-motion="reduced"] *) {
+    transition: none;
+  }
+}
+
+/* A tooltip leaves at once: on a hand-off the next one is already showing,
+   and two must never overlap. Unlayered, so it outranks overlay-motion. */
+[data-slot="tooltip-content"][data-ending-style] {
+  transition-duration: 0ms;
 }
 
 /* Data that replaces a loading state fades in; cached data appears at once
@@ -1249,11 +1351,27 @@ html[data-density="spacious"]
     [data-slot="textarea"],
     button[role="combobox"],
     input[role="combobox"]
-  ):focus-visible,
-:root:not([data-theme]) .slim-ui [data-slot="input-group"]:focus-within {
+  ):focus-visible:where(:not(:root[data-focus-source="pointer"] *)),
+:root:not([data-theme])
+  .slim-ui
+  [data-slot="input-group"]:focus-within:where(
+    :not(:root[data-focus-source="pointer"] *)
+  ) {
   border-color: transparent;
   border-bottom-color: var(--action);
   box-shadow: inset 0 -1px 0 var(--action);
+}
+/* An input group draws the focus of its control with its own border and ring
+   (components/ui/input-group.tsx); after a pointer press it shows neither.
+   Zero specificity, so the slim and look skins still set the resting edge. */
+:where(
+  :root[data-focus-source="pointer"]
+    [data-slot="input-group"]:has(
+      [data-slot="input-group-control"]:focus-visible
+    )
+) {
+  border-color: var(--input);
+  --tw-ring-shadow: 0 0 #0000;
 }
 :root:not([data-theme])
   .slim-ui
@@ -1292,7 +1410,8 @@ html[data-density="spacious"]
   opacity: 1;
 }
 /* Quiet buttons: an outline button is a sunken fill with no edge in Slate;
-   the other looks keep their outline skins. */
+   the other looks keep their outline skins. Hover lays the ink tint over
+   this fill (over-tint-hover on the Button), so it darkens a step. */
 :root:not([data-theme])
   .slim-ui
   :is(
@@ -1301,11 +1420,6 @@ html[data-density="spacious"]
   )[data-variant="outline"] {
   border-color: transparent;
   background-color: var(--surface-sunken);
-}
-:root:not([data-theme])
-  .slim-ui
-  [data-slot="button"][data-variant="outline"]:hover:not(:disabled) {
-  background-color: var(--surface-hover);
 }
 
 /* Shared page switches retain a balanced track and thumb at every density. */

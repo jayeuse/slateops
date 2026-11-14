@@ -433,7 +433,9 @@ export function PeopleView() {
           <Settings2 aria-hidden="true" />
           Invitation settings
         </Button>
-        <DisabledReason reason={rows === null ? "Loading people…" : null}>
+        <DisabledReason
+          reason={rows === null ? "Wait for the people to load." : null}
+        >
           <Button className="min-h-11" onClick={() => setInviteOpen(true)}>
             <UserRoundPlus aria-hidden="true" />
             Invite person
