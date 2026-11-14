@@ -57,14 +57,17 @@ The "SO" block has four styles now: `size-9 bg-foreground` (home, `/setup`), `si
 ### Home `/` (SO-H)
 
 - **SO-H1.** The header action is "Sign in" as an outline button (`variant="outline"`, `min-h-11 xl:min-h-8`), 44px below 1280px and 32px from 1280px, with no icon. "Open workspace" stays the page's one primary action.
-- **SO-H2.** Under the header, one region at most 72rem wide (`max-w-6xl`), with 16px side padding below 640px and 28px from 640px. From 1024px it has two panes: the hero (`minmax(0,1fr)`) and the guided-start card (`minmax(0,28rem)`), 64px apart, centered on the same middle line. Below 1024px the hero comes first, then the card, 40px apart.
+- **SO-H2.** Under the header, one region at most 72rem wide (`max-w-6xl`), with 16px side padding below 640px and 28px from 640px. From 1024px it has two panes: the hero (`minmax(0,1fr)`) and the "How it works" card (`minmax(0,28rem)`), 64px apart, centered on the same middle line. Below 1024px the hero comes first, then the card, 40px apart.
 - **SO-H3.** From 1024px the region is vertically centered in the space under the header (`my-auto`), with at least 48px above and below. Below 1024px it starts 40px under the header.
-- **SO-H4.** The hero title keeps its size: 36px below 1024px and 48px from 1024px, `leading-[1.1]`, weight 700, tracking -0.025em, with `data-slot="page-title"`. This is the one title step above 30px in the product (proposed DESIGN.md text below).
-- **SO-H5.** The hero text is 16px with a 28px line height, `text-muted-foreground`, at most 36rem wide, 20px under the title.
+- **SO-H4.** The hero title keeps its size: 36px below 1024px and 48px from 1024px, `leading-[1.1]`, weight 700, tracking -0.025em, with `data-slot="page-title"`. This is the one title step above 30px in the product (proposed DESIGN.md text below). The title is "Draw your organization as it works.": PRODUCT.md's public line with the fixed word "organization". PRODUCT.md allows one fixed word where the line cannot move; here the word does not rotate because motion belongs only to the element a person acted on (Human Owner, 2026-11-14). The title has `text-balance`.
+- **SO-H5.** Under the title, 20px down, one sentence: "Slate Operations turns the drawing into one system your people use every day." It is 16px with a 28px line height, `text-muted-foreground`, at most 36rem wide. It is PRODUCT.md's outcome line, so "draw" does not read as a diagram tool.
 - **SO-H6.** "Open workspace" is the primary button with `size="lg"` and `min-h-11` (44px at every width and every page spacing; `h-11` alone shrinks under compact spacing), 32px under the text, with its arrow icon. It is the only button with an icon on the signed-out pages: it leaves the page.
-- **SO-H7.** The two facts ("Self-hosted access", "Your records stay on your server") stay as one line of 14px muted text, 24px under the button, each after a 16px icon in `text-muted-foreground`, not action blue.
-- **SO-H8.** "A guided start" is a `Card` with a `CardHeader` that holds a `CardTitle` (`h2`, 16px weight 600). There is no header icon. The card takes `w-full` below 1024px and `lg:self-center` from 1024px, because the base `Card` class has `self-start`.
-- **SO-H9.** The three steps are an ordered list (`ol`) in the card body. Each row has 20px side padding and 16px top and bottom padding, with a `border-border` hairline between rows. A row is the step number ("01") in the code face at 12px, `text-muted-foreground`, tabular figures; then the step title as an `h3` (14px weight 600) over its sentence (14px muted, 20px line). No check circle shows.
+- **SO-H7.** 24px under the button, one line: "Staff join by invitation from their administrator." It is a `<p>`, 14px, `text-muted-foreground`, with no icon: it is one fact, and an icon would only decorate it. It replaces the two facts "Self-hosted access" and "Your records stay on your server" and their icons. It is the home page's only word about how a person gets in; the page still has no `/setup` link (UF-C13.4).
+- **SO-H8.** "How it works" is a `Card` with a `CardHeader` that holds a `CardTitle` (`h2`, 16px weight 600). There is no header icon. The card takes `w-full` below 1024px and `lg:self-center` from 1024px, because the base `Card` class has `self-start`.
+- **SO-H9.** The three steps are an ordered list (`ol`) in the card body. Each row has 20px side padding and 16px top and bottom padding, with a `border-border` hairline between rows. A row is the step number ("01") in the code face at 12px, `text-muted-foreground`, tabular figures; then the step title as an `h3` (14px weight 600) over its sentence (14px muted, 20px line). No check circle shows. The steps, in order:
+  1. "01", "Draw", "Lay out your departments, what each one records, and how work moves between them."
+  2. "02", "Test", "Send sample data through the drawing and see where it goes, before anyone relies on it."
+  3. "03", "Work", "Your people keep records, boards and messages in one place, each seeing only what they may."
 - **SO-H10.** No footer.
 
 ### Sign-in `/login` (SO-S)
@@ -88,7 +91,7 @@ The "SO" block has four styles now: `size-9 bg-foreground` (home, `/setup`), `si
 
 ### Other signed-out pages (SO-O)
 
-- **SO-O1.** `/setup` (setup guide) takes the frame only. Its "Back to sign in" ghost button moves into the header action slot. Its body (eyebrow, title, notice, card, "Continue to sign in") does not change. One body spacing changes: the top and bottom padding from 640px goes from 96px to 64px (`sm:py-16`), so the page fits 1440x900 under the 56px top bar without scrolling at rest. Two colors change: the eyebrow uses `text-action-text`, the text-safe shade, because `text-primary` was 4.45:1 at 12px, below AA; the Terminal icon uses `text-muted-foreground`, as the home facts do (SO-H7), because action blue never decorates (One Meaning Rule). The header "Back to sign in" takes the home header action's sizes (`h-8 min-h-11 xl:min-h-8`).
+- **SO-O1.** `/setup` (setup guide) takes the frame only. Its "Back to sign in" ghost button moves into the header action slot. Its body (eyebrow, title, notice, card, "Continue to sign in") does not change. One body spacing changes: the top and bottom padding from 640px goes from 96px to 64px (`sm:py-16`), so the page fits 1440x900 under the 56px top bar without scrolling at rest. Two colors change: the eyebrow uses `text-action-text`, the text-safe shade, because `text-primary` was 4.45:1 at 12px, below AA; the Terminal icon uses `text-muted-foreground`, because action blue never decorates (One Meaning Rule). The header "Back to sign in" takes the home header action's sizes (`h-8 min-h-11 xl:min-h-8`).
 - **SO-O2.** `/auth/setup` and `/auth/email-change` take the frame and the mark only (the scope stated to the Human Owner). Each page drops its own `<main>`, its `min-h-screen`, and its own "SO" block; its current content sits in the frame's `main`, centered with `m-auto` and `px-4 py-8 sm:py-12`. Its words, controls, classes, order, and states do not change. It gets no `slim-ui` and no panel.
 - **SO-O3 (proposed, needs a go-ahead).** Move these two pages into `SignedOutPanel` too, so all four form pages look the same. This is more than a container: inside `slim-ui`, from 1280px, the email change buttons, the invitation list, and the outline "Go to your workspace" button become 32px slim controls, and the icon tiles go. No other rule depends on this choice.
 
@@ -138,8 +141,8 @@ The Slate field skin (sunken well and bottom rule) applies at every width inside
 | Notices | `Alert` with `mb-5` above the form, on the ground | `Alert` inside the card at the top, 16px over the first field | Same component, same variants. |
 | Field spacing | `space-y-5` (20px) | `gap-4` (16px) between groups; 8px label to field | Same. |
 | Home header action | Primary `size="sm"` with arrow | Outline, no icon (SO-H1) | `--button-edge` and `--button-ink` per look. |
-| Home feature icons | `text-primary` | `text-muted-foreground` | Same. |
-| Home guided-start card | Hand-made card, `rounded-[calc(var(--radius)*1.5)]`, `p-5 sm:p-7`, `h2` 20px, header icon, check circles | `Card`, `CardHeader`, `CardTitle` (16px weight 600), `ol` rows (SO-H9), no icons | Same. |
+| Home facts line | Two facts, each after a `text-primary` icon | One 14px muted line, no icon (SO-H7) | Same. |
+| Home "How it works" card | Hand-made card, `rounded-[calc(var(--radius)*1.5)]`, `p-5 sm:p-7`, `h2` 20px, header icon, check circles | `Card`, `CardHeader`, `CardTitle` (16px weight 600), `ol` rows (SO-H9), no icons | Same. |
 | Layout | Sign-in: split grid from 1024px. Recovery: centered column with `min-h-screen` | One frame; panel column `max-w-sm m-auto`; home two panes from 1024px; no `min-h-screen` | Same. |
 | Footers | Home and sign-in footers | None | Same. |
 
@@ -153,21 +156,37 @@ The Still Page Rule is for workspace pages; signed-out pages are not still pages
 4. At 1440x900 no signed-out page scrolls at rest. On a shorter window the page scrolls as one; no pane scrolls on its own.
 5. At 390x844 every page is one column. Sign-in and recovery fit without scroll at rest; home scrolls.
 6. No page scrolls sideways at any width from 320px. The panel gives each `Alert` in its card `wrap-anywhere`, so a long email or reference in a notice wraps.
-7. Every link and button shows the 2px `--focus` outline with a 2px offset on keyboard focus. Fields show the keyboard focus rule (delta list, Field). The product link in the header shows the outline too.
+7. The home title takes at most three lines at any width from 320px: two from 1280px, three at 1024px and on phones. At 1440x900 and 1280x800 home does not scroll; on phones it scrolls as one.
+8. Every link and button shows the 2px `--focus` outline with a 2px offset on keyboard focus. Fields show the keyboard focus rule (delta list, Field). The product link in the header shows the outline too.
 
 ## Words
 
-Kept (tests pin most of them): "Welcome back", "Sign in to continue to your workspace.", "Email", "Password", "Forgot password?", "Sign in", "Signing in…", "First deployment?", "Read the setup guide", "Password set. Sign in.", "Finish setup using the link in your invitation email.", "Reset password", "Choose a new password", both recovery descriptions, "Preparing password recovery…", "Request recovery", "Requesting…", "Saving…", "New password", "Confirm new password", the requirement line and the field errors, both recovery notices, "Remembered your password?", "Return to sign in", "Make the next action obvious.", the hero sentence, "Open workspace", "Self-hosted access", "Your records stay on your server", "A guided start", "Join", "Model", "Operate", and their three sentences.
+Kept (tests pin most of them): "Welcome back", "Sign in to continue to your workspace.", "Email", "Password", "Forgot password?", "Sign in", "Signing in…", "First deployment?", "Read the setup guide", "Password set. Sign in.", "Finish setup using the link in your invitation email.", "Reset password", "Choose a new password", both recovery descriptions, "Preparing password recovery…", "Request recovery", "Requesting…", "Saving…", "New password", "Confirm new password", the requirement line and the field errors, both recovery notices, "Remembered your password?", "Return to sign in", and "Open workspace".
 
 **Error message.** "Invalid email or password." (commit `296c890f`): **confirmed**. It is the same for a wrong email and a wrong password, so it does not tell anyone which accounts exist. It is short, it ends with a period like the other notices, and it shows no reference because the person can fix it alone.
 
-Changed or removed (each needs no new word):
+**Home words (Human Owner, 2026-11-14, "Product story").** Exact words; do not edit them.
+
+| Place | Words |
+| --- | --- |
+| Title (`h1`) | "Draw your organization as it works." |
+| Text under the title | "Slate Operations turns the drawing into one system your people use every day." |
+| Primary button | "Open workspace" (with its arrow) |
+| Line under the button | "Staff join by invitation from their administrator." |
+| Card title | "How it works" |
+| Step 1 | "Draw": "Lay out your departments, what each one records, and how work moves between them." |
+| Step 2 | "Test": "Send sample data through the drawing and see where it goes, before anyone relies on it." |
+| Step 3 | "Work": "Your people keep records, boards and messages in one place, each seeing only what they may." |
+
+Removed from home (Human Owner, 2026-11-14): "Make the next action obvious.", "Slate Operations gives teams a calm, structured place to design their operational data and keep work moving from setup to everyday records.", "Self-hosted access", "Your records stay on your server", "A guided start", and the steps "Join", "Model", "Operate" with their sentences. The invitation line takes the place of step "Join" ("Your administrator sends you an invitation by email."), so the page still speaks to staff who join by invitation (`ux-friction-pass.md` DR-13.5). The self-hosted fact no longer shows on any signed-out page.
+
+Changed or removed with the restyle (each needs no new word):
 
 | Words | Change | Reason | Where it goes |
 | --- | --- | --- | --- |
-| "A clear view of what comes next." and "Design your operating model once, then keep every team working from the same source of truth." | Removed | They live only in the empty brand panel, which AC-3 removes. | Nowhere. The home hero already says what the product does. |
-| "Self-hosted by default · Slate Operations" (sign-in footer) | Removed | Footer of the removed panel; the header names the product. | The home line "Self-hosted access" keeps the fact. |
-| "Slate Operations" and "Self-hosted by default" (home footer) | Removed | The header names the product, and the hero line already says self-hosted (one fact, one place). | Header; hero facts line. |
+| "A clear view of what comes next." and "Design your operating model once, then keep every team working from the same source of truth." | Removed | They live only in the empty brand panel, which AC-3 removes. | Nowhere. The home title and text say what the product does. |
+| "Self-hosted by default · Slate Operations" (sign-in footer) | Removed | Footer of the removed panel; the header names the product. | Nowhere (the home facts line is gone too, see above). |
+| "Slate Operations" and "Self-hosted by default" (home footer) | Removed | The header names the product, and the self-hosted fact goes with the old home content. | Header. |
 | "Use the email and password for your Slate Operations account." | Removed | It explains how to use the fields and repeats the description (the Few Words Rule). No test pins it. | Nowhere. |
 | "Slate Ops" (home header on phones) | Becomes "Slate Operations" | One product link on every page; the full name fits at 390px beside "Sign in". | Header. |
 | "Welcome back" | `h2` becomes `h1` | AC-3: the sign-in page gets one visible `h1` at every width. | Same place. |
@@ -179,7 +198,7 @@ Changed or removed (each needs no new word):
 | No sign-in flash on `/` and `/login` for a signed-in visitor | `http/auth-sign-in-destination.spec.ts` "an authenticated visitor to … waits …" | Home: `actionsHidden` hides the header "Sign in", and the hero CTA stays `invisible` until the check ends. Sign-in: `contentHidden` hides Email and Sign in. `main` stays visible. |
 | Public actions after an anonymous or failed check | same file, "keeps its public actions …" | The page clears `actionsHidden` and `contentHidden` in both paths, as now. |
 | The error alert inside `main`; "Invalid email or password." | same file, "login explains …" | The `Alert` sits in the card, inside `main`; the frame adds no alert (SO-F7). |
-| Setup guide link only on sign-in | `http/landing-page.spec.ts` | Home has no `/setup` link; "First deployment?" and the link share one `<p>` (SO-P7). |
+| Setup guide link only on sign-in | `http/landing-page.spec.ts` (UF-C13.4) | Home has no `/setup` link; "First deployment?" and the link share one `<p>` (SO-P7). The test also checks the old step "Join" and its sentence; those words are gone, so it must check the invitation line "Staff join by invitation from their administrator." instead. The criterion does not change. |
 | Recovery request and completion, one status | `http/auth-setup.spec.ts`, `fullstack/auth-session.spec.ts` | Words kept; the frame adds no `role="status"`. |
 | One "sign in" link on email change | `http/auth-email-change.spec.ts` (`/sign in/i`) | No header action on that page (SO-F4). |
 | Headings "Welcome back", "Reset password", "Choose a new password" | `fullstack/auth-session.spec.ts` | Words kept. |
@@ -206,8 +225,13 @@ Add under "Components", after "Profile and Account settings (relayout)":
 >
 > Home, sign-in, recovery, invitation setup, email change, and the setup guide share one frame (`components/signed-out/signed-out-frame.tsx`): the workspace top bar (56px, card fill, hairline, `data-skin="topbar"`) with the product link on the left, and `main#main-content` with `data-skin="page"`, so each look draws its ground. Before sign-in the page knows only the look, not the organization, so the product link shows `ProductMark` (`components/brand/product-mark.tsx`: the "SO" square in `--foreground`, 32px) and "Slate Operations". No page draws its own mark.
 >
-> Sign-in and recovery use `SignedOutPanel`: one centered 24rem column with the page title (24px, 30px from 640px), a muted description, a `slim-ui` card that holds the notices and the form, and one muted footer line with its link. Fields and buttons are 44px below 1280px and 32px from 1280px. Home has a 36px title (48px from 1024px), the one title above 30px in the product, and two panes from 1024px: the hero with "Open workspace", the only primary, and the guided-start card. Signed-out pages are not still pages: the band spans the width, forms stay centered, and at 1440x900 nothing scrolls at rest.
+> Sign-in and recovery use `SignedOutPanel`: one centered 24rem column with the page title (24px, 30px from 640px), a muted description, a `slim-ui` card that holds the notices and the form, and one muted footer line with its link. Fields and buttons are 44px below 1280px and 32px from 1280px. Home has a 36px title (48px from 1024px), the one title above 30px in the product, and two panes from 1024px: the hero ("Draw your organization as it works.", the outcome line, "Open workspace", the only primary, and one muted line on how staff join, with no icon) and the "How it works" card. Signed-out pages are not still pages: the band spans the width, forms stay centered, and at 1440x900 nothing scrolls at rest.
 >
 > Correct: the sign-in page at 390px shows the band with the mark, "Welcome back" as the page's one `h1`, and the card with Email, Password, and Sign in.
 >
 > Wrong: a split sign-in page whose left half is ground on ground and holds the only `h1`, or a blue "SO" block on one page and a black one on the next.
+
+DESIGN.md now has the section (the "Home." paragraph under "Signed-out pages"). The home content change (SO-H4, SO-H5, SO-H7 to SO-H9) changes two of its recorded facts:
+
+- Replace `the "A guided start" card` with `the "How it works" card`.
+- Replace `one 14px muted line of two facts whose 16px icons are muted ink, not action blue.` with `one 14px muted line on how staff join, with no icon. The title is PRODUCT.md's public line with the fixed word "organization", because nothing on the page moves unless a person acts on it.`
