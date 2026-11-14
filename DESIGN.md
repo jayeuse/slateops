@@ -509,7 +509,7 @@ Wrong: a new chip tint that is checked only in Slate light.
 
 ### Hierarchy
 
-- **Headline** (`--font-display`, 700, 24px, 30px from 640px up, line height 1.25, -0.025em): page titles only, through `PageHeader` (`data-slot="page-title"`). One per page.
+- **Headline** (`--font-display`, 700, 24px, 30px from 640px up, line height 1.25, -0.025em): page titles only, through `PageHeader` (`data-slot="page-title"`). One per page. The one larger step is the signed-out home title: 36px, 48px from 1024px, line height 1.1, with the same hook (Signed-out pages).
 - **Title Large** (600, 18px, 28px line, tight tracking): section headings inside a page, such as "Organization look" (`data-slot="section-title"`).
 - **Title** (600, 16px): card titles (`data-slot="card-title"`).
 - **Body** (400, 14px, 20px line; descriptions use a 24px line and a 672px maximum width): the default text size for content, tables, and descriptions.
@@ -992,6 +992,26 @@ Wrong: a list of 400 zones as tall as the viewport that covers the header, or a 
 Correct: at 390px `/settings` shows the bar's controls, then "Account settings" as the heading row under the bar, and a tap in Display name does not zoom the page.
 
 Wrong: "Account settin…" cut in the phone bar, or a 14px field that makes Safari zoom on focus.
+
+### Signed-out pages
+
+Home, sign-in, recovery, invitation setup, email change, and the setup guide each render `SignedOutFrame` once (`components/signed-out/signed-out-frame.tsx`; `docs/specs/signed-out-pages.md`). It holds the page's only header and only `main`, and both are server-safe, so a server page can use them.
+
+**Frame.** The header is the workspace top bar (`data-skin="topbar"`): 56px, the card fill, a `--border` hairline under it, 16px sides (20px from 640px). The product link to `/` sits on the left: the product mark and "Slate Operations" at 14px weight 600, a 44px target below 1280px and 32px from 1280px. An optional action sits on the right; only home ("Sign in", outline, no icon) and the setup guide ("Back to sign in", ghost) have one, both 44px below 1280px and 32px from 1280px. `main#main-content` carries `data-skin="page"`, so each look draws its page ground, and the device's page spacing and the 44px floor apply as in the workspace. The header and `main` sit in the body column and `main` takes the rest of the height; no part sets `min-h-screen`, which would add 56px of scroll. The frame adds no status or alert of its own.
+
+**Mark.** Before sign-in the page knows the look, not the organization, so the band shows the product, never an organization name or logo. `ProductMark` (`components/brand/product-mark.tsx`) is the one product mark: a 32px square with the medium corner, `--foreground` fill, and "SO" in `--background` at 12px weight 700, `aria-hidden` because the words beside it name the product. It uses the classes of the `WorkspaceLogo` fallback, so it matches the default organization mark. No page draws its own "SO" block; inside the workspace the shell shows the organization (Navigation), not this mark.
+
+**Form panel.** Sign-in and recovery use `SignedOutPanel` (`components/signed-out/signed-out-panel.tsx`): one column at most 24rem wide, centered with `m-auto` in the space under the bar (not `items-center` on `main`, so a tall form keeps its top on a short window). In order: the `h1` page title with `data-slot="page-title"` and the `PageHeader` title classes (24px, 30px from 640px); a 14px muted description on a 24px line, 6px under it; a full-width `Card` with `slim-ui` and 20px padding at every width, 24px under the description, holding the notices first and then the form (groups 16px apart); and one 14px muted footer line, centered, 24px under the card, whose sentence and `--action-text` link share one `<p>`. No icon sits over the title. Fields and the full-width primary button are 44px below 1280px and 32px from 1280px; form buttons have no icon and keep their width while pending. Invitation setup, email change, and the setup guide take the frame only and keep their earlier content inside it until their own pass.
+
+**Home.** One region at most 72rem wide, 16px sides (28px from 640px). From 1024px it has two panes, centered in the height under the bar and 64px apart: the hero, and the "A guided start" card (at most 28rem). Below 1024px the hero comes first and the card follows 40px under it. The hero title is 36px (48px from 1024px), weight 700, line height 1.1, -0.025em, with `data-slot="page-title"`: the one title step above 30px in the product (Typography). Under it sit 16px muted text on a 28px line (at most 36rem), "Open workspace" (the page's one primary, large, 44px at every width, with its arrow), and one 14px muted line of two facts whose 16px icons are muted ink, not action blue. The card is a `Card` with a 16px card title and an ordered list of three rows divided by hairlines: the step number in the code face (12px, muted, tabular), then a 14px weight-600 step title over a 14px muted sentence. There are no check circles and no footer.
+
+**Session check.** The page owns the check and keeps its frame on screen. `busy` sets `aria-busy` on `main`; `actionsHidden` hides the header action and `contentHidden` hides the panel's card content and footer line, both with `invisible`, so the layout keeps its space. Home also hides "Open workspace" the same way. A signed-in visitor sees the bar, the title, and the empty card, then the redirect; an anonymous visitor or a failed check gets the full page. Nothing covers the page, and no "Checking…" text shows.
+
+Signed-out pages are not still pages: the band spans the window, the forms stay centered, and home fills the width with its two panes from 1024px.
+
+Correct: at 390px, sign-in shows the band with the mark and "Slate Operations", "Welcome back" as the page's one `h1`, and the card with Email, Password, and Sign in; during the session check the title and the empty card are already there.
+
+Wrong: a split sign-in page whose left half is ground on ground and holds the only `h1`, a blue "SO" block or the last organization's logo in the band, or a "Checking your session…" cover.
 
 ### Organization look picker
 
