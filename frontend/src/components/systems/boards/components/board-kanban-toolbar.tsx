@@ -733,7 +733,10 @@ export function StageSwitcher({
       ref={row}
       aria-label="Stages"
       data-pill-rail=""
-      className={cn("isolate flex gap-1 overflow-x-auto", pillRailClass)}
+      className={cn(
+        "isolate flex gap-1 overflow-x-auto overflow-y-hidden",
+        pillRailClass,
+      )}
     >
       {stages.map((stage) => (
         <button

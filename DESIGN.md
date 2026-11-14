@@ -751,6 +751,8 @@ Wrong: a disabled, boxed "Email" field that the person cannot change (it is read
 
 **The One Pill Rule** (Human Owner, 2026-11-14). Every rail of choices looks like the tabs: tabs, link tabs (Records and Reports, the Boards views), segmented filters (also Active and Resolved threads in Comms, All and Unread notifications, and Keep current or Use draft in Access conflicts), the phone stage switcher on a Kanban board, and Color mode. Counts in an option stay `--ink-muted` at normal weight. Focus draws a 2px outline inside the option's edge. They share one rail, one pill, one chosen label (`--action-text`, weight 600), and one option height (28px from 1280px, 44px below), from `components/ui/pill.ts`. A rail, pill or option that is not a Tabs part carries `data-pill-rail`, `data-pill` or `data-pill-option`, so each look below restyles it with its tabs.
 
+A rail or toolbar that scrolls sideways on a narrow screen sets `overflow-y-hidden` with its `overflow-x-auto`: alone, `overflow-x-auto` also scrolls up and down, and a 1px rounding then shows a vertical scrollbar (Human Owner, 2026-11-14; `tests/isolated/shell/sideways-strips.spec.ts` checks the source).
+
 Correct: a new view switch uses `pillRailClass` and `pillClass`, and its chosen option shows the shared pill.
 Wrong: a switch with its own fill and ring (`bg-card shadow-[0_0_0_1px_var(--rule)]`), or a darker outline on its pill.
 

@@ -81,7 +81,7 @@ export function JobsToolbar({
               multiple={false}
               disabled={locked}
               value={[state || "all"]}
-              className="w-full max-w-full flex-nowrap overflow-x-auto max-xl:[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] max-xl:pr-8 xl:w-fit [&>*]:shrink-0"
+              className="w-full max-w-full flex-nowrap overflow-x-auto overflow-y-hidden max-xl:[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] max-xl:pr-8 xl:w-fit [&>*]:shrink-0"
               onValueChange={(selection) => {
                 const next = STATE_FILTERS.find(
                   (option) => option.value === selection[0],

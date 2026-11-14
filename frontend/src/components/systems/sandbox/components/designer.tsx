@@ -2317,7 +2317,7 @@ export function Designer({
                   <div
                     role="toolbar"
                     aria-label="Canvas view controls"
-                    className="slim-ui flex min-w-0 flex-1 flex-wrap items-center gap-1 py-1 md:flex-nowrap md:overflow-x-auto [&>button]:shrink-0"
+                    className="slim-ui flex min-w-0 flex-1 flex-wrap items-center gap-1 py-1 md:flex-nowrap md:overflow-x-auto md:overflow-y-hidden [&>button]:shrink-0"
                   >
                     {/* The first control, always visible: it opens the
                         entry for departments (FIND-1, canvas level). */}

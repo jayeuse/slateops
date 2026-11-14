@@ -399,7 +399,7 @@ function ReadySheet({
         <div className="shrink-0 border-b px-5 py-3">
           <TabsList
             aria-label="Card sections"
-            className="max-w-full flex-nowrap justify-start overflow-x-auto"
+            className="max-w-full flex-nowrap justify-start overflow-x-auto overflow-y-hidden"
           >
             <TabsTrigger value="details" className={tab}>
               Details

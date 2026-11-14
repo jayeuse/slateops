@@ -254,7 +254,7 @@ export function LiveRecordInspector({
             <div className="shrink-0 border-b px-5 py-3">
               <TabsList
                 aria-label="Record sections"
-                className="max-w-full flex-nowrap justify-start overflow-x-auto"
+                className="max-w-full flex-nowrap justify-start overflow-x-auto overflow-y-hidden"
               >
                 {leadingTab ? (
                   <TabsTrigger value={leadingTab.value} className="shrink-0">
