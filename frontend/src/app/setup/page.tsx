@@ -11,13 +11,13 @@ export default function SetupPage() {
   return (
     <SignedOutFrame
       actions={
-        <Button asChild variant="ghost">
+        <Button asChild variant="ghost" className="h-8 min-h-11 xl:min-h-8">
           <a href="/login">Back to sign in</a>
         </Button>
       }
     >
-      <div className="mx-auto w-full max-w-3xl px-6 py-14 sm:py-24">
-        <p className="text-primary text-xs font-semibold tracking-[0.18em] uppercase">
+      <div className="mx-auto w-full max-w-3xl px-6 py-14 sm:py-16">
+        <p className="text-action-text text-xs font-semibold tracking-[0.18em] uppercase">
           First deployment
         </p>
         <h1 className="mt-4 text-2xl font-semibold tracking-tight sm:text-3xl">
@@ -41,8 +41,8 @@ export default function SetupPage() {
         <Card className="mt-8">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Terminal size={17} className="text-primary" /> Supported local
-              path
+              <Terminal size={17} className="text-muted-foreground" /> Supported
+              local path
             </CardTitle>
           </CardHeader>
           <CardContent>

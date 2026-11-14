@@ -49,6 +49,11 @@ const routes = [
     settled: (page: Page) =>
       page.getByRole("button", { name: "Request recovery", exact: true }),
   },
+  {
+    path: "/setup",
+    settled: (page: Page) =>
+      page.getByRole("link", { name: "Continue to sign in", exact: true }),
+  },
 ] as const;
 
 const overflow = (page: Page) =>
@@ -57,8 +62,9 @@ const overflow = (page: Page) =>
     down: document.documentElement.scrollHeight - window.innerHeight,
   }));
 
-// AC-5 ("Wide screens and phones"): the top bar spans the window; no page
-// scrolls sideways at 1440 or 390, and at 1440x900 none scrolls at rest.
+// AC-5 ("Wide screens and phones"), plus /setup (SO-O1): the top bar spans
+// the window; no page scrolls sideways at 1440 or 390, and at 1440x900 none
+// scrolls at rest.
 for (const { path, settled } of routes) {
   test(`${path} shows the full-width top bar and fits 1440x900 and 390x844 without scrolling sideways`, async ({
     page,

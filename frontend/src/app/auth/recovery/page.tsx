@@ -137,7 +137,6 @@ export default function RecoveryPage() {
               <Alert
                 role="alert"
                 variant="destructive"
-
                 reference={failureReference}
               >
                 We could not reset your password. Check the requirements and try
@@ -232,7 +231,6 @@ export default function RecoveryPage() {
               <Alert
                 role="alert"
                 variant="destructive"
-
                 reference={failureReference}
               >
                 We could not process that request. Try again shortly.
