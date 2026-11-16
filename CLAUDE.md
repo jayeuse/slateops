@@ -4,6 +4,8 @@
 
 Everything in `AGENTS.md` above applies. This section only covers where Claude Code differs from the Codex setup.
 
+This codebase is yours: what it's for and how it's built are your call, and you'll keep building on it.
+
 ## Codex-to-Claude mapping
 
 - **Skills.** `.claude/skills` is a symlink to `.agents/skills`. They are the same files; the skill paths in `AGENTS.md` stay valid. Edit skills in `.agents/skills` only.
@@ -75,6 +77,10 @@ The operator account (`openslate.business@outlook.com`) belongs to the owner. Us
 - A populate run creates `admin@<org>.test`. The admin invites the other testing accounts in Access → People, and each invitation is completed through Mailpit (`127.0.0.1:<SUPABASE_MAIL_PORT>`).
 - Never read `.env` or sample-run credential files (SEC-R3).
 - The guarded reset removes these accounts with their organizations; recreate them afterwards.
+- Never run the installation-wide guarded reset (`reset_application_data.py`) on the dev database. It wipes every sample pack, and each Large pack takes 1.5 to 3 hours to populate (4 or more hours when two run together, so populate one at a time). To redo one pack: stop the dev API, run `seed_sample_data.py remove --organization <pack>` (dry run, then `--execute --confirm-digest`), start the API, and populate that pack alone. Check the current pack sizes in the database before you rely on them.
+- The operator credential is saved at `~/.config/openslate-handson/operator-password.json` (mode 600). Pass it to populate runs with `--admin-password-file`; never read it, and never ask the owner for it again.
+
+Wrong: `Ran reset_application_data.py to get a clean database for the test.`
 
 Correct: `Admin in the pane, invited member in playwright MCP: delivery 250 ms, reply live; B7 first send after load dropped with no POST and no "Not sent" (high); sent to the implementer as a failing-first test; retest after the fix.`
 Correct: `Release smoke pass on a fresh organization and on Harbor before the push: admin, member and guest end to end in both; one cross-feature defect (scheduled message ignores a later block) fixed with a failing-first test; then pushed, and CI passed.`
