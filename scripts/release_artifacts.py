@@ -1,4 +1,4 @@
-"""Helpers for the release workflow (docs/plans/windows-installer.md 5.2 and 5.3, slice W3).
+"""Helpers for the release workflow (docs/plans/windows-installer.md 5.2 and 5.3, W3 and W4).
 
 `.github/workflows/release.yml` calls each subcommand once:
 
@@ -8,10 +8,12 @@
   branch (plan 5.1 rule 1). Then it writes the step outputs.
 - `image-info` checks an image archive against the pushed digest and records its size,
   SHA-256 and config digest.
-- `manifest` writes `release-manifest.json` (decision H11) with the fields P2 has.
-- `notices` writes `THIRD-PARTY-NOTICES.txt` from the installed packages and from the
-  package databases copied out of the two images, and `SOURCE-OFFER.txt` for the Debian
-  packages of the server image (decision H4).
+- `manifest` writes `release-manifest.json` (decision H11) with the fields that exist:
+  the two images (W3) and the Linux image (W4).
+- `notices` writes `THIRD-PARTY-NOTICES.txt` from the installed packages, from the
+  package databases copied out of the two images and the Linux image, the Python runtime
+  and Caddy, and `SOURCE-OFFER.txt` for the Debian and Alpine source packages and the
+  upstream parts (decision H4, W4-7).
 - `notes` writes the release notes with the verification commands.
 
 Standard library only: the workflow runs it with a plain Python, before any install.
@@ -27,7 +29,7 @@ import subprocess
 import sys
 import tarfile
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib import metadata
 from pathlib import Path
 from typing import BinaryIO
@@ -50,6 +52,19 @@ TEST_BUILD_TITLE = "Test build, not for customers"
 OIDC_ISSUER = "https://token.actions.githubusercontent.com"
 MANIFEST_BUNDLE = "release-manifest.json.sigstore.json"
 SNAPSHOT_SOURCE = "https://snapshot.debian.org/package"
+APORTS_SOURCE = "https://gitlab.alpinelinux.org/alpine/aports/-/tree"
+# Docker's apt repository has no source packages; each of the four packages that the
+# Linux image installs from it is built from these upstream tags (Apache-2.0).
+DOCKER_SOURCES = {
+    "docker-ce": "https://github.com/moby/moby/tree/docker-v{upstream}",
+    "docker-ce-cli": "https://github.com/docker/cli/tree/v{upstream}",
+    "containerd.io": "https://github.com/containerd/containerd/tree/v{upstream}",
+    "docker-compose-plugin": "https://github.com/docker/compose/tree/v{upstream}",
+}
+COSIGN_SOURCE = "https://github.com/sigstore/cosign/tree/v{version}"
+PYTHON_SOURCE = "https://www.python.org/ftp/python/{version}/Python-{version}.tar.xz"
+CADDY_SOURCE = "https://github.com/caddyserver/caddy/tree/{tag}"
+GO_MODULE_SOURCE = "https://pkg.go.dev/{path}@{version}"
 
 _DIGEST = re.compile(r"@sha256:[0-9a-f]{64}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -59,6 +74,9 @@ _SERVICE = re.compile(r"^  ([A-Za-z0-9_.-]+):\s*$")
 _IMAGE = re.compile(r"^    image:\s*(.+?)\s*$")
 _LICENSE_FILE = re.compile(r"^(?:LICEN[CS]E|COPYING|NOTICE)", re.IGNORECASE)
 _DPKG_SOURCE = re.compile(r"(?P<name>\S+)(?: \((?P<version>\S+)\))?")
+# Go build information: "mod" is the main module, "dep" a module built in, "=>" the
+# replacement of the "dep" line before it (the format of `go version -m`).
+_GO_MODULE = re.compile(rb"(?m)^(mod|dep|=>)\t([^\t\n]+)\t([^\t\n]+)")
 
 
 class ReleaseError(Exception):
@@ -93,6 +111,27 @@ class DebianPackage:
     def source_url(self) -> str:
         source, version = quote(self.source, safe=""), quote(self.source_version, safe="~+")
         return f"{SNAPSHOT_SOURCE}/{source}/{version}/"
+
+
+@dataclass(frozen=True)
+class AlpinePackage:
+    origin: str
+    version: str
+    commit: str
+
+    @property
+    def source_url(self) -> str:
+        return f"{APORTS_SOURCE}/{self.commit}"
+
+
+def upstream_version(version: str) -> str:
+    """The upstream part of a Debian version: no epoch, no Debian revision."""
+    without_epoch = version.split(":", 1)[1] if ":" in version else version
+    return without_epoch.rpartition("-")[0] or without_epoch
+
+
+def docker_source(name: str, version: str) -> str:
+    return DOCKER_SOURCES[name].format(upstream=upstream_version(version))
 
 
 def classify_tag(
@@ -242,14 +281,17 @@ def image_info(reference: str, archive: Path) -> dict[str, object]:
 # 1. "schema_version" is 1. Fields added later keep version 1. A rename, a removal, or a
 #    change of a field's type or meaning raises the version.
 # 2. A reader ignores keys that it does not know.
-# 3. A missing optional field means "not provided" (for example the Linux image before W4,
-#    the engine bundle before W5b).
+# 3. A missing optional field means "not provided" (for example the engine bundle before
+#    W5b).
 # 4. A reader refuses a manifest whose "schema_version" is higher than the one it knows.
 # 5. images.server and images.caddy are objects with "ref" (by digest), "archive" (the
 #    release asset file name), "sha256" and "size" (of the archive) and "config_digest";
 #    images.providers is the sorted list of Compose references by digest.
+# 6. linux_image (added by W4, so schema_version stays 1) is an object with "archive"
+#    (the release asset file name, always amd64 in v1), "sha256" and "size".
 SCHEMA_VERSION = 1
 IMAGE_FIELDS = frozenset({"ref", "archive", "sha256", "size", "config_digest"})
+LINUX_FIELDS = frozenset({"archive", "sha256", "size"})
 
 
 def _image_entry(
@@ -273,19 +315,37 @@ def _image_entry(
     return {field: info[field] for field in ("ref", "archive", "sha256", "size", "config_digest")}
 
 
+def linux_archive_name(version: str) -> str:
+    return f"slateops-linux-{version}-amd64.tar.gz"
+
+
+def _linux_entry(info: Mapping[str, object], version: str) -> dict[str, object]:
+    if set(info) != LINUX_FIELDS:
+        raise ReleaseError(f"linux image fields {sorted(info)} are not {sorted(LINUX_FIELDS)}")
+    archive, sha256, size = info["archive"], info["sha256"], info["size"]
+    if archive != linux_archive_name(version):
+        raise ReleaseError(f"linux image archive {archive!r} is not {linux_archive_name(version)}")
+    if not isinstance(sha256, str) or not _SHA256.fullmatch(sha256):
+        raise ReleaseError(f"linux image sha256 {sha256!r} is not 64 hex digits")
+    if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+        raise ReleaseError(f"linux image size {size!r} is not a positive integer")
+    return {"archive": archive, "sha256": sha256, "size": size}
+
+
 def build_manifest(
     version: str,
     server: Mapping[str, object],
     caddy: Mapping[str, object],
     providers: list[str],
+    linux: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    """Build the P2 manifest (format rules above).
+    """Build the manifest (format rules above).
 
-    Fields that later slices produce (Linux image, engine bundle, minimum Windows-part
-    version, known-bad WSL versions, migration notes) are omitted until their slice adds
-    them (rule 3).
+    Fields that later slices produce (engine bundle, minimum Windows-part version,
+    known-bad WSL versions, migration notes) are omitted until their slice adds them
+    (rule 3). The Linux image entry is present when the workflow passes it (W4).
     """
-    return {
+    manifest: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
         "version": version,
         "images": {
@@ -294,6 +354,9 @@ def build_manifest(
             "providers": providers,
         },
     }
+    if linux is not None:
+        manifest["linux_image"] = _linux_entry(linux, version)
+    return manifest
 
 
 def _license_name(meta: metadata.PackageMetadata) -> str:
@@ -422,16 +485,132 @@ def alpine_notices(files: Path) -> list[Notice]:
     return [notices[name] for name in sorted(notices)]
 
 
-def source_offer(version: str, packages: list[DebianPackage]) -> str:
+def alpine_packages(installed_text: str) -> list[AlpinePackage]:
+    """The Alpine source packages (origins) of an apk database, each with its aports commit."""
+    origins: dict[str, AlpinePackage] = {}
+    for stanza in _stanzas(installed_text):
+        fields = {line[0]: line[2:] for line in stanza if len(line) > 1 and line[1] == ":"}
+        name, version = fields["P"], fields["V"]
+        commit = fields.get("c", "")
+        if not re.fullmatch(r"[0-9a-f]{7,40}", commit):
+            raise ReleaseError(f"Alpine package {name} has no aports commit")
+        origin = fields.get("o", name)
+        origins[origin] = AlpinePackage(origin, version, commit)
+    return [origins[origin] for origin in sorted(origins)]
+
+
+def linux_notices(files: Path) -> list[Notice]:
+    """Notices for the Linux image: its Debian and Docker packages, and cosign (W4-7).
+
+    Docker's packages are not in the Debian archive: their source is the upstream tag, and
+    the ones without a copyright file carry the upstream license name (Apache-2.0).
+    """
+    notices: list[Notice] = []
+    for notice in debian_notices(files):
+        if notice.name in DOCKER_SOURCES:
+            notice = replace(
+                notice,
+                license=notice.license if notice.texts else "Apache-2.0",
+                source=docker_source(notice.name, notice.version),
+            )
+        notices.append(notice)
+    record = json.loads((files / "usr/share/slateops/linux-image.json").read_text())
+    cosign = str(record["cosign"])
+    text = (files / "usr/share/doc/cosign/LICENSE").read_text(errors="replace")
+    notices.append(
+        Notice("cosign", cosign, "Apache-2.0", (text,), COSIGN_SOURCE.format(version=cosign))
+    )
+    return notices
+
+
+def python_runtime_notice(version: str, license_file: Path) -> Notice:
+    """The Python under /usr/local in the server image, with its own LICENSE.txt."""
+    return Notice(
+        "Python",
+        version,
+        "PSF-2.0",
+        (license_file.read_text(errors="replace"),),
+        PYTHON_SOURCE.format(version=version),
+    )
+
+
+def caddy_notices(tag: str, binary: Path, license_file: Path) -> list[Notice]:
+    """Caddy and the Go modules built into it, read from the program's build information."""
+    modules: dict[str, str] = {}
+    last = ""
+    found_main = False
+    for kind, path, module_version in _GO_MODULE.findall(binary.read_bytes()):
+        if kind == b"mod":
+            found_main = True
+        elif kind == b"dep":
+            last = path.decode()
+            modules[last] = module_version.decode()
+        elif last:
+            del modules[last]
+            last = path.decode()
+            modules[last] = module_version.decode()
+    if not found_main:
+        raise ReleaseError(f"{binary.name} has no Go module data")
+    caddy = Notice(
+        "Caddy",
+        tag.removeprefix("v"),
+        "Apache-2.0",
+        (license_file.read_text(errors="replace"),),
+        CADDY_SOURCE.format(tag=tag),
+    )
+    return [
+        caddy,
+        *(
+            Notice(
+                path, version, "UNKNOWN", (), GO_MODULE_SOURCE.format(path=path, version=version)
+            )
+            for path, version in sorted(modules.items())
+        ),
+    ]
+
+
+def _source_lines(packages: Iterable[DebianPackage]) -> list[str]:
     sources = sorted({(p.source, p.source_version, p.source_url) for p in packages})
+    return [f"{name} {source_version} {url}" for name, source_version, url in sources]
+
+
+def source_offer(
+    version: str,
+    packages: list[DebianPackage],
+    linux: Sequence[DebianPackage] = (),
+    alpine: Sequence[AlpinePackage] = (),
+    upstream: Sequence[str] = (),
+) -> str:
+    if not (linux or alpine or upstream):
+        lines = [
+            f"Source offer for Slate Operations {version}",
+            "",
+            "The server image (slateops-server) contains the Debian binary packages listed in",
+            "THIRD-PARTY-NOTICES.txt. Each line below names one Debian source package, its",
+            "version, and the snapshot.debian.org page that holds its source files.",
+            "",
+            *_source_lines(packages),
+        ]
+        return "\n".join(lines) + "\n"
     lines = [
         f"Source offer for Slate Operations {version}",
         "",
-        "The server image (slateops-server) contains the Debian binary packages listed in",
-        "THIRD-PARTY-NOTICES.txt. Each line below names one Debian source package, its",
-        "version, and the snapshot.debian.org page that holds its source files.",
+        "This release attaches the source files of each Debian and Alpine source package",
+        f"below as the slateops-sources-{version}-<n>.tar assets (decision H4). Each line",
+        "names a source package, its version, and where its publisher keeps its sources.",
+        "THIRD-PARTY-NOTICES.txt lists the binary packages and their licenses.",
         "",
-        *(f"{name} {source_version} {url}" for name, source_version, url in sources),
+        f"Linux image ({linux_archive_name(version)}), Debian source packages:",
+        *_source_lines(linux),
+        "",
+        "Caddy image (slateops-caddy), Alpine source packages:",
+        *(f"{p.origin} {p.version} {p.source_url}" for p in alpine),
+        "",
+        "Other parts, at their upstream source:",
+        *upstream,
+        "",
+        "Server image (slateops-server), Debian source packages:",
+        *_source_lines(packages),
     ]
     return "\n".join(lines) + "\n"
 
@@ -459,8 +638,17 @@ def render_notices(
     providers: list[str],
     debian: Sequence[Notice] = (),
     alpine: Sequence[Notice] = (),
+    linux: Sequence[Notice] = (),
+    runtimes: Sequence[Notice] = (),
 ) -> str:
-    groups = (("python", python), ("npm", npm), ("debian", debian), ("alpine", alpine))
+    groups = (
+        ("python", python),
+        ("npm", npm),
+        ("debian", debian),
+        ("alpine", alpine),
+        ("linux", linux),
+        ("runtime", runtimes),
+    )
     missing = [
         f"- {kind} {n.name} {n.version}" for kind, group in groups for n in group if not n.texts
     ]
@@ -479,9 +667,13 @@ def render_notices(
         "5. Provider images that an installation pulls from their publishers. This",
         "   release does not contain them; their license terms are in each image and",
         "   at its publisher's source repository.",
-        "",
-        "Not listed yet: the Python runtime under /usr/local in the server image, and",
-        "the Caddy program and its Go modules in the Caddy image.",
+        "6. Linux image (slateops-linux): its Debian packages, read from its dpkg status",
+        "   and copyright files; Docker Engine from Docker's apt repository (upstream",
+        "   license Apache-2.0); cosign with its license.",
+        "7. Python runtime, Caddy and its Go modules: the Python under /usr/local in the",
+        "   server image with its LICENSE.txt; the Caddy program of the Caddy image with",
+        "   the LICENSE of its release tag; the Go modules built into it, read from the",
+        "   program's build information (their license texts are at each module source).",
         "",
         "Packages without a license text in their installed files:",
         *(missing or ["- none"]),
@@ -501,6 +693,13 @@ def render_notices(
         "5. Provider images",
         "",
         *providers,
+        "",
+        "6. Linux image (slateops-linux)",
+        "",
+        *_blocks(linux),
+        "7. Python runtime, Caddy and its Go modules",
+        "",
+        *_blocks(runtimes),
     ]
     return "\n".join(lines) + "\n"
 
@@ -573,6 +772,7 @@ def _parser() -> argparse.ArgumentParser:
     manifest.add_argument("--version", required=True)
     manifest.add_argument("--server-info", type=Path, required=True)
     manifest.add_argument("--caddy-info", type=Path, required=True)
+    manifest.add_argument("--linux-info", type=Path, help="the Linux image entry (W4)")
     manifest.add_argument("--compose", type=Path, required=True)
     manifest.add_argument("--output", type=Path, required=True)
 
@@ -582,6 +782,13 @@ def _parser() -> argparse.ArgumentParser:
     notices.add_argument("--npm-root", type=Path, required=True)
     notices.add_argument("--server-files", type=Path, required=True)
     notices.add_argument("--caddy-files", type=Path, required=True)
+    # W4-7: the Linux image, the Python runtime and Caddy. Give all of them or none.
+    notices.add_argument("--linux-files", type=Path)
+    notices.add_argument("--python-version")
+    notices.add_argument("--python-license", type=Path)
+    notices.add_argument("--caddy-version")
+    notices.add_argument("--caddy-binary", type=Path)
+    notices.add_argument("--caddy-license", type=Path)
     notices.add_argument("--compose", type=Path, required=True)
     notices.add_argument("--output", type=Path, required=True)
     notices.add_argument("--source-offer", type=Path, required=True)
@@ -595,6 +802,61 @@ def _parser() -> argparse.ArgumentParser:
     notes.add_argument("--caddy-image", required=True)
     notes.add_argument("--output", type=Path, required=True)
     return parser
+
+
+_W4_NOTICE_INPUTS = (
+    "linux_files",
+    "python_version",
+    "python_license",
+    "caddy_version",
+    "caddy_binary",
+    "caddy_license",
+)
+
+
+def _write_notices(args: argparse.Namespace) -> None:
+    given = [name for name in _W4_NOTICE_INPUTS if getattr(args, name) is not None]
+    if given and len(given) != len(_W4_NOTICE_INPUTS):
+        missing = sorted(set(_W4_NOTICE_INPUTS) - set(given))
+        raise ReleaseError(f"notices: give every W4 input or none; missing {missing}")
+    python = python_notices(args.python_site_packages)
+    npm = npm_notices(args.npm_root)
+    debian = debian_notices(args.server_files)
+    alpine = alpine_notices(args.caddy_files)
+    providers = provider_images(args.compose.read_text())
+    server_status = (args.server_files / "var/lib/dpkg/status").read_text()
+    linux: list[Notice] = []
+    runtimes: list[Notice] = []
+    offer = source_offer(args.version, debian_packages(server_status))
+    if given:
+        linux = linux_notices(args.linux_files)
+        runtimes = [
+            python_runtime_notice(args.python_version, args.python_license),
+            *caddy_notices(args.caddy_version, args.caddy_binary, args.caddy_license),
+        ]
+        linux_status = (args.linux_files / "var/lib/dpkg/status").read_text()
+        linux_packages = debian_packages(linux_status)
+        upstream = [
+            *(
+                f"{p.name} {p.version} {docker_source(p.name, p.version)}"
+                for p in linux_packages
+                if p.name in DOCKER_SOURCES
+            ),
+            *(f"{n.name} {n.version} {n.source}" for n in linux if n.name == "cosign"),
+            *(f"{n.name} {n.version} {n.source}" for n in runtimes[:2]),
+        ]
+        offer = source_offer(
+            args.version,
+            debian_packages(server_status),
+            linux=[p for p in linux_packages if p.name not in DOCKER_SOURCES],
+            alpine=alpine_packages((args.caddy_files / "lib/apk/db/installed").read_text()),
+            upstream=upstream,
+        )
+    text = render_notices(args.version, python, npm, providers, debian, alpine, linux, runtimes)
+    _write(args.output, text)
+    _write(args.source_offer, offer)
+    for notice in (n for n in [*python, *npm, *debian, *alpine, *linux, *runtimes] if not n.texts):
+        print(f"::warning::No license text for {notice.name} {notice.version}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -627,20 +889,11 @@ def main(argv: list[str] | None = None) -> int:
             providers = provider_images(args.compose.read_text())
             server = json.loads(args.server_info.read_text())
             caddy = json.loads(args.caddy_info.read_text())
-            content = build_manifest(args.version, server, caddy, providers)
+            linux = json.loads(args.linux_info.read_text()) if args.linux_info else None
+            content = build_manifest(args.version, server, caddy, providers, linux)
             _write(args.output, json.dumps(content, indent=2) + "\n")
         elif args.command == "notices":
-            python = python_notices(args.python_site_packages)
-            npm = npm_notices(args.npm_root)
-            debian = debian_notices(args.server_files)
-            alpine = alpine_notices(args.caddy_files)
-            providers = provider_images(args.compose.read_text())
-            text = render_notices(args.version, python, npm, providers, debian, alpine)
-            _write(args.output, text)
-            status = (args.server_files / "var/lib/dpkg/status").read_text()
-            _write(args.source_offer, source_offer(args.version, debian_packages(status)))
-            for notice in (n for n in [*python, *npm, *debian, *alpine] if not n.texts):
-                print(f"::warning::No license text for {notice.name} {notice.version}")
+            _write_notices(args)
         else:
             text = release_notes(
                 args.tag,

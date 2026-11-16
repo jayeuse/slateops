@@ -344,6 +344,72 @@ class ReleaseManifestTests(unittest.TestCase):
             self.assertEqual(json.loads(output.read_text())["images"]["caddy"], CADDY_INFO)
 
 
+LINUX_INFO = {
+    "archive": "slateops-linux-0.2.0-rc.1-amd64.tar.gz",
+    "sha256": "2" * 64,
+    "size": 251666497,
+}
+
+
+class LinuxImageManifestTests(unittest.TestCase):
+    def test_manifest_adds_the_linux_image_entry_and_keeps_schema_version_1(self):
+        # Plan 5.2 and W4: the SHA-256 of the Linux image; an added field keeps version 1.
+        manifest = release_artifacts.build_manifest(
+            "0.2.0-rc.1", SERVER_INFO, CADDY_INFO, [], linux=LINUX_INFO
+        )
+
+        self.assertEqual(manifest["schema_version"], 1)
+        self.assertEqual(manifest["linux_image"], LINUX_INFO)
+
+    def test_manifest_refuses_a_linux_entry_that_is_not_the_tagged_amd64_tarball(self):
+        for field, value in (
+            ("archive", "slateops-linux-0.2.0-rc.2-amd64.tar.gz"),
+            ("archive", "slateops-linux-0.2.0-rc.1-arm64.tar.gz"),
+            ("sha256", "A" * 64),
+            ("size", 0),
+            ("size", True),
+            ("extra", "x"),
+        ):
+            entry = {**LINUX_INFO, field: value}
+            with (
+                self.subTest(field=field, value=value),
+                self.assertRaisesRegex(ReleaseError, "linux image"),
+            ):
+                release_artifacts.build_manifest(
+                    "0.2.0-rc.1", SERVER_INFO, CADDY_INFO, [], linux=entry
+                )
+
+    def test_manifest_command_reads_the_linux_image_entry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "compose.yaml").write_text(COMPOSE)
+            (root / "server.json").write_text(json.dumps(SERVER_INFO))
+            (root / "caddy.json").write_text(json.dumps(CADDY_INFO))
+            (root / "linux.json").write_text(json.dumps(LINUX_INFO))
+            output = root / "release-manifest.json"
+
+            status = release_artifacts.main(
+                [
+                    "manifest",
+                    "--version",
+                    "0.2.0-rc.1",
+                    "--server-info",
+                    str(root / "server.json"),
+                    "--caddy-info",
+                    str(root / "caddy.json"),
+                    "--linux-info",
+                    str(root / "linux.json"),
+                    "--compose",
+                    str(root / "compose.yaml"),
+                    "--output",
+                    str(output),
+                ]
+            )
+
+            self.assertEqual(status, 0)
+            self.assertEqual(json.loads(output.read_text())["linux_image"], LINUX_INFO)
+
+
 def write_oci_archive(
     path: Path, *, manifests: int = 1, media_type: str = OCI_MANIFEST, tamper: str = ""
 ) -> str:
@@ -773,6 +839,282 @@ class ImagePackageTests(unittest.TestCase):
             self.assertIn("musl 1.2.5-r10\nLicense: MIT\n", notices)
             offer = (root / "dist/SOURCE-OFFER.txt").read_text()
             self.assertIn(f"glibc 2.41-12 {SNAPSHOT}/glibc/2.41-12/\n", offer)
+
+
+LINUX_STATUS = textwrap.dedent(
+    """\
+    Package: chrony
+    Status: install ok installed
+    Architecture: amd64
+    Version: 4.6.1-3
+
+    Package: docker-ce
+    Status: install ok installed
+    Maintainer: Docker <support@docker.com>
+    Architecture: amd64
+    Version: 5:29.8.2-1~debian.13~trixie
+
+    Package: containerd.io
+    Status: install ok installed
+    Maintainer: Docker <support@docker.com>
+    Architecture: amd64
+    Version: 2.3.6-1~debian.13~trixie
+    """
+)
+GO_MODULES = (
+    b"\x00\xff Go buildinf:\x08\x02 junk path\tgithub.com/caddyserver/caddy/v2/cmd/caddy\n"
+    b"mod\tgithub.com/caddyserver/caddy/v2\tv2.10.2\th1:abc=\n"
+    b"dep\tgithub.com/klauspost/compress\tv1.18.0\th1:def=\n"
+    b"dep\tgolang.org/x/crypto\tv0.40.0\th1:ghi=\n"
+    b"=>\tgithub.com/example/crypto-fork\tv0.40.1\th1:jkl=\n"
+    b"build\tGOOS=linux\n\x00 more binary"
+)
+
+
+def write_linux_files(files: Path) -> None:
+    """Write the package files that release_linux_image.py outputs copies out of the image."""
+    status = files / "var/lib/dpkg/status"
+    status.parent.mkdir(parents=True)
+    status.write_text(LINUX_STATUS)
+    for package, text in (("chrony", "chrony copyright\n"), ("containerd.io", "containerd\n")):
+        folder = files / "usr/share/doc" / package
+        folder.mkdir(parents=True)
+        (folder / "copyright").write_text(text)
+    (files / "usr/share/doc/cosign").mkdir(parents=True)
+    (files / "usr/share/doc/cosign/LICENSE").write_text("Apache License 2.0\n")
+    record = files / "usr/share/slateops/linux-image.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"version": "0.2.0-rc.1", "cosign": "3.1.4"}))
+
+
+class LinuxImageNoticeTests(unittest.TestCase):
+    def test_linux_notices_give_debian_docker_and_cosign_their_source_and_license(self):
+        # W4-7: Docker's packages are not in the Debian archive, so their source is upstream.
+        with tempfile.TemporaryDirectory() as directory:
+            files = Path(directory)
+            write_linux_files(files)
+
+            notices = release_artifacts.linux_notices(files)
+
+        self.assertEqual(
+            notices,
+            [
+                release_artifacts.Notice(
+                    "chrony",
+                    "4.6.1-3",
+                    "/usr/share/doc/chrony/copyright",
+                    ("chrony copyright\n",),
+                    f"{SNAPSHOT}/chrony/4.6.1-3/",
+                ),
+                release_artifacts.Notice(
+                    "containerd.io",
+                    "2.3.6-1~debian.13~trixie",
+                    "/usr/share/doc/containerd.io/copyright",
+                    ("containerd\n",),
+                    "https://github.com/containerd/containerd/tree/v2.3.6",
+                ),
+                release_artifacts.Notice(
+                    "docker-ce",
+                    "5:29.8.2-1~debian.13~trixie",
+                    "Apache-2.0",
+                    (),
+                    "https://github.com/moby/moby/tree/docker-v29.8.2",
+                ),
+                release_artifacts.Notice(
+                    "cosign",
+                    "3.1.4",
+                    "Apache-2.0",
+                    ("Apache License 2.0\n",),
+                    "https://github.com/sigstore/cosign/tree/v3.1.4",
+                ),
+            ],
+        )
+
+    def test_python_runtime_notice_reads_the_license_of_the_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            license_file = Path(directory) / "LICENSE.txt"
+            license_file.write_text("PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2\n")
+
+            notice = release_artifacts.python_runtime_notice("3.14.10", license_file)
+
+        self.assertEqual(
+            notice,
+            release_artifacts.Notice(
+                "Python",
+                "3.14.10",
+                "PSF-2.0",
+                ("PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2\n",),
+                "https://www.python.org/ftp/python/3.14.10/Python-3.14.10.tar.xz",
+            ),
+        )
+
+    def test_caddy_notices_list_caddy_and_the_go_modules_built_into_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "caddy").write_bytes(GO_MODULES)
+            (root / "LICENSE").write_text("Apache License\n")
+
+            notices = release_artifacts.caddy_notices("v2.10.2", root / "caddy", root / "LICENSE")
+
+        self.assertEqual(
+            notices,
+            [
+                release_artifacts.Notice(
+                    "Caddy",
+                    "2.10.2",
+                    "Apache-2.0",
+                    ("Apache License\n",),
+                    "https://github.com/caddyserver/caddy/tree/v2.10.2",
+                ),
+                release_artifacts.Notice(
+                    "github.com/example/crypto-fork",
+                    "v0.40.1",
+                    "UNKNOWN",
+                    (),
+                    "https://pkg.go.dev/github.com/example/crypto-fork@v0.40.1",
+                ),
+                release_artifacts.Notice(
+                    "github.com/klauspost/compress",
+                    "v1.18.0",
+                    "UNKNOWN",
+                    (),
+                    "https://pkg.go.dev/github.com/klauspost/compress@v1.18.0",
+                ),
+            ],
+        )
+
+    def test_caddy_binary_without_module_data_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "caddy"
+            binary.write_bytes(b"\x7fELF no build info")
+
+            with self.assertRaisesRegex(ReleaseError, "no Go module data"):
+                release_artifacts.caddy_notices("v2.10.2", binary, binary)
+
+    def test_rendered_notices_add_the_linux_image_and_the_runtimes(self):
+        text = release_artifacts.render_notices(
+            "0.2.0-rc.1",
+            [],
+            [],
+            [],
+            linux=[release_artifacts.Notice("docker-ce", "5:29.8.2-1", "Apache-2.0", ())],
+            runtimes=[release_artifacts.Notice("Python", "3.14.10", "PSF-2.0", ("PSF\n",))],
+        )
+
+        for expected in (
+            "6. Linux image (slateops-linux)",
+            "docker-ce 5:29.8.2-1\nLicense: Apache-2.0\n",
+            "7. Python runtime, Caddy and its Go modules",
+            "Python 3.14.10\nLicense: PSF-2.0\n",
+            "- linux docker-ce 5:29.8.2-1\n",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, text)
+        self.assertNotIn("Not listed yet", text)
+
+    def test_source_offer_covers_the_linux_image_the_caddy_image_and_upstream_parts(self):
+        linux = [release_artifacts.DebianPackage("chrony", "4.6.1-3", "chrony", "4.6.1-3")]
+        server = release_artifacts.debian_packages(DPKG_STATUS)
+        alpine = release_artifacts.alpine_packages(
+            APK_INSTALLED.replace("o:busybox\n", "o:busybox\nc:2e97d754\n").replace(
+                "o:musl\n", "o:musl\nc:1a5f5e69\n"
+            )
+        )
+
+        offer = release_artifacts.source_offer(
+            "0.2.0-rc.1",
+            server,
+            linux=linux,
+            alpine=alpine,
+            upstream=["cosign 3.1.4 https://github.com/sigstore/cosign/tree/v3.1.4"],
+        )
+
+        for expected in (
+            "slateops-sources-0.2.0-rc.1-",
+            "Linux image (slateops-linux-0.2.0-rc.1-amd64.tar.gz), Debian source packages:\n"
+            f"chrony 4.6.1-3 {SNAPSHOT}/chrony/4.6.1-3/\n",
+            "Caddy image (slateops-caddy), Alpine source packages:\n"
+            "busybox 1.37.0-r19 https://gitlab.alpinelinux.org/alpine/aports/-/tree/2e97d754\n",
+            "Other parts, at their upstream source:\n"
+            "cosign 3.1.4 https://github.com/sigstore/cosign/tree/v3.1.4\n",
+            f"Server image (slateops-server), Debian source packages:\nbash 5.2.37-2 {SNAPSHOT}",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, offer)
+
+    def test_an_alpine_package_without_its_aports_commit_is_refused(self):
+        with self.assertRaisesRegex(ReleaseError, "musl has no aports commit"):
+            release_artifacts.alpine_packages(APK_INSTALLED)
+
+    def test_notices_command_adds_the_linux_image_python_and_caddy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_distribution(root / "site", "anyio", "4.11.0", "License: BSD\n", {})
+            (root / "npm").mkdir()
+            (root / "npm/package-lock.json").write_text(json.dumps({"packages": {}}))
+            write_image_files(root / "server", root / "caddy")
+            installed = root / "caddy/lib/apk/db/installed"
+            installed.write_text(installed.read_text().replace("o:musl\n", "o:musl\nc:1a5f5e69\n"))
+            installed.write_text(
+                installed.read_text().replace("o:busybox\n", "o:busybox\nc:2e97d754\n")
+            )
+            write_linux_files(root / "linux")
+            (root / "compose.yaml").write_text(COMPOSE)
+            (root / "PYTHON-LICENSE.txt").write_text("PSF text\n")
+            (root / "caddy-bin").write_bytes(GO_MODULES)
+            (root / "CADDY-LICENSE").write_text("Apache text\n")
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                status = release_artifacts.main(
+                    [
+                        "notices",
+                        "--version",
+                        "0.2.0-rc.1",
+                        "--python-site-packages",
+                        str(root / "site"),
+                        "--npm-root",
+                        str(root / "npm"),
+                        "--server-files",
+                        str(root / "server"),
+                        "--caddy-files",
+                        str(root / "caddy"),
+                        "--linux-files",
+                        str(root / "linux"),
+                        "--python-version",
+                        "3.14.10",
+                        "--python-license",
+                        str(root / "PYTHON-LICENSE.txt"),
+                        "--caddy-version",
+                        "v2.10.2",
+                        "--caddy-binary",
+                        str(root / "caddy-bin"),
+                        "--caddy-license",
+                        str(root / "CADDY-LICENSE"),
+                        "--compose",
+                        str(root / "compose.yaml"),
+                        "--output",
+                        str(root / "dist/THIRD-PARTY-NOTICES.txt"),
+                        "--source-offer",
+                        str(root / "dist/SOURCE-OFFER.txt"),
+                    ]
+                )
+
+            self.assertEqual(status, 0)
+            notices = (root / "dist/THIRD-PARTY-NOTICES.txt").read_text()
+            for expected in ("chrony copyright\n", "PSF text\n", "Apache text\n", "cosign 3.1.4\n"):
+                with self.subTest(expected=expected):
+                    self.assertIn(expected, notices)
+            offer = (root / "dist/SOURCE-OFFER.txt").read_text()
+            for expected in (
+                f"chrony 4.6.1-3 {SNAPSHOT}/chrony/4.6.1-3/\n",
+                "musl 1.2.5-r10 https://gitlab.alpinelinux.org/alpine/aports/-/tree/1a5f5e69\n",
+                "docker-ce 5:29.8.2-1~debian.13~trixie https://github.com/moby/moby/tree/docker-v29.8.2\n",
+                "Python 3.14.10 https://www.python.org/ftp/python/3.14.10/Python-3.14.10.tar.xz\n",
+                "Caddy 2.10.2 https://github.com/caddyserver/caddy/tree/v2.10.2\n",
+                f"glibc 2.41-12 {SNAPSHOT}/glibc/2.41-12/\n",
+            ):
+                with self.subTest(expected=expected):
+                    self.assertIn(expected, offer)
 
 
 class ReleaseNotesTests(unittest.TestCase):

@@ -1,8 +1,9 @@
 name: release
 
 # Release artifacts for a version tag: docs/plans/windows-installer.md sections 5.1 to 5.3,
-# slice W3. Later slices add the Linux image (W4), the engine bundle (W5b) and the
-# installer (W7, W8). The release stays a draft.
+# slices W3 and W4 (the Linux image, its lists, the notices and the source packages).
+# Later slices add the engine bundle (W5b) and the installer (W7, W8). The release stays
+# a draft.
 #
 # Re-run rule (parent decision D5, TASK-0079): never use "Re-run all jobs" or "Re-run
 # failed jobs" on a failed run. A re-run pushes a new image digest under the same tag.
@@ -211,8 +212,77 @@ jobs:
         if: always()
         run: docker logout ghcr.io
 
+  linux-image:
+    # W4: our Debian 13 root file system for WSL (packaging/linux-image/, pins.env). The
+    # build runs in a privileged, digest-pinned Debian container. The tarball is hashed
+    # first, then checked as it ships, then a throwaway copy boots with systemd-nspawn;
+    # the tarball itself never boots. It needs only the tag check, so it runs beside the
+    # image builds.
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - name: Build the Linux image (amd64)
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: packaging/linux-image/build.sh --arch amd64 --version "$VERSION" --output dist
+      - name: Write the package list, the source list and the manifest entry (W4-4)
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: >-
+          python3 scripts/release_linux_image.py outputs
+          --tarball "dist/slateops-linux-$VERSION-amd64.tar.gz" --arch amd64
+          --pins packaging/linux-image/pins.env --output dist
+          --entry linux-info/linux-image.json --files linux-files
+      - name: Check the root file system as it ships (W4-1 to W4-3, W4-6, AC-W4-8)
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: >-
+          python3 scripts/release_linux_image.py check
+          --tarball "dist/slateops-linux-$VERSION-amd64.tar.gz" --arch amd64
+          --pins packaging/linux-image/pins.env
+      - name: Boot a throwaway copy with systemd-nspawn (W4-5, W4-6, AC-W4-8)
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: packaging/linux-image/boot-check.sh --arch amd64 --tarball "dist/slateops-linux-$VERSION-amd64.tar.gz"
+      - name: Record the Linux image size (10.2)
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          size="$(stat -c %s "dist/slateops-linux-$VERSION-amd64.tar.gz")"
+          echo "### Linux image size (10.2)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`slateops-linux-$VERSION-amd64.tar.gz\`: $size bytes, $((size / 1048576)) MiB" \
+            >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-linux
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-info
+          path: linux-info/
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-files
+          path: linux-files/
+          if-no-files-found: error
+          retention-days: 1
+
   manifest:
-    needs: [check, images]
+    needs: [check, images, linux-image]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -229,6 +299,10 @@ jobs:
         with:
           name: image-info
           path: image-info
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-info
+          path: linux-info
       - name: Write the release manifest and the release notes
         env:
           TAG: ${{ github.ref_name }}
@@ -240,6 +314,7 @@ jobs:
           python3 scripts/release_artifacts.py manifest \
             --version "$VERSION" \
             --server-info image-info/server.json --caddy-info image-info/caddy.json \
+            --linux-info linux-info/linux-image.json \
             --compose infra/supabase/compose.yaml --output dist/release-manifest.json
           python3 scripts/release_artifacts.py notes \
             --tag "$TAG" --prerelease "$PRERELEASE" \
@@ -280,11 +355,12 @@ jobs:
   notices:
     # License data comes from what the release ships: the locked Python packages without
     # development packages (as in the server image), the npm production packages
-    # (installed without running their install scripts), and the Debian and Alpine
-    # package databases copied out of the pushed images with docker create and docker cp,
-    # so no code from an image runs here. packages: read pulls the images while the
+    # (installed without running their install scripts), the Debian and Alpine package
+    # databases, the Python license and the Caddy program copied out of the pushed images
+    # with docker create and docker cp, so no code from an image runs here, and the
+    # package files of the Linux image (W4-7). packages: read pulls the images while the
     # GHCR packages are private.
-    needs: [check, images]
+    needs: [check, images, linux-image]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -311,11 +387,31 @@ jobs:
         env:
           GHCR_TOKEN: ${{ github.token }}
         run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-files
+          path: image-files/linux
       - name: Copy the package databases out of the pushed images
+        id: files
         env:
           SERVER_IMAGE: ${{ needs.images.outputs.server }}
           CADDY_IMAGE: ${{ needs.images.outputs.caddy }}
         run: |
+          # The runtime versions come from the image settings; each must have its shape
+          # before it becomes a path or a URL.
+          image_env() {
+            docker pull --quiet "$1" > /dev/null
+            docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$1" \
+              | sed -n "s/^$2=//p"
+          }
+          python_version="$(image_env "$SERVER_IMAGE" PYTHON_VERSION)"
+          caddy_version="$(image_env "$CADDY_IMAGE" CADDY_VERSION)"
+          if ! [[ "$python_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$caddy_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Unexpected PYTHON_VERSION '$python_version' or CADDY_VERSION '$caddy_version'"
+            exit 1
+          fi
+          echo "python_version=$python_version" >> "$GITHUB_OUTPUT"
+          echo "caddy_version=$caddy_version" >> "$GITHUB_OUTPUT"
           echo "### Unpacked image sizes (W3-6)" >> "$GITHUB_STEP_SUMMARY"
           extract() {
             local name="$1" image="$2" container path
@@ -330,8 +426,17 @@ jobs:
             done
             docker rm "$container"
           }
-          extract server "$SERVER_IMAGE" /var/lib/dpkg/status /usr/share/doc
-          extract caddy "$CADDY_IMAGE" /lib/apk/db/installed
+          extract server "$SERVER_IMAGE" /var/lib/dpkg/status /usr/share/doc \
+            "/usr/local/lib/python${python_version%.*}/LICENSE.txt"
+          extract caddy "$CADDY_IMAGE" /lib/apk/db/installed /etc/alpine-release /usr/bin/caddy
+      - name: Download the Caddy license of the image's release tag
+        # The Caddy image ships no license file (checked 2026-11-16).
+        env:
+          CADDY_VERSION: ${{ steps.files.outputs.caddy_version }}
+        run: >-
+          curl --fail --silent --show-error --location --retry 5
+          --output image-files/caddy-LICENSE
+          "https://raw.githubusercontent.com/caddyserver/caddy/$CADDY_VERSION/LICENSE"
       - name: Install the Python packages that the server image ships
         working-directory: backend
         # The same lock flag as the image (infra/docker/backend.Dockerfile).
@@ -342,11 +447,18 @@ jobs:
       - name: Write the third-party notices
         env:
           VERSION: ${{ needs.check.outputs.version }}
+          PYTHON_VERSION: ${{ steps.files.outputs.python_version }}
+          CADDY_VERSION: ${{ steps.files.outputs.caddy_version }}
         run: |
           site_packages="$(backend/.venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
           python3 scripts/release_artifacts.py notices \
             --version "$VERSION" --python-site-packages "$site_packages" --npm-root frontend \
             --server-files image-files/server --caddy-files image-files/caddy \
+            --linux-files image-files/linux \
+            --python-version "$PYTHON_VERSION" \
+            --python-license "image-files/server/usr/local/lib/python${PYTHON_VERSION%.*}/LICENSE.txt" \
+            --caddy-version "$CADDY_VERSION" --caddy-binary image-files/caddy/usr/bin/caddy \
+            --caddy-license image-files/caddy-LICENSE \
             --compose infra/supabase/compose.yaml --output dist/THIRD-PARTY-NOTICES.txt \
             --source-offer dist/SOURCE-OFFER.txt
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -355,14 +467,65 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          # The package databases of the three images, for the source-packages job.
+          name: package-databases
+          path: |
+            image-files/linux/var/lib/dpkg/status
+            image-files/server/var/lib/dpkg/status
+            image-files/caddy/lib/apk/db/installed
+            image-files/caddy/etc/alpine-release
+          if-no-files-found: error
+          retention-days: 1
       - name: Log out of GHCR
         if: always()
         run: docker logout ghcr.io
 
+  source-packages:
+    # Decision H4 and W4-7: the source files of every Debian package of the Linux image
+    # and the server image, and of every Alpine package of the Caddy image, each checked
+    # against its published hash, packed into assets below 2 GiB
+    # (scripts/release_sources.py). Docker, cosign, Python and Caddy are named with their
+    # upstream source in SOURCE-OFFER.txt.
+    needs: [check, notices]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package-databases
+          path: databases
+      - name: Download, check and pack the source packages
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: >-
+          python3 scripts/release_sources.py fetch --version "$VERSION"
+          --debian-status databases/linux/var/lib/dpkg/status
+          --debian-status databases/server/var/lib/dpkg/status
+          --apk-installed databases/caddy/lib/apk/db/installed
+          --alpine-release databases/caddy/etc/alpine-release
+          --staging "$RUNNER_TEMP/sources" --output dist --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-sources
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
   release:
     # The only job that writes to the repository. It checks out nothing and runs no
     # repository code; it downloads the assets, writes SHA256SUMS and creates the draft.
-    needs: [check, images, manifest, notices]
+    needs: [check, images, linux-image, manifest, notices, source-packages]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -387,6 +550,15 @@ jobs:
         with:
           name: release-notes
           path: notes
+      - name: Refuse an asset of 2 GiB or more
+        # GitHub refuses a release asset of 2 GiB or more (plan 5.2); stop before the draft.
+        working-directory: dist
+        run: |
+          too_big="$(find . -maxdepth 1 -type f -size +2147483647c)"
+          if [ -n "$too_big" ]; then
+            echo "::error::Release assets of 2 GiB or more: $too_big"
+            exit 1
+          fi
       - name: Write SHA256SUMS for every asset
         working-directory: dist
         run: |

@@ -73,6 +73,7 @@ jobs:
           ../scripts/ci_scope.py ../scripts/environment.py
           ../scripts/dev.py ../scripts/run_tests.py ../scripts/assertion_guard.py
           ../scripts/release_artifacts.py ../scripts/check_release_version.py
+          ../scripts/release_linux_image.py ../scripts/release_sources.py
           ../packaging/backup/backup_installation.py
           ../packaging/backup/restore_installation.py
       - name: Run packaging backup contracts

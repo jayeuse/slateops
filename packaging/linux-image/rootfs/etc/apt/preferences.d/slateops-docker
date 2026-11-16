@@ -1,0 +1,17 @@
+# Slate Operations Linux image (docs/plans/windows-installer.md 7.4, W4-2): take only the
+# four Docker Engine packages from Docker's repository, and keep their major versions.
+Package: *
+Pin: origin download.docker.com
+Pin-Priority: -1
+
+Package: docker-ce docker-ce-cli
+Pin: version 5:29.*
+Pin-Priority: 500
+
+Package: containerd.io
+Pin: version 2.*
+Pin-Priority: 500
+
+Package: docker-compose-plugin
+Pin: version 5.*
+Pin-Priority: 500

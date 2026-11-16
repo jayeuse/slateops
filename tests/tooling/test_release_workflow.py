@@ -1,4 +1,4 @@
-"""Contracts for the release workflow (docs/plans/windows-installer.md 5.2, 5.3; W3-1 to W3-4).
+"""Contracts for the release workflow (docs/plans/windows-installer.md 5.2, 5.3; W3-1 to W3-4, W4).
 
 The workflow runs only on a release tag, so these checks read its text. The first rc tag
 run proves the runtime parts (push, signatures, attestations, the draft release).
@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/release.yml"
-JOBS = ("check", "images", "manifest", "notices", "release")
+JOBS = ("check", "images", "linux-image", "manifest", "notices", "source-packages", "release")
 
 
 def job_blocks(source: str) -> dict[str, str]:
@@ -72,8 +72,10 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
                 "id-token": "write",
                 "attestations": "write",
             },
+            "linux-image": {"contents": "read"},
             "manifest": {"contents": "read", "id-token": "write"},
             "notices": {"contents": "read", "packages": "read"},
+            "source-packages": {"contents": "read"},
             "release": {"contents": "write"},
         }
         for job, permissions in expected.items():
@@ -308,7 +310,7 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
 
     def test_image_packages_are_read_from_the_pushed_digests_without_running_the_images(self):
         notices = self.jobs["notices"]
-        self.assertRegex(notices, r"(?m)^    needs: \[check, images\]$")
+        self.assertRegex(notices, r"(?m)^    needs: \[check, images, linux-image\]$")
         self.assertIn("SERVER_IMAGE: ${{ needs.images.outputs.server }}", notices)
         self.assertIn("CADDY_IMAGE: ${{ needs.images.outputs.caddy }}", notices)
         self.assertIn('docker create "$image"', notices)
@@ -323,6 +325,144 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         mypy = backend.split("      - name: Run mypy\n", 1)[1].split("\n      - ", 1)[0]
 
         for script in ("../scripts/release_artifacts.py", "../scripts/check_release_version.py"):
+            with self.subTest(script=script):
+                self.assertIn(script, mypy)
+
+    def test_linux_image_is_hashed_then_checked_then_booted_and_attached(self):
+        # W4: the build needs only the tag check; the tarball's entry is written before
+        # any check, the static check runs before the boot, and only a copy boots.
+        job = self.jobs["linux-image"]
+        tarball = '"dist/slateops-linux-$VERSION-amd64.tar.gz"'
+        self.assertRegex(job, r"(?m)^    needs: check$")
+        steps = [
+            'packaging/linux-image/build.sh --arch amd64 --version "$VERSION" --output dist',
+            "python3 scripts/release_linux_image.py outputs",
+            "python3 scripts/release_linux_image.py check",
+            f"packaging/linux-image/boot-check.sh --arch amd64 --tarball {tarball}",
+            "name: asset-linux\n          path: dist/",
+        ]
+        positions = [job.index(step) for step in steps]
+        self.assertEqual(positions, sorted(positions))
+        self.assertEqual(job.count(f"--tarball {tarball} --arch amd64"), 2)
+        self.assertIn("--pins packaging/linux-image/pins.env", job)
+        self.assertIn("--entry linux-info/linux-image.json --files linux-files", job)
+        self.assertIn("name: linux-info\n          path: linux-info/", job)
+        self.assertIn("name: linux-files\n          path: linux-files/", job)
+        self.assertIn("### Linux image size (10.2)", job)
+
+    def test_manifest_lists_the_linux_image_and_notices_read_its_package_files(self):
+        manifest = self.jobs["manifest"]
+        self.assertRegex(manifest, r"(?m)^    needs: \[check, images, linux-image\]$")
+        self.assertIn("name: linux-info\n          path: linux-info", manifest)
+        self.assertIn("--linux-info linux-info/linux-image.json", manifest)
+        notices = self.jobs["notices"]
+        self.assertIn("name: linux-files\n          path: image-files/linux", notices)
+        for argument in (
+            "--linux-files image-files/linux",
+            '--python-version "$PYTHON_VERSION"',
+            '--python-license "image-files/server/usr/local/lib/'
+            'python${PYTHON_VERSION%.*}/LICENSE.txt"',
+            '--caddy-version "$CADDY_VERSION" --caddy-binary image-files/caddy/usr/bin/caddy',
+            "--caddy-license image-files/caddy-LICENSE",
+        ):
+            with self.subTest(argument=argument):
+                self.assertIn(argument, notices)
+        self.assertIn("/lib/apk/db/installed /etc/alpine-release /usr/bin/caddy", notices)
+
+    def test_image_versions_are_checked_before_they_become_a_path_or_url(self):
+        # W4-7: PYTHON_VERSION and CADDY_VERSION come from the pushed images' settings.
+        notices = self.jobs["notices"]
+        step = notices.split(
+            "      - name: Copy the package databases out of the pushed images", 1
+        )[1]
+        body = textwrap.dedent(step.split("        run: |\n", 1)[1].split("\n      - ", 1)[0])
+        guard = body.split('echo "python_version=', 1)[0]
+        for python, caddy, expected in (
+            ("3.14.10", "v2.10.2", 0),
+            ("3.14.10/../../x", "v2.10.2", 1),
+            ("3.14.10", "v2.10.2; rm -rf /", 1),
+            ("", "v2.10.2", 1),
+        ):
+            with self.subTest(python=python, caddy=caddy), tempfile.TemporaryDirectory() as root:
+                stubs = Path(root)
+                (stubs / "docker").write_text(
+                    "#!/bin/bash\n"
+                    'if [ "$1" = image ]; then\n'
+                    f'  case "$5" in server) echo "PYTHON_VERSION={python}";; '
+                    f'*) echo "CADDY_VERSION={caddy}";; esac\n'
+                    "fi\n"
+                )
+                (stubs / "docker").chmod(0o755)
+                result = subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", guard],
+                    env={
+                        "PATH": f"{stubs}:{os.environ['PATH']}",
+                        "SERVER_IMAGE": "server",
+                        "CADDY_IMAGE": "caddy",
+                    },
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+
+    def test_source_packages_are_fetched_from_the_three_package_databases(self):
+        # H4 and W4-7: Debian sources of the Linux and server images, Alpine of Caddy.
+        notices = self.jobs["notices"]
+        for path in (
+            "image-files/linux/var/lib/dpkg/status",
+            "image-files/server/var/lib/dpkg/status",
+            "image-files/caddy/lib/apk/db/installed",
+            "image-files/caddy/etc/alpine-release",
+        ):
+            with self.subTest(path=path):
+                self.assertIn(f"            {path}\n", notices)
+        job = self.jobs["source-packages"]
+        self.assertRegex(job, r"(?m)^    needs: \[check, notices\]$")
+        self.assertIn("name: package-databases\n          path: databases", job)
+        for argument in (
+            "python3 scripts/release_sources.py fetch",
+            "--debian-status databases/linux/var/lib/dpkg/status",
+            "--debian-status databases/server/var/lib/dpkg/status",
+            "--apk-installed databases/caddy/lib/apk/db/installed",
+            "--alpine-release databases/caddy/etc/alpine-release",
+            "--output dist",
+        ):
+            with self.subTest(argument=argument):
+                self.assertIn(argument, job)
+        self.assertIn("name: asset-sources\n          path: dist/", job)
+
+    def test_release_waits_for_every_asset_and_refuses_one_of_2_gib_or_more(self):
+        release = self.jobs["release"]
+        self.assertRegex(
+            release,
+            r"(?m)^    needs: \[check, images, linux-image, manifest, notices, source-packages\]$",
+        )
+        step = release.split("      - name: Refuse an asset of 2 GiB or more", 1)[1]
+        body = textwrap.dedent(step.split("        run: |\n", 1)[1].split("\n      - ", 1)[0])
+        self.assertLess(
+            release.index("Refuse an asset of 2 GiB"), release.index("gh release create")
+        )
+        for size, expected in ((2 * 1024**3 - 1, 0), (2 * 1024**3, 1)):
+            with self.subTest(size=size), tempfile.TemporaryDirectory() as directory:
+                with open(Path(directory) / "asset.tar", "wb") as asset:
+                    asset.truncate(size)  # A sparse file: no disk space used.
+                result = subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", body],
+                    cwd=directory,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+                self.assertEqual(result.returncode, expected, result.stdout)
+
+    def test_backend_ci_type_checks_the_w4_scripts(self):
+        backend = (ROOT / ".github/workflows/backend.yml").read_text()
+        mypy = backend.split("      - name: Run mypy\n", 1)[1].split("\n      - ", 1)[0]
+
+        for script in ("../scripts/release_linux_image.py", "../scripts/release_sources.py"):
             with self.subTest(script=script):
                 self.assertIn(script, mypy)
 
