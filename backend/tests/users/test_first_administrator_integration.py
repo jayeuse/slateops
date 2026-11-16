@@ -14,14 +14,15 @@ their rolled-back transaction.
 
 import os
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 from threading import Event, Thread
 from typing import Any
 from unittest.mock import Mock
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -34,9 +35,12 @@ from app.systems.access.users.models import Membership, PlatformOperator, User, 
 from app.systems.access.users.schemas import InvitationCreate
 from app.systems.boards.models import Board
 from app.systems.manage.audit.models import AuditLog, SecurityEvent
+from app.systems.manage.backups.models import BackupPolicy
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.designs.models import SandboxDocument
+from operations import backup_state
 from operations import bootstrap_admin as bootstrap
+from tests.backups.bridge_support import bridge_session, on_fresh_thread
 from tests.conftest import guarded_create_engine
 from tests.organization_scope_support import in_context
 from tests.race_support import WAIT, backend_pid, wait_until_waiting
@@ -57,10 +61,11 @@ def _provider() -> Mock:
 
     provider = Mock()
     created: dict[str, UUID] = {}
+    identities: dict[UUID, ProviderUser] = {}
 
     def create(email: str, local_id: UUID, operation_id: UUID) -> ProviderUser:
         created[email] = uuid7()
-        return ProviderUser(
+        identities[created[email]] = ProviderUser(
             created[email],
             None,
             email,
@@ -69,9 +74,12 @@ def _provider() -> Mock:
                 "slateops_invitation_operation_id": str(operation_id),
             },
         )
+        return identities[created[email]]
 
     provider.find_invitation_user.return_value = None
     provider.admin_create_invitation_user.side_effect = create
+    # A resend reads the still unconfirmed identity that the first invitation created.
+    provider.get_admin_user.side_effect = lambda provider_id: identities[provider_id]
     provider.admin_send_invitation.side_effect = lambda email: ProviderUser(
         created[email], None, email
     )
@@ -264,3 +272,130 @@ def test_a_bootstrap_reconcile_resends_only_the_sole_pending_administrator(
         stored = db.execute(stored_profile).one_or_none()
         assert stored is not None
         assert (stored.supabase_user_id, stored.invitation_sent_at) == (None, None)
+
+
+def _footprint(owner: Engine, user_id: UUID, org_id: UUID) -> dict[str, object]:
+    """Row versions and append-only rows of one installation's first administrator."""
+    keys = {"user": user_id, "org": org_id}
+    queries = {
+        "users": "SELECT xmin::text FROM users WHERE id = :user",
+        "memberships": "SELECT id::text || xmin::text FROM memberships WHERE user_id = :user",
+        "operators": "SELECT user_id::text FROM platform_operators WHERE user_id = :user",
+        "operator_versions": "SELECT xmin::text FROM platform_operators WHERE user_id = :user",
+        "organizations": f"SELECT xmin::text FROM {WorkspaceProfile.__tablename__} WHERE id = :org",
+        "audit": "SELECT count(*)::text FROM audit_logs WHERE org_id = :org "
+                 "OR entity_id IN (:user, :org) OR entity_id IN "
+                 "(SELECT id FROM platform_operators WHERE user_id = :user) OR entity_id IN "
+                 "(SELECT id FROM memberships WHERE user_id = :user)",
+        "security_events": "SELECT count(*)::text FROM security_events "
+                           "WHERE org_id = :org OR subject_id = :user",
+    }
+    with owner.connect() as connection:
+        return {name: sorted(connection.scalars(text(query), keys).all())
+                for name, query in queries.items()}
+
+
+@pytest.mark.parametrize("operator_row", [
+    pytest.param(True, id="operator-row-present"),
+    pytest.param(False, id="operator-row-absent"),
+])
+def test_w5a_4_rerun_on_an_active_administrator_writes_no_row(
+    empty_installation: tuple[Engine, list[str]], monkeypatch: pytest.MonkeyPatch,
+    operator_row: bool,
+) -> None:
+    owner, invited = empty_installation
+    invitation = InvitationCreate(
+        email=f"first-{uuid7().hex}@example.com", username=f"first_{uuid7().hex}"
+    )
+    invited.append(invitation.email)
+    monkeypatch.setattr(user_service, "get_supabase_auth_client", _provider)
+    slug = f"w5a-{uuid7().hex[-12:]}"
+    first = bootstrap._provision(get_settings(), invitation, name="Harbor Supply", slug=slug)
+    assert first.status == UserStatus.PENDING.value
+    with Session(owner) as db:
+        # The administrator completes the emailed invitation.
+        user = db.get(User, first.user_id)
+        assert user is not None and user.supabase_user_id is not None
+        user.status = UserStatus.ACTIVE.value
+        membership = db.scalars(select(Membership).where(Membership.user_id == user.id)).one()
+        membership.status = UserStatus.ACTIVE.value
+        membership.invitation_accepted_at = datetime.now(UTC)
+        if not operator_row:
+            db.execute(delete(PlatformOperator).where(PlatformOperator.user_id == user.id))
+        db.commit()
+    before = _footprint(owner, first.user_id, first.org_id)
+
+    again = bootstrap._provision(get_settings(), invitation, name="Harbor Supply", slug=slug)
+
+    assert (again.status, again.org_id) == (UserStatus.ACTIVE.value, first.org_id)
+    after = _footprint(owner, first.user_id, first.org_id)
+    if operator_row:
+        assert after == before
+    else:
+        # `_provision` in bootstrap_admin.py restores a missing operator row: one insert and
+        # one audit row.
+        assert after["operators"] == [str(first.user_id)] and before["operators"] == []
+        assert int(after["audit"][0]) == int(before["audit"][0]) + 1
+        unchanged = {"users", "memberships", "organizations", "security_events"}
+        assert {key: after[key] for key in unchanged} == {key: before[key] for key in unchanged}
+    with Session(owner) as db:
+        assert db.scalar(select(func.count()).select_from(WorkspaceProfile).where(
+            WorkspaceProfile.slug == slug)) == 1
+
+
+@pytest.mark.parametrize("owner_status", [
+    pytest.param(UserStatus.PENDING.value, id="owner-invitation-pending"),
+    pytest.param(UserStatus.ACTIVE.value, id="owner-active"),
+])
+def test_d4_fresh_bootstrap_time_zone_gives_the_default_policy_at_0200_local(
+    empty_installation: tuple[Engine, list[str]], monkeypatch: pytest.MonkeyPatch,
+    owner_status: str,
+) -> None:
+    owner, invited = empty_installation
+    invitation = InvitationCreate(
+        email=f"first-{uuid7().hex}@example.com", username=f"first_{uuid7().hex}"
+    )
+    invited.append(invitation.email)
+    provider = _provider()
+    monkeypatch.setattr(user_service, "get_supabase_auth_client", lambda: provider)
+    slug = f"d4-{uuid7().hex[-12:]}"
+    first = bootstrap._provision(get_settings(), invitation, name="Harbor Supply", slug=slug,
+                                 time_zone="Asia/Manila")
+    if owner_status == UserStatus.ACTIVE.value:
+        with Session(owner) as db:
+            user = db.get(User, first.user_id)
+            assert user is not None
+            user.status = UserStatus.ACTIVE.value
+            membership = db.scalars(select(Membership).where(Membership.user_id == user.id)).one()
+            membership.status = UserStatus.ACTIVE.value
+            membership.invitation_accepted_at = datetime.now(UTC)
+            db.commit()
+
+    # A pending owner's rerun resends the invitation through the resume path of `provision`.
+    again = bootstrap._provision(get_settings(), invitation, name="Harbor Supply", slug=slug,
+                                 time_zone="Europe/Berlin")
+
+    assert (again.org_id, again.status) == (first.org_id, owner_status)
+    with Session(owner) as db:
+        organization_row = db.get(WorkspaceProfile, first.org_id)
+        assert organization_row is not None and organization_row.timezone == "Asia/Manila"
+        # On an installation this is the only organization; in the shared test database
+        # make it the oldest one that an installation owner owns (the D-5 rule).
+        organization_row.created_at = datetime(2000, 1, 1, tzinfo=UTC)
+        db.commit()
+
+    def default_policy() -> tuple[dict[str, Any], datetime | None]:
+        with bridge_session() as bridge:
+            instance = bridge.connection().scalar(text("SELECT current_setting('cluster_name')"))
+            result = backup_state.execute(bridge, backup_state.COMMAND_ADAPTER.validate_python(
+                {"op": "policy_default", "installation_id": instance, "project": "harbor-install"}
+            ))
+            return result, bridge.scalars(select(BackupPolicy)).one().next_due_at
+
+    result, next_due_at = on_fresh_thread(default_policy)
+
+    assert (result["written"], result["policy"]["schedule"], result["policy"]["timezone"]) == (
+        True, "daily", "Asia/Manila"
+    )
+    assert next_due_at is not None
+    assert next_due_at.astimezone(ZoneInfo("Asia/Manila")).time() == time(2)

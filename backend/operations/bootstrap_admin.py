@@ -1,11 +1,12 @@
 """Bootstrap the first organization, administrator and installation operator."""
 
-import argparse
+import json
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -32,13 +33,18 @@ from app.systems.access.users.models import Membership, PlatformOperator, User, 
 from app.systems.access.users.schemas import InvitationCreate
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
-from operations.create_organization import provision
+from operations.create_organization import provision, validate_identity
+from operations.install.joblog import RefusalParser, log_line
 
 LOCAL_ENVIRONMENTS = frozenset({"development", "dev", "local"})
 
 
 class BootstrapError(RuntimeError):
     """A safe operational error raised while provisioning an administrator."""
+
+
+class BootstrapFailure(BootstrapError):
+    """The final commit or provider delivery failed; a rerun can complete it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,8 +57,8 @@ class BootstrapResult:
     slug: str
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+def _parser() -> RefusalParser:
+    parser = RefusalParser(description=__doc__)
     parser.add_argument(
         "--confirm",
         action="store_true",
@@ -62,6 +68,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--slug", default="slateops")
     parser.add_argument("--provider-user-id", type=UUID,
                         help="explicitly link a surviving confirmed provider identity")
+    parser.add_argument("--time-zone", default="UTC",
+                        help="IANA time zone of a new organization (never changes an existing one)")
+    parser.add_argument("--json", action="store_true",
+                        help="print one line of safe JSON for the install engine")
     return parser
 
 
@@ -70,6 +80,17 @@ def _validate_confirmation(settings: Settings, confirmed: bool) -> None:
         raise BootstrapError(
             "Administrator bootstrap requires --confirm outside development/local environments"
         )
+
+
+def _time_zone(name: str) -> str:
+    """Accept only an IANA name that fits the organization's time zone column."""
+    try:
+        if not name or len(name) > 64:
+            raise ValueError
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise BootstrapError("The time zone must be an IANA time zone name") from None
+    return name
 
 
 def _invitation(email: str, username: str) -> InvitationCreate:
@@ -132,7 +153,7 @@ def _is_exact_admin_reservation(db: AuditSession, user: User, invitation: Invita
 
 def _provision(
     settings: Settings, invitation: InvitationCreate, *, provider_user_id: UUID | None = None,
-    name: str = "Slate Operations", slug: str = "slateops",
+    name: str = "Slate Operations", slug: str = "slateops", time_zone: str = "UTC",
 ) -> BootstrapResult:
     # Provider I/O precedes the short serialized installation transaction.
     confirmed_provider = (
@@ -176,7 +197,7 @@ def _provision(
                 org = provision(db, name=name, slug=slug,
                                 invitation=invitation.model_copy(update={"role": UserRole.ADMIN}),
                                 provider_user_id=provider_user_id,
-                                confirmed_provider=confirmed_provider)
+                                confirmed_provider=confirmed_provider, timezone=time_zone)
                 created_user = db.scalar(select(User).where(User.email == invitation.email))
                 assert created_user is not None
                 user = created_user
@@ -190,14 +211,31 @@ def _provision(
             )
         except (InvitationError, SQLAlchemyError, ValueError) as error:
             db.rollback()
-            raise BootstrapError("Unable to finalize administrator profile") from error
+            raise BootstrapFailure("Unable to finalize administrator profile") from error
+
+
+def _engine_output(level: str, value: dict[str, str]) -> None:
+    log_line("bootstrap", level, next(iter(value.values())))
+    print(json.dumps(value, separators=(",", ":")))
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     parser = _parser()
-    args = parser.parse_args(argv)
+    arguments = sys.argv[1:] if argv is None else list(argv)
+    # Without --json, argparse keeps its usage message and exit 2.
+    parser.refuse = "--json" in arguments
+    try:
+        args = parser.parse_args(arguments)
+    except ValueError:
+        _engine_output("error", {"code": "bootstrap_refused"})
+        raise SystemExit(2) from None
 
     try:
+        time_zone = _time_zone(args.time_zone)
+        try:
+            validate_identity(args.name, args.slug)
+        except ValueError:
+            raise BootstrapError("Organization name or slug is invalid") from None
         settings = get_settings()
         admin = get_admin_settings()
         target = instance_target_for_process(settings.database_url, "slateops_runtime")
@@ -212,13 +250,25 @@ def main(argv: Sequence[str] | None = None) -> None:
             expected_user="slateops_runtime",
         )
         result = _provision(settings, invitation, provider_user_id=args.provider_user_id,
-                            name=args.name, slug=args.slug)
+                            name=args.name, slug=args.slug, time_zone=time_zone)
     except SystemExit:
         raise
-    except Exception:
+    except Exception as error:
         # Keep database, Auth, and configuration details out of command output.
+        if args.json:
+            refused = isinstance(error, BootstrapError) and not isinstance(
+                error, BootstrapFailure
+            )
+            code = "bootstrap_refused" if refused else "bootstrap_failed"
+            _engine_output("error", {"code": code})
+            raise SystemExit(2 if refused else 3) from None
         raise SystemExit("Unable to provision administrator") from None
 
+    if args.json:
+        # The email and user name stay out of engine output and logs (plan 10.1 item 7).
+        sent = result.status == UserStatus.PENDING.value
+        _engine_output("info", {"result": "sent" if sent else "already_active"})
+        return
     print(
         f"user_id={result.user_id} email={result.email} "
         f"username={result.username} status={result.status} "
