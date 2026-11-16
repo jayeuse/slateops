@@ -27,15 +27,15 @@ The company installation service, the email relay, public certificates, the purc
 
 ### 1.3 Labels
 
-**Current** means read in the code at the base revision. **Observed** means measured on the owner's Windows 11 Pro PC in the boot test (company request REQ-0020). **Proposed** means this plan. **Assumption** means not checked; a spike in section 10 checks it.
+**Current** means read in the code at the base revision. **Observed** means measured on the owner's Windows 11 Pro PC in the boot test (company request REQ-0022). **Proposed** means this plan. **Assumption** means not checked; a spike in section 10 checks it.
 
 ## 2. Current state
 
 | Area | Current state | Source |
 |---|---|---|
-| Runtime on Windows | **Observed:** WSL2 with Docker Engine in our own imported Debian 13 serves the LAN at boot with nobody signed in. A hidden standard account runs it through Task Scheduler. It recovered after shutdown, restart, sign-out and `wsl --update`. Ready about 30 to 36 s after Windows starts. The WSL update restarted the Linux VM; the outage was about 2.5 min. | REQ-0020; `infra/windows/boot-test/README.md` |
+| Runtime on Windows | **Observed:** WSL2 with Docker Engine in our own imported Debian 13 serves the LAN at boot with nobody signed in. A hidden standard account runs it through Task Scheduler. It recovered after shutdown, restart, sign-out and `wsl --update`. Ready about 30 to 36 s after Windows starts. The WSL update restarted the Linux VM; the outage was about 2.5 min. | REQ-0022; `infra/windows/boot-test/README.md` |
 | Proven mechanisms | Per-account `.wslconfig` (`vmIdleTimeout=-1`, `[general] instanceIdleTimeout=-1`, fixed memory, `networkingMode=mirrored`, `defaultVhdSize`); the on-demand job task `Exec` with an allow-list (`lib/svc-exec.ps1`); the boot task (At startup, `PT0S`, 1-minute repetition, IgnoreNew, keep-alive attached, `lib/start-distro.ps1`); Windows and Hyper-V firewall rules (Private, local subnet); Docker from Docker's apt repository with a key fingerprint check; folder ACL hardening and the safety check; cleanup. | `infra/windows/boot-test/` (pull request 113) |
-| Installer findings | **Observed:** the server PC cannot open its own LAN address into WSL in mirrored mode. WSL updates cause a short outage. salsa.debian.org serves a bot check to PowerShell's default user agent. Drive C: can be small (26.6 GB free on the test PC). | REQ-0020 |
+| Installer findings | **Observed:** the server PC cannot open its own LAN address into WSL in mirrored mode. WSL updates cause a short outage. salsa.debian.org serves a bot check to PowerShell's default user agent. Drive C: can be small (26.6 GB free on the test PC). | REQ-0022 |
 | Production install | About 9 manual commands and 3 env files written by hand. | `infra/supabase/README.md:29-140` |
 | Secrets | `supabase_keys.py` generates the provider keys and some application keys (for example `SUPABASE_SESSION_ENCRYPTION_KEY`, the Realtime keys). It does not generate `SECURITY_EVENT_SERVER_KEY`, the `slateops_owner` and `slateops_runtime` passwords, the SMTP values or the Restic password. It writes `NAME='value'`; `docker run --env-file` needs the literal `KEY=value` format (inferred from `infra/supabase/README.md`, provisioning env). It imports `jwt`, `cryptography` and `app.*`, so it runs only with the backend environment. | `backend/operations/supabase_keys.py:109,140` |
 | First administrator | `bootstrap_admin.py` needs `--confirm` outside development, `ADMIN_EMAIL`, `ADMIN_USERNAME`, a running API and working SMTP. `--name` and `--slug` set the first organization. No production step runs it. | `backend/operations/bootstrap_admin.py:54-64,196-228`; `settings.py:348-350` |
@@ -186,7 +186,7 @@ The Product Designer must design pages 3, 4, 6, 7, 8, 11 and 12, the trust page 
 | R5 | Free space on the chosen data drive | Checked on page 4 | Yes | Page 4 |
 | R6 | Not joined to a domain network, and the active network is not Public | `Get-NetConnectionProfile` | Domain: yes. Public: page 8 offers the fix | "Slate Operations is not tested on company domain networks." |
 | R7 | PowerShell module logging does not cover `ScheduledTasks` | Policy registry (kit check) | Yes | "A security policy on this PC records commands. Ask the person who manages this PC." |
-| R8 | Internet access to github.com, ghcr.io and the Docker Hub registry | HTTPS HEAD with a plain user agent (REQ-0020 finding) | Yes | "Setup cannot reach the internet. Connect this PC, then select Retry." |
+| R8 | Internet access to github.com, ghcr.io and the Docker Hub registry | HTTPS HEAD with a plain user agent (REQ-0022 finding) | Yes | "Setup cannot reach the internet. Connect this PC, then select Retry." |
 | R9 | On mains power (laptops) | `Win32_Battery` | No (a warning) | "Keep this PC on mains power. A PC that sleeps or runs on battery stops serving the office." |
 
 ### 4.3 What goes where
