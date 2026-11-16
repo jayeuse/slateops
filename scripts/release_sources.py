@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import io
 import json
 import logging
@@ -34,6 +35,7 @@ import urllib.request
 from collections.abc import Callable, Collection, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Protocol
 from urllib.parse import quote
 
 # Run as a file, the script directory is first on sys.path; the repository root lets both
@@ -56,32 +58,80 @@ USER_AGENT = "slateops-release-sources"
 _SAFE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._+~@=,-]*")
 _CHECKSUMS = re.compile(r"""sha512sums=(["'])(.*?)\1""", re.DOTALL)
 
-Fetch = Callable[[str], bytes]
+# Answers that a later try can change (run 43925764551: a GitLab answer that was not a
+# 404 became "no folder"). 403 is here as an assumption: services answer abuse limits on
+# shared runner addresses with it, and a lasting 403 still fails, with its status.
+TRANSIENT_STATUS = frozenset({403, 408, 429})
+TRIES = 6
+MAX_WAIT = 120.0
+
+Check = Callable[[bytes], object]
+
+
+class Fetch(Protocol):
+    def __call__(self, url: str, check: Check | None = None) -> bytes: ...
 
 
 class SourceError(Exception):
     """A source package that the workflow cannot attach as published."""
 
 
-def download(url: str, *, tries: int = 5, timeout: float = 300) -> bytes:
-    """GET a URL. Server errors, rate limits and time-outs are tried again; others are not."""
+class NotFoundError(SourceError):
+    """The server answered 404: the file does not exist there."""
+
+
+def _retry_after(error: urllib.error.HTTPError) -> float:
+    value = error.headers.get("Retry-After", "") if error.headers else ""
+    return float(value) if value.strip().isdigit() else 0.0
+
+
+def download(
+    url: str, check: Check | None = None, *, tries: int = TRIES, timeout: float = 300
+) -> bytes:
+    """GET a URL, with bounded tries and growing waits for answers that can change.
+
+    Rate limits, server errors, time-outs, broken or truncated transfers, and a body that
+    `check` refuses (it raises ValueError) are tried again; the waits double from 2 s,
+    or follow Retry-After, up to MAX_WAIT. A lasting failure names its cause. A 404 raises
+    NotFoundError at once; any other answer raises SourceError at once.
+    """
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     for attempt in range(1, tries + 1):
+        wait = float(2**attempt)
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
                 content: bytes = response.read()
-                return content
+            if check is not None:
+                check(content)
+            return content
         except urllib.error.HTTPError as error:
-            if error.code != 429 and error.code < 500:
-                raise SourceError(f"{error.code} {url}") from None
+            if error.code == 404:
+                raise NotFoundError(f"HTTP 404 {url}") from None
+            if error.code not in TRANSIENT_STATUS and error.code < 500:
+                raise SourceError(f"HTTP {error.code} {url}") from None
             reason = f"HTTP {error.code}"
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
-            reason = str(error)
+            wait = max(wait, _retry_after(error))
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as error:
+            reason = f"{type(error).__name__}: {error}"
+        except ValueError as error:
+            reason = f"unusable answer: {error}"
         if attempt == tries:
             raise SourceError(f"{url}: {reason} after {tries} tries")
         LOG.warning("try %d of %d failed for %s: %s", attempt, tries, url, reason)
-        time.sleep(2**attempt)
+        time.sleep(min(wait, MAX_WAIT))
     raise SourceError(url)  # pragma: no cover - the loop returns or raises
+
+
+def _json(content: bytes) -> object:
+    return json.loads(content)
+
+
+def _gzip_tar(content: bytes) -> object:
+    try:
+        with tarfile.open(fileobj=io.BytesIO(content), mode="r:gz") as tar:
+            return tar.getmembers()
+    except (tarfile.TarError, EOFError, OSError) as error:
+        raise ValueError(f"not a gzip tar archive ({error})") from None
 
 
 def _safe(name: str) -> str:
@@ -123,7 +173,7 @@ def fetch_debian(source: str, version: str, folder: Path, fetch: Fetch) -> int:
     """Download one Debian source package into folder; return its size in bytes."""
     package = f"{quote(source, safe='')}/{quote(version, safe='')}"
     url = f"{SNAPSHOT}/mr/package/{package}/srcfiles?fileinfo=1"
-    answer = json.loads(fetch(url))
+    answer = json.loads(fetch(url, _json))
     files: dict[str, str] = {}
     for item in answer["result"]:
         digest = str(item["hash"])
@@ -172,9 +222,9 @@ def _aports_folder(package: AlpinePackage, fetch: Fetch) -> dict[str, bytes]:
             f"?path={repository}/{package.origin}"
         )
         try:
-            archive = fetch(url)
-        except SourceError:
-            continue
+            archive = fetch(url, _gzip_tar)
+        except NotFoundError:
+            continue  # Only a 404 means "not in this repository"; other failures stop.
         files: dict[str, bytes] = {}
         suffix = f"/{repository}/{package.origin}/"
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
@@ -258,8 +308,8 @@ def _fetch_all(args: argparse.Namespace, staging: Path) -> None:
     branch = alpine_branch(args.alpine_release.read_text())
     LOG.info("sources: %d Debian, %d Alpine (%s)", len(debian), len(alpine), branch)
 
-    def logged(url: str) -> bytes:
-        content = download(url)
+    def logged(url: str, check: Check | None = None) -> bytes:
+        content = download(url, check)
         LOG.info("fetched %s (%d bytes)", url, len(content))
         return content
 

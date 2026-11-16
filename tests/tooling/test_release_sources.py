@@ -10,11 +10,13 @@ network with a table of URLs.
 from __future__ import annotations
 
 import hashlib
+import http.server
 import io
 import json
 import tarfile
 import tempfile
 import textwrap
+import threading
 import unittest
 import urllib.error
 from email.message import Message
@@ -63,9 +65,11 @@ def debian_site(dsc_files: dict[str, bytes] | None = None, served: dict[str, byt
 
 
 def fetcher(pages: dict[str, bytes]):
-    def fetch(url: str) -> bytes:
+    def fetch(url: str, check=None) -> bytes:
         if url not in pages:
-            raise SourceError(f"404 {url}")
+            raise release_sources.NotFoundError(f"HTTP 404 {url}")
+        if check is not None:
+            check(pages[url])
         return pages[url]
 
     return fetch
@@ -284,6 +288,165 @@ class DownloadTests(unittest.TestCase):
         ):
             release_sources.download("https://x")
         self.assertEqual(urlopen.call_count, 1)
+
+
+Answer = tuple[int, dict[str, str], bytes]
+
+
+class FakeServer:
+    """A local HTTP server that gives each path its scripted answers in order.
+
+    The last answer of a path repeats. An answer with status 0 sleeps past the client's
+    time-out; one with the header "X-Truncate" sends fewer bytes than Content-Length.
+    """
+
+    def __init__(self, answers: dict[str, list[Answer]]) -> None:
+        self.answers = answers
+        self.calls: dict[str, int] = {}
+        server = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def answer(self) -> None:
+                count = server.calls.get(self.path, 0)
+                server.calls[self.path] = count + 1
+                script = server.answers.get(self.path, [(404, {}, b"not found")])
+                status, headers, body = script[min(count, len(script) - 1)]
+                if status == 0:
+                    threading.Event().wait(0.5)  # not time.sleep: the tests patch it
+                    status = 200
+                self.send_response(status)
+                length = len(body) + (100 if "X-Truncate" in headers else 0)
+                self.send_header("Content-Length", str(length))
+                for name, value in headers.items():
+                    self.send_header(name, value)
+                self.end_headers()
+                self.wfile.write(body)
+
+            do_GET = answer  # the method name that http.server calls for a GET
+
+            def log_message(self, *args: object) -> None:
+                pass
+
+        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+
+    def __enter__(self) -> FakeServer:
+        self.thread.start()
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+class TransientAnswerTests(unittest.TestCase):
+    """Run 43925764551 (rc.6): a GitLab answer that was not a 404 became "no folder".
+
+    Each answer below reaches the real download() through a local server; the waits are
+    recorded, not slept.
+    """
+
+    def setUp(self) -> None:
+        patcher = mock.patch("time.sleep")
+        self.sleep = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def aports(self, server: FakeServer) -> mock._patch[str]:
+        return mock.patch.object(release_sources, "APORTS_ARCHIVE", f"{server.url}/aports")
+
+    def busybox_paths(self) -> tuple[str, str, bytes]:
+        site = alpine_site()
+        main = next(url for url in site if "path=main/busybox" in url)
+        path = main.split("/-/archive", 1)[1]
+        return f"/aports{path}", path.replace("main/busybox", "community/busybox"), site[main]
+
+    def test_rate_limit_and_server_errors_are_tried_again_with_growing_waits(self):
+        main, _, archive = self.busybox_paths()
+        answers = [(429, {"Retry-After": "7"}, b""), (503, {}, b""), (502, {}, b"")]
+        with FakeServer({main: [*answers, (200, {}, archive)]}) as server, self.aports(server):
+            files = release_sources._aports_folder(
+                AlpinePackage("busybox", "1.37.0-r20", COMMIT), release_sources.download
+            )
+
+        self.assertIn("APKBUILD", files)
+        self.assertEqual(server.calls[main], 4)
+        self.assertEqual([call.args[0] for call in self.sleep.call_args_list], [7, 4, 8])
+
+    def test_a_persistent_transient_answer_fails_with_its_cause_not_no_folder(self):
+        main, _, _ = self.busybox_paths()
+        for case, answer, cause in (
+            ("rate limit", (429, {}, b""), "HTTP 429 after 6 tries"),
+            ("forbidden", (403, {}, b"blocked"), "HTTP 403 after 6 tries"),
+            ("server error", (500, {}, b""), "HTTP 500 after 6 tries"),
+            ("challenge page", (200, {}, b"<html>checking</html>"), "not a gzip tar archive"),
+            ("truncated body", (200, {"X-Truncate": "1"}, b"\x1f\x8b"), "after 6 tries"),
+        ):
+            self.sleep.reset_mock()
+            with (
+                self.subTest(case=case),
+                FakeServer({main: [answer]}) as server,
+                self.aports(server),
+                self.assertRaisesRegex(SourceError, cause) as raised,
+            ):
+                release_sources._aports_folder(
+                    AlpinePackage("busybox", "1.37.0-r20", COMMIT), release_sources.download
+                )
+            self.assertNotIn("no folder", str(raised.exception))
+            self.assertEqual(server.calls[main], 6)
+
+    def test_a_time_out_is_tried_again(self):
+        with FakeServer({"/slow": [(0, {}, b""), (200, {}, b"content")]}) as server:
+            content = release_sources.download(f"{server.url}/slow", timeout=0.2)
+
+        self.assertEqual((content, server.calls["/slow"]), (b"content", 2))
+
+    def test_a_missing_folder_still_fails_as_missing_after_both_repositories(self):
+        main, community, _ = self.busybox_paths()
+        empty = io.BytesIO()
+        with tarfile.open(fileobj=empty, mode="w:gz"):
+            pass
+        for case, answers in (
+            ("404 in both", {}),
+            (
+                "empty archives",
+                {
+                    main: [(200, {}, empty.getvalue())],
+                    f"/aports{community}": [(200, {}, empty.getvalue())],
+                },
+            ),
+        ):
+            with (
+                self.subTest(case=case),
+                FakeServer(answers) as server,
+                self.aports(server),
+                self.assertRaisesRegex(SourceError, "aports has no folder for busybox"),
+            ):
+                release_sources._aports_folder(
+                    AlpinePackage("busybox", "1.37.0-r20", COMMIT), release_sources.download
+                )
+            self.assertEqual(server.calls.get(main), 1)
+            self.assertEqual(server.calls.get(f"/aports{community}"), 1)
+        self.sleep.assert_not_called()
+
+    def test_a_snapshot_answer_that_is_not_json_is_tried_again(self):
+        page = "/mr/package/bash/5.2.37-2/srcfiles?fileinfo=1"
+        site = debian_site()
+        answers: dict[str, list[Answer]] = {
+            url.removeprefix(SNAPSHOT): [(200, {}, body)] for url, body in site.items()
+        }
+        answers[page] = [(200, {}, b"<html>busy</html>"), *answers[page]]
+        with (
+            FakeServer(answers) as server,
+            mock.patch.object(release_sources, "SNAPSHOT", server.url),
+            tempfile.TemporaryDirectory() as directory,
+        ):
+            release_sources.fetch_debian(
+                "bash", "5.2.37-2", Path(directory), release_sources.download
+            )
+
+        self.assertEqual(server.calls[page], 2)
+        self.sleep.assert_called_once()
 
 
 if __name__ == "__main__":
