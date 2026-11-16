@@ -114,9 +114,9 @@ See [API contracts](docs/architecture/07-api-architecture.md) and
 
 ## Good faith
 
-Slate Operations has no open-source license. All rights are reserved, and you can read the code on GitHub.
-The maintainer gives you one more permission: you can run your own copy on systems that you control, only to find and report vulnerabilities under this policy.
-This permission does not let you use Slate Operations for other purposes, give copies to other persons, or run it for an organization.
+Slate Operations is source-available under the [Elastic License 2.0](LICENSE).
+The license lets you run your own copy, so you need no extra permission for security research.
+Do your security testing on a copy that runs on systems that you control.
 
 The maintainer will not take legal action against you for good-faith research that follows this policy.
 This promise covers only the maintainer. It does not cover a client organization that runs Slate Operations.
@@ -161,7 +161,7 @@ pgp-key: none
 maintainers: 1
 backup-maintainer: none
 installations-in-use: none
-license: none (all rights reserved; running a copy is permitted only for security research under this policy)
+license: Elastic-2.0 (Elastic License 2.0, source-available; full text in LICENSE)
 acknowledgement-target-days: 7
 silence-fallback-days: 14
 triage-target-days: 30
