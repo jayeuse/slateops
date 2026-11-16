@@ -197,7 +197,8 @@ try {
         }
         if ($haveGood) { Write-KitLog ('{0}: cached file {1} has the pinned SHA-256.' -f $download.Name, $download.File); continue }
         Invoke-Step ('Download {0} from {1}' -f $download.Name, $download.Url) {
-            Invoke-WebRequest -Uri $download.Url -OutFile $download.File -UseBasicParsing
+            # salsa.debian.org answers browser-like user agents (PowerShell 5.1 sends "Mozilla/...") with a bot-check page.
+            Invoke-WebRequest -Uri $download.Url -OutFile $download.File -UseBasicParsing -UserAgent 'SlateOpsBootTest/1.0 (WindowsPowerShell/5.1)'
             $hash = (Get-FileHash -LiteralPath $download.File -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($hash -ne $download.Sha256) {
                 Remove-Item -LiteralPath $download.File -Force
