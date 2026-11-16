@@ -15,8 +15,12 @@ from typing import NoReturn, TextIO
 
 RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:+-]{0,95}")
 # C0 (except tab), DEL, C1 and the Unicode line and paragraph separators: each could
-# forge a line, hide one, or drive a terminal.
-CONTROL = re.compile("[\x00-\x08\x0a-\x1f\x7f-\x9f  ]")
+# forge a line, hide one, or drive a terminal. A translate table of explicit code points
+# (no regex character range).
+_ESCAPED_CODES = [*range(0x00, 0x09), *range(0x0A, 0x20), *range(0x7F, 0xA0), 0x2028, 0x2029]
+_ESCAPES = {
+    code: f"\\x{code:02x}" if code < 0x100 else f"\\u{code:04x}" for code in _ESCAPED_CODES
+}
 
 
 def run_id(environ: Mapping[str, str] | None = None) -> str:
@@ -25,15 +29,15 @@ def run_id(environ: Mapping[str, str] | None = None) -> str:
     return value if RUN_ID.fullmatch(value) else "-"
 
 
-def _escape(match: re.Match[str]) -> str:
-    code = ord(match.group())
-    return f"\\x{code:02x}" if code < 0x100 else f"\\u{code:04x}"
+def escape_controls(text: str) -> str:
+    """``text`` with every control character written as a visible escape."""
+    return text.translate(_ESCAPES)
 
 
 def format_line(step: str, level: str, text: str) -> str:
     """The exact line that ``log_line`` writes, without its newline."""
     moment = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-    return f"{moment} {run_id()} {step} {level} {CONTROL.sub(_escape, text)}"
+    return f"{moment} {run_id()} {step} {level} {escape_controls(text)}"
 
 
 def log_line(step: str, level: str, text: str, *, stream: TextIO | None = None) -> None:
