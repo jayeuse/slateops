@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # build-rootfs.sh - runs inside the build container that build.sh starts (as root).
 #
-# 1. Points the container's apt at snapshot.debian.org ($SNAPSHOT) and installs mmdebstrap,
-#    gpg, curl and ca-certificates from it.
+# 1. Installs mmdebstrap, gpg and curl from snapshot.debian.org ($SNAPSHOT) over HTTPS,
+#    after a pinned ca-certificates (snapshot-apt.sh).
 # 2. Checks the three Debian 13 archive keys by fingerprint (W4-1) and Docker's apt key by
 #    fingerprint (W4-2). Only these keys can sign what the image installs.
 # 3. Runs mmdebstrap (variant "important", the base of the Debian WSL image that REQ-0022
@@ -29,28 +29,8 @@ log "pins: snapshot $SNAPSHOT (SOURCE_DATE_EPOCH $SOURCE_DATE_EPOCH), arch $ARCH
 log "pins: docker-ce $DOCKER_CE_VERSION, docker-ce-cli $DOCKER_CE_CLI_VERSION, containerd.io $CONTAINERD_IO_VERSION, docker-compose-plugin $DOCKER_COMPOSE_PLUGIN_VERSION, cosign $COSIGN_VERSION"
 mkdir -p "$keys"
 
-# 1. Build tools from the same snapshot. The snapshot's Release files are older than their
-# Valid-Until date; the signature check stays on. This setting is in the build container
-# only and never in the image (scripts/release_linux_image.py check refuses it).
-rm -f /etc/apt/sources.list.d/debian.sources
-cat > /etc/apt/sources.list.d/snapshot.sources <<EOF
-Types: deb
-URIs: http://snapshot.debian.org/archive/debian/$SNAPSHOT
-Suites: trixie trixie-updates
-Components: main
-Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
-
-Types: deb
-URIs: http://snapshot.debian.org/archive/debian-security/$SNAPSHOT
-Suites: trixie-security
-Components: main
-Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
-EOF
-printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/90snapshot
-log "fetch: build tools from http://snapshot.debian.org/archive/debian/$SNAPSHOT"
-apt-get update -qq
-apt-get install -y -qq --no-install-recommends mmdebstrap gpg ca-certificates curl >/dev/null
-log "build tools: $(dpkg-query -W -f '${Package} ${Version}, ' mmdebstrap gpg curl)"
+# 1. Build tools from the same snapshot, over HTTPS after a pinned CA bundle.
+bash /build/snapshot-apt.sh mmdebstrap gpg curl
 
 fingerprints() {
     gpg --batch --show-keys --with-colons "$1" \
@@ -86,8 +66,11 @@ packages=(
     "containerd.io=$CONTAINERD_IO_VERSION" "docker-compose-plugin=$DOCKER_COMPOSE_PLUGIN_VERSION"
 )
 include="$(IFS=,; echo "${packages[*]}")"
-debian="http://snapshot.debian.org/archive/debian/$SNAPSHOT"
-security="http://snapshot.debian.org/archive/debian-security/$SNAPSHOT"
+debian="https://snapshot.debian.org/archive/debian/$SNAPSHOT"
+security="https://snapshot.debian.org/archive/debian-security/$SNAPSHOT"
+# mmdebstrap's apt runs in this container: the HTTPS sources need its CA bundle.
+[ -s /etc/ssl/certs/ca-certificates.crt ] || fail "the build container has no CA bundle"
+log "CA bundle: ca-certificates $(dpkg-query -W -f '${Version}' ca-certificates)"
 log "fetch: Debian packages from $debian and $security; Docker packages from $DOCKER_REPOSITORY"
 # The hooks get the root folder as "$1" from mmdebstrap, so the quotes stay single.
 # shellcheck disable=SC2016

@@ -151,16 +151,36 @@ def _wsl_conf_problems(root: RootFileSystem) -> list[str]:
     ]
 
 
+# The reviewed Docker settings (S83-4). Any other key, a TCP socket in "hosts" for
+# example, could open a port or weaken the daemon, so the check refuses it.
+DAEMON_KEYS: dict[str, frozenset[str] | None] = {
+    "features": frozenset({"containerd-snapshotter"}),
+    "log-driver": None,
+    "log-opts": frozenset({"max-size", "max-file"}),
+}
+
+
 def _daemon_problems(root: RootFileSystem) -> list[str]:
     text = root.text("etc/docker/daemon.json")
     try:
-        features = json.loads(text or "null")["features"]
-        enabled = features["containerd-snapshotter"] is True
+        settings = json.loads(text or "null")
+        enabled = settings["features"]["containerd-snapshotter"] is True
     except (TypeError, KeyError, ValueError):
-        enabled = False
-    if enabled:
-        return []
-    return ["AC-W4-8: /etc/docker/daemon.json does not turn on the containerd image store"]
+        settings, enabled = None, False
+    problems: list[str] = []
+    if not enabled:
+        problems.append(
+            "AC-W4-8: /etc/docker/daemon.json does not turn on the containerd image store"
+        )
+    if isinstance(settings, dict):
+        unknown = sorted(set(settings) - set(DAEMON_KEYS))
+        for key, allowed in DAEMON_KEYS.items():
+            value = settings.get(key)
+            if allowed is not None and isinstance(value, dict):
+                unknown += [f"{key}.{name}" for name in sorted(set(value) - allowed)]
+        if unknown:
+            problems.append(f"W4-3: /etc/docker/daemon.json has unreviewed keys {unknown}")
+    return problems
 
 
 def _secret_problems(root: RootFileSystem, packages: Iterable[str]) -> list[str]:
@@ -303,7 +323,9 @@ def _time_problems(root: RootFileSystem) -> list[str]:
     problems += [
         f"W4-6: chrony.conf has '{' '.join(words)}'"
         for words in lines
-        if words[0] in ("allow", "cmdallow", "bindcmdaddress")
+        # S83-4: include, confdir and sourcedir would read more files (Debian ships
+        # /etc/chrony/conf.d and sources.d), which could add sources or open a port.
+        if words[0] in ("allow", "cmdallow", "bindcmdaddress", "include", "confdir", "sourcedir")
     ]
     if not any(words[0] == "log" and "tracking" in words[1:] for words in lines):
         problems.append("W4-6: chrony.conf does not log the tracking (offset) data")

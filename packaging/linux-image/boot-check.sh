@@ -43,12 +43,7 @@ docker run --rm --privileged --platform "linux/$arch" \
     bash -euo pipefail -c '
 log() { printf "%s boot-check %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 . /build/pins.env
-rm -f /etc/apt/sources.list.d/debian.sources
-printf "deb [signed-by=/usr/share/keyrings/debian-archive-keyring.pgp] http://snapshot.debian.org/archive/debian/%s trixie main\n" \
-    "$SNAPSHOT" > /etc/apt/sources.list.d/snapshot.list
-printf "Acquire::Check-Valid-Until \"false\";\nAcquire::Retries \"5\";\n" > /etc/apt/apt.conf.d/90snapshot
-apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends systemd-container >/dev/null
+bash /build/snapshot-apt.sh systemd-container
 log "systemd-nspawn $(dpkg-query -W -f "\${Version}" systemd-container)"
 
 root=/check/root

@@ -430,13 +430,25 @@ jobs:
             "/usr/local/lib/python${python_version%.*}/LICENSE.txt"
           extract caddy "$CADDY_IMAGE" /lib/apk/db/installed /etc/alpine-release /usr/bin/caddy
       - name: Download the Caddy license of the image's release tag
-        # The Caddy image ships no license file (checked 2026-11-16).
+        # The Caddy image ships no license file (checked 2026-11-16). The version and the
+        # SHA-256 are pinned next to the image pin in infra/docker/caddy.Dockerfile (S83-2).
         env:
           CADDY_VERSION: ${{ steps.files.outputs.caddy_version }}
-        run: >-
-          curl --fail --silent --show-error --location --retry 5
-          --output image-files/caddy-LICENSE
-          "https://raw.githubusercontent.com/caddyserver/caddy/$CADDY_VERSION/LICENSE"
+        run: |
+          read -r _ _ pinned_version pinned_sha256 < <(grep '^# caddy-license: ' infra/docker/caddy.Dockerfile)
+          if [ "$CADDY_VERSION" != "$pinned_version" ]; then
+            echo "::error::The Caddy image is $CADDY_VERSION; caddy.Dockerfile pins the license of $pinned_version"
+            exit 1
+          fi
+          curl --fail --silent --show-error --location --retry 5 \
+            --output image-files/caddy-LICENSE.download \
+            "https://raw.githubusercontent.com/caddyserver/caddy/$CADDY_VERSION/LICENSE"
+          if ! echo "$pinned_sha256  image-files/caddy-LICENSE.download" | sha256sum --check --strict --status -; then
+            rm -f image-files/caddy-LICENSE.download
+            echo "::error::The Caddy $CADDY_VERSION LICENSE does not match its pinned SHA-256"
+            exit 1
+          fi
+          mv image-files/caddy-LICENSE.download image-files/caddy-LICENSE
       - name: Install the Python packages that the server image ships
         working-directory: backend
         # The same lock flag as the image (infra/docker/backend.Dockerfile).

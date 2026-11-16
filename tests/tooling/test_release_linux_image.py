@@ -195,6 +195,34 @@ class RootFileSystemCheckTests(unittest.TestCase):
                 "AC-W4-8",
             ),
             ("no daemon.json", drop("etc/docker/daemon.json"), "AC-W4-8"),
+            # S83-4: no Docker setting outside the reviewed set (a TCP socket, for example).
+            (
+                "daemon listens on TCP",
+                edit(
+                    "etc/docker/daemon.json",
+                    '"log-driver"',
+                    '"hosts": ["tcp://0.0.0.0:2375"],\n  "log-driver"',
+                ),
+                "W4-3",
+            ),
+            (
+                "other feature",
+                edit(
+                    "etc/docker/daemon.json",
+                    '"containerd-snapshotter": true',
+                    '"containerd-snapshotter": true, "cdi": true',
+                ),
+                "W4-3",
+            ),
+            (
+                "other log option",
+                edit(
+                    "etc/docker/daemon.json",
+                    '"max-file": "3"',
+                    '"max-file": "3", "compress": "false"',
+                ),
+                "W4-3",
+            ),
             # W4-3: no SSH server, no secret, no identity.
             (
                 "ssh server package",
@@ -274,6 +302,22 @@ class RootFileSystemCheckTests(unittest.TestCase):
             ),
             ("command port", edit("etc/chrony/chrony.conf", "cmdport 0\n", ""), "W4-6"),
             ("offset not logged", edit("etc/chrony/chrony.conf", "log tracking\n", ""), "W4-6"),
+            # S83-4: no other file may add sources or open a port.
+            (
+                "include",
+                edit("etc/chrony/chrony.conf", "port 0\n", "port 0\ninclude /etc/x.conf\n"),
+                "W4-6",
+            ),
+            (
+                "confdir",
+                edit("etc/chrony/chrony.conf", "port 0\n", "port 0\nconfdir /etc/chrony/conf.d\n"),
+                "W4-6",
+            ),
+            (
+                "sourcedir",
+                edit("etc/chrony/chrony.conf", "port 0\n", "port 0\nsourcedir /run/chrony-dhcp\n"),
+                "W4-6",
+            ),
             # Section 10: the journal is capped.
             ("journal cap", drop("etc/systemd/journald.conf.d/slateops.conf"), "section 10"),
             # W4-3 and plan 3.1: the parts that the image must hold.
@@ -345,9 +389,40 @@ class PinTests(unittest.TestCase):
         for line in re.findall(r'(?m)^    "deb \[signed-by=[^]]+\] (\S+) ', build):
             with self.subTest(source=line):
                 self.assertIn(line, ("$debian", "$security", "$DOCKER_REPOSITORY"))
-        self.assertIn('debian="http://snapshot.debian.org/archive/debian/$SNAPSHOT"', build)
+        self.assertIn('debian="https://snapshot.debian.org/archive/debian/$SNAPSHOT"', build)
         self.assertIn("sha256sum --check --strict --status", hooks)
         self.assertIn("gzip -n", build)
+
+    def test_snapshot_is_fetched_over_https_after_one_pinned_ca_bundle(self):
+        # S83-1: the slim build image has no CA bundle. Only ca-certificates, at its exact
+        # snapshot version (so a replayed older index cannot serve another one), comes
+        # over HTTP; every other package of the build, the image and the boot check comes
+        # over HTTPS.
+        apt = (IMAGE / "snapshot-apt.sh").read_text()
+        build = (IMAGE / "build-rootfs.sh").read_text()
+        boot = (IMAGE / "boot-check.sh").read_text()
+        http, https = (
+            apt.index("http://snapshot.debian.org"),
+            apt.index("https://snapshot.debian.org"),
+        )
+        installs = [m.start() for m in re.finditer(r"apt-get install", apt)]
+        self.assertEqual(len(installs), 2)
+        self.assertLess(http, installs[0])
+        self.assertIn('"ca-certificates=$CA_CERTIFICATES_VERSION"', apt[installs[0] : https])
+        self.assertLess(installs[0], https)
+        self.assertLess(https, installs[1])
+        self.assertIn('"$@"', apt[installs[1] :])
+        self.assertIn("bash /build/snapshot-apt.sh mmdebstrap gpg curl", build)
+        self.assertIn("bash /build/snapshot-apt.sh systemd-container", boot)
+        for script in (build, boot):
+            with self.subTest(script=script.splitlines()[1]):
+                self.assertNotIn("http://snapshot.debian.org", script)
+                self.assertNotIn("apt-get update", script)
+        guard = build.index("[ -s /etc/ssl/certs/ca-certificates.crt ]")
+        self.assertLess(guard, build.index("mmdebstrap \\\n"))
+        self.assertIn(
+            'security="https://snapshot.debian.org/archive/debian-security/$SNAPSHOT"', build
+        )
 
 
 class ImageOutputTests(unittest.TestCase):

@@ -6,6 +6,7 @@ run proves the runtime parts (push, signatures, attestations, the draft release)
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import subprocess
@@ -406,6 +407,51 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
                 )
 
                 self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+
+    def test_caddy_license_is_pinned_next_to_the_caddy_image_and_checked(self):
+        # S83-2: the license comes from GitHub, so its SHA-256 is pinned beside the image.
+        dockerfile = (ROOT / "infra/docker/caddy.Dockerfile").read_text().splitlines()
+        pin = next(line for line in dockerfile if line.startswith("# caddy-license: "))
+        self.assertTrue(dockerfile[dockerfile.index(pin) + 1].startswith("FROM caddy@sha256:"))
+        _, version, digest = pin.removeprefix("# ").split()
+        notices = self.jobs["notices"]
+        step = notices.split(
+            "      - name: Download the Caddy license of the image's release tag", 1
+        )[1]
+        body = textwrap.dedent(step.split("        run: |\n", 1)[1].split("\n      - ", 1)[0])
+        license_text = b"Apache License\n"
+        for case, image_version, served, expected in (
+            ("pinned", version, None, 0),
+            ("changed license", version, b"other text\n", 1),
+            ("other Caddy version", "v9.9.9", None, 1),
+        ):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "infra/docker").mkdir(parents=True)
+                (root / "image-files").mkdir()
+                lines = [f"# caddy-license: {version} {hashlib.sha256(license_text).hexdigest()}"]
+                (root / "infra/docker/caddy.Dockerfile").write_text("\n".join(lines) + "\n")
+                stubs = root / "stubs"
+                stubs.mkdir()
+                (root / "license").write_bytes(served or license_text)
+                (stubs / "curl").write_text(
+                    "#!/bin/bash\n"
+                    'while [ "$1" != --output ]; do shift; done\n'
+                    f'cp "{root / "license"}" "$2"\n'
+                )
+                (stubs / "curl").chmod(0o755)
+                result = subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", body],
+                    cwd=root,
+                    env={"PATH": f"{stubs}:{os.environ['PATH']}", "CADDY_VERSION": image_version},
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                self.assertEqual((root / "image-files/caddy-LICENSE").exists(), expected == 0)
+        self.assertRegex(digest, r"^[0-9a-f]{64}$")
 
     def test_source_packages_are_fetched_from_the_three_package_databases(self):
         # H4 and W4-7: Debian sources of the Linux and server images, Alpine of Caddy.
