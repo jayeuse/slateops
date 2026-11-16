@@ -25,8 +25,6 @@ Part 2:
     reach it, setup warns and tells you to check from another device; it does not fail.
 Run it again at any time: every step checks what exists. A new run gives the account a new
 password and registers the tasks again.
-30-p1.ps1 runs this script first with -ContinueP1: if Windows must restart, the resume task then
-opens setup with -LaunchP1, and setup starts 30-p1.ps1 again when it is complete.
 
 Run in Windows PowerShell opened with "Run as administrator":
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\10-setup.ps1
@@ -43,11 +41,7 @@ param(
     [ValidateSet('bridge', 'host')][string]$WebNetwork = 'bridge',
     # Do not give the deny sign-in rights. Use it only if the tasks fail with a logon error
     # (for example 0x80070569) and record that as a finding.
-    [switch]$NoDenyRights,
-    # P1: after a restart, the resume task starts 30-p1.ps1 when setup is complete.
-    [switch]$ContinueP1,
-    # P1: start kit\30-p1.ps1 at the end of this run (the resume task sets it).
-    [switch]$LaunchP1
+    [switch]$NoDenyRights
 )
 
 . (Join-Path $PSScriptRoot 'lib\common.ps1')
@@ -55,14 +49,37 @@ param(
 $dryRun = [bool]$WhatIfPreference
 $powershellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
+function ConvertTo-KitSecureString {
+    # Builds a SecureString one character at a time (no ConvertTo-SecureString -AsPlainText,
+    # so the plain text never passes through a logged cmdlet parameter).
+    param([Parameter(Mandatory = $true)][string]$Text)
+    $secure = New-Object System.Security.SecureString
+    foreach ($character in $Text.ToCharArray()) { $secure.AppendChar($character) }
+    $secure.MakeReadOnly()
+    return $secure
+}
+
+function Get-RandomPassword {
+    # 32 characters from a cryptographic random source; meets Windows complexity rules.
+    $lower = 'abcdefghijkmnopqrstuvwxyz'; $upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; $digits = '23456789'; $symbols = '-_.:+=@%'
+    $all = $lower + $upper + $digits + $symbols
+    $rng = New-Object System.Security.Cryptography.RNGCryptoServiceProvider
+    try {
+        $bytes = New-Object byte[] 64
+        $rng.GetBytes($bytes)
+        $chars = New-Object System.Collections.Generic.List[char]
+        $chars.Add($lower[$bytes[0] % $lower.Length]); $chars.Add($upper[$bytes[1] % $upper.Length])
+        $chars.Add($digits[$bytes[2] % $digits.Length]); $chars.Add($symbols[$bytes[3] % $symbols.Length])
+        for ($i = 4; $i -lt 32; $i++) { $chars.Add($all[$bytes[$i] % $all.Length]) }
+        return (-join $chars)
+    } finally { $rng.Dispose() }
+}
+
 function Register-ResumeTask {
     $owner = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     # -Command "& '<script>'" (not -File): the script ends with "exit", which would close a -File
     # host even with -NoExit. With -Command the window stays open, so you can read the result.
-    $extra = ''
-    if ($NoDenyRights) { $extra += ' -NoDenyRights' }
-    if ($ContinueP1 -or $LaunchP1) { $extra += ' -LaunchP1' }
-    $argument = ('-NoProfile -ExecutionPolicy Bypass -NoExit -Command "& ''{0}'' -WslMemoryGB {1} -WebNetwork {2}{3}"' -f (Join-Path $BootTest.Kit '10-setup.ps1'), $WslMemoryGB, $WebNetwork, $extra)
+    $argument = ('-NoProfile -ExecutionPolicy Bypass -NoExit -Command "& ''{0}'' -WslMemoryGB {1} -WebNetwork {2}{3}"' -f (Join-Path $BootTest.Kit '10-setup.ps1'), $WslMemoryGB, $WebNetwork, $(if ($NoDenyRights) { ' -NoDenyRights' } else { '' }))
     Invoke-Step ('Register a one-time task: open setup again at the next sign-in of {0}' -f $owner) {
         $action = New-ScheduledTaskAction -Execute $powershellExe -Argument $argument
         $trigger = New-ScheduledTaskTrigger -AtLogOn -User $owner
@@ -330,14 +347,12 @@ try {
     # Service account access: read on the root folder itself (not inherited), read on kit, cache
     # and state, modify on svc-out and distro only. logs stays administrators-only.
     Invoke-Step ('Give {0} read access to kit, cache and state, and modify access to svc-out and distro only' -f $accountName) {
-        # /L: change the named item itself, never the target of a link.
-        Invoke-Native -FilePath 'icacls.exe' -ArgumentList @($BootTest.Root, '/grant:r', ('*{0}:(RX)' -f $sid), '/L') -Quiet | Out-Null
-        foreach ($dir in @($BootTest.Kit, $BootTest.Cache, $BootTest.State, $BootTest.Source)) {
-            if (-not (Test-Path -LiteralPath $dir)) { continue }
-            Invoke-Native -FilePath 'icacls.exe' -ArgumentList @($dir, '/grant:r', ('*{0}:(OI)(CI)RX' -f $sid), '/L') -Quiet | Out-Null
+        Invoke-Native -FilePath 'icacls.exe' -ArgumentList @($BootTest.Root, '/grant:r', ('*{0}:(RX)' -f $sid)) -Quiet | Out-Null
+        foreach ($dir in @($BootTest.Kit, $BootTest.Cache, $BootTest.State)) {
+            Invoke-Native -FilePath 'icacls.exe' -ArgumentList @($dir, '/grant:r', ('*{0}:(OI)(CI)RX' -f $sid)) -Quiet | Out-Null
         }
         foreach ($dir in @($BootTest.SvcOut, $BootTest.Distro)) {
-            Invoke-Native -FilePath 'icacls.exe' -ArgumentList @($dir, '/grant:r', ('*{0}:(OI)(CI)M' -f $sid), '/L') -Quiet | Out-Null
+            Invoke-Native -FilePath 'icacls.exe' -ArgumentList @($dir, '/grant:r', ('*{0}:(OI)(CI)M' -f $sid)) -Quiet | Out-Null
         }
         $problems = @(Get-BootTestTreeProblem)
         if ($problems.Count -gt 0) { throw ('{0} fails the safety check after the access change: {1}.' -f $BootTest.Root, ($problems -join '; ')) }
@@ -419,12 +434,7 @@ try {
     Save-BootTestState -State $state
     Write-KitLog 'Setup is complete.' 'PASS'
     Write-KitLog ('From a phone or another PC on the same network, open: http://{0}:{1}/' -f $lan.Address, $BootTest.Port) 'PASS'
-    if ($LaunchP1) {
-        Write-KitLog 'Starting 30-p1.ps1 (P1 continues after the setup).' 'STEP'
-        & (Join-Path $BootTest.Kit '30-p1.ps1')
-        exit $LASTEXITCODE
-    }
-    if (-not $ContinueP1) { Write-KitLog 'Next: do the steps in the README section "Before E1" and the baseline, then event E1.' }
+    Write-KitLog 'Next: do the steps in the README section "Before E1" and the baseline, then event E1.'
     exit 0
 } catch {
     Write-KitLog ('Setup stopped at the first error: {0}' -f $_.Exception.Message) 'ERROR'

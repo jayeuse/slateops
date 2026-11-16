@@ -14,13 +14,6 @@ It first lists what it found and asks you to type REMOVE. Then, in this order:
   8. restores Sleep and Hibernate on mains power and the Task Scheduler log state,
   9. deletes C:\ProgramData\SlateOpsBootTest, except the logs folder (use -RemoveLogs).
      Deletes never follow a junction or link.
-P1 items (30-p1.ps1) go first, each one on its own, so a half-finished P1 run never blocks
-cleanup: the F4 test installer (silent uninstall) and its RunOnce entry, the throwaway
-distribution SlateOpsSpike and the account slateops-f3 with its task, the P1 firewall rules
-(TCP 443 and 80, Hyper-V UDP 5353), the hosts entry, and the P1 tasks.
--P1Only removes only the P1 items and keeps the boot-test setup. It also removes the S1 stack
-inside the distribution (containers, volumes with the throwaway test data, images, units) and
-the P1 files in C:\ProgramData\SlateOpsBootTest.
 It reads state\state.json only when the kit folder passes the safety check (see lib\common.ps1);
 otherwise it ignores the file and says which settings you must restore by hand.
 WSL itself stays installed. With -RemoveWsl it also uninstalls the WSL package and turns off
@@ -36,9 +29,7 @@ Run in Windows PowerShell opened with "Run as administrator":
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [switch]$RemoveWsl,
-    [switch]$RemoveLogs,
-    # Remove only what P1 (30-p1.ps1) added; keep the boot-test setup.
-    [switch]$P1Only
+    [switch]$RemoveLogs
 )
 
 . (Join-Path $PSScriptRoot 'lib\common.ps1')
@@ -53,97 +44,6 @@ function Get-WslUninstallEntry {
         }
     }
     return $null
-}
-
-function Get-P1Plan {
-    # What P1 left on this PC (each part checked on its own).
-    $plan = @()
-    $f4 = Get-ItemProperty -LiteralPath $BootTest.P1.F4UninstallKey -ErrorAction SilentlyContinue
-    if ($f4) { $plan += ('F4 test installer "{0}" (silent uninstall)' -f $f4.DisplayName) }
-    if (Test-Path -LiteralPath (Join-Path $env:ProgramFiles 'SlateOps P1 installer test')) { $plan += 'F4 program folder' }
-    if (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce' -Name $BootTest.P1.F4RunOnceName -ErrorAction SilentlyContinue) { $plan += 'F4 RunOnce entry' }
-    if (Get-LocalUser -Name $BootTest.P1.F3AccountName -ErrorAction SilentlyContinue) { $plan += ('P1 account {0}, its profile, rights and task' -f $BootTest.P1.F3AccountName) }
-    if (Test-Path -LiteralPath $BootTest.Spike) { $plan += ('Throwaway distribution {0} and {1}' -f $BootTest.P1.SpikeDistroName, $BootTest.Spike) }
-    $rules = Get-P1RuleName
-    foreach ($name in $rules.Windows) { if (Get-NetFirewallRule -Name $name -ErrorAction SilentlyContinue) { $plan += ('Firewall rule {0}' -f $name) } }
-    foreach ($name in $rules.HyperV) { if (Get-NetFirewallHyperVRule -Name $name -ErrorAction SilentlyContinue) { $plan += ('Hyper-V firewall rule {0}' -f $name) } }
-    if (@(Get-Content -LiteralPath (Get-P1HostsPath) -ErrorAction SilentlyContinue | Where-Object { $_ -like ('*' + $BootTest.P1.HostsMarker + '*') }).Count -gt 0) { $plan += 'hosts entry of P1' }
-    foreach ($name in @($BootTest.P1.ProbeTaskName, $BootTest.P1.ResumeTaskName, $BootTest.P1.F3TaskName)) {
-        if (Get-ScheduledTask -TaskPath $BootTest.TaskPath -TaskName $name -ErrorAction SilentlyContinue) { $plan += ('Task {0}{1}' -f $BootTest.TaskPath, $name) }
-    }
-    return $plan
-}
-
-function Invoke-P1Removal {
-    # Each part in its own try: a missing or half-made part never stops the others.
-    param([switch]$StackToo)
-    $parts = @(
-        @{ Name = 'F4 test installer'; Action = {
-            # The RunOnce entry first: a restart during cleanup must not start the test installer.
-            Remove-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce' -Name $BootTest.P1.F4RunOnceName -ErrorAction SilentlyContinue
-            $f4 = Get-ItemProperty -LiteralPath $BootTest.P1.F4UninstallKey -ErrorAction SilentlyContinue
-            if ($f4 -and $f4.PSObject.Properties['UninstallString']) {
-                $exe = ([string]$f4.UninstallString).Trim('"')
-                if (Test-Path -LiteralPath $exe) {
-                    $process = Start-Process -FilePath $exe -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
-                    Write-KitLog ('  Silent uninstall exit code {0}.' -f $process.ExitCode)
-                }
-            }
-            if (Test-Path -LiteralPath $BootTest.P1.F4UninstallKey) { Remove-Item -LiteralPath $BootTest.P1.F4UninstallKey -Recurse -Force }
-            # The first run copies setup-resume.exe into the program folder before the restart.
-            $programFolder = Join-Path $env:ProgramFiles 'SlateOps P1 installer test'
-            if (Test-Path -LiteralPath $programFolder) { Remove-PathNoFollow -Path $programFolder }
-        } },
-        @{ Name = 'F3 distribution of slateops-f3'; Action = {
-            if ((Get-LocalUser -Name $BootTest.P1.F3AccountName -ErrorAction SilentlyContinue) -and
-                (Get-ScheduledTask -TaskPath $BootTest.TaskPath -TaskName $BootTest.P1.F3TaskName -ErrorAction SilentlyContinue)) {
-                $null = Invoke-SvcJob -Job 'f3-cleanup' -Account 'f3' -TimeoutMinutes 5 -NoThrow
-            }
-        } },
-        @{ Name = 'P1 account slateops-f3'; Action = {
-            if (Get-ScheduledTask -TaskPath $BootTest.TaskPath -TaskName $BootTest.P1.F3TaskName -ErrorAction SilentlyContinue) {
-                Unregister-ScheduledTask -TaskPath $BootTest.TaskPath -TaskName $BootTest.P1.F3TaskName -Confirm:$false
-            }
-            $sid = Get-BootTestF3Sid
-            if ($sid) {
-                foreach ($dir in @($BootTest.Root, $BootTest.Kit, $BootTest.State)) {
-                    if (Test-Path -LiteralPath $dir) { Invoke-Native -FilePath 'icacls.exe' -ArgumentList @($dir, '/remove:g', ('*{0}' -f $sid)) -Quiet -NoThrow | Out-Null }
-                }
-                Remove-KitLocalAccount -Name $BootTest.P1.F3AccountName -Sid $sid
-            }
-        } },
-        @{ Name = 'Throwaway distribution SlateOpsSpike'; Action = {
-            if ((Get-ServiceAccount) -and (Get-ScheduledTask -TaskPath $BootTest.TaskPath -TaskName $BootTest.ExecTaskName -ErrorAction SilentlyContinue)) {
-                $null = Invoke-SvcJob -Job 'spike-unregister' -TimeoutMinutes 10 -NoThrow
-            }
-        } },
-        @{ Name = 'S1 stack in the distribution'; Action = {
-            if ($StackToo -and (Get-ServiceAccount) -and (Get-ScheduledTask -TaskPath $BootTest.TaskPath -TaskName $BootTest.ExecTaskName -ErrorAction SilentlyContinue)) {
-                $null = Invoke-SvcJob -Job 's1-remove' -TimeoutMinutes 20 -NoThrow
-            }
-        } },
-        @{ Name = 'P1 firewall rules'; Action = {
-            $rules = Get-P1RuleName
-            foreach ($name in $rules.Windows) { Get-NetFirewallRule -Name $name -ErrorAction SilentlyContinue | Remove-NetFirewallRule }
-            foreach ($name in $rules.HyperV) { Get-NetFirewallHyperVRule -Name $name -ErrorAction SilentlyContinue | Remove-NetFirewallHyperVRule }
-        } },
-        @{ Name = 'P1 hosts entry'; Action = {
-            $removed = Remove-P1HostsEntry
-            Write-KitLog ('  Removed {0} hosts line(s).' -f $removed)
-        } },
-        @{ Name = 'P1 tasks'; Action = {
-            foreach ($name in @($BootTest.P1.ProbeTaskName, $BootTest.P1.ResumeTaskName)) {
-                if (Get-ScheduledTask -TaskPath $BootTest.TaskPath -TaskName $name -ErrorAction SilentlyContinue) {
-                    Unregister-ScheduledTask -TaskPath $BootTest.TaskPath -TaskName $name -Confirm:$false
-                }
-            }
-        } }
-    )
-    foreach ($part in $parts) {
-        if ($dryRun) { Write-KitLog ('Would: remove {0} (if present)' -f $part.Name) 'WHATIF'; continue }
-        Write-KitLog ('Remove {0}' -f $part.Name) 'STEP'
-        try { & $part.Action } catch { Write-KitLog ('  {0}: {1} (cleanup continues)' -f $part.Name, $_.Exception.Message) 'WARN' }
-    }
 }
 
 try {
@@ -162,44 +62,6 @@ try {
         Write-KitLog 'Restore by hand if needed: Settings > System > Power > Screen and sleep.' 'WARN'
     } else {
         $state = Read-BootTestState
-    }
-
-    if ($P1Only) {
-        $plan = @(Get-P1Plan)
-        if ($treeProblems.Count -gt 0) { throw 'The kit folder fails the safety check; run 90-cleanup.ps1 without -P1Only.' }
-        $plan += 'S1 stack in the distribution: containers, volumes (throwaway test data), images, units'
-        $plan += ('P1 files in {0}: source, spike, f3-out, f4, p1-state.json, the cached F10 MSI' -f $BootTest.Root)
-        Write-KitLog 'P1 cleanup will remove:'
-        foreach ($item in $plan) { Write-KitLog ('  - {0}' -f $item) }
-        Write-KitLog 'Caution: the S1 stack and its test data are deleted. Record the P1 results first.' 'WARN'
-        if (-not $dryRun) {
-            $answer = Read-Host 'Type REMOVE to continue (anything else stops)'
-            if ($answer -cne 'REMOVE') { Write-KitLog 'Stopped. Nothing was removed.' 'WARN'; exit 1 }
-        }
-        Invoke-P1Removal -StackToo
-        if (-not $dryRun) {
-            # slateops-svc still exists and can change the spike folder: it empties the folder in
-            # its own job, then only the empty folder is deleted here.
-            if (Test-Path -LiteralPath $BootTest.Spike) {
-                try {
-                    $null = Invoke-SvcJob -Job 'spike-clean' -TimeoutMinutes 10 -NoThrow
-                    Remove-EmptiedFolder -Path $BootTest.Spike
-                } catch { Write-KitLog ('  {0}: {1}' -f $BootTest.Spike, $_.Exception.Message) 'WARN' }
-            }
-            # The other P1 folders are administrator-only (source, f4) or belong to slateops-f3,
-            # which Invoke-P1Removal deleted before this point (f3-out).
-            foreach ($path in @($BootTest.Source, $BootTest.F3Out, $BootTest.F4Dir, $BootTest.P1.StateFile)) {
-                try { if (Test-Path -LiteralPath $path) { Remove-PathNoFollow -Path $path } } catch { Write-KitLog ('  {0}: {1}' -f $path, $_.Exception.Message) 'WARN' }
-            }
-            foreach ($msi in @(Get-ChildItem -LiteralPath $BootTest.Cache -Filter 'wsl.*.msi' -ErrorAction SilentlyContinue)) {
-                if ($msi.Name -ne ('wsl.{0}.{1}.msi' -f $BootTest.WslVersion, (Get-Architecture).ToLowerInvariant())) { Remove-PathNoFollow -Path $msi.FullName }
-            }
-            $kitState = Read-BootTestState
-            foreach ($key in @($kitState.Keys | Where-Object { $_ -like 'p1_*' })) { $kitState.Remove($key) }
-            Save-BootTestState -State $kitState
-        }
-        Write-KitLog 'P1 cleanup is complete. The boot-test setup stays.' 'PASS'
-        exit 0
     }
 
     $account = Get-ServiceAccount
@@ -252,8 +114,6 @@ try {
     }
     if ($removeWslPackage) { $plan += ('WSL package "{0}" {1} (also for your own account)' -f $wslEntry.DisplayName, $wslEntry.DisplayVersion) }
     if ($removeVmp) { $plan += 'Windows feature VirtualMachinePlatform (setup turned it on; restart needed)' }
-    $p1Plan = @(Get-P1Plan)
-    $plan += $p1Plan
     if ($plan.Count -eq 0) { Write-KitLog 'Nothing from the kit was found. Nothing to remove.' 'PASS'; exit 0 }
     Write-KitLog 'Cleanup will remove or restore:'
     foreach ($item in $plan) { Write-KitLog ('  - {0}' -f $item) }
@@ -263,9 +123,6 @@ try {
         $answer = Read-Host 'Type REMOVE to continue (anything else stops)'
         if ($answer -cne 'REMOVE') { Write-KitLog 'Stopped. Nothing was removed.' 'WARN'; exit 1 }
     }
-
-    # 0. P1 items first: the jobs that remove them need the service account and its tasks.
-    if ($p1Plan.Count -gt 0) { Invoke-P1Removal }
 
     # 1. Boot task off.
     $startTask = $tasks | Where-Object { $_.TaskName -eq $BootTest.StartTaskName }
