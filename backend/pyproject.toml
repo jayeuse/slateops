@@ -46,7 +46,7 @@ package = false
 addopts = "-p no:randomly --cov=app --cov-report=term-missing --cov-fail-under=90"
 testpaths = ["tests"]
 pythonpath = ["."]
-markers = ["integration: requires a PostgreSQL test database"]
+markers = ["integration: needs the runner's PostgreSQL test database or a Docker daemon"]
 
 [tool.mutmut]
 # Mutation testing is the safety net for test consolidation (tdd-workflow

@@ -518,6 +518,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         source = self.source("backend.yml")
 
         self.assertIn("../packaging/backup", source)
+        self.assertIn("../packaging/engine", source)
         self.assertIn("../packaging/backup/backup_installation.py", source)
         self.assertIn("../packaging/backup/restore_installation.py", source)
         self.assertIn("uv run pytest ../packaging/backup/tests\n", source)
