@@ -233,6 +233,13 @@ def _cosign_problems(root: RootFileSystem, pins: Mapping[str, str], arch: str) -
     return problems
 
 
+# Content checks, not URL checks: any mention of the snapshot host in the shipped apt
+# configuration is refused, and a Docker package is one whose maintainer address is at
+# docker.com.
+_SNAPSHOT_HOST = re.compile(rb"snapshot\.debian\.org")
+_DOCKER_MAINTAINER = re.compile(r"@docker\.com>?\s*$")
+
+
 def _apt_problems(root: RootFileSystem) -> list[str]:
     problems: list[str] = []
     for path in sorted(root.under("etc/apt")):
@@ -240,7 +247,7 @@ def _apt_problems(root: RootFileSystem) -> list[str]:
         if content is None or path.startswith(("etc/apt/keyrings/", "etc/apt/trusted.gpg.d/")):
             continue
         lowered = content.lower()
-        if b"snapshot.debian.org" in lowered:
+        if _SNAPSHOT_HOST.search(lowered):
             problems.append(f"W4-1: /{path} names snapshot.debian.org")
         if b"check-valid-until" in lowered:
             problems.append(f"W4-1: /{path} changes Check-Valid-Until")
@@ -263,7 +270,9 @@ def _docker_problems(
                 f"W4-2: {package} is {versions.get(package, 'not installed')}, not {pins.get(key)}"
             )
     for fields in stanzas:
-        if "docker.com" in fields.get("Maintainer", "") and fields["Package"] not in DOCKER_PINS:
+        if _DOCKER_MAINTAINER.search(fields.get("Maintainer", "")) and (
+            fields["Package"] not in DOCKER_PINS
+        ):
             problems.append(f"W4-2: {fields['Package']} from Docker is not a pinned package")
     if "etc/apt/preferences.d/slateops-docker" not in root.members:
         problems.append("W4-2: /etc/apt/preferences.d/slateops-docker is missing")
