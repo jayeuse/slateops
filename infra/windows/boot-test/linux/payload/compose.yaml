@@ -1,0 +1,123 @@
+# Boot-test payload for the Slate Operations WSL2 boot-test kit.
+#
+# This is a test stack, not the product. It proves that a database keeps its rows and that
+# a web port answers the LAN after each boot event. setup-docker.sh starts it with
+#   docker compose --project-name slateops-boottest --profile <bridge|host> up --detach --wait
+# Docker restarts every service at boot (restart: unless-stopped).
+#
+# Security baseline (.agents/skills/project-tooling/references/compose-security.md):
+# - db and heartbeat: non-root (uid 999), cap_drop ALL, no-new-privileges, read-only root,
+#   internal network only, no published port. The password comes from a root-created
+#   secret file (mode 0400, owner 999) inside the distribution.
+# - web: non-root (nobody), cap_drop ALL, no-new-privileges, read-only root, read-only mounts,
+#   no secrets, no database access.
+# Documented exceptions, both needed by the test:
+# - web publishes TCP 8443 on all addresses of the WSL VM, because the LAN must reach it.
+#   The Windows and Hyper-V firewall rules limit it to the Private profile and the LAN.
+# - Profile "host" (web-host) uses the host network namespace. It exists only because WSL
+#   documents a known issue with published Docker ports in mirrored networking mode; its
+#   documented workaround is the host network. Use it only when the "bridge" profile fails.
+
+name: slateops-boottest
+
+services:
+  db:
+    image: postgres:17.12-trixie@sha256:0d938e975177bef9f1f61f3f9dbcf2e0aa0a139568f66d3415ed8892eb97f6ac
+    user: "999:999"
+    environment:
+      POSTGRES_USER: boottest
+      POSTGRES_DB: boottest
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+      # Data checksums detect torn pages after the power-cut event (E3).
+      POSTGRES_INITDB_ARGS: --data-checksums
+    secrets:
+      - pg_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    tmpfs:
+      - /var/run/postgresql:uid=999,gid=999,mode=0775
+      - /tmp:uid=999,gid=999,mode=1777
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "boottest", "-d", "boottest"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    stop_grace_period: 60s
+    restart: unless-stopped
+
+  heartbeat:
+    image: postgres:17.12-trixie@sha256:0d938e975177bef9f1f61f3f9dbcf2e0aa0a139568f66d3415ed8892eb97f6ac
+    user: "999:999"
+    entrypoint: ["/bin/bash", "/opt/boottest/heartbeat.sh"]
+    environment:
+      PGHOST: db
+      PGUSER: boottest
+      PGDATABASE: boottest
+      HEARTBEAT_INTERVAL_SECONDS: "60"
+    secrets:
+      - pg_password
+    volumes:
+      - ./heartbeat.sh:/opt/boottest/heartbeat.sh:ro
+      - /var/lib/slateops-boottest/status:/status
+      - /var/lib/slateops-boottest/host:/host:ro
+    tmpfs:
+      - /tmp:uid=999,gid=999,mode=1777
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [backend]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    profiles: [bridge]
+    image: busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478
+    user: "65534:65534"
+    command: ["httpd", "-f", "-v", "-p", "8443", "-h", "/www"]
+    environment:
+      BOOTTEST_WEB_NETWORK: bridge
+    volumes:
+      - ./www:/www:ro
+      - /var/lib/slateops-boottest/status:/status:ro
+    ports:
+      - "8443:8443"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [frontend]
+    restart: unless-stopped
+
+  web-host:
+    profiles: [host]
+    image: busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478
+    user: "65534:65534"
+    command: ["httpd", "-f", "-v", "-p", "8443", "-h", "/www"]
+    environment:
+      BOOTTEST_WEB_NETWORK: host
+    volumes:
+      - ./www:/www:ro
+      - /var/lib/slateops-boottest/status:/status:ro
+    network_mode: host
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+networks:
+  backend:
+    internal: true
+  frontend: {}
+
+volumes:
+  pgdata: {}
+
+secrets:
+  pg_password:
+    file: /etc/slateops-boottest/pg_password
