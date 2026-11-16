@@ -1,6 +1,6 @@
 # Windows installer plan
 
-Status: **proposed**. Nothing here is built. The owner approved the scope on 2026-11-16 (company records DEC-0028 and APR-0010). This plan names three new API routes, one new table and one new bridge command (section 7.2). Each of them needs the owner's approval before its slice starts (decision H2). Base revision: `b33ee415` on `feat/windows-installer`.
+Status: **proposed**. Nothing here is built. The owner approved the scope on 2026-11-16 (company records DEC-0028 and APR-0010). This plan names three new API routes, one new table and one new bridge command (section 7.2). Each of them needs the owner's approval before its slice starts (decision H2). Company record DEC-0029 adds self-hosted editions: every installation starts as Desk, and the first public download needs the separate license work (section 5.3). Base revision: `b33ee415` on `feat/windows-installer`.
 
 ## 1. Outcome
 
@@ -13,6 +13,8 @@ First-version choices (DEC-0028):
 - HTTPS with a local certificate authority (CA). The installer trusts it on the server PC. Phones and other PCs use a "Trust this device" page.
 - Unsigned builds until the first customer install. Only the owner's PCs run them.
 - No company installation service, no email relay, no public certificates.
+- Every installation starts as the Desk edition (free). The administrator imports a license file inside the app, in Manage → Updates & licensing (DEC-0029 item 10). It is never in the wizard (the owner, company record TASK-0076: "I want it inside the system itself and not on the wizard").
+- The first public download includes the edition limits and the license import (DEC-0029 item 13). Until the license work merges, every release is a test build (section 5.3).
 
 ### 1.1 Preserved
 
@@ -25,9 +27,13 @@ First-version choices (DEC-0028):
 
 The company installation service, the email relay, public certificates, the purchase of a code-signing certificate, the managed cloud, installers for macOS or Linux desktops, Windows 10, Windows on Arm, and everything else that DEC-0028 defers. Windows 11 Home stays untested (section 4.2, requirement R2).
 
+The license work is also excluded. It holds the license file format, the signature check, the limit counters and the read-only state. It also holds the "Available in Office" previews and the test license. It is a separate build with its own contract (DEC-0029 Follow-up), and it starts only when the owner says so. This plan needs it before the first stable release, so the stable tags, W13b-1, W14, W15 and the first public download wait for it (section 5.3).
+
 ### 1.3 Labels
 
 **Current** means read in the code at the base revision. **Observed** means measured on the owner's Windows 11 Pro PC in the boot test (company request REQ-0022). **Proposed** means this plan. **Assumption** means not checked; a spike in section 10 checks it.
+
+**Edition** means a self-hosted edition: Desk (free), Office or Headquarters (DEC-0029 item 2). Core and Scale are managed cloud plans only, and this plan does not use them. A Windows edition (Home, Pro) is always called a Windows edition. **License file** means the signed file of an edition; the Elastic License 2.0 is always named in full.
 
 ## 2. Current state
 
@@ -45,6 +51,7 @@ The company installation service, the email relay, public certificates, the purc
 | Backup | An offline physical Restic backup. It stops the services. The app queues runs (`POST /api/backups`); a host runner claims them once a minute through a bridge in the release image. The host runner uses only the Python standard library. After a failed backup the services stay stopped until an operator runs `recover`. | `infra/supabase/RESTORE.md:48-104`; `backend/operations/backups/` |
 | Restore | Support-run, about 15 steps. A restore always goes into a **new** Compose project with a **new** `SLATEOPS_INSTANCE_ID`. Finalization revokes all application sessions. | `infra/supabase/RESTORE.md:132-200` |
 | Alerts | There is no application mailer. System health shows backup freshness and failed jobs. | `backend/app/systems/manage/health/organization.py`, `installation.py` |
+| Editions | No code checks a license or a limit (DEC-0029, Context). Manage → Updates & licensing shows "No license required · Self-hosted". | `frontend/src/components/systems/manage/domain/updates-rules.ts:9` |
 | Setup page | `/setup` says "the installer creates the first administrator". | `frontend/src/app/setup/page.tsx:50,60` |
 | Documentation | `infra/AGENTS.md` and `infra/supabase/PLAN.md` describe Windows as Docker Desktop with WSL2. This plan uses Docker Engine in our own distribution instead. | `infra/AGENTS.md` |
 
@@ -153,7 +160,7 @@ The Linux disk needs the chosen data folder, so the distribution is imported rig
 | # | Page | Fields | Checks | Failure message (draft; the Product Designer writes the final copy) |
 |---|---|---|---|---|
 | 1 | Welcome | — | An existing installation is found → maintenance mode instead (section 9.3). Kept data is found → offer reuse on page 4. | — |
-| 2 | License | Accept the Elastic License 2.0 (`LICENSE`). Link to the third-party notices. | Accept is required. | — |
+| 2 | License agreement | Accept the Elastic License 2.0 (`LICENSE`). Link to the third-party notices. This page has no edition choice and no license file. | Accept is required. | — |
 | 3 | Requirements | None (a list with a pass or fail mark per line) | R1 to R9 in 4.2 | Per line, in 4.2. "Next" stays off until every blocking line passes. |
 | 3a | Prepare this PC (only when needed) | — | Turns on `VirtualMachinePlatform`. Installs the pinned WSL MSI, with the SHA-256 checked right before `msiexec`. | "Slate Operations must restart this PC once. Save your work, then select Restart now." After the sign-in, setup opens again (RunOnce) at page 4. |
 | 4 | Location | Program folder (default `C:\Program Files\Slate Operations`). Data folder (default `<largest fixed NTFS drive>\SlateOps`). | The data drive is a fixed NTFS drive: not removable, not network, not compressed, not EFS-encrypted. Free space ≥ the S1 figure. The folder is empty, or it holds kept data. | "This drive has X GB free. Slate Operations needs Y GB. Choose another drive." / "Choose a drive inside this PC. USB and network drives cannot hold the data." |
@@ -165,13 +172,21 @@ The Linux disk needs the chosen data folder, so the distribution is imported rig
 | 9 | Ready | A summary of the choices | — | — |
 | 10 | Installing (progress) | — | `slateops-engine install` steps (section 6.2) with a step list. The firewall rules, the hosts entry, the CA in LocalMachine Root and the sleep setting run on the Windows side. | For each step: "Retry" and "Save report". A failed install keeps all state so that "Retry" resumes it. |
 | 11 | Recovery key | The key, shown once. Buttons: Print, Save to a USB drive. | Check box "I saved the recovery key" is required. | — |
-| 12 | Finish | "Open Slate Operations" (default browser at `https://<name>.local`). A QR code for phones that opens `http://<name>.local/trust`. Text: "Open the invitation email on this PC to set your password." | — | — |
+| 12 | Finish | "Open Slate Operations" (default browser at `https://<name>.local`). A QR code for phones that opens `http://<name>.local/trust`. Text: "Open the invitation email on this PC to set your password." Text: "Your edition is Desk (free). To use Office or Headquarters, import your license file in Slate Operations: Manage → Updates & licensing." | — | — |
 
 **Cancel after page 4a.** From page 4a on, Linux exists on the PC. Cancel then asks: "Remove what setup added?" with two answers:
 - **Remove everything** (default): the uninstall steps of section 9.1 with "Delete everything", plus the staged SMTP values.
 - **Keep it and continue later**: the distribution, the account and the tasks stay; the staged SMTP values are deleted. The next start of setup resumes at page 5.
 
 While an install step runs on page 10, Cancel waits for that step to end. After a failed step, Cancel gives the same two answers.
+
+**Edition at first run.** Every new installation runs as Desk. No wizard page asks for an edition or a license file. The maintenance mode (9.3) has no license import. Source: the owner, company record TASK-0076: "I want it inside the system itself and not on the wizard". The administrator imports a license file in the app, in Manage → Updates & licensing (DEC-0029 item 10). The license work owns that control and its states. The license work decides how a reinstall with kept data (9.2) keeps the edition.
+
+**Handoff to the license work.** These points of this plan touch the license work, and its contract must cover them:
+
+1. Updates (`POST /api/updates` and the engine update) and backup runs stay allowed in the read-only state after the end of a license. Source: DEC-0029 items 6 and 11.
+2. A rollback by restore (7.5) and a support restore (8.4) create a new instance ID. The license must stay valid after that change.
+3. When the license work gives a license path for release builds, W14 adds step W14-7. In W14-7, a licensed installation keeps its edition after the update and after the rollback.
 
 The Product Designer must design pages 3, 4, 6, 7, 8, 11 and 12, the trust page and the uninstall page (section 9) before the build. The Inno Setup default pages (1, 2, 9) need only copy.
 
@@ -180,7 +195,7 @@ The Product Designer must design pages 3, 4, 6, 7, 8, 11 and 12, the trust page 
 | ID | Check | How | Blocking | Message |
 |---|---|---|---|---|
 | R1 | Windows 11, build 22621 or later | Registry `CurrentBuildNumber` | Yes | "Slate Operations needs Windows 11, version 22H2 or later. Run Windows Update, then try again." |
-| R2 | Edition Pro, Enterprise or Education | `EditionID` | Yes (decision H5; default: Home is blocked until it is tested) | "Slate Operations is not yet tested on Windows 11 Home." |
+| R2 | Windows edition Pro, Enterprise or Education | `EditionID` | Yes (decision H5; default: Home is blocked until it is tested) | "Slate Operations is not yet tested on Windows 11 Home." |
 | R3 | Virtualization on | `Win32_Processor.VirtualizationFirmwareEnabled`, or `Win32_ComputerSystem.HypervisorPresent` when a hypervisor already runs (property names are an assumption; W7 checks them) | Yes | "Turn on virtualization in the PC's firmware (BIOS or UEFI) settings. Your PC supplier can help." |
 | R4 | Memory | Total physical memory ≥ the S1 figure (planning value 16 GB) | Yes | "This PC has X GB of memory. Slate Operations needs Y GB." |
 | R5 | Free space on the chosen data drive | Checked on page 4 | Yes | Page 4 |
@@ -216,7 +231,7 @@ A new `.github/workflows/release.yml` runs on a `v*` tag push. The workflow-leve
 
 | Step | Output |
 |---|---|
-| Build the server and Caddy images for `linux/amd64` with Buildx | `ghcr.io/<owner>/slateops-server:<version>` and `ghcr.io/<owner>/slateops-caddy:<version>`, public, anonymous pull |
+| Build the server and Caddy images for `linux/amd64` with Buildx | `ghcr.io/<owner>/slateops-server:<version>` and `ghcr.io/<owner>/slateops-caddy:<version>`, public, anonymous pull (before the license work, only rc versions; section 5.3) |
 | Sign the image digests with cosign keyless (GitHub OIDC). Attach build provenance. | Signatures and attestations in GHCR |
 | Build the Linux image: `mmdebstrap` of Debian 13 from a fixed `snapshot.debian.org` date, plus Docker's apt repository (fingerprint check), Restic, Python 3, a pinned cosign release (SHA-256 checked; listed in the package list), the engine bundle, systemd units and `wsl.conf`. amd64 only. | `slateops-linux-<version>-amd64.tar.gz`, its package list and its source list |
 | Build the engine bundle | `slateops-engine-<version>.tar.gz` |
@@ -225,12 +240,33 @@ A new `.github/workflows/release.yml` runs on a `v*` tag push. The workflow-leve
 | Collect the third-party notices: Python packages (from `backend/uv.lock`), npm packages in the static export (from `frontend/package-lock.json`), the Debian packages (copyright files), Docker Engine, Inno Setup, and the provider images that the installation pulls | `THIRD-PARTY-NOTICES.txt` (also inside the installer and the Linux image) |
 | Write the source offer for the GPL parts of the Linux image: each Debian source package and version with its `snapshot.debian.org` URL (decision H4 decides whether the source files are also attached) | `SOURCE-OFFER.txt` |
 | `SHA256SUMS` for every asset | `SHA256SUMS` |
-| Create the GitHub Release as a **draft**. The owner publishes it. | — |
-| Installer and Linux image | The installer **downloads** the Linux image from the published release by its exact URL and checks the compiled-in SHA-256, like the kit does. The installer stays small. A draft release cannot serve anonymous downloads, so every hands-on install uses a published release or pre-release. |
+| Create the GitHub Release as a **draft**. The owner publishes it. Before the license work, the owner publishes only as a pre-release (section 5.3). | — |
+| Installer and Linux image | The installer **downloads** the Linux image from the published release by its exact URL and checks the compiled-in SHA-256, like the kit does. The installer stays small. A draft release cannot serve anonymous downloads, so every hands-on install uses a published release or pre-release. Before the license work, it is always a pre-release (section 5.3). |
 
-A pre-release tag (`v0.2.0-rc.1`) builds the same assets. A published pre-release serves installs. The update check ignores pre-releases (`backup_runner.py:88`). `POST /api/updates` accepts only the latest observed stable release. So an update test needs two **published stable** releases (decision H8: for example `v0.2.0`, then `v0.2.1`). This plan adds no configurable release source; the README says none exists.
+A pre-release tag (`v0.2.0-rc.1`) builds the same assets. A published pre-release serves installs. The update check ignores pre-releases (`backup_runner.py:88`). `POST /api/updates` accepts only the latest observed stable release. So an update test needs two **published stable** releases (decision H8: for example `v0.2.0`, then `v0.2.1`). Both come after the license work (section 5.3). This plan adds no configurable release source; the README says none exists.
 
 The GitHub release asset limit is 2 GiB per file (assumption from memory; W3 checks it). The Linux image does not contain the container images, so it stays far below that limit (assumption; W4 measures it).
+
+### 5.3 Releases before the license work
+
+DEC-0029 item 13 allows no public release without the edition limits and the license import, so that no customer loses access in a later update. The repository is public. So a published pre-release is listed publicly on the Releases page, and the GHCR packages are listed on the Packages page. This plan uses these rules until the license work merges into `main`:
+
+1. **Tags.** The owner pushes only pre-release tags (`vX.Y.Z-rc.N`). No stable tag `vX.Y.Z` is pushed before the license work merges.
+2. **Releases.** The workflow creates a draft. For a hands-on install, the owner publishes it as a pre-release, never as "Latest". Its title starts with "Test build, not for customers". The website and the README never link it. The installer is unsigned (H1), so SmartScreen warns.
+3. **Images.** GHCR holds only rc versions. The packages stay public, because the install pulls anonymously (R8, 6.2 step 3). A private package would put a pull credential on the PC. An image alone has no installer and no Windows part. But a Linux operator can run the public rc images with the Compose files of the public repository, with no edition limits.
+4. **Honest limit.** These test builds are not secret. Each one is listed publicly as a pre-release on the Releases page, and the GHCR packages are listed on the Packages page. Anyone can download them. They are marked as test builds and never offered as a download. Decision H13 asks the owner to accept this reading of item 13.
+5. **Stable releases.** The first stable tag comes after the license work merges, so every stable release contains the edition limits and the license import. W13b-1 and W14 need two stable releases (H8), so their hands-on proof waits for the license work. The website links a stable release only after W14 passes. That release is the first public download. A fix in P9 needs a new stable tag and a new run of the failed W14 steps before the website links that release.
+
+The license work is not a slice of this plan. It does not block P1 to P8. It blocks only the stable tags (H8), the W13b-1 hands-on proof, W14, W15 and the first public download. The W13b design checks one question: can the setup program's `update` path (7.4, 9.2 step 5) rehearse 7.3 and 7.5 on rc tags? It can only if that path needs no stable target and no `update_runs` row. If it cannot, the other W13b criteria that need an update run (W13b-2 to W13b-4, W13b-6 and W13b-7) also wait for the stable tags.
+
+Order: P8 merges, then the license work merges, then the owner tags `v0.2.0` and `v0.2.1`, then W13b-1 and W14 run, then P9 (W15) merges. This order has three costs:
+
+| Cost | Solution |
+|---|---|
+| W13b-1 merges in P8 with no hands-on proof. | P8 merges with the engine unit tests and the hands-on proofs that rc tags allow. W13b-1 runs on the stable tags before W14. A W13b-1 failure becomes a failing-first test and a fix in P9, before the website links a release. |
+| W12 and the license work both change `updates-panel.tsx` and `updates-rules.ts`. | Each keeps the other's parts (7.1). P8 merges first, so the license work rebases onto W12. |
+| W11 and the license work can each add an Alembic migration. | The second migration to merge rebases onto the first (its `down_revision`), and `alembic check` passes after the rebase. |
+
 
 ## 6. Install engine (proposed)
 
@@ -293,7 +329,7 @@ Other states:
 - "Not enough free space for a safe update (needs X GB)".
 - "This update needs the new setup program", with a download link. It shows when `release-manifest.json` needs a newer Windows part than `version.json`.
 
-The Product Designer designs these states. The Frontend Engineer builds them in `updates-panel.tsx` and `updates-rules.ts`.
+The Product Designer designs these states. The Frontend Engineer builds them in `updates-panel.tsx` and `updates-rules.ts`. The same page holds the edition and the license import of the license work (DEC-0029 item 10). W12 keeps those parts and does not change them. The license work keeps the update states of W12 and does not change them. The second of the two to merge rebases onto the first (section 5.3).
 
 ### 7.2 Contract between the app and the engine (each item needs the owner's approval before W11 starts)
 
@@ -442,6 +478,8 @@ The Start menu entry "Slate Operations settings" opens the setup copy in the pro
 - Status ("Running", "Updating", "Needs support"), with a log bundle that holds no secrets.
 - Repair: rerun the tasks, the rules and the boot start.
 
+The maintenance mode has no license import. The administrator imports a license file in the app (DEC-0029 item 10).
+
 ## 10. Spikes and the measurement slice
 
 | ID | Question | Method | Owner | Blocks |
@@ -476,27 +514,30 @@ The Start menu entry "Slate Operations settings" opens the setup copy in the pro
 
 ### 11.0 Pull requests
 
-The 20 slices ship as 8 pull requests. The pull requests run **one after another**. The repository allows one writing session at a time and no worktrees, so no two pull requests are open for writing at once. Inside one pull request, the slices run in the order listed, and each slice is one task with one owner. The spikes F1 to F10 run before the pull request that they block; they change no product code. W14 (the rehearsal) changes no code; its findings go into the next commit of an open pull request or into P8.
+The 20 slices ship as 9 pull requests. The pull requests run **one after another**. The repository allows one writing session at a time and no worktrees, so no two pull requests are open for writing at once. Inside one pull request, the slices run in the order listed, and each slice is one task with one owner. The spikes F1 to F10 run before the pull request that they block; they change no product code. W14 (the rehearsal) changes no code; its findings go into the next commit of an open pull request or into P9.
 
 | PR | Slices (tasks, in order) | Owners | Why a separate pull request | Depends on |
 |---|---|---|---|---|
 | P1 | S1 | Infrastructure Engineer | Test-kit change only; its measurements set R4, the memory value and the free-space minimum before any wizard work | — |
-| P2 | W1, W3 | Backend Engineer, Infrastructure Engineer | Creates public artifacts (GHCR, releases) and the release workflow; needs its own security review and the owner's one-time GHCR setting | P1 (measurements known) |
+| P2 | W1, W3 | Backend Engineer, Infrastructure Engineer | Creates public artifacts (GHCR, rc pre-releases only, section 5.3) and the release workflow; needs its own security review and the owner's one-time GHCR setting | P1 (measurements known), H13 answered |
 | P3 | W4 | Infrastructure Engineer | A new distributable with GPL duties (H4) and a supply-chain review | P2 |
 | P4 | W2, W5a, W5b | Backend Engineer, Infrastructure Engineer | The install contract: secrets, env format, bridge entry points and the engine | P3 |
 | P5 | W6b, W6a | Frontend Engineer, Infrastructure Engineer | A new public listener (H10) and the CA design; security review of exposure | P4, F1, F6 |
 | P6 | W10a, W10b | Backend Engineer, Infrastructure Engineer | Changes runner behavior for every installation, Linux included | P4, P5 (W10b follows W6a in the engine), F5 |
 | P7 | W7, W8, W9 | Infrastructure Engineer | The Windows installer; proved only by hands-on runs on the owner's PC | P3, P4, P5, P6, F3, F4 |
-| P8 | W11, W12, W13a, W13b, W15 | Backend Engineer, Frontend Engineer, Infrastructure Engineer | The owner-approved update contract (H2, H11, H12) with a migration; W15 closes the documentation after W14 | P2, P6, P7, decision H2; W14 runs on P8's published releases before W15 |
+| P8 | W11, W12, W13a, W13b | Backend Engineer, Frontend Engineer, Infrastructure Engineer | The owner-approved update contract (H2, H11, H12) with a migration | P2, P6, P7, decision H2 |
+| P9 | W15, and the fixes from W13b-1 and W14 | Infrastructure Engineer | W15 closes the documentation after W14, which runs on the stable tags after the license work (section 5.3). Risk: it holds the fixes that gate the first public download, and no other pull request is open then | P8, the license work, W13b-1, W14 |
 
 Each slice still lists its own "Depends on" below; the pull request order satisfies all of them.
+
+**License work.** It is a separate build with its own contract (DEC-0029 Follow-up), not a pull request of this plan. It must merge before the first stable tag (section 5.3). It needs the owner's start. P1 to P8 do not wait for it; it merges after P8 (order and costs in section 5.3).
 
 | ID | Slice | Owner | Files or area | Contracts changed | Acceptance criteria | Proof | Needs from the owner | Depends on |
 |---|---|---|---|---|---|---|---|---|
 | S1 | Measure the real stack on Windows | Infrastructure Engineer | `infra/windows/boot-test/` (new payload option) | None (test kit only) | S1-1: memory, start time, sizes and durations recorded as in section 10. S1-2: F2 answered. | Hands-on run on the owner's PC; results in the company record | Runs the kit; about 1 hour | — |
 | W1 | Single version source | Backend Engineer | `backend/app/main.py`, `infra/docker/backend.Dockerfile` (build argument), `tests/tooling/` | `GET /api/version` value (shape unchanged) | W1-1: the image built with `SLATEOPS_VERSION=1.2.3` reports `1.2.3` at `/api/version`. W1-2: without it, the value is `0.0.0+dev`. W1-3: a tooling test refuses a tag that differs from `pyproject.toml` and `package.json`. | Focused pytest; tooling test; one local image build | — | — |
 | W2 | Production env templates and the complete secret set | Backend Engineer | `backend/operations/supabase_keys.py` (complete set, new `--format docker`), new `backend/operations/local_ca.py`, templates in `packaging/engine/templates/` | Env file format becomes literal `KEY=value` | W2-1: one run writes every secret in 6.2 step 4; `Settings`, `ProvisionSettings` and `AdminSettings` load from the result with no missing field. W2-2: a new `--format docker` output has no quotes. Random values come from a safe alphabet. The JSON values (`JWT_KEYS`, `JWT_JWKS`) contain no `$`, `#`, `'` or space. A test reads the file with both env readers, `docker run --env-file` and `docker compose --env-file` (which interpolates unquoted values), and compares every value byte for byte. The current default output stays, because `README.md:86`, `backend/tests/supabase_runtime.py`, `backend/tests/config_support.py` and `tests/tooling/test_environment.py` use it. W2-3: an existing output is never overwritten. W2-4: `local_ca.py` makes a root, a name-constrained intermediate signed by it (the root key is removed after this), and a server certificate of 397 days or less for one host from the intermediate; it renews 30 days before expiry. W2-5: no secret is printed. | Focused pytest under `backend/tests/operations/`, plus `tests/tooling/test_environment.py` | — | — |
-| W3 | Release workflow and GHCR | Infrastructure Engineer | `.github/workflows/release.yml`, `tests/tooling/` | New public artifacts | W3-1: a `v*-rc.*` tag makes a draft release with every asset in 5.2 and `SHA256SUMS`. W3-2: both images are `linux/amd64`, public and anonymously pullable by digest. W3-3: cosign verify passes for the images and the manifest with the workflow identity. W3-4: per-job least-privilege permissions under a `contents: read` default; SHA-pinned Actions. | Tooling tests; one rc tag run; anonymous `docker pull` by digest | Sets the GHCR packages to public once; confirms that the repository stays public; pushes the first rc tag | W1 |
+| W3 | Release workflow and GHCR | Infrastructure Engineer | `.github/workflows/release.yml`, `tests/tooling/` | New public artifacts | W3-1: a `v*-rc.*` tag makes a draft release with every asset in 5.2 and `SHA256SUMS`. The release is marked as a pre-release, with the title "Test build, not for customers" (section 5.3). W3-2: both images are `linux/amd64`, public and anonymously pullable by digest, with only the rc version of their release. W3-3: cosign verify passes for the images and the manifest with the workflow identity. W3-4: per-job least-privilege permissions under a `contents: read` default; SHA-pinned Actions. | Tooling tests; one rc tag run; anonymous `docker pull` by digest | Sets the GHCR packages to public once; confirms that the repository stays public; answers H13 before the first rc tag; pushes the first rc tag; pushes no stable tag before the license work merges (section 5.3) | W1 |
 | W4 | Our Linux image | Infrastructure Engineer | `packaging/linux-image/` (build script, units, `wsl.conf`), release job step | New artifact | W4-1: a reproducible build from a fixed snapshot date. W4-2: the Docker key fingerprint is checked. W4-3: there is no SSH server and no secret; interop and automount are off; cosign is pinned and in the package list. W4-4: the package list and the source list are produced. W4-5: `wsl --import` of the tarball starts systemd and Docker. | CI build; hands-on import on the owner's PC | — | W3 (wiring) |
 | W5a | Engine bridge commands in the server image | Backend Engineer | `backend/operations/` (no new top-level command), `backend/operations/backup_state.py` (`policy_default`) | None beyond W2 | W5a-1: `bootstrap_admin.py` runs non-interactively with `--confirm --name --slug` and the env. W5a-2: one provisioning entry point that the engine calls returns safe JSON. W5a-3: the `policy_default` operation writes the default backup policy only when none exists, through `AuditSession`. | Focused pytest | Approves `policy_default` within H2 | W2 |
 | W5b | Engine install, status and email check | Infrastructure Engineer | `packaging/engine/` and its tests | New engine job contract (section 6) | W5b-1: `install` from a fresh Linux with valid answers reaches HTTPS `/api/ready` and sends the invitation. W5b-2: killing it at any step and running it again completes it with no duplicate secret, CA, volume or invitation. W5b-3: `smtp-test` refuses authentication without TLS and reports the error class. W5b-4: no secret appears in any log, in the output, or in `docker compose` output. W5b-5: it uses only the standard library on the host. | Unit tests in `packaging/engine/tests/`; one run on a Linux host with the release images | — | W2, W5a, W4 |
@@ -510,11 +551,13 @@ Each slice still lists its own "Depends on" below; the pull request order satisf
 | W11 | Update queue API and table | Backend Engineer | `backend/app/systems/manage/backups/` (or a new `updates/` folder; the Software Architect decides), migration, `backend/operations/backup_state.py` (update operations in the existing union) | **New routes, table, column and bridge operations (7.2)** | W11-1: 201 with `Location`. W11-2: 409 `update_active`. W11-3: 409 `update_not_cancellable` after the claim. W11-4: 409 `update_target_stale`. W11-5: 409 `updater_unavailable` when the engine was not seen in 5 minutes. W11-6: 403 for a non-owner, and 404 or 403 per the current rules for others. W11-7: `update_claim` is exclusive under concurrency, under the existing advisory lock. W11-8: `update_close_restored` is admitted only by a valid restore-finalized marker. W11-9: the migration passes `alembic check`. | Focused pytest plus the PostgreSQL integration batch | **Approves the routes, the table, the column and the bridge operations (decision H2)** | Software Architect contract review |
 | W12 | "Install tonight" UI | Frontend Engineer | `frontend/src/components/systems/manage/components/updates-panel.tsx`, `domain/updates-rules.ts`, `adapters/backup-api.ts` | None | W12-1: each state in 7.1 renders from the API. W12-2: Cancel works only while queued. W12-3: only the installation owner sees the button, and only while the engine was seen in the last 5 minutes. | Isolated and http Playwright specs; hands-on | — | W11, design |
 | W13a | Non-interactive restore for the engine | Backend Engineer | `packaging/backup/restore_installation.py` | A new engine-only mode (owner decision H12) | W13a-1: the mode needs the engine's own snapshot, project and directory, and refuses any other value. W13a-2: the interactive path is unchanged. | Focused tests in `packaging/backup/tests/` | — | — |
-| W13b | Update executor and Maintain task | Infrastructure Engineer | `packaging/engine/`, `infra/windows/installer/` (Maintain) | Engine update contract (7.3, 7.4) | W13b-1: a queued run updates `v0.2.0` → `v0.2.1` (decision H8) at the window, and `/api/version` shows `v0.2.1`. W13b-2: a forced migration failure rolls back to the old version with the data intact, keeps the same origin and name, and writes `rolled_back`; the run is never claimed again. W13b-3: a failure forced before step 7 uses `recover`, not a restore. W13b-4: low space gives `insufficient_space` with no outage. W13b-5: with an older WSL installed and `engine_idle` true, Maintain installs the pinned WSL MSI after the SHA-256 check, and the service returns by itself. W13b-6: a manifest with a bad signature is refused. W13b-7: a restart during the window resumes by the rule in section 12 (Windows Update row). W13b-8: the package night runs on a night with no update and leaves the services ready. | Engine unit tests; hands-on on the owner's PC | Publishes two stable releases (decision H8) | W9, W3, W11, W13a |
-| W14 | Release rehearsal on Windows | QA Engineer, with the owner | No code | None | W14-1: fresh install → invitation → sign-in on the PC and a phone. W14-2: update between the two stable releases. W14-3: forced rollback. W14-4: uninstall with Keep my data, then reinstall. W14-5: uninstall with Delete everything. W14-6: E1, E2 and E4 again. | Hands-on, each step recorded | Runs the rehearsal | All |
-| W15 | Documentation | Infrastructure Engineer | `README.md`, `infra/AGENTS.md`, `infra/supabase/README.md`, `RESTORE.md`, `docs/architecture/11-infrastructure.md`, `docs/architecture/12-deployment-architecture.md`, the glossary | Documented contracts only | W15-1: Windows is documented as Docker Engine in our distribution, not Docker Desktop. W15-2: new glossary rows: installer, engine, engine bundle, release manifest, maintenance mode, recovery key, trust page. W15-3: no document calls the infrastructure production-ready. | Scope review | — | W14 (the glossary waits for the open glossary edits) |
+| W13b | Update executor and Maintain task | Infrastructure Engineer | `packaging/engine/`, `infra/windows/installer/` (Maintain) | Engine update contract (7.3, 7.4) | W13b-1: a queued run updates `v0.2.0` → `v0.2.1` (decision H8) at the window, and `/api/version` shows `v0.2.1`. W13b-2: a forced migration failure rolls back to the old version with the data intact, keeps the same origin and name, and writes `rolled_back`; the run is never claimed again. W13b-3: a failure forced before step 7 uses `recover`, not a restore. W13b-4: low space gives `insufficient_space` with no outage. W13b-5: with an older WSL installed and `engine_idle` true, Maintain installs the pinned WSL MSI after the SHA-256 check, and the service returns by itself. W13b-6: a manifest with a bad signature is refused. W13b-7: a restart during the window resumes by the rule in section 12 (Windows Update row). W13b-8: the package night runs on a night with no update and leaves the services ready. | Engine unit tests; hands-on on the owner's PC. W13b-1 runs on the stable tags after the license work; the design checks whether the setup program's `update` path proves W13b-2 to W13b-4 on rc tags (section 5.3). | Publishes two stable releases after the license work merges (decision H8, section 5.3) | W9, W3, W11, W13a; the license work for W13b-1 only |
+| W14 | Release rehearsal on Windows | QA Engineer, with the owner | No code | None | W14-1: fresh install → invitation → sign-in on the PC and a phone. W14-2: update between the two stable releases. W14-3: forced rollback. W14-4: uninstall with Keep my data, then reinstall. W14-5: uninstall with Delete everything. W14-6: E1, E2 and E4 again. W14-7 (when the license work gives a license path for release builds): a licensed installation keeps its edition after the update and after the rollback. | Hands-on, each step recorded | Runs the rehearsal | All, and the license work |
+| W15 | Documentation | Infrastructure Engineer | `README.md`, `infra/AGENTS.md`, `infra/supabase/README.md`, `RESTORE.md`, `docs/architecture/11-infrastructure.md`, `docs/architecture/12-deployment-architecture.md`, the glossary | Documented contracts only | W15-1: Windows is documented as Docker Engine in our distribution, not Docker Desktop. W15-2: new glossary rows: installer, engine, engine bundle, release manifest, maintenance mode, recovery key, trust page, edition, license file, test build. W15-3: no document calls the infrastructure production-ready. | Scope review | — | W14 (the glossary waits for the open glossary edits) |
 
 Repository testing rules apply to every slice: focused tests and one batch per work unit, then fast checks before a push; CI runs the heavy suites. Windows behavior is proved only by a hands-on run on the owner's Windows 11 Pro PC. Linux-container evidence from macOS does not prove Windows behavior.
+
+**Data size.** No slice or rehearsal step uses a sample pack. The sample packs are larger than the Desk limits (DEC-0029 Impact). A step with more data than the Desk limits allow needs a license from the license work. Examples are a sample pack, or more than 2 seats. The test license of the license work uses a test key that production builds refuse. So W13b and W14, which run on release builds, keep their data within the Desk limits, unless the license work gives another path.
 
 ### 11.1 Reviews and other roles per slice
 
@@ -556,6 +599,8 @@ The standard order (company delegation policy, section 4) adds these steps. "SA"
 | The trust page on HTTP can be changed by an attacker on the LAN. | The fingerprint shows on the server PC; Security Engineer review in W6a. |
 | Docker Hub limits anonymous pulls. | F8; fallback: mirror the pinned provider images to GHCR (decision H9). |
 | The engine runs as root with the Docker socket. | It accepts only allow-listed jobs and JSON input. Interop and automount are off. The Security Engineer reviews W5b and W13b. |
+| A customer installs a release without the edition limits and loses access in a later update (DEC-0029 item 13). | Before the license work, only rc pre-releases marked "Test build" exist. The website never links them. The first stable tag comes after the license work (section 5.3, H13). |
+| The license work starts late, so the first public download waits. | P1 to P8 do not wait for it. Only the stable tags, W13b-1, W14 and W15 wait (section 5.3). |
 | A rollback revokes every session. | The Updates page says so; it happens only after a failed update. |
 | The data disk is not encrypted unless BitLocker is on. | Noted on the requirements page as a recommendation (decision H5 can make it a requirement). |
 
@@ -570,8 +615,9 @@ The standard order (company delegation policy, section 4) adds these steps. "SA"
 | H5 | Windows 11 Home and BitLocker | a) Block Home until it is tested; recommend BitLocker. b) Allow Home with a warning. c) Require BitLocker. | W7 |
 | H6 | Alert channel for a failed backup or update | a) In-app only in v1 (System health, Manage). b) Add an application mailer (a new capability). | W10a, W10b |
 | H7 | Restore in v1 | a) Support-run with the one-command engine restore. b) Owner-started restore in the maintenance mode in v1. | W13a scope |
-| H8 | Update rehearsal releases | a) Publish two stable releases (for example `v0.2.0` and `v0.2.1`) for W13b and W14. Only the owner's PCs run them, so no customer sees them. b) Another path; a configurable release source is not offered. | W13b, W14 |
+| H8 | Update rehearsal releases | a) After the license work merges, publish two stable releases (for example `v0.2.0` and `v0.2.1`) that contain it, for W13b and W14. The website links neither until W14 passes. This keeps DEC-0029 item 13. But the stable tags, W13b-1, W14 and W15 wait for the license work, which waits for the owner's start. P8 merges without it. b) Publish two stable releases before the license work, only for the rehearsal, then delete them. This removes the wait, but it breaks DEC-0029 item 13 for that time. Anyone can install a stable build without the edition limits, and the first becomes "Latest". It needs a change of DEC-0029. A configurable release source is not offered. | W13b, W14 |
 | H9 | Provider image source (after F8) | a) Pull the pinned provider images from Docker Hub, as now. b) Mirror them to GHCR by digest. We then redistribute them and ship their notices and source duties. | W3 |
 | H10 | A second public listener on port 80 for the trust page | a) Approve: Caddy serves only `/trust`, the root certificate and the iOS profile on port 80 and redirects every other path to HTTPS. `infra/supabase/README.md:136` names 443 as the only public listener today, so this changes a documented contract. b) No port 80: phones get the trust files another way (for example from the server PC by USB or email). | W6a |
 | H11 | The `release-manifest.json` format | a) Approve the fields in 5.2 as a public format that the engine and the installer read; a change after v1 keeps old fields readable. b) Change it. | W3, W13b |
 | H12 | The non-interactive restore mode | a) Approve an engine-only mode in `restore_installation.py` that the engine's own snapshot, project and directory bind (7.5, W13a). b) No such mode: a failed update then needs a support person for the rollback. | W13a, W13b |
+| H13 | Test-build pre-releases before the license work (section 5.3) | a) Accept: rc pre-releases titled "Test build, not for customers", never "Latest", not linked by the website or the README, with public rc images. Each one is listed publicly as a pre-release on the Releases page, and the GHCR packages are listed on the Packages page. The owner counts them as not a public release under DEC-0029 item 13. b) No published release before the license work. This removes every public artifact. But every hands-on proof from P2 on waits for the license work: W3, W4-5, W6a and W7 to W10b. c) Make the repository and the packages private until the first public download. This removes public access. But the anonymous download (5.2), the anonymous image pull (R8) and the update check (`backup_runner.py`) then fail. The owner's PCs then need a stored credential, with a new design and a Security Engineer review. | W3, P2 to P7 hands-on runs |
