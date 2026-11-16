@@ -241,3 +241,28 @@ def test_module_entrypoint_passes_each_server_option_explicitly(
         access_log=False,
         forwarded_allow_ips=[],
     )
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        pytest.param("1.2.3", "1.2.3", id="release-build-argument"),
+        pytest.param(None, "0.0.0+dev", id="local-run-default"),
+    ],
+)
+def test_application_version_comes_from_slateops_version(
+    monkeypatch: pytest.MonkeyPatch, configured: str | None, expected: str
+) -> None:
+    # W1-1, W1-2: GET /api/version reports the app version that create_app() sets.
+    from app.core.config import get_settings
+    from app.main import create_app
+
+    if configured is None:
+        monkeypatch.delenv("SLATEOPS_VERSION", raising=False)
+    else:
+        monkeypatch.setenv("SLATEOPS_VERSION", configured)
+    get_settings.cache_clear()
+    try:
+        assert create_app().version == expected
+    finally:
+        get_settings.cache_clear()

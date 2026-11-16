@@ -79,6 +79,9 @@ class Settings(EnvironmentSettings):
     """Configuration required to start the FastAPI application process."""
 
     app_name: ClassVar[str] = "Slate Operations API"
+    # The release build argument of the server image (the tag without "v"); local runs
+    # have no release.
+    slateops_version: str = Field(default="0.0.0+dev", validation_alias="SLATEOPS_VERSION")
     environment: str = Field(validation_alias="ENVIRONMENT")
     log_dir: Path = Field(validation_alias="LOG_DIR")
     database_url: str = Field(validation_alias="DATABASE_URL")

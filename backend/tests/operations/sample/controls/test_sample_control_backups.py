@@ -357,7 +357,9 @@ def test_version_review_preserves_non_numeric_running_version_and_last_observati
         "original_policy",
         "restore_final",
         "queue_final",
-        "version_final",
+        "version_changed",
+        "version_recorded_missing",
+        "version_final_invalid",
         "final_no_store",
     ),
 )
@@ -411,16 +413,23 @@ def test_backup_reconciliation_requires_exact_descriptors_and_current_owned_read
             wire.policy["retention_days"] = 7
         elif tamper == "queue_final":
             wire.queued["state"] = "running"
-        elif tamper == "version_final":
-            wire.version["current_version"] = "9.9.9"
+        elif tamper == "version_changed":
+            # A pack populated at one release and verified at another is not a defect.
+            results[4]["version_observation"]["current_version"] = "0.1.0"
+            wire.version["current_version"] = "0.0.0+dev"
+        elif tamper == "version_recorded_missing":
+            results[4]["version_observation"].pop("current_version")
+        elif tamper == "version_final_invalid":
+            wire.fault = "version_missing"
         elif tamper == "final_no_store":
             wire.fault = "no_store"
         operator = context.clients["operator"]
         counts, issues = verify_controls(
             operator, dataset, manifest, str(uuid4()), operator=operator
         )
-        assert bool(issues) is (tamper is not None)
-        if tamper is None:
+        clean = tamper in {None, "version_changed"}
+        assert bool(issues) is not clean
+        if clean:
             assert counts["control_requests_verified"] == 11
             assert counts["backup_requests_queued"] == 1
             assert counts["backup_policy_restored"] == 1

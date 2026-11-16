@@ -43,6 +43,12 @@ COPY --from=backend-builder --chown=appuser:appuser /app /app
 COPY --from=frontend-builder --chown=appuser:appuser /workspace/frontend/out /app/web
 COPY --chown=appuser:appuser infra/supabase/templates/ /infra/supabase/templates/
 
+# The release workflow passes the tag without "v" (scripts/check_release_version.py).
+# Declared after the copies so a new version reuses the cached layers above.
+ARG SLATEOPS_VERSION=0.0.0+dev
+LABEL org.opencontainers.image.version=$SLATEOPS_VERSION
+ENV SLATEOPS_VERSION=$SLATEOPS_VERSION
+
 USER appuser
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD ["python", "-c", "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ['BACKEND_PORT'] + '/api/health', timeout=2).read()"]
