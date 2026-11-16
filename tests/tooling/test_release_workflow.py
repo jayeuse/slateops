@@ -85,6 +85,47 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
                 self.assertRegex(action, r"^[a-z0-9-]+/[a-z0-9-]+@[0-9a-f]{40}$")
                 self.assertRegex(comment, r"^ # v\d+\.\d+\.\d+$")
 
+    def test_every_action_is_allowed_by_the_repository_policy(self):
+        # Repository Actions policy (gh api repos/<repo>/actions/permissions/selected-actions,
+        # 2026-11-16): GitHub-owned actions and three patterns; a run that uses another
+        # action ends in startup_failure (run 43884616032).
+        allowed = ("astral-sh/setup-uv", "docker/setup-buildx-action", "docker/build-push-action")
+        for action in re.findall(r"(?m)^\s+(?:- )?uses: (\S+)", self.source):
+            name, _, revision = action.partition("@")
+            with self.subTest(action=action):
+                self.assertTrue(name.startswith("actions/") or name in allowed)
+                self.assertRegex(revision, r"^[0-9a-f]{40}$")
+
+    def test_registry_login_and_cosign_install_are_checked_run_steps(self):
+        login = (
+            'printf \'%s\' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" '
+            "--password-stdin"
+        )
+        for job in ("images", "notices"):
+            with self.subTest(job=job):
+                block = self.jobs[job]
+                self.assertIn("GHCR_TOKEN: ${{ github.token }}", block)
+                self.assertIn(login, block)
+                self.assertRegex(block, r"if: always\(\)\n\s+run: docker logout ghcr.io\n")
+        for job in ("images", "manifest"):
+            with self.subTest(job=job):
+                block = self.jobs[job]
+                self.assertIn(
+                    "https://github.com/sigstore/cosign/releases/download/v3.1.4/"
+                    "cosign-linux-amd64",
+                    block,
+                )
+                self.assertIn(
+                    'echo "424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  '
+                    '$bin/cosign"',
+                    block,
+                )
+                check = block.index("sha256sum --check --strict --status -")
+                self.assertLess(check, block.index('chmod +x "$bin/cosign"'))
+                signing = re.search(r"(?m)^\s+(?:run: )?cosign sign", block)
+                self.assertIsNotNone(signing)
+                self.assertLess(block.index('chmod +x "$bin/cosign"'), signing.start())
+
     def test_no_secret_beyond_the_workflow_token_and_no_expression_in_shell(self):
         self.assertNotIn("secrets.", self.source)
         for body in run_bodies(self.source):
