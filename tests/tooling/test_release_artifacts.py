@@ -1034,7 +1034,7 @@ class LinuxImageNoticeTests(unittest.TestCase):
             "Linux image (slateops-linux-0.2.0-rc.1-amd64.tar.gz), Debian source packages:\n"
             f"chrony 4.6.1-3 {SNAPSHOT}/chrony/4.6.1-3/\n",
             "Caddy image (slateops-caddy), Alpine source packages:\n"
-            "busybox 1.37.0-r19 https://gitlab.alpinelinux.org/alpine/aports/-/tree/2e97d754\n",
+            "busybox 1.37.0-r19 https://github.com/alpinelinux/aports/tree/2e97d754\n",
             "Other parts, at their upstream source:\n"
             "cosign 3.1.4 https://github.com/sigstore/cosign/tree/v3.1.4\n",
             f"Server image (slateops-server), Debian source packages:\nbash 5.2.37-2 {SNAPSHOT}",
@@ -1107,7 +1107,7 @@ class LinuxImageNoticeTests(unittest.TestCase):
             offer = (root / "dist/SOURCE-OFFER.txt").read_text()
             for expected in (
                 f"chrony 4.6.1-3 {SNAPSHOT}/chrony/4.6.1-3/\n",
-                "musl 1.2.5-r10 https://gitlab.alpinelinux.org/alpine/aports/-/tree/1a5f5e69\n",
+                "musl 1.2.5-r10 https://github.com/alpinelinux/aports/tree/1a5f5e69\n",
                 "docker-ce 5:29.8.2-1~debian.13~trixie https://github.com/moby/moby/tree/docker-v29.8.2\n",
                 "Python 3.14.10 https://www.python.org/ftp/python/3.14.10/Python-3.14.10.tar.xz\n",
                 "Caddy 2.10.2 https://github.com/caddyserver/caddy/tree/v2.10.2\n",

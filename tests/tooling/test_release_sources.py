@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import hashlib
 import http.server
-import io
 import json
+import subprocess
 import tarfile
 import tempfile
 import textwrap
@@ -93,26 +93,55 @@ UPSTREAM = b"busybox tarball"
 COMMIT = "2e97d754a30d558f15524b8e422303c8a96832df"
 
 
-def aports_archive(apkbuild: str) -> bytes:
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-        top = f"aports-{COMMIT}-main-busybox/main/busybox"
-        for name, data in (("APKBUILD", apkbuild.encode()), ("0001-fix.patch", PATCH)):
-            info = tarfile.TarInfo(f"{top}/{name}")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-    return buffer.getvalue()
+DISTFILE = "https://distfiles.alpinelinux.org/distfiles/v3.22/busybox-1.37.0.tar.bz2"
 
 
-def alpine_site(tarball: bytes = UPSTREAM) -> dict[str, bytes]:
-    apkbuild = APKBUILD.format(
+def busybox_apkbuild() -> bytes:
+    return APKBUILD.format(
         tarball=hashlib.sha512(UPSTREAM).hexdigest(), patch=hashlib.sha512(PATCH).hexdigest()
+    ).encode()
+
+
+def git(*arguments: str, cwd: Path) -> str:
+    result = subprocess.run(
+        ["git", "-c", "user.name=test", "-c", "user.email=test@example.org", *arguments],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=True,
     )
-    base = "https://gitlab.alpinelinux.org/alpine/aports/-/archive"
-    return {
-        f"{base}/{COMMIT}/aports-{COMMIT}.tar.gz?path=main/busybox": aports_archive(apkbuild),
-        "https://distfiles.alpinelinux.org/distfiles/v3.22/busybox-1.37.0.tar.bz2": tarball,
-    }
+    return result.stdout.strip()
+
+
+def aports_mirror(root: Path, folders: dict[str, dict[str, bytes]]) -> tuple[str, str]:
+    """A local git repository in place of Alpine's aports mirror; return its URL and commit.
+
+    It allows what GitHub allows: a fetch by commit SHA, with a blob filter.
+    """
+    repository = root / "aports"
+    repository.mkdir()
+    git("init", "--quiet", cwd=repository)
+    for folder, files in folders.items():
+        for name, content in files.items():
+            path = repository / folder / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+    (repository / "README").write_text("aports\n")
+    git("add", "--all", cwd=repository)
+    git("commit", "--quiet", "--message", "release", cwd=repository)
+    git("config", "uploadpack.allowFilter", "true", cwd=repository)
+    git("config", "uploadpack.allowAnySHA1InWant", "true", cwd=repository)
+    return repository.as_uri(), git("rev-parse", "HEAD", cwd=repository)
+
+
+def busybox_mirror(root: Path, repository: str = "main") -> tuple[str, str]:
+    return aports_mirror(
+        root,
+        {
+            f"{repository}/busybox": {"APKBUILD": busybox_apkbuild(), "0001-fix.patch": PATCH},
+            "main/other": {"APKBUILD": b"pkgname=other\n"},
+        },
+    )
 
 
 class DebianSourceTests(unittest.TestCase):
@@ -201,11 +230,18 @@ class AlpineSourceTests(unittest.TestCase):
                 release_sources.apkbuild_checksums(f'sha512sums="{"d" * 128}  {name}"')
 
     def test_fetch_takes_the_aports_folder_and_the_distfiles_with_their_hashes(self):
-        package = AlpinePackage("busybox", "1.37.0-r20", COMMIT)
         with tempfile.TemporaryDirectory() as directory:
-            folder = Path(directory)
+            root = Path(directory)
+            url, commit = busybox_mirror(root)
+            package = AlpinePackage("busybox", "1.37.0-r20", commit)
+            checkout = release_sources.AportsMirror(url, root / "work").checkout(
+                commit, ["busybox"]
+            )
+            folder = root / "out"
 
-            release_sources.fetch_alpine(package, "v3.22", folder, fetcher(alpine_site()))
+            release_sources.fetch_alpine(
+                package, "v3.22", folder, fetcher({DISTFILE: UPSTREAM}), checkout
+            )
 
             self.assertEqual(
                 sorted(path.name for path in folder.iterdir()),
@@ -214,18 +250,81 @@ class AlpineSourceTests(unittest.TestCase):
             self.assertEqual((folder / "busybox-1.37.0.tar.bz2").read_bytes(), UPSTREAM)
 
     def test_a_distfile_that_differs_from_its_sha512_is_refused(self):
-        package = AlpinePackage("busybox", "1.37.0-r20", COMMIT)
-        site = alpine_site(tarball=b"tampered")
-        with (
-            tempfile.TemporaryDirectory() as directory,
-            self.assertRaisesRegex(
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            url, commit = busybox_mirror(root)
+            package = AlpinePackage("busybox", "1.37.0-r20", commit)
+            checkout = release_sources.AportsMirror(url, root / "work").checkout(
+                commit, ["busybox"]
+            )
+            site = {DISTFILE: b"tampered"}
+            with self.assertRaisesRegex(
                 SourceError, "busybox-1.37.0.tar.bz2 does not match its SHA-512"
-            ),
-        ):
-            release_sources.fetch_alpine(package, "v3.22", Path(directory), fetcher(site))
+            ):
+                release_sources.fetch_alpine(
+                    package, "v3.22", root / "out", fetcher(site), checkout
+                )
 
     def test_branch_comes_from_the_alpine_release(self):
         self.assertEqual(release_sources.alpine_branch("3.22.3\n"), "v3.22")
+
+
+class AportsMirrorTests(unittest.TestCase):
+    """Run 43927846839 (rc.7): gitlab.alpinelinux.org answers GitHub's runners with HTTP 418.
+
+    The aports files now come by git, at the pinned commit, from Alpine's mirror, so each
+    file is bound to the commit. A local repository stands in for the mirror.
+    """
+
+    def setUp(self) -> None:
+        patcher = mock.patch("time.sleep")
+        self.sleep = patcher.start()
+        self.addCleanup(patcher.stop)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+
+    def test_the_folder_at_the_commit_is_read_from_main_or_community(self):
+        for repository in ("main", "community"):
+            with self.subTest(repository=repository):
+                root = self.root / repository
+                root.mkdir()
+                url, commit = busybox_mirror(root, repository)
+                mirror = release_sources.AportsMirror(url, root / "work")
+                checkout = mirror.checkout(commit, ["busybox"])
+
+                files = release_sources.aports_folder(
+                    checkout, AlpinePackage("busybox", "1.37.0-r20", commit)
+                )
+
+                self.assertEqual(files, {"APKBUILD": busybox_apkbuild(), "0001-fix.patch": PATCH})
+                # The sparse checkout holds only the requested folders.
+                self.assertFalse((checkout / "main/other").exists())
+        self.sleep.assert_not_called()
+
+    def test_a_folder_missing_at_the_commit_fails_as_no_folder(self):
+        url, commit = busybox_mirror(self.root)
+        checkout = release_sources.AportsMirror(url, self.root / "work").checkout(commit, ["gone"])
+
+        with self.assertRaisesRegex(SourceError, f"aports has no folder for gone at {commit}"):
+            release_sources.aports_folder(checkout, AlpinePackage("gone", "1.0-r0", commit))
+        self.sleep.assert_not_called()
+
+    def test_a_commit_missing_from_the_mirror_fails_at_once_and_names_the_commit(self):
+        url, _ = busybox_mirror(self.root)
+        missing = "0123456789abcdef0123456789abcdef01234567"
+
+        with self.assertRaisesRegex(SourceError, f"commit {missing} is not in {url}"):
+            release_sources.AportsMirror(url, self.root / "work").checkout(missing, ["busybox"])
+        self.sleep.assert_not_called()
+
+    def test_an_unreachable_mirror_is_tried_again_and_fails_with_its_cause(self):
+        url = (self.root / "no-such-repository").as_uri()
+        commit = "0123456789abcdef0123456789abcdef01234567"
+
+        with self.assertRaisesRegex(SourceError, "git fetch .* after 6 tries"):
+            release_sources.AportsMirror(url, self.root / "work").checkout(commit, ["busybox"])
+        self.assertEqual(self.sleep.call_count, 5)
 
 
 class PackTests(unittest.TestCase):
@@ -341,7 +440,7 @@ class FakeServer:
 
 
 class TransientAnswerTests(unittest.TestCase):
-    """Run 43925764551 (rc.6): a GitLab answer that was not a 404 became "no folder".
+    """Run 43925764551 (rc.6): a transient answer must be tried again and name its cause.
 
     Each answer below reaches the real download() through a local server; the waits are
     recorded, not slept.
@@ -352,46 +451,32 @@ class TransientAnswerTests(unittest.TestCase):
         self.sleep = patcher.start()
         self.addCleanup(patcher.stop)
 
-    def aports(self, server: FakeServer) -> mock._patch[str]:
-        return mock.patch.object(release_sources, "APORTS_ARCHIVE", f"{server.url}/aports")
-
-    def busybox_paths(self) -> tuple[str, str, bytes]:
-        site = alpine_site()
-        main = next(url for url in site if "path=main/busybox" in url)
-        path = main.split("/-/archive", 1)[1]
-        return f"/aports{path}", path.replace("main/busybox", "community/busybox"), site[main]
-
     def test_rate_limit_and_server_errors_are_tried_again_with_growing_waits(self):
-        main, _, archive = self.busybox_paths()
+        main = "/distfiles/v3.22/busybox-1.37.0.tar.bz2"
         answers = [(429, {"Retry-After": "7"}, b""), (503, {}, b""), (502, {}, b"")]
-        with FakeServer({main: [*answers, (200, {}, archive)]}) as server, self.aports(server):
-            files = release_sources._aports_folder(
-                AlpinePackage("busybox", "1.37.0-r20", COMMIT), release_sources.download
-            )
+        with FakeServer({main: [*answers, (200, {}, UPSTREAM)]}) as server:
+            content = release_sources.download(f"{server.url}{main}")
 
-        self.assertIn("APKBUILD", files)
+        self.assertEqual(content, UPSTREAM)
         self.assertEqual(server.calls[main], 4)
         self.assertEqual([call.args[0] for call in self.sleep.call_args_list], [7, 4, 8])
 
     def test_a_persistent_transient_answer_fails_with_its_cause_not_no_folder(self):
-        main, _, _ = self.busybox_paths()
+        main = "/mr/package/bash/5.2.37-2/srcfiles?fileinfo=1"
         for case, answer, cause in (
             ("rate limit", (429, {}, b""), "HTTP 429 after 6 tries"),
             ("forbidden", (403, {}, b"blocked"), "HTTP 403 after 6 tries"),
             ("server error", (500, {}, b""), "HTTP 500 after 6 tries"),
-            ("challenge page", (200, {}, b"<html>checking</html>"), "not a gzip tar archive"),
-            ("truncated body", (200, {"X-Truncate": "1"}, b"\x1f\x8b"), "after 6 tries"),
+            ("challenge page", (200, {}, b"<html>checking</html>"), "unusable answer"),
+            ("truncated body", (200, {"X-Truncate": "1"}, b"{}"), "after 6 tries"),
         ):
             self.sleep.reset_mock()
             with (
                 self.subTest(case=case),
                 FakeServer({main: [answer]}) as server,
-                self.aports(server),
                 self.assertRaisesRegex(SourceError, cause) as raised,
             ):
-                release_sources._aports_folder(
-                    AlpinePackage("busybox", "1.37.0-r20", COMMIT), release_sources.download
-                )
+                release_sources.download(f"{server.url}{main}", release_sources._json)
             self.assertNotIn("no folder", str(raised.exception))
             self.assertEqual(server.calls[main], 6)
 
@@ -400,34 +485,6 @@ class TransientAnswerTests(unittest.TestCase):
             content = release_sources.download(f"{server.url}/slow", timeout=0.2)
 
         self.assertEqual((content, server.calls["/slow"]), (b"content", 2))
-
-    def test_a_missing_folder_still_fails_as_missing_after_both_repositories(self):
-        main, community, _ = self.busybox_paths()
-        empty = io.BytesIO()
-        with tarfile.open(fileobj=empty, mode="w:gz"):
-            pass
-        for case, answers in (
-            ("404 in both", {}),
-            (
-                "empty archives",
-                {
-                    main: [(200, {}, empty.getvalue())],
-                    f"/aports{community}": [(200, {}, empty.getvalue())],
-                },
-            ),
-        ):
-            with (
-                self.subTest(case=case),
-                FakeServer(answers) as server,
-                self.aports(server),
-                self.assertRaisesRegex(SourceError, "aports has no folder for busybox"),
-            ):
-                release_sources._aports_folder(
-                    AlpinePackage("busybox", "1.37.0-r20", COMMIT), release_sources.download
-                )
-            self.assertEqual(server.calls.get(main), 1)
-            self.assertEqual(server.calls.get(f"/aports{community}"), 1)
-        self.sleep.assert_not_called()
 
     def test_a_snapshot_answer_that_is_not_json_is_tried_again(self):
         page = "/mr/package/bash/5.2.37-2/srcfiles?fileinfo=1"

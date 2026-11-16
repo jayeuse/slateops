@@ -52,7 +52,8 @@ TEST_BUILD_TITLE = "Test build, not for customers"
 OIDC_ISSUER = "https://token.actions.githubusercontent.com"
 MANIFEST_BUNDLE = "release-manifest.json.sigstore.json"
 SNAPSHOT_SOURCE = "https://snapshot.debian.org/package"
-APORTS_SOURCE = "https://gitlab.alpinelinux.org/alpine/aports/-/tree"
+# Alpine's aports mirror, where the release fetches the aports files (release_sources.py).
+APORTS_SOURCE = "https://github.com/alpinelinux/aports/tree"
 # Docker's apt repository has no source packages; each of the four packages that the
 # Linux image installs from it is built from these upstream tags (Apache-2.0).
 DOCKER_SOURCES = {

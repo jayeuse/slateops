@@ -8,9 +8,12 @@ and the Caddy image, then:
    (Docker's packages excluded: their source is upstream, SOURCE-OFFER.txt), it asks
    snapshot.debian.org for the source files, downloads each one, checks it against its
    SHA-1 (snapshot's file name) and against the SHA-256 in the package's .dsc.
-2. Alpine: for each origin of the Caddy image, it downloads the aports folder at the
-   commit that built the package (the apk database's `c:` field), and each upstream file
-   that the APKBUILD names from Alpine's distfiles, checked against the APKBUILD SHA-512.
+2. Alpine: for each origin of the Caddy image, it fetches the aports folder with git at
+   the commit that built the package (the apk database's `c:` field) from Alpine's aports
+   mirror on GitHub, so git binds each file to the commit. Then it downloads each upstream
+   file that the APKBUILD names from Alpine's distfiles, checked against the APKBUILD
+   SHA-512. (gitlab.alpinelinux.org answers GitHub's runners with HTTP 418, run
+   43927846839.)
 3. It packs whole packages into `slateops-sources-<version>-<n>.tar` assets, each below
    ASSET_LIMIT (GitHub refuses a release asset of 2 GiB or more).
 
@@ -23,10 +26,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import http.client
-import io
 import json
 import logging
+import os
 import re
+import subprocess
 import sys
 import tarfile
 import time
@@ -50,7 +54,12 @@ from scripts.release_artifacts import (  # noqa: E402
 
 LOG = logging.getLogger("release_sources")
 SNAPSHOT = "https://snapshot.debian.org"
-APORTS_ARCHIVE = "https://gitlab.alpinelinux.org/alpine/aports/-/archive"
+# Alpine's mirror of aports: owner "alpinelinux" (Alpine Linux, homepage alpinelinux.org),
+# described as "[MIRROR]" of gitlab.alpinelinux.org/alpine/aports; master, 3.22-stable
+# and v3.22.3 equal on both, and it serves commit 9eb55a39 by SHA (checked 2026-11-17).
+APORTS_GIT = "https://github.com/alpinelinux/aports.git"
+# git's messages for a commit that the server does not have.
+_MISSING_COMMIT = ("not our ref", "unadvertised object", "couldn't find remote ref")
 DISTFILES = "https://distfiles.alpinelinux.org/distfiles"
 # GitHub refuses a release asset of 2 GiB or more; keep a margin below it.
 ASSET_LIMIT = 1900 * 1024**2
@@ -124,14 +133,6 @@ def download(
 
 def _json(content: bytes) -> object:
     return json.loads(content)
-
-
-def _gzip_tar(content: bytes) -> object:
-    try:
-        with tarfile.open(fileobj=io.BytesIO(content), mode="r:gz") as tar:
-            return tar.getmembers()
-    except (tarfile.TarError, EOFError, OSError) as error:
-        raise ValueError(f"not a gzip tar archive ({error})") from None
 
 
 def _safe(name: str) -> str:
@@ -215,36 +216,87 @@ def alpine_branch(release: str) -> str:
     return f"v{major}.{minor}"
 
 
-def _aports_folder(package: AlpinePackage, fetch: Fetch) -> dict[str, bytes]:
-    for repository in ("main", "community"):
-        url = (
-            f"{APORTS_ARCHIVE}/{package.commit}/aports-{package.commit}.tar.gz"
-            f"?path={repository}/{package.origin}"
+def _git(arguments: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-c", "advice.detachedHead=false", *arguments],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+    )
+
+
+class AportsMirror:
+    """The aports repository, fetched by git at one commit, with only the needed folders."""
+
+    def __init__(self, url: str, work: Path, tries: int = TRIES) -> None:
+        self.url, self.work, self.tries = url, work, tries
+
+    def _run(self, arguments: list[str], cwd: Path, commit: str) -> None:
+        """Run a git command that reaches the mirror, with the download retry rules."""
+        what = f"git {arguments[0]} {self.url} {commit}"
+        for attempt in range(1, self.tries + 1):
+            result = _git(arguments, cwd)
+            if result.returncode == 0:
+                return
+            lines = [line for line in result.stderr.splitlines() if line.strip()]
+            reason = lines[-1] if lines else f"exit {result.returncode}"
+            if any(marker in result.stderr for marker in _MISSING_COMMIT):
+                raise SourceError(f"aports commit {commit} is not in {self.url}: {reason}")
+            if attempt == self.tries:
+                raise SourceError(f"{what} failed after {self.tries} tries: {reason}")
+            LOG.warning("try %d of %d failed for %s: %s", attempt, self.tries, what, reason)
+            time.sleep(min(float(2**attempt), MAX_WAIT))
+
+    def checkout(self, commit: str, origins: Iterable[str]) -> Path:
+        """Fetch one commit and check out only main/<origin> and community/<origin>."""
+        if not re.fullmatch(r"[0-9a-f]{40}", commit):
+            raise SourceError(f"aports commit {commit!r} is not a full SHA-1")
+        repository = self.work / commit
+        repository.mkdir(parents=True)
+        for arguments in (["init", "--quiet"], ["remote", "add", "origin", self.url]):
+            if (result := _git(arguments, repository)).returncode != 0:
+                raise SourceError(f"git {arguments[0]}: {result.stderr.strip()}")
+        self._run(
+            ["fetch", "--quiet", "--depth", "1", "--filter=blob:none", "origin", commit],
+            repository,
+            commit,
         )
-        try:
-            archive = fetch(url, _gzip_tar)
-        except NotFoundError:
-            continue  # Only a 404 means "not in this repository"; other failures stop.
-        files: dict[str, bytes] = {}
-        suffix = f"/{repository}/{package.origin}/"
-        with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
-            for member in tar.getmembers():
-                if not member.isfile() or suffix not in member.name:
-                    continue
-                relative = member.name.split(suffix, 1)[1]
-                if "/" in relative:
-                    continue
-                file = tar.extractfile(member)
-                if file is not None:
-                    files[_safe(relative)] = file.read()
+        patterns = [
+            f"/{kind}/{_safe(origin)}/" for origin in origins for kind in ("main", "community")
+        ]
+        (repository / ".git/info").mkdir(exist_ok=True)
+        (repository / ".git/info/sparse-checkout").write_text("\n".join(patterns) + "\n")
+        if (result := _git(["config", "core.sparseCheckout", "true"], repository)).returncode:
+            raise SourceError(f"git config: {result.stderr.strip()}")
+        # The checkout fetches the blobs of the chosen folders from the mirror.
+        self._run(["checkout", "--quiet", commit], repository, commit)
+        LOG.info("fetched aports %s (%s) from %s", commit, " ".join(origins), self.url)
+        return repository
+
+
+def aports_folder(checkout: Path, package: AlpinePackage) -> dict[str, bytes]:
+    """The files of main/<origin> or community/<origin> in a checkout of the commit."""
+    for repository in ("main", "community"):
+        folder = checkout / repository / package.origin
+        if not folder.is_dir():
+            continue
+        files = {
+            _safe(path.name): path.read_bytes()
+            for path in sorted(folder.iterdir())
+            if path.is_file() and not path.is_symlink()
+        }
         if "APKBUILD" in files:
             return files
     raise SourceError(f"aports has no folder for {package.origin} at {package.commit}")
 
 
-def fetch_alpine(package: AlpinePackage, branch: str, folder: Path, fetch: Fetch) -> int:
-    """Download one Alpine origin's aports folder and distfiles; return its size in bytes."""
-    files = _aports_folder(package, fetch)
+def fetch_alpine(
+    package: AlpinePackage, branch: str, folder: Path, fetch: Fetch, checkout: Path
+) -> int:
+    """Copy one Alpine origin's aports folder and download its distfiles; return the size."""
+    files = aports_folder(checkout, package)
     for digest, name in apkbuild_checksums(files["APKBUILD"].decode(errors="replace")):
         if name not in files:
             files[name] = fetch(f"{DISTFILES}/{branch}/{quote(name)}")
@@ -318,9 +370,16 @@ def _fetch_all(args: argparse.Namespace, staging: Path) -> None:
         folder = staging / "debian" / debian_folder(source, version)
         return fetch_debian(source, version, folder, logged)
 
+    # git work stays out of the thread pool: one checkout per commit, one after another.
+    mirror = AportsMirror(APORTS_GIT, staging / "aports-git")
+    checkouts: dict[str, Path] = {}
+    for commit in sorted({package.commit for package in alpine}):
+        origins = sorted(package.origin for package in alpine if package.commit == commit)
+        checkouts[commit] = mirror.checkout(commit, origins)
+
     def one_alpine(package: AlpinePackage) -> int:
         folder = staging / "alpine" / _safe(f"{package.origin}-{package.version}")
-        return fetch_alpine(package, branch, folder, logged)
+        return fetch_alpine(package, branch, folder, logged, checkouts[package.commit])
 
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         sizes = [*pool.map(one_debian, debian), *pool.map(one_alpine, alpine)]
