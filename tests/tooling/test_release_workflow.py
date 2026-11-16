@@ -6,7 +6,11 @@ run proves the runtime parts (push, signatures, attestations, the draft release)
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -181,12 +185,75 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertIn(
             'skopeo copy --preserve-digests --src-authfile "$HOME/.docker/config.json"', images
         )
-        self.assertIn('"docker://$reference" "oci-archive:$archive:${reference%@*}"', images)
+        self.assertIn('"docker://$source" "oci-archive:$archive:$tagged"', images)
         self.assertIn("python3 scripts/release_artifacts.py image-info", images)
         self.assertIn('--summary "$GITHUB_STEP_SUMMARY"', images)
         self.assertLess(images.index("image-info --reference"), images.index("cosign sign --yes"))
         self.assertLess(images.index("image-info --reference"), images.index("attest-build"))
         self.assertIn("name: asset-images\n          path: archives/", images)
+
+    def test_archive_step_gives_skopeo_a_digest_only_source_and_keeps_the_tagged_name(self):
+        # Run 43885232153: skopeo 1.13 refuses "docker://name:tag@digest" ("Docker
+        # references with both a tag and digest are currently not supported").
+        images = self.jobs["images"]
+        step = images.split("      - name: Write and check the image archives", 1)[1]
+        body = textwrap.dedent(step.split("        run: |\n", 1)[1].split("\n      - ", 1)[0])
+        server = f"ghcr.io/jayeuse/slateops-server:0.1.0-rc.2@sha256:{'a' * 64}"
+        caddy = f"ghcr.io/jayeuse/slateops-caddy:0.1.0-rc.2@sha256:{'b' * 64}"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stubs = root / "stubs"
+            stubs.mkdir()
+            calls = root / "calls"
+            (stubs / "skopeo").write_text(
+                "#!/bin/bash\n"
+                'for argument in "$@"; do\n'
+                '  if [[ "$argument" =~ ^docker://.*:[^/@]+@sha256: ]]; then\n'
+                '    echo "both a tag and digest are currently not supported" >&2; exit 1\n'
+                "  fi\n"
+                "done\n"
+                f'echo "skopeo $*" >> "{calls}"\n'
+            )
+            (stubs / "python3").write_text(f'#!/bin/bash\necho "python3 $*" >> "{calls}"\n')
+            for stub in stubs.iterdir():
+                stub.chmod(0o755)
+            result = subprocess.run(
+                ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", body],
+                cwd=root,
+                env={
+                    "PATH": f"{stubs}:{os.environ['PATH']}",
+                    "HOME": "/home/runner",
+                    "SERVER": server,
+                    "CADDY": caddy,
+                    "VERSION": "0.1.0-rc.2",
+                    "GITHUB_STEP_SUMMARY": str(root / "summary"),
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            authfile = "--src-authfile /home/runner/.docker/config.json"
+            self.assertEqual(
+                calls.read_text().splitlines(),
+                [
+                    f"skopeo copy --preserve-digests {authfile} "
+                    f"docker://ghcr.io/jayeuse/slateops-server@sha256:{'a' * 64} "
+                    "oci-archive:archives/slateops-server-0.1.0-rc.2-amd64.oci.tar:"
+                    "ghcr.io/jayeuse/slateops-server:0.1.0-rc.2",
+                    f"python3 scripts/release_artifacts.py image-info --reference {server} "
+                    "--archive archives/slateops-server-0.1.0-rc.2-amd64.oci.tar "
+                    f"--output image-info/server.json --summary {root / 'summary'}",
+                    f"skopeo copy --preserve-digests {authfile} "
+                    f"docker://ghcr.io/jayeuse/slateops-caddy@sha256:{'b' * 64} "
+                    "oci-archive:archives/slateops-caddy-0.1.0-rc.2-amd64.oci.tar:"
+                    "ghcr.io/jayeuse/slateops-caddy:0.1.0-rc.2",
+                    f"python3 scripts/release_artifacts.py image-info --reference {caddy} "
+                    "--archive archives/slateops-caddy-0.1.0-rc.2-amd64.oci.tar "
+                    f"--output image-info/caddy.json --summary {root / 'summary'}",
+                ],
+            )
 
     def test_a_failed_run_is_never_re_run_and_an_existing_release_stops_the_job(self):
         # D5: the rule heads the file and the release job refuses an existing release.

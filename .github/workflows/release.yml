@@ -136,6 +136,8 @@ jobs:
       - name: Write and check the image archives (before any signature)
         # skopeo copies the pushed digest byte for byte (--preserve-digests fails instead of
         # converting); image-info then checks every blob against the pushed digest.
+        # skopeo 1.13 refuses a source with both a tag and a digest (run 43885232153), so
+        # the source is name@digest; the archive keeps the name:tag reference name.
         env:
           SERVER: ${{ steps.refs.outputs.server }}
           CADDY: ${{ steps.refs.outputs.caddy }}
@@ -147,8 +149,10 @@ jobs:
             role="${pair%%:*}"
             reference="${pair#*:}"
             archive="archives/slateops-$role-$VERSION-amd64.oci.tar"
+            tagged="${reference%@*}"
+            source="${tagged%:*}@${reference#*@}"
             skopeo copy --preserve-digests --src-authfile "$HOME/.docker/config.json" \
-              "docker://$reference" "oci-archive:$archive:${reference%@*}"
+              "docker://$source" "oci-archive:$archive:$tagged"
             python3 scripts/release_artifacts.py image-info --reference "$reference" \
               --archive "$archive" --output "image-info/$role.json" --summary "$GITHUB_STEP_SUMMARY"
           done
