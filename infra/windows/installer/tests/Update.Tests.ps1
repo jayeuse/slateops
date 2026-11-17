@@ -103,7 +103,7 @@ Test-Case 'W13b-10 the setup program orders -rc.N by number, so rc.10 updates rc
     Assert-Equal 'M01' (Get-SetupEntry -Progress $null -Installed '0.1.0-rc.10' -SetupVersion '0.1.0-rc.9').screen
 }
 
-Test-Case 'W13b after an update only the receive parts of other versions leave the payload folder, and a link is removed as a link' {
+Test-Case 'W13b after an update only the receive parts of other versions leave the payload folder; a link in the tree leaves everything in place' {
     # Parent decision (DEC-0036, TASK-0095): the fixed part names of other versions go; the parts
     # of this version, the shared manifest names, the Linux image and other files stay.
     $outside = New-TestDirectory 'w13b-payload-outside'
@@ -118,7 +118,6 @@ Test-Case 'W13b after an update only the receive parts of other versions leave t
             'slateops-engine-0.2.0.tar.gz', 'slateops-server-0.2.0-amd64.oci.tar', 'slateops-caddy-0.2.1-rc.3-amd64.oci.tar',
             'slateops-linux-0.2.0-amd64.tar.gz', 'notes.txt')
         foreach ($name in $names) { [System.IO.File]::WriteAllText((Join-Path $layout.Payload $name), 'part') }
-        $null = New-Item -ItemType SymbolicLink -Path (Join-Path $layout.Payload 'slateops-engine-0.1.0.tar.gz') -Target $outside
         # Preconditions: the test folders pass the same checks as Copy-PayloadPart.
         $parentProblems = @(Get-FolderParentProblem -Path $layout.DataRoot)
         Assert-Equal 0 $parentProblems.Count ('parent: ' + ($parentProblems -join '; '))
@@ -132,5 +131,14 @@ Test-Case 'W13b after an update only the receive parts of other versions leave t
         Assert-Equal $true (Test-Path -LiteralPath (Join-Path $outside 'keep.txt')) 'the folder behind the link stays'
         $again = Remove-OldPayloadParts -Layout $layout -Version '0.2.1'
         Assert-Equal 'none 0' ('{0} {1}' -f $again.code, $again.values.count) 'a second run finds nothing'
+        # A link inside the protected data tree fails the tree check, as in Copy-PayloadPart: the
+        # removal changes nothing and never follows the link.
+        [System.IO.File]::WriteAllText((Join-Path $layout.Payload 'slateops-engine-0.2.0.tar.gz'), 'part')
+        $null = New-Item -ItemType SymbolicLink -Path (Join-Path $layout.Payload 'slateops-engine-0.1.0.tar.gz') -Target $outside
+        $refused = Remove-OldPayloadParts -Layout $layout -Version '0.2.1'
+        Assert-Equal 'data_folder_parent_unsafe' $refused.code
+        Assert-Equal $true (Test-Path -LiteralPath (Join-Path $layout.Payload 'slateops-engine-0.2.0.tar.gz')) 'nothing is removed while the tree holds a link'
+        Assert-Equal $true (Test-Path -LiteralPath (Join-Path $outside 'keep.txt')) 'the folder behind the link stays'
+        Remove-PathNoFollow -Path (Join-Path $layout.Payload 'slateops-engine-0.1.0.tar.gz')
     } finally { Remove-PathNoFollow -Path $root }
 }
