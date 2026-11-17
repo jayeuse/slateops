@@ -313,7 +313,7 @@ function Get-VolumeFormat {
 }
 
 function Get-BackupFolderProblem {
-    # The backup folder tree rule (Security W9-S1, W9-S2, F-2, W9-S3; S91-2 class), before any
+    # The backup folder tree rule (Security W9-S1, W9-S2, F-2, W9-S3, W9-S4; S91-2 class), before any
     # elevated delete or access-list write: the folder owned by Administrators, SYSTEM or this
     # administrator, a protected list, and below it no link, no other owner than those, the
     # service account and the account that a kept reinstall replaces (-OldSid), and no writer
@@ -322,6 +322,9 @@ function Get-BackupFolderProblem {
     param([Parameter(Mandatory = $true)][string]$Folder, [string]$ServiceSid = '', [string]$OldSid = '')
     $problems = New-Object System.Collections.Generic.List[string]
     if (Test-AclFreeFileSystem -Format (Get-VolumeFormat -Path $Folder)) { return $problems.ToArray() }
+    # Security W9-S4: the folders above must keep the folder in place (the S91-2 parent rule), or
+    # a standard user could swap it for a junction after this check passes.
+    foreach ($problem in @(Get-FolderParentProblem -Path $Folder)) { $problems.Add($problem) }
     $sidType = [System.Security.Principal.SecurityIdentifier]
     $trusted = @($SlateOps.SidAdministrators, $SlateOps.SidSystem, [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
     $writers = @($SlateOps.SidAdministrators, $SlateOps.SidSystem)

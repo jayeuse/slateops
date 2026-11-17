@@ -309,6 +309,24 @@ Test-Case 'W9 option b Repair sets the backup folder rights when the drive is th
     }
 }
 
+Test-Case 'W9-S4 the backup folder rule refuses a parent that a standard user can change' {
+    # Security W9-S4: the S91-2 parent rule is part of the backup folder rule, so a folder whose
+    # parent lets a standard user delete subfolders (and so swap the folder) is refused.
+    $root = New-AdminOnlyFolder 'SlateOpsW9S4'
+    try {
+        $folder = Join-Path $root 'SlateOps-backups'
+        [void][System.IO.Directory]::CreateDirectory($folder, (Get-ProtectedDirectorySecurity))
+        $null = & icacls.exe $folder /setowner '*S-1-5-32-544' 2>&1
+        $clean = @(Get-BackupFolderProblem -Folder $folder)
+        Assert-Equal 0 $clean.Count ('a protected folder under a protected parent: ' + ($clean -join '; '))
+        $parent = Get-Acl -LiteralPath $root
+        $parent.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule((New-Object System.Security.Principal.SecurityIdentifier('S-1-5-11')), 'DeleteSubdirectoriesAndFiles', 'None', 'None', 'Allow')))
+        Set-Acl -LiteralPath $root -AclObject $parent
+        $found = @(Get-BackupFolderProblem -Folder $folder | Where-Object { $_ -like ('rights:{0}:*' -f $root) })
+        Assert-Equal 1 $found.Count 'the parent that Authenticated Users can change is reported'
+    } finally { Remove-PathNoFollow -Path $root }
+}
+
 Test-Case 'W9-S2 F-2 a backup folder that a standard user can change gets no access-list write' {
     # Security re-check: the tree rule runs before Initialize-BackupFolder changes an existing
     # folder and before the old-account walk; a folder that fails it is refused or skipped.
