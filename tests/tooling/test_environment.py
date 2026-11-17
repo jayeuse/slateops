@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from cryptography.fernet import Fernet
@@ -621,6 +622,267 @@ class SupabaseEnvironmentTests(unittest.TestCase):
                     2,
                 )
             run.assert_not_called()
+
+
+DB_DIGEST = "sha256:6058a6759ab9268cff8ee70641d61f1bd75953316281b76427cf5a6b4db2eafc"
+GHCR_DB_IMAGE = "ghcr.io/supabase/postgres:17.11.0.004@" + DB_DIGEST
+DOCKER_HUB_DB_IMAGE = "supabase/postgres:17.11.0.004@" + DB_DIGEST
+
+
+class _OwnedDocker:
+    """Docker answers for one owned database container whose image and ID can change."""
+
+    def __init__(self, values: dict[str, str], image: object) -> None:
+        identity = values["SLATEOPS_INSTANCE_ID"]
+        self.container_id = "a" * 64
+        self.image = image
+        self.identity = identity
+        self.port = values["SUPABASE_DB_PORT"]
+
+    def docker_json(self, arguments: list[str]) -> list[dict[str, object]]:
+        identity = self.identity
+        if arguments[0] == "inspect":
+            return [
+                {
+                    "Id": self.container_id,
+                    "State": {"Running": True},
+                    "Config": {
+                        "Image": self.image,
+                        "Labels": {
+                            "com.docker.compose.project": identity,
+                            "com.docker.compose.project.working_dir": str(
+                                environment.SUPABASE_COMPOSE_PATH.parent
+                            ),
+                            "com.docker.compose.service": "db",
+                        },
+                    },
+                    "Mounts": [
+                        {
+                            "Type": "volume",
+                            "Destination": "/var/lib/postgresql/data",
+                            "Name": f"{identity}_supabase-db-data",
+                        }
+                    ],
+                    "NetworkSettings": {
+                        "Networks": {f"{identity}_provider": {"NetworkID": "b" * 64}}
+                    },
+                    "HostConfig": {
+                        "PortBindings": {
+                            "5432/tcp": [{"HostIp": "127.0.0.1", "HostPort": self.port}]
+                        }
+                    },
+                }
+            ]
+        kind = arguments[0]
+        return [
+            {
+                "Id": "b" * 64,
+                "Name": f"{identity}_supabase-db-data",
+                "Labels": {
+                    "com.docker.compose.project": identity,
+                    f"com.docker.compose.{kind}": (
+                        "provider" if kind == "network" else "supabase-db-data"
+                    ),
+                },
+            }
+        ]
+
+    def ownership(self) -> dict[str, object]:
+        identity = self.identity
+        return {
+            "compose_project": identity,
+            "container_id": self.container_id,
+            "image": self.image,
+            "working_dir": str(environment.SUPABASE_COMPOSE_PATH.parent),
+            "network": f"{identity}_provider",
+            "network_id": "b" * 64,
+            "volume": f"{identity}_supabase-db-data",
+            "host_port": int(self.port),
+            "container_port": 5432,
+        }
+
+
+class DatabaseImageAdmissionTests(unittest.TestCase):
+    """H9 moved the database image to GHCR at the same digest (plan W5b-10)."""
+
+    def _preflight(self, root: Path, docker: _OwnedDocker, subcommand: str) -> None:
+        values = fixture()
+        # "up-volume": the container was removed and only the attested volume remains,
+        # so the attestation alone decides.
+        retained = subcommand == "up-volume"
+        volume_filter = f"name=^{values['SLATEOPS_INSTANCE_ID']}_supabase-db-data$"
+
+        def docker_output(arguments: list[str]) -> str:
+            return "volume\n" if retained and volume_filter in arguments else ""
+
+        with (
+            patch.object(environment, "ROOT", root),
+            patch.object(
+                environment,
+                "_compose_project_containers",
+                return_value=[] if retained else ["a" * 64],
+            ),
+            patch.object(environment, "_docker_json", side_effect=docker.docker_json),
+            patch.object(environment, "_docker_output", side_effect=docker_output),
+        ):
+            command = "up" if retained else subcommand
+            environment._preflight_compose_mutation(values, command, [command])
+
+    def test_only_the_dev_preflight_admits_both_names_of_the_pinned_digest(self) -> None:
+        # Each attested and live image, and whether the dev.py preflight admits it.
+        cases = [
+            (GHCR_DB_IMAGE, True),
+            (DOCKER_HUB_DB_IMAGE, True),
+            ("supabase/postgres:17.11.0.004@sha256:" + "0" * 64, False),  # another digest
+            ("docker.io/supabase/postgres:17.11.0.004@" + DB_DIGEST, False),  # third name
+            ("registry.example/supabase/postgres:17.11.0.004@" + DB_DIGEST, False),
+            ("supabase/postgres:17.11.0.004", False),  # tag only
+            ("ghcr.io/supabase/postgres:17.11.0.004", False),  # tag only
+            ("supabase/postgres@" + DB_DIGEST, False),  # digest without the tag
+            (DOCKER_HUB_DB_IMAGE + "0", False),  # suffix
+            (DOCKER_HUB_DB_IMAGE[:-1], False),  # prefix
+            ([DOCKER_HUB_DB_IMAGE], False),  # not a string
+        ]
+        for image, admitted in cases:
+            for subcommand in ("up", "stop", "down", "ps", "up-volume"):
+                with (
+                    self.subTest(image=image, subcommand=subcommand),
+                    tempfile.TemporaryDirectory() as directory,
+                ):
+                    root = Path(directory)
+                    docker = _OwnedDocker(fixture(), image)
+                    with patch.object(environment, "ROOT", root):
+                        environment.write_instance_attestation(fixture(), docker.ownership())
+                    if admitted:
+                        self._preflight(root, docker, subcommand)
+                    else:
+                        with self.assertRaises(environment.ConfigurationError):
+                            self._preflight(root, docker, subcommand)
+
+    def test_an_old_attestation_never_admits_a_new_container_or_the_reverse(self) -> None:
+        for attested, live in (
+            (DOCKER_HUB_DB_IMAGE, GHCR_DB_IMAGE),
+            (GHCR_DB_IMAGE, DOCKER_HUB_DB_IMAGE),
+        ):
+            with self.subTest(attested=attested), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                docker = _OwnedDocker(fixture(), attested)
+                with patch.object(environment, "ROOT", root):
+                    environment.write_instance_attestation(fixture(), docker.ownership())
+                docker.image = live
+                with self.assertRaisesRegex(environment.ConfigurationError, "changed"):
+                    self._preflight(root, docker, "stop")
+
+    def test_up_on_the_old_name_writes_a_new_name_attestation_the_api_accepts(self) -> None:
+        from app.core.config import instance
+
+        values = fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env_file = root / "installation.env"
+            env_file.write_text("# private\n", encoding="utf-8")
+            env_file.chmod(0o600)
+            api_process = {
+                "SLATEOPS_INSTANCE_ID": values["SLATEOPS_INSTANCE_ID"],
+                "POSTGRES_HOST": values["POSTGRES_HOST"],
+                "POSTGRES_PORT": values["SUPABASE_DB_PORT"],
+                "POSTGRES_DATABASE": values["POSTGRES_DATABASE"],
+            }
+            docker = _OwnedDocker(values, DOCKER_HUB_DB_IMAGE)
+
+            def recreate(arguments: list[str], _projected: dict[str, str]) -> int:
+                self.assertEqual(arguments, ["up", "-d"])
+                docker.container_id = "c" * 64
+                docker.image = GHCR_DB_IMAGE
+                return 0
+
+            with (
+                patch.object(environment, "ROOT", root),
+                patch.object(
+                    environment, "SUPABASE_COMPOSE_PATH", root / "infra/supabase/compose.yaml"
+                ),
+                patch.object(instance, "REPOSITORY_ROOT", root),
+                patch.object(environment, "read_environment", return_value=values),
+                patch.object(environment, "_compose_project_containers", return_value=["a" * 64]),
+                patch.object(environment, "_docker_json", side_effect=docker.docker_json),
+                patch.object(environment, "_docker_output", return_value=""),
+                patch.object(environment, "run_compose", side_effect=recreate),
+            ):
+                environment.write_instance_attestation(values, docker.ownership())
+                with self.assertRaises(instance.InstanceTargetError):
+                    instance.load_instance_target(api_process)
+
+                self.assertEqual(
+                    environment.main(["--env-file", str(env_file), "compose", "up", "-d"]), 0
+                )
+
+                path, payload = environment._read_instance_attestation(values)
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(payload["ownership"]["image"], GHCR_DB_IMAGE)
+                self.assertEqual(payload["ownership"]["container_id"], "c" * 64)
+                instance.load_instance_target(api_process)
+
+    def test_the_attestation_written_after_up_never_carries_the_old_name(self) -> None:
+        values = fixture()
+        docker = _OwnedDocker(values, DOCKER_HUB_DB_IMAGE)
+        with (
+            patch.object(environment, "_compose_project_containers", return_value=["a" * 64]),
+            patch.object(environment, "_docker_json", side_effect=docker.docker_json),
+            self.assertRaises(environment.ConfigurationError),
+        ):
+            environment.inspect_instance_ownership(values)
+
+    def _up_leaving_the_old_container(self, compose_result: int) -> tuple[int, Any, str]:
+        """Run `compose up -d` through main() while Compose keeps the Docker Hub `db`."""
+        values = fixture()
+        docker = _OwnedDocker(values, DOCKER_HUB_DB_IMAGE)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env_file = root / "installation.env"
+            env_file.write_text("# private\n", encoding="utf-8")
+            env_file.chmod(0o600)
+            stderr = io.StringIO()
+            with (
+                patch.object(environment, "ROOT", root),
+                patch.object(environment, "read_environment", return_value=values),
+                patch.object(environment, "_compose_project_containers", return_value=["a" * 64]),
+                patch.object(environment, "_docker_json", side_effect=docker.docker_json),
+                patch.object(environment, "_docker_output", return_value=""),
+                patch.object(environment, "run_compose", return_value=compose_result),
+            ):
+                environment.write_instance_attestation(values, docker.ownership())
+                with (
+                    patch.object(
+                        environment,
+                        "write_instance_attestation",
+                        wraps=environment.write_instance_attestation,
+                    ) as write,
+                    redirect_stderr(stderr),
+                ):
+                    result = environment.main(
+                        ["--env-file", str(env_file), "compose", "up", "-d"]
+                    )
+        return result, write, stderr.getvalue()
+
+    def test_a_successful_up_that_keeps_the_old_container_writes_no_attestation(self) -> None:
+        result, write, stderr = self._up_leaving_the_old_container(0)
+        self.assertEqual(result, 2)
+        self.assertIn("Docker ownership does not match", stderr)
+        write.assert_not_called()
+
+    def test_a_failed_up_that_keeps_the_old_container_writes_no_attestation(self) -> None:
+        result, write, _stderr = self._up_leaving_the_old_container(17)
+        self.assertEqual(result, 17)
+        write.assert_not_called()
+
+    def test_the_preflight_set_is_exactly_the_two_full_database_names(self) -> None:
+        # Remove the Docker Hub entry (and this case) at whichever comes first: (a) pull
+        # request 115 has merged, no `db` container has `Config.Image` equal to it, and
+        # no attestation whose volume still exists holds it; (b) the change that next
+        # edits SUPABASE_DB_TAG_AND_DIGEST, in that same change.
+        self.assertEqual(
+            environment.PREFLIGHT_DB_IMAGES, frozenset({GHCR_DB_IMAGE, DOCKER_HUB_DB_IMAGE})
+        )
 
 
 if __name__ == "__main__":

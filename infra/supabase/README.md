@@ -8,14 +8,14 @@ The service wiring follows Supabase [`self-hosted/v0.8.2`](https://github.com/su
 
 | Service | Image tag | Pinned index digest |
 | --- | --- | --- |
-| Database | `supabase/postgres:17.11.0.004` | `6058a6759ab9268cff8ee70641d61f1bd75953316281b76427cf5a6b4db2eafc` |
-| Auth | `supabase/gotrue:v2.196.0` | `c0c25187a6b835e65a6f6e6c6b39d090e832d40e6de5186f2c038e0411944232` |
-| Storage | `supabase/storage-api:v1.81.0` | `98ffec5d0678803783c30e404c27f4ec65e97efbe014088f2a86b4b8b54b9f54` |
+| Database | `ghcr.io/supabase/postgres:17.11.0.004` | `6058a6759ab9268cff8ee70641d61f1bd75953316281b76427cf5a6b4db2eafc` |
+| Auth | `ghcr.io/supabase/gotrue:v2.196.0` | `c0c25187a6b835e65a6f6e6c6b39d090e832d40e6de5186f2c038e0411944232` |
+| Storage | `ghcr.io/supabase/storage-api:v1.81.0` | `98ffec5d0678803783c30e404c27f4ec65e97efbe014088f2a86b4b8b54b9f54` |
 | Gateway | `envoyproxy/envoy:v1.39.1` | `57e14a549d7bd43c8d3f6d03e8cfa653e037d4b38e133acd9b54f38c524401b4` |
-| Studio | `supabase/studio:2026.10.05-sha-94b8b06` | `d878dcd9dba73b66d1c2c19aeaf53d07704e71604d93013225be1d1c51475237` |
-| postgres-meta | `supabase/postgres-meta:v0.100.0` | `145325b7e39f8ef4931d6e8cfd3f6f4d655de09d72a2ccc96d9513542c2202bd` |
-| imgproxy | `darthsim/imgproxy:v3.31.4` | `73c5dda13199745b0d2d00e4149d4a589c5b2e205dbf335ca05eca8276b54712` |
-| Realtime | `supabase/realtime:v2.143.3` | `768b559241dd234c4e8852c5c0f504e598b80f1df2ad4dd78d5486fbed2f17a2` |
+| Studio | `ghcr.io/supabase/studio:2026.10.05-sha-94b8b06` | `d878dcd9dba73b66d1c2c19aeaf53d07704e71604d93013225be1d1c51475237` |
+| postgres-meta | `ghcr.io/supabase/postgres-meta:v0.100.0` | `145325b7e39f8ef4931d6e8cfd3f6f4d655de09d72a2ccc96d9513542c2202bd` |
+| imgproxy | `ghcr.io/imgproxy/imgproxy:v3.31.4` | `73c5dda13199745b0d2d00e4149d4a589c5b2e205dbf335ca05eca8276b54712` |
+| Realtime | `ghcr.io/supabase/realtime:v2.143.3` | `768b559241dd234c4e8852c5c0f504e598b80f1df2ad4dd78d5486fbed2f17a2` |
 | Development mail catcher | `axllent/mailpit:v1.27.9` | `b004cc0672d0692f097ba8ab9e5956ae08eeafee3d0a6bf2ab239750101ac538` |
 
 The three provider DNS/port pairs are `auth:9999`, `storage:5000`, and `realtime:4000`; the internal gateway is `api-gw:8000` and PostgreSQL is `db:5432`. The gateway publishes `127.0.0.1:${SUPABASE_API_PORT:-58000}` for host-run development and operator Studio access. PostgreSQL publishes `127.0.0.1:${SUPABASE_DB_PORT:-55432}` in development only. The production overlay has no published database port. Docker Desktop needs a non-internal network for each published port to become reachable, so the gateway has its own `gateway-host` network and the development database has `db-host`; their Compose port bindings stay loopback-only. `api-gw` serves Auth, Storage, and Studio; `/pg` and `/pg/` return 404, and `/realtime/v1/websocket` reaches Realtime with a header `apikey`; the rest of `/realtime/` (including the Realtime REST and tenant API), `/rest/`, `/graphql/`, `/functions/`, and MCP routes are blocked. It rejects `apikey` query parameters; provider keys are accepted in headers only. Gateway access logs omit paths, query strings, referrers, and headers so email token hashes and API keys do not enter them. Studio uses Envoy Basic Auth and is loopback-only. PostgreSQL and postgres-meta share the internal `operator` network; Studio joins `operator` and `studio-ingress`, while the gateway joins `provider` and `studio-ingress` plus its loopback-publication network. The API has no direct network path to postgres-meta or Studio. The provider communication networks remain internal to Compose; Auth also joins a network for SMTP and for development access to the host-run template endpoint.

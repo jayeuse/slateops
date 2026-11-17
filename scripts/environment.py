@@ -27,7 +27,10 @@ INSTANCE_ID = re.compile(r"[a-z][a-z0-9-]{2,62}\Z")
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.core.config.development import is_local_development_host  # noqa: E402
-from app.core.config.disposable_instance import SUPABASE_DB_IMAGE  # noqa: E402
+from app.core.config.disposable_instance import (  # noqa: E402
+    SUPABASE_DB_IMAGE,
+    SUPABASE_DB_TAG_AND_DIGEST,
+)
 from app.core.config.environment import (  # noqa: E402
     ConfigurationError,
     read_environment,
@@ -36,6 +39,18 @@ from app.core.config.environment import (  # noqa: E402
 )
 
 __all__ = ("ConfigurationError", "read_environment")
+
+# H9 moved the database image from Docker Hub to GHCR at the same digest (plan W5b-10).
+# Only the dev.py preflight below also admits the Docker Hub name of that one digest, so
+# an existing development stack can run `up`, which writes a new attestation under the
+# GHCR name. Exact string equality only. The API and the test runner stay exact.
+# Remove the Docker Hub entry and the `preflight` flag at whichever comes first:
+# (a) pull request 115 has merged, no `db` container has `Config.Image` equal to the
+#     Docker Hub entry, and no attestation whose volume still exists holds it;
+# (b) the change that next edits SUPABASE_DB_TAG_AND_DIGEST, in that same change.
+PREFLIGHT_DB_IMAGES = frozenset(
+    {SUPABASE_DB_IMAGE, "supabase/postgres:" + SUPABASE_DB_TAG_AND_DIGEST}
+)
 
 SETTINGS_KEYS = (
     "ENVIRONMENT",
@@ -361,9 +376,14 @@ def _compose_resource_labels(resource: dict[str, Any], identity: str, kind: str)
 
 
 def inspect_instance_ownership(
-    values: dict[str, str], *, allow_stopped: bool = False
+    values: dict[str, str], *, allow_stopped: bool = False, preflight: bool = False
 ) -> dict[str, object]:
-    """Read container, network and volume ownership facts from Docker itself."""
+    """Read container, network and volume ownership facts from Docker itself.
+
+    Only a preflight admits PREFLIGHT_DB_IMAGES; the read that feeds a new attestation
+    admits SUPABASE_DB_IMAGE alone.
+    """
+    images = PREFLIGHT_DB_IMAGES if preflight else frozenset({SUPABASE_DB_IMAGE})
     identity = instance_id(values)
     identifiers = _compose_project_containers(values)
     if len(identifiers) != 1:
@@ -395,7 +415,7 @@ def inspect_instance_ownership(
             and labels.get("com.docker.compose.project.working_dir")
             == str(SUPABASE_COMPOSE_PATH.parent)
             and labels.get("com.docker.compose.service") == "db"
-            and config.get("Image") == SUPABASE_DB_IMAGE
+            and config.get("Image") in images
             and (
                 container["State"]["Running"] is True
                 or (allow_stopped and container["State"]["Running"] is False)
@@ -459,7 +479,8 @@ def _read_instance_attestation(values: dict[str, str]) -> tuple[Path, dict[str, 
         or not isinstance(payload.get("ownership"), dict)
         or payload["ownership"].get("volume") != f"{identity}_supabase-db-data"
         or payload["ownership"].get("network") != f"{identity}_provider"
-        or payload["ownership"].get("image") != SUPABASE_DB_IMAGE
+        or not isinstance(payload["ownership"].get("image"), str)
+        or payload["ownership"]["image"] not in PREFLIGHT_DB_IMAGES
         or payload["ownership"].get("working_dir") != str(SUPABASE_COMPOSE_PATH.parent)
     ):
         raise ConfigurationError("Slate Operations instance attestation is unavailable or invalid")
@@ -497,7 +518,7 @@ def _verify_attested_resources(values: dict[str, str]) -> None:
 
 
 def _verify_live_instance(values: dict[str, str]) -> dict[str, object]:
-    ownership = inspect_instance_ownership(values, allow_stopped=True)
+    ownership = inspect_instance_ownership(values, allow_stopped=True, preflight=True)
     _path, payload = _read_instance_attestation(values)
     if payload.get("ownership") != ownership:
         raise ConfigurationError("Live Docker ownership changed; refusing the operation")
@@ -535,7 +556,7 @@ def _preflight_compose_mutation(
         raise ConfigurationError("Compose command is not supported by the attested wrapper")
     if subcommand == "ps":
         if _compose_project_containers(values):
-            inspect_instance_ownership(values, allow_stopped=True)
+            inspect_instance_ownership(values, allow_stopped=True, preflight=True)
         return
     if subcommand not in {"up", "start", "stop", "restart", "down"}:
         return
