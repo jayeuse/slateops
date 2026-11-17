@@ -12,11 +12,14 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from app.core.config.instance import instance_target_for_process
 from app.core.observability import log_event
+
+if TYPE_CHECKING:
+    from operations.backups.fail_open import Clock, Recover
 
 ROOT = Path(__file__).resolve().parents[3]
 SERVICES = frozenset(
@@ -470,3 +473,8 @@ class Host:
         from operations.backups.docker import resume_existing
 
         resume_existing(self, journal)
+
+    def fail_open(self, journal: Json, now: Clock, recover: Recover) -> dict[str, object]:
+        from operations.backups.fail_open import fail_open
+
+        return fail_open(self, journal, now, recover)

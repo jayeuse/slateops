@@ -328,7 +328,7 @@ def run_once(
                 host.finish_empty(active)
                 active = None
         if active is not None:
-            raise RunnerError("recovery_required")
+            return host.fail_open(active, now, recover_claim)
         view = host.bridge({"op": "inspect"})
         if view.get("unresolved") is not None:
             raise RunnerError("recovery_required")

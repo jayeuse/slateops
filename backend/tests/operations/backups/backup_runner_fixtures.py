@@ -47,6 +47,12 @@ VOLUMES = (
 )
 
 
+def active_journal(state: Path) -> tuple[Path, dict[str, Any]]:
+    pointer = json.loads((state / "client-a" / "active.json").read_text())
+    path = state / "client-a" / "claims" / pointer["claim_id"] / "journal.json"
+    return path, json.loads(path.read_text())
+
+
 def private_file(path: Path, value: str) -> Path:
     path.write_text(value)
     path.chmod(0o600)
