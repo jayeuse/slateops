@@ -14,6 +14,8 @@ Windows PowerShell 5.1, ASCII only.
 [CmdletBinding()]
 param()
 
+# S91-6: modules load only from Windows PowerShell's own folder.
+$env:PSModulePath = Join-Path $PSHOME 'Modules'
 foreach ($name in @('Common', 'Checks', 'Exec')) { . (Join-Path $PSScriptRoot ('lib\{0}.ps1' -f $name)) }
 
 $layout = New-SlateOpsLayout
@@ -46,18 +48,23 @@ while ($true) {
         Write-RunLog 'boot.attach' 'INFO' ('attach {0}: > wsl.exe -d {1} -u root --exec {2} infinity' -f $attach, $SlateOps.DistroName, $SlateOps.KeepAlivePath)
         # -PassThru and WaitForExit() wait for wsl.exe only; Start-Process -Wait would wait for
         # every child too. Reading Handle first keeps ExitCode available (kit).
+        # P3-4: fixed file names, overwritten at each attach, so the run folder does not grow
+        # while the task runs for months.
         $process = Start-Process -FilePath $wslExe -ArgumentList @('-d', $SlateOps.DistroName, '-u', 'root', '--exec', $SlateOps.KeepAlivePath, 'infinity') `
-            -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $runDir ('keepalive-{0}.out.txt' -f $attach)) `
-            -RedirectStandardError (Join-Path $runDir ('keepalive-{0}.err.txt' -f $attach))
+            -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $runDir 'keepalive.out.txt') `
+            -RedirectStandardError (Join-Path $runDir 'keepalive.err.txt')
         $null = $process.Handle
         $statusInput = Get-StatusInput
         if ($statusInput) {
-            $stdout = Join-Path $runDir ('status-{0}.json' -f $attach)
-            $stderr = Join-Path $runDir ('status-{0}.err.txt' -f $attach)
+            $stdout = Join-Path $runDir 'status.json'
+            $stderr = Join-Path $runDir 'status.err.txt'
+            foreach ($path in @($stdout, $stderr)) { if (Test-Path -LiteralPath $path) { Remove-PathNoFollow -Path $path } }
             $writer = { param($sink) Write-InputBytes -Sink $sink -Buffer $statusInput }
             $run = Invoke-ProcessWithInput -FilePath $wslExe -ArgumentList (Get-EngineArguments -Job 'status') -WriteInput $writer -StdoutPath $stdout -StderrPath $stderr
             $null = Limit-ErrorFile -Path $stderr
-            $engine = Get-EngineCode -Path $stdout
+            # S91-8: the cap is checked again before the file is read.
+            if (($run.stdout_total -gt $SlateOpsExec.StdoutCap) -or ((Get-Item -LiteralPath $stdout -Force).Length -gt $SlateOpsExec.StdoutCap)) { $engine = @{ code = 'output_too_large' } }
+            else { $engine = Get-EngineCode -Path $stdout }
             Write-RunLog 'boot.status' 'INFO' ('status: exit code {0}, code {1}, {2} ms' -f $run.exit_code, $engine.code, $run.duration_ms)
         } else {
             Write-RunLog 'boot.status' 'WARN' 'status skipped: the Windows-part or the WSL version cannot be read'

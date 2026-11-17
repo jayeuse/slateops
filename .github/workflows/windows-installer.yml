@@ -9,11 +9,21 @@ on:
     paths:
       - "infra/windows/installer/**"
       - ".github/workflows/windows-installer.yml"
+      # The engine wire contract that the Windows side follows (P3-8).
+      - "packaging/engine/receive.py"
+      - "packaging/engine/status.py"
+      - "packaging/engine/log_bundle.py"
+      - "packaging/engine/release.py"
   push:
     branches: [main]
     paths:
       - "infra/windows/installer/**"
       - ".github/workflows/windows-installer.yml"
+      # The engine wire contract that the Windows side follows (P3-8).
+      - "packaging/engine/receive.py"
+      - "packaging/engine/status.py"
+      - "packaging/engine/log_bundle.py"
+      - "packaging/engine/release.py"
 
 concurrency:
   group: windows-installer-${{ github.workflow }}-${{ github.ref }}

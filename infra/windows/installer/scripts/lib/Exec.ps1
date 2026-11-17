@@ -237,23 +237,63 @@ function Start-ProcessWithoutPreamble {
     }
 }
 
+function Initialize-CappedCopyType {
+    # A copy on a thread-pool task that keeps at most "cap" bytes and reads the rest of the
+    # stream without keeping it, so the child never blocks on a full pipe and no file grows past
+    # its cap (S91-8). Returns the number of bytes the stream gave. Windows PowerShell cannot
+    # run a script block on a thread-pool thread, so this is C#.
+    if ('SlateOpsSetup.CappedCopy' -as [type]) { return }
+    $source = @'
+using System;
+using System.IO;
+using System.Threading.Tasks;
+namespace SlateOpsSetup
+{
+    public static class CappedCopy
+    {
+        public static Task<long> Start(Stream source, Stream target, long cap)
+        {
+            return Task.Run(() =>
+            {
+                byte[] buffer = new byte[81920];
+                long total = 0;
+                int read;
+                while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    if (total < cap) { target.Write(buffer, 0, (int)Math.Min((long)read, cap - total)); }
+                    total += read;
+                }
+                target.Flush();
+                return total;
+            });
+        }
+    }
+}
+'@
+    Add-Type -TypeDefinition $source -Language CSharp
+}
+
 function Invoke-ProcessWithInput {
-    # Starts FilePath with fixed arguments, drains standard output and standard error into files
-    # on thread-pool tasks (so a large input cannot deadlock on a full output pipe), gives
-    # WriteInput a sink (@{ Stream; Process; Written }) for the raw input stream (never the
-    # PowerShell pipeline; Write-InputBytes writes to it), and
-    # waits. A write that fails because the process closed its input is reported as pipe_closed
-    # (a receive refusal closes standard input early; TASK-0083 carry).
+    # Starts FilePath with fixed arguments, copies standard output and standard error into files
+    # on thread-pool tasks with their caps applied while reading (so a large input cannot
+    # deadlock on a full output pipe, and no file passes its cap), gives WriteInput a sink
+    # (@{ Stream; Process; Written }) for the raw input stream (never the PowerShell pipeline;
+    # Write-InputBytes writes to it), and waits. Only Write-InputBytes' "input_closed" (the
+    # process ended before it read all input: a receive refusal, TASK-0083 carry) counts as
+    # pipe_closed; any other error is thrown (P3-3).
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][string[]]$ArgumentList,
         [Parameter(Mandatory = $true)][scriptblock]$WriteInput,
         [Parameter(Mandatory = $true)][string]$StdoutPath,
-        [Parameter(Mandatory = $true)][string]$StderrPath
+        [Parameter(Mandatory = $true)][string]$StderrPath,
+        [long]$StdoutCap = $SlateOpsExec.StdoutCap,
+        [long]$StderrCap = $SlateOpsExec.StderrCap
     )
     foreach ($argument in $ArgumentList) {
         if ($argument -notmatch '^[A-Za-z0-9/._-]+$') { throw 'An argument holds a character that needs quoting.' }
     }
+    Initialize-CappedCopyType
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.FileName = $FilePath
     $info.Arguments = ($ArgumentList -join ' ')
@@ -270,8 +310,8 @@ function Invoke-ProcessWithInput {
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         Start-ProcessWithoutPreamble -Process $process
-        $outTask = $process.StandardOutput.BaseStream.CopyToAsync($outFile)
-        $errTask = $process.StandardError.BaseStream.CopyToAsync($errFile)
+        $outTask = [SlateOpsSetup.CappedCopy]::Start($process.StandardOutput.BaseStream, $outFile, $StdoutCap)
+        $errTask = [SlateOpsSetup.CappedCopy]::Start($process.StandardError.BaseStream, $errFile, $StderrCap)
         $inStream = $process.StandardInput.BaseStream
         $sink = @{ Stream = $inStream; Process = $process; Written = [long]0 }
         try {
@@ -279,15 +319,15 @@ function Invoke-ProcessWithInput {
             $inStream.Flush()
         } catch {
             $inner = $_.Exception
-            while ($inner -and -not ($inner -is [System.IO.IOException])) { $inner = $inner.InnerException }
-            if (($inner -is [System.IO.IOException]) -and -not ($inner -is [System.IO.FileNotFoundException])) { $pipeClosed = $true }
-            else { throw }
+            while ($inner -and -not (($inner -is [System.IO.IOException]) -and ($inner.Message -eq 'input_closed'))) { $inner = $inner.InnerException }
+            if ($inner) { $pipeClosed = $true } else { throw }
         } finally {
-            try { $inStream.Dispose() } catch { $pipeClosed = $true }
+            # .NET Framework ignores a closed pipe on the final flush; nothing to report here.
+            try { $inStream.Dispose() } catch { $null = $_ }
         }
         $process.WaitForExit()
-        $outTask.Wait()
-        $errTask.Wait()
+        $stdoutTotal = $outTask.Result
+        $stderrTotal = $errTask.Result
         $exitCode = $process.ExitCode
     } finally {
         $watch.Stop()
@@ -295,7 +335,7 @@ function Invoke-ProcessWithInput {
         $errFile.Dispose()
         $process.Dispose()
     }
-    return @{ exit_code = $exitCode; pipe_closed = $pipeClosed; duration_ms = $watch.ElapsedMilliseconds }
+    return @{ exit_code = $exitCode; pipe_closed = $pipeClosed; duration_ms = $watch.ElapsedMilliseconds; stdout_total = [long]$stdoutTotal; stderr_total = [long]$stderrTotal }
 }
 
 function Limit-ErrorFile {
@@ -429,7 +469,7 @@ function Invoke-EngineJob {
     $Result.pipe_closed = [bool]$run.pipe_closed
     $Result.stdout_bytes = [long]$outItem.Length
     Write-RunLog ('exec.{0}' -f $job) 'INFO' ('  exit code {0}, {1} ms, stdout {2} bytes, stderr {3} bytes, input closed early {4}' -f $run.exit_code, $run.duration_ms, $outItem.Length, $errBytes, $run.pipe_closed)
-    if ($outItem.Length -gt $SlateOpsExec.StdoutCap) {
+    if (($run.stdout_total -gt $SlateOpsExec.StdoutCap) -or ($outItem.Length -gt $SlateOpsExec.StdoutCap)) {
         Remove-PathNoFollow -Path $stdout
         $Result.code = 'output_too_large'; $Result.message_key = 'exec.output_too_large'; $Result.exit_code = 3
         return $Result
@@ -546,7 +586,7 @@ function Invoke-WindowsJob {
     switch ($Check.job) {
         'wslconfig' {
             $state = Read-InstallState -Layout $Layout
-            $path = Join-Path $env:USERPROFILE '.wslconfig'
+            $path = Join-Path (Get-UserProfilePath) '.wslconfig'
             $lines = Get-WslConfigText -VhdSizeGB $state.vhd_size_gb
             [System.IO.File]::WriteAllText($path, (($lines -join "`r`n") + "`r`n"), [System.Text.Encoding]::ASCII)
             foreach ($line in $lines) { Write-RunLog $step 'INFO' ('  {0}' -f $line) }
@@ -556,17 +596,32 @@ function Invoke-WindowsJob {
             $state = Read-InstallState -Layout $Layout
             Set-LayoutDataRoot -Layout $Layout -DataRoot $state.data_root
             $setup = Read-SetupVersion -Path (Join-Path $Layout.Scripts 'version.json')
+            # S91-2: the folders above the data folder and the data tree, right before the read.
+            $own = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+            $problems = @(Get-FolderParentProblem -Path $Layout.DataRoot) + @(Get-TreeProblem -Tree $Layout.DataTree -ServiceSid $own)
+            if ($problems.Count -gt 0) {
+                foreach ($problem in $problems) { Write-RunLog $step 'FAIL' $problem }
+                $Result.code = 'data_folder_parent_unsafe'; $Result.exit_code = 3; $Result.message_key = 'exec.data_folder_parent_unsafe'; return $Result
+            }
             $list = Invoke-Logged -Step $step -FilePath $WslPath -ArgumentList @('--list', '--quiet') -NoThrow
             if (@($list.Output | Where-Object { $_.Trim() -eq $SlateOps.DistroName }).Count -gt 0) {
                 $Result.code = 'already_imported'
             } else {
                 $image = Join-Path $Layout.Payload $setup.linux_image_name
                 $tar = Join-Path $Layout.Distro 'rootfs.tar'
-                # Checked right before the import (plan 4.1 page 4a, 5.2).
-                $hash = Get-FileSha256 -Path $image
-                Write-RunLog $step 'INFO' ('  SHA-256 of {0}: {1}' -f $setup.linux_image_name, $hash)
-                if ($hash -ne $setup.linux_image_sha256) { $Result.code = 'image_hash_mismatch'; $Result.exit_code = 3; $Result.message_key = 'exec.image_hash_mismatch'; return $Result }
-                Expand-GzipFile -Source $image -Destination $tar
+                # S91-2: one handle on the image, shared for reading only (no write, no delete or
+                # rename), held from the hash through the decompression, so the bytes unpacked are
+                # the bytes hashed. The plain tar goes into distro, which only this account and
+                # administrators can write. (A stream import with "-" would know the hash only
+                # after WSL has registered the distribution.)
+                $handle = [System.IO.File]::Open($image, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+                try {
+                    $hash = Get-StreamSha256 -Stream $handle
+                    Write-RunLog $step 'INFO' ('  SHA-256 of {0}: {1}' -f $setup.linux_image_name, $hash)
+                    if ($hash -ne $setup.linux_image_sha256) { $Result.code = 'image_hash_mismatch'; $Result.exit_code = 3; $Result.message_key = 'exec.image_hash_mismatch'; return $Result }
+                    [void]$handle.Seek(0, [System.IO.SeekOrigin]::Begin)
+                    Expand-GzipStream -Source $handle -Destination $tar
+                } finally { $handle.Dispose() }
                 try {
                     $import = Invoke-Logged -Step $step -FilePath $WslPath -ArgumentList @('--import', $SlateOps.DistroName, $Layout.Distro, $tar, '--version', '2') -NoThrow
                 } finally { Remove-PathNoFollow -Path $tar }
@@ -578,7 +633,7 @@ function Invoke-WindowsJob {
             foreach ($arguments in @(@('--version'), @('--status'), @('--list', '--verbose'))) {
                 $null = Invoke-Logged -Step $step -FilePath $WslPath -ArgumentList $arguments -NoThrow
             }
-            $config = Join-Path $env:USERPROFILE '.wslconfig'
+            $config = Join-Path (Get-UserProfilePath) '.wslconfig'
             if (Test-Path -LiteralPath $config) {
                 foreach ($line in (Get-Content -LiteralPath $config)) { Write-RunLog $step 'INFO' ('  .wslconfig: {0}' -f $line) }
             } else { Write-RunLog $step 'WARN' '  .wslconfig is missing' }
@@ -590,15 +645,18 @@ function Invoke-WindowsJob {
     return $Result
 }
 
-function Expand-GzipFile {
-    # Kit function: wsl --import gets a plain tar.
-    param([Parameter(Mandatory = $true)][string]$Source, [Parameter(Mandatory = $true)][string]$Destination)
-    $in = [System.IO.File]::OpenRead($Source)
-    try {
-        $gzip = New-Object System.IO.Compression.GZipStream($in, [System.IO.Compression.CompressionMode]::Decompress)
-        $out = [System.IO.File]::Open($Destination, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
-        try { $gzip.CopyTo($out, 1MB) } finally { $out.Dispose(); $gzip.Dispose() }
-    } finally { $in.Dispose() }
+function Get-StreamSha256 {
+    param([Parameter(Mandatory = $true)][System.IO.Stream]$Stream)
+    $sha = New-Object System.Security.Cryptography.SHA256Managed
+    try { return (-join ($sha.ComputeHash($Stream) | ForEach-Object { $_.ToString('x2') })) } finally { $sha.Dispose() }
+}
+
+function Expand-GzipStream {
+    # Kit step: wsl --import gets a plain tar. The caller owns the source handle.
+    param([Parameter(Mandatory = $true)][System.IO.Stream]$Source, [Parameter(Mandatory = $true)][string]$Destination)
+    $gzip = New-Object System.IO.Compression.GZipStream($Source, [System.IO.Compression.CompressionMode]::Decompress, $true)
+    $out = [System.IO.File]::Open($Destination, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+    try { $gzip.CopyTo($out, 1MB) } finally { $out.Dispose(); $gzip.Dispose() }
 }
 
 # ---------------------------------------------------------------------------
@@ -638,6 +696,8 @@ function Get-ExecResult {
     try { $value = Read-JsonFile -Path $Layout.ResultFile } catch { return $null }
     if (-not ($value -is [System.Collections.IDictionary])) { return $null }
     if ([string](Get-DictValue $value 'request_id') -cne $RequestId) { return $null }
+    # S91-3: the request is spent once its result is read; a later start of the task finds none.
+    foreach ($path in @($Layout.RequestFile, $Layout.InputFile)) { if (Test-Path -LiteralPath $path) { Remove-PathNoFollow -Path $path } }
     return $value
 }
 
@@ -650,6 +710,8 @@ function Read-EngineOutput {
     $path = Join-Path $Layout.SvcOut $name
     $item = Get-Item -LiteralPath $path -Force
     if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw 'output_invalid' }
+    # S91-8: the cap again on this side, before the file is read into memory.
+    if ($item.Length -gt $SlateOpsExec.StdoutCap) { throw 'output_too_large' }
     if (($item.Length -ne [long](Get-DictValue $Result 'stdout_bytes')) -or ((Get-FileSha256 -Path $path) -ne [string](Get-DictValue $Result 'stdout_sha256'))) { throw 'output_changed' }
     return ConvertFrom-JsonUnlimited ([System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8))
 }

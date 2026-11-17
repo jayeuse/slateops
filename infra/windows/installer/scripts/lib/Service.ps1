@@ -8,7 +8,7 @@ function Get-ExecTaskDefinition {
     param([Parameter(Mandatory = $true)][string]$ScriptsDir)
     return @{
         TaskName  = $SlateOps.ExecTaskName
-        Execute   = (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
+        Execute   = (Join-Path $SlateOpsPaths.System32 'WindowsPowerShell\v1.0\powershell.exe')
         Argument  = ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}"' -f (Join-Path $ScriptsDir 'exec.ps1'))
         Trigger   = 'none'
         RunLevel  = 'Limited'
@@ -37,7 +37,7 @@ function Get-StartTaskDefinition {
     param([Parameter(Mandatory = $true)][string]$ScriptsDir)
     return @{
         TaskName  = $SlateOps.StartTaskName
-        Execute   = (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
+        Execute   = (Join-Path $SlateOpsPaths.System32 'WindowsPowerShell\v1.0\powershell.exe')
         Argument  = ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}"' -f (Join-Path $ScriptsDir 'start.ps1'))
         Trigger   = 'AtStartup'
         Repetition = 'PT1M'
@@ -252,6 +252,42 @@ function Get-AccountDefinition {
     }
 }
 
+$SlateOps.TaskSddl = 'D:P(A;;FA;;;BA)(A;;FA;;;SY)'
+
+function Get-TaskFolderState {
+    # 'absent', 'product' (only the Exec and Start tasks, or one of them) or 'unknown' (an empty
+    # folder or another task in it; S91-3: setup does not take over a folder it did not make).
+    param([string]$FolderPath = ('\' + $SlateOps.TaskFolder))
+    $service = New-Object -ComObject 'Schedule.Service'
+    $service.Connect()
+    try { $folder = $service.GetFolder($FolderPath) } catch { return 'absent' }
+    $names = @(@($folder.GetTasks(1)) | ForEach-Object { [string]$_.Name })
+    if ($names.Count -eq 0) { return 'unknown' }
+    foreach ($name in $names) { if (@($SlateOps.ExecTaskName, $SlateOps.StartTaskName) -notcontains $name) { return 'unknown' } }
+    return 'product'
+}
+
+function Set-TaskSecurity {
+    # S91-3: the task folder and its tasks: full access for Administrators and SYSTEM only, no
+    # inherited entries, no entry for the task principal (TASK_DONT_ADD_PRINCIPAL_ACE, 0x10).
+    # Task Scheduler runs the task as its principal whatever the object's access list says.
+    param([string]$FolderPath = ('\' + $SlateOps.TaskFolder), [string[]]$TaskNames = @($SlateOps.ExecTaskName, $SlateOps.StartTaskName))
+    $service = New-Object -ComObject 'Schedule.Service'
+    $service.Connect()
+    $folder = $service.GetFolder($FolderPath)
+    $folder.SetSecurityDescriptor($SlateOps.TaskSddl, 0)
+    foreach ($name in $TaskNames) { $folder.GetTask($name).SetSecurityDescriptor($SlateOps.TaskSddl, 0x10) }
+}
+
+function Get-TaskAccessEntries {
+    # The access entries (SDDL ACE strings) of a task's DACL, sorted by code points.
+    param([Parameter(Mandatory = $true)][string]$FolderPath, [Parameter(Mandatory = $true)][string]$TaskName)
+    $service = New-Object -ComObject 'Schedule.Service'
+    $service.Connect()
+    $sddl = [string]$service.GetFolder($FolderPath).GetTask($TaskName).GetSecurityDescriptor(4)
+    return Get-OrdinalSorted @([regex]::Matches($sddl, '\(([^)]*)\)') | ForEach-Object { $_.Groups[1].Value })
+}
+
 function Install-ServiceAccountAndTasks {
     # Creates slateops-svc, gives it its rights and folder access, and registers both tasks with
     # one random password that exists only in this process. Never reuses an existing account
@@ -260,6 +296,22 @@ function Install-ServiceAccountAndTasks {
     $step = 'setup.service'
     if (Get-LocalUser -Name $SlateOps.AccountName -ErrorAction SilentlyContinue) {
         return New-StepResult -Code 'account_exists' -MessageKey 'setup.service.account_exists'
+    }
+    if ((Get-TaskFolderState) -eq 'unknown') {
+        return New-StepResult -Code 'task_folder_unknown' -MessageKey 'setup.service.task_folder_unknown'
+    }
+    # S91-4: the folder that the account record goes into, checked right before the write.
+    Assert-TreeWritable -Tree $Layout.StateTree -Directory $Layout.State -ServiceSid (Get-RecordedServiceSid -Layout $Layout)
+    # P2-3: a recorded account that is gone (a partial earlier step, or a removal) leaves its
+    # entries in the trees; they go before the new account is made.
+    $stale = Get-RecordedServiceSid -Layout $Layout
+    if ($stale) {
+        Write-RunLog $step 'INFO' ('remove the entries of the earlier account {0}' -f $stale)
+        Remove-ServiceAccess -Tree $Layout.StateTree -Sid $stale
+        if ($Layout.DataRoot) { Remove-ServiceAccess -Tree $Layout.DataTree -Sid $stale }
+        $record = Read-WindowsChanges -Layout $Layout
+        $record.Remove('account_sid')
+        Save-WindowsChanges -Layout $Layout -Record $record
     }
     # R7 again right before the password moves (spec 5.2, W80-8): an unreadable policy stops too.
     try { $covered = @(Get-PasswordModuleLogged) } catch { return New-StepResult -Code 'logging_policy_unreadable' -MessageKey 'check.c18.unreadable' }
@@ -271,15 +323,15 @@ function Install-ServiceAccountAndTasks {
     try {
         $secure = ConvertTo-SecureText -Text $password
         Write-RunLog $step 'INFO' ('create the standard local account {0} (random password, not stored, not shown)' -f $definition.Name)
-        New-LocalUser -Name $definition.Name -Password $secure -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires `
-            -FullName $definition.FullName -Description $definition.Description | Out-Null
+        $userParameters = @{
+            Name = $definition.Name; Password = $secure; FullName = $definition.FullName; Description = $definition.Description
+            PasswordNeverExpires = $definition.PasswordNeverExpires; UserMayNotChangePassword = $definition.UserMayNotChangePassword
+            AccountNeverExpires = $definition.AccountNeverExpires
+        }
+        New-LocalUser @userParameters | Out-Null
         $account = Get-LocalUser -Name $definition.Name
         $sid = $account.SID.Value
-        try { Add-LocalGroupMember -SID $SlateOps.SidUsers -Member $account }
-        catch [Microsoft.PowerShell.Commands.MemberExistsException] { Write-RunLog $step 'INFO' '  already a member of Users' }
-        Initialize-LsaRightsType
-        [SlateOpsSetup.LsaRights]::Add($sid, [string[]]$definition.Rights)
-        Write-RunLog $step 'INFO' ('  rights now: {0}' -f (([SlateOpsSetup.LsaRights]::Get($sid)) -join ', '))
+        # Recorded at once, so a later failure still leaves the SID known (P2-3).
         $userList = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList'
         $record = Read-WindowsChanges -Layout $Layout
         if (-not $record.Contains('userlist_key_existed')) {
@@ -288,18 +340,28 @@ function Install-ServiceAccountAndTasks {
         }
         $record.account_sid = $sid
         Save-WindowsChanges -Layout $Layout -Record $record
-        if (-not (Test-Path -LiteralPath $userList)) { New-Item -Path $userList -Force | Out-Null }
-        New-ItemProperty -LiteralPath $userList -Name $definition.Name -PropertyType DWord -Value 0 -Force | Out-Null
-        Write-RunLog $step 'INFO' '  hidden from the sign-in screen'
+        foreach ($group in $definition.Groups) {
+            try { Add-LocalGroupMember -SID $group -Member $account }
+            catch [Microsoft.PowerShell.Commands.MemberExistsException] { Write-RunLog $step 'INFO' ('  already a member of {0}' -f $group) }
+        }
+        Initialize-LsaRightsType
+        [SlateOpsSetup.LsaRights]::Add($sid, [string[]]$definition.Rights)
+        Write-RunLog $step 'INFO' ('  rights now: {0}' -f (([SlateOpsSetup.LsaRights]::Get($sid)) -join ', '))
+        if ($definition.Hidden) {
+            if (-not (Test-Path -LiteralPath $userList)) { New-Item -Path $userList -Force | Out-Null }
+            New-ItemProperty -LiteralPath $userList -Name $definition.Name -PropertyType DWord -Value 0 -Force | Out-Null
+            Write-RunLog $step 'INFO' '  hidden from the sign-in screen'
+        }
 
-        $problems = @(Initialize-ProtectedTree -Tree $Layout.StateTree -ServiceSid $sid)
-        if ($Layout.DataRoot) { $problems += @(Initialize-ProtectedTree -Tree $Layout.DataTree -ServiceSid $sid) }
+        # S91-5: the one call that gives the new account its folder entries.
+        $problems = @(Grant-ServiceAccess -Tree $Layout.StateTree -ServiceSid $sid)
+        if ($Layout.DataRoot) { $problems += @(Grant-ServiceAccess -Tree $Layout.DataTree -ServiceSid $sid) }
         if ($problems.Count -gt 0) {
             Write-RunLog $step 'FAIL' ('folder safety check: {0}' -f ($problems -join '; '))
             return New-StepResult -Code 'folder_unsafe' -MessageKey 'setup.folder_unsafe'
         }
 
-        $qualified = '{0}\{1}' -f $env:COMPUTERNAME, $definition.Name
+        $qualified = '{0}\{1}' -f [Environment]::MachineName, $definition.Name
         foreach ($taskDefinition in @((Get-ExecTaskDefinition -ScriptsDir $Layout.Scripts), (Get-StartTaskDefinition -ScriptsDir $Layout.Scripts))) {
             $objects = New-TaskSettingsFromDefinition -Definition $taskDefinition
             $parameters = @{
@@ -310,6 +372,8 @@ function Install-ServiceAccountAndTasks {
             Write-RunLog $step 'INFO' ('register the task {0}{1} as {2}' -f $SlateOps.TaskPath, $taskDefinition.TaskName, $definition.Name)
             Register-ScheduledTask @parameters | Out-Null
         }
+        Set-TaskSecurity
+        Write-RunLog $step 'INFO' ('  task folder and tasks: {0}' -f $SlateOps.TaskSddl)
     } finally {
         $password = $null
         $secure = $null

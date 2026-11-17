@@ -25,12 +25,12 @@ $SlateOpsCheck = @{
     # The checks that run again on S06 and on Install in S11 (spec 5.2).
     RecheckIds           = @('C08', 'C09', 'C10', 'C12', 'C13', 'C14', 'C21')
     # Plan R-checks whose unreadable value is Advice "cannot read" (spec 5.2; C18 is Fix).
-    RequirementIds       = @('C01', 'C02', 'C04', 'C05', 'C07', 'C10', 'C11', 'C12', 'C21')
+    RequirementIds       = @('C01', 'C02', 'C04', 'C05', 'C07', 'C10', 'C11', 'C12', 'C15', 'C21')
     # Uninstall key of the installed program (Inno AppId, see SlateOpsSetup.iss).
     UninstallKey         = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{8B0C1D7E-3F4A-4E52-9A61-5C2D7B9E0F13}_is1'
     Kit = @{
         AccountName = 'slateops-svc'
-        Root        = (Join-Path $env:ProgramData 'SlateOpsBootTest')
+        Root        = (Join-Path $SlateOpsPaths.ProgramData 'SlateOpsBootTest')
         TaskPath    = '\SlateOpsBootTest\'
         RuleName    = 'SlateOpsBootTest-TCP-8443'
         HyperVRule  = 'SlateOpsBootTest-HyperV-TCP-8443'
@@ -256,12 +256,17 @@ function Test-DnsLabel {
 }
 
 function Test-C15 {
+    # The address is the DNS host name in lower case (P3-9; Windows answers mDNS for it). Advice
+    # when it differs from the NetBIOS name or is longer than 15 characters, because other
+    # Windows names of this PC then do not match the address.
     param([hashtable]$Facts)
-    $name = Get-FactValue $Facts 'computer_name'
+    $name = Get-FactValue $Facts 'dns_host_name'
     if (-not $name) { return New-UnreadableResult 'C15' }
-    $values = @{ address = ('{0}.local' -f ([string]$name).ToLowerInvariant()) }
-    if (Test-DnsLabel $name) { return New-CheckResult 'C15' 'pass' 'ok' $values }
-    return New-CheckResult 'C15' 'fix' 'invalid_name' $values
+    $netbios = [string](Get-FactValue $Facts 'computer_name')
+    $values = @{ address = ('{0}.local' -f ([string]$name).ToLowerInvariant()); netbios_name = $netbios }
+    if (-not (Test-DnsLabel $name)) { return New-CheckResult 'C15' 'fix' 'invalid_name' $values }
+    if ((([string]$name).Length -gt 15) -or ($netbios -and ([string]$name -ine $netbios))) { return New-CheckResult 'C15' 'advice' 'name_mismatch' $values }
+    return New-CheckResult 'C15' 'pass' 'ok' $values
 }
 
 function Test-C18 {
@@ -381,6 +386,9 @@ function Test-C29 {
     $kit = @()
     foreach ($name in @('kit_distro', 'kit_tasks', 'kit_rules', 'kit_folder')) { if ($parts[$name]) { $kit += $name } }
     $values = @{ found = (Get-OrdinalSorted @($parts.Keys | Where-Object { $parts[$_] -eq $true })) }
+    # S91-1: a kit folder that fails the kit's own safety check is not "an earlier test": setup
+    # removes nothing there and stops.
+    if ($parts['kit_folder_unsafe']) { return New-CheckResult 'C29' 'stop' 'unknown_parts' $values }
     if ($parts['slateops_parts'] -and (-not $parts['installed_program'])) { return New-CheckResult 'C29' 'stop' 'unknown_parts' $values }
     if ($kit.Count -gt 0) { return New-CheckResult 'C29' 'fix' 'earlier_test' $values }
     if ($parts['account'] -and (-not $parts['installed_program'])) { return New-CheckResult 'C29' 'fix' 'leftover_account' $values }
@@ -389,10 +397,10 @@ function Test-C29 {
 
 function Test-C30 {
     param([hashtable]$Facts)
-    $name = Get-FactValue $Facts 'computer_name'
+    $name = Get-FactValue $Facts 'dns_host_name'
     if (-not $name) { return New-UnreadableResult 'C30' }
     $values = @{ address = ('{0}.local' -f ([string]$name).ToLowerInvariant()) }
-    if ([string]$name -cmatch $SlateOpsCheck.FactoryNamePattern) { return New-CheckResult 'C30' 'advice' 'factory_name' $values }
+    if (([string]$name).ToUpperInvariant() -cmatch $SlateOpsCheck.FactoryNamePattern) { return New-CheckResult 'C30' 'advice' 'factory_name' $values }
     return New-CheckResult 'C30' 'pass' 'ok' $values
 }
 
@@ -603,38 +611,87 @@ function Get-PowerIndex {
     return @{ ac = [Convert]::ToInt64($hex[$hex.Count - 2], 16); dc = [Convert]::ToInt64($hex[$hex.Count - 1], 16) }
 }
 
+function Get-EncryptableVolumeStatus {
+    # BitLocker status through WMI (P2-4, S91-10; changes the plan 10.4 command, TASK-0091): the
+    # class Win32_EncryptableVolume with only DriveLetter, ProtectionStatus, ConversionStatus
+    # and EncryptionMethod selected. The BitLocker module is not used, because it loads every
+    # volume's key protectors before any property is selected. ProtectionStatus: 0 off, 1 on,
+    # 2 unknown (Win32_EncryptableVolume documentation).
+    param([string[]]$MountPoints)
+    $wanted = @($MountPoints | ForEach-Object { ([string]$_).ToUpperInvariant() })
+    $out = @()
+    $volumes = @(Get-CimInstance -Namespace 'root\cimv2\Security\MicrosoftVolumeEncryption' -ClassName 'Win32_EncryptableVolume' `
+            -Property DriveLetter, ProtectionStatus, ConversionStatus, EncryptionMethod -ErrorAction Stop)
+    foreach ($volume in $volumes) {
+        $letter = ([string]$volume.DriveLetter).ToUpperInvariant()
+        if ($wanted -notcontains $letter) { continue }
+        $protection = switch ([int]$volume.ProtectionStatus) { 0 { 'Off' } 1 { 'On' } default { 'Unknown' } }
+        $out += @{ mount_point = $letter; protection_status = $protection; conversion_status = [int]$volume.ConversionStatus; encryption_method = [int]$volume.EncryptionMethod }
+    }
+    return $out
+}
+
 function Get-BitLockerStatusFact {
-    # Status only: ProtectionStatus per mount point. Never reads KeyProtector (plan 10.4, W80-9).
+    # Status only (W80-9): protection status per mount point.
     param([string[]]$MountPoints)
     $out = @{}
-    foreach ($volume in @(Get-BitLockerVolume -MountPoint $MountPoints -ErrorAction Stop | Select-Object -Property MountPoint, ProtectionStatus)) {
-        $out[[string]$volume.MountPoint] = [string]$volume.ProtectionStatus
-    }
+    foreach ($volume in @(Get-EncryptableVolumeStatus -MountPoints $MountPoints)) { $out[[string]$volume.mount_point] = [string]$volume.protection_status }
     return $out
 }
 
 function Get-WslPackageVersion {
     # Kit function: the installed WSL package version, or $null when the package is absent.
-    $exe = Join-Path $env:ProgramFiles 'WSL\wsl.exe'
+    $exe = Join-Path $SlateOpsPaths.ProgramFiles 'WSL\wsl.exe'
     if (-not (Test-Path -LiteralPath $exe)) { return $null }
     $info = (Get-Item -LiteralPath $exe).VersionInfo
     return New-Object -TypeName System.Version -ArgumentList $info.FileMajorPart, $info.FileMinorPart, $info.FileBuildPart, $info.FilePrivatePart
 }
 
+function Get-KitTree {
+    # The boot-test kit's folder tree and its expected access (kit lib/common.ps1).
+    param([Parameter(Mandatory = $true)][hashtable]$Kit)
+    return @{ Root = $Kit.Root; Entries = [ordered]@{ 'kit' = 'read'; 'cache' = 'read'; 'state' = 'read'; 'logs' = 'none'; 'svc-out' = 'modify'; 'distro' = 'modify' } }
+}
+
+function Get-KitTreeProblem {
+    # The kit's own safety check, with the kit account's SID when the account exists.
+    param([Parameter(Mandatory = $true)][hashtable]$Kit)
+    if (-not (Test-Path -LiteralPath $Kit.Root)) { return @() }
+    $account = Get-LocalUser -Name $Kit.AccountName -ErrorAction SilentlyContinue
+    $sid = $(if ($account) { $account.SID.Value } else { '' })
+    return @(Get-TreeProblem -Tree (Get-KitTree -Kit $Kit) -ServiceSid $sid)
+}
+
+function Test-InstalledProgram {
+    # Spec 4.1 signal (P3-2, S91-1c): the installed program's version.json, in the folder that
+    # the uninstall key of this setup names.
+    $key = Get-ItemProperty -LiteralPath $SlateOpsCheck.UninstallKey -ErrorAction SilentlyContinue
+    if ((-not $key) -or (-not $key.PSObject.Properties['InstallLocation']) -or (-not $key.InstallLocation)) { return $false }
+    return [bool](Test-Path -LiteralPath (Join-Path ([string]$key.InstallLocation) 'version.json') -PathType Leaf)
+}
+
 function Get-LeftoverFact {
     # C29: parts of the boot-test kit (plan 10.7) and Slate Operations parts without an
-    # installed program. Read-only.
-    $kit = $SlateOpsCheck.Kit
-    $installed = [bool](Get-ItemProperty -LiteralPath $SlateOpsCheck.UninstallKey -ErrorAction SilentlyContinue)
-    return @{
-        account           = [bool](Get-LocalUser -Name $kit.AccountName -ErrorAction SilentlyContinue)
+    # installed program. Read-only. Nothing below the kit folder is read until the folder
+    # passes the kit's safety check (S91-1).
+    param([hashtable]$Kit = $SlateOpsCheck.Kit)
+    $unsafe = (@(Get-KitTreeProblem -Kit $Kit).Count -gt 0)
+    $folder = $false
+    $distro = $false
+    if (-not $unsafe) {
         # The kit's cleanup keeps its logs folder; a folder with only logs is not a leftover.
-        kit_folder        = (@(Get-ChildItem -LiteralPath $kit.Root -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -ine 'logs' }).Count -gt 0)
-        kit_distro        = [bool](Test-Path -LiteralPath (Join-Path $kit.Root 'distro\vhd\ext4.vhdx'))
-        kit_tasks         = [bool](Get-ScheduledTask -TaskPath $kit.TaskPath -ErrorAction SilentlyContinue)
-        kit_rules         = ([bool](Get-NetFirewallRule -Name $kit.RuleName -ErrorAction SilentlyContinue)) -or ([bool](Get-NetFirewallHyperVRule -Name $kit.HyperVRule -ErrorAction SilentlyContinue))
+        $folder = (@(Get-ChildItem -LiteralPath $Kit.Root -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -ine 'logs' }).Count -gt 0)
+        $distro = [bool](Test-Path -LiteralPath (Join-Path $Kit.Root 'distro\vhd\ext4.vhdx'))
+    }
+    return @{
+        account           = [bool](Get-LocalUser -Name $Kit.AccountName -ErrorAction SilentlyContinue)
+        kit_folder        = $folder
+        kit_folder_unsafe = $unsafe
+        kit_distro        = $distro
+        kit_tasks         = [bool](Get-ScheduledTask -TaskPath $Kit.TaskPath -ErrorAction SilentlyContinue)
+        kit_rules         = ([bool](Get-NetFirewallRule -Name $Kit.RuleName -ErrorAction SilentlyContinue)) -or ([bool](Get-NetFirewallHyperVRule -Name $Kit.HyperVRule -ErrorAction SilentlyContinue))
         slateops_parts    = [bool](Get-ScheduledTask -TaskPath $SlateOps.TaskPath -ErrorAction SilentlyContinue)
-        installed_program = $installed
+        installed_program = (Test-InstalledProgram)
     }
 }
 
@@ -648,9 +705,8 @@ function Get-PcCheckFacts {
         if ($cv.PSObject.Properties['DisplayVersion']) { $facts.display_version = [string]$cv.DisplayVersion }
     }
     $facts.architecture = Invoke-Reader 'architecture' {
-        $arch = $env:PROCESSOR_ARCHITEW6432
-        if (-not $arch) { $arch = $env:PROCESSOR_ARCHITECTURE }
-        $arch.ToUpperInvariant()
+        # The operating system's architecture from .NET, not from an environment value (S91-6).
+        switch ([string][System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) { 'X64' { 'AMD64' } 'Arm64' { 'ARM64' } default { 'OTHER' } }
     }
     $cs = Invoke-Reader 'computer_system' { Get-CimInstance -ClassName Win32_ComputerSystem }
     $cpu = Invoke-Reader 'processor' { @(Get-CimInstance -ClassName Win32_Processor)[0] }
@@ -660,6 +716,7 @@ function Get-PcCheckFacts {
         $facts.part_of_domain = [bool]$cs.PartOfDomain
         $facts.maker = [string]$cs.Manufacturer
         $facts.computer_name = [string]$cs.Name
+        $facts.dns_host_name = ([string]$cs.DNSHostName).ToLowerInvariant()
     }
     if ($cpu) {
         $facts.virtualization_firmware = $cpu.VirtualizationFirmwareEnabled
@@ -706,7 +763,7 @@ function Get-PcCheckFacts {
     $facts.bitlocker = Invoke-Reader 'bitlocker' { Get-BitLockerStatusFact -MountPoints @($mounts | Select-Object -Unique) }
     if ($facts.bitlocker -and $facts.bitlocker.ContainsKey('C:')) { $facts.bitlocker_c = $facts.bitlocker['C:'] }
     $facts.docker_desktop = Invoke-Reader 'docker_desktop' {
-        (Test-Path -LiteralPath (Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe')) -or [bool](Get-Service -Name 'com.docker.service' -ErrorAction SilentlyContinue)
+        (Test-Path -LiteralPath (Join-Path $SlateOpsPaths.ProgramFiles 'Docker\Docker\Docker Desktop.exe')) -or [bool](Get-Service -Name 'com.docker.service' -ErrorAction SilentlyContinue)
     }
     $facts.vmp_state = Invoke-Reader 'vmp' { [string](Get-WindowsOptionalFeature -Online -FeatureName 'VirtualMachinePlatform' -ErrorAction Stop).State }
     $facts.wsl_version = Invoke-Reader 'wsl_version' { Get-WslPackageVersion }
@@ -715,7 +772,7 @@ function Get-PcCheckFacts {
         $lxss = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
         if (Test-Path -LiteralPath $lxss) { , @(Get-ChildItem -LiteralPath $lxss | ForEach-Object { [string](Get-ItemProperty -LiteralPath $_.PSPath).DistributionName }) } else { , @() }
     }
-    $facts.user_wslconfig = Invoke-Reader 'user_wslconfig' { Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.wslconfig') }
+    $facts.user_wslconfig = Invoke-Reader 'user_wslconfig' { Test-Path -LiteralPath (Join-Path (Get-UserProfilePath) '.wslconfig') }
     $facts.time_zone = Invoke-Reader 'time_zone' { (Get-TimeZone).Id }
     $facts.leftovers = Invoke-Reader 'leftovers' { Get-LeftoverFact }
     return $facts

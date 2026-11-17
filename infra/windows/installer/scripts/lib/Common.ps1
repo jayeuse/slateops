@@ -50,6 +50,17 @@ $SlateOps = @{
     StreamCapBytes    = 1MB
 }
 $SlateOps.AccountRights = @($SlateOps.BatchRight) + $SlateOps.DenyRights
+$SlateOps.SidTrustedInstaller = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+$SlateOps.SidCreatorOwner = 'S-1-3-0'
+
+# Folder paths come from the Windows known-folder calls, not from environment values that the
+# caller's process can change (S91-6).
+$SlateOpsPaths = @{
+    ProgramData  = [Environment]::GetFolderPath('CommonApplicationData')
+    Windows      = [Environment]::GetFolderPath('Windows')
+    System32     = [Environment]::SystemDirectory
+    ProgramFiles = [Environment]::GetFolderPath('ProgramFiles')
+}
 
 # Run ID: <kind>-<UTC time>-<6 random characters> (plan 10.1 item 1; engine core.py RUN_ID).
 $SlateOps.RunIdPattern = '^(install|update|uninstall|maintenance|report|boot|backup|package-night|renewal)-[0-9]{8}T[0-9]{6}Z-[a-z0-9]{6}$'
@@ -63,7 +74,7 @@ $SlateOps.VersionPattern = '^(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][
 
 function New-SlateOpsLayout {
     param(
-        [string]$StateRoot = (Join-Path $env:ProgramData 'SlateOps'),
+        [string]$StateRoot = (Join-Path $SlateOpsPaths.ProgramData 'SlateOps'),
         [string]$DataRoot = ''
     )
     $state = $StateRoot.TrimEnd('\')
@@ -132,7 +143,7 @@ function New-RunId {
     $rng = New-Object System.Security.Cryptography.RNGCryptoServiceProvider
     try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
     $suffix = -join ($bytes | ForEach-Object { $alphabet[$_ % $alphabet.Length] })
-    return ('{0}-{1}-{2}' -f $Kind, $Time.ToUniversalTime().ToString('yyyyMMddTHHmmssZ'), $suffix)
+    return ('{0}-{1}-{2}' -f $Kind, (Format-UtcTime -Time $Time -Format 'yyyyMMddTHHmmssZ'), $suffix)
 }
 
 function Test-RunId {
@@ -145,9 +156,16 @@ function Test-ReleaseVersion {
     return (($Value -is [string]) -and ($Value -cmatch $SlateOps.VersionPattern))
 }
 
+function Format-UtcTime {
+    # UTC time in a fixed format with the invariant culture (P2-1): the current culture can use
+    # another calendar (th-TH: year 2569) or another time separator.
+    param([datetime]$Time = (Get-Date), [Parameter(Mandatory = $true)][string]$Format)
+    return $Time.ToUniversalTime().ToString($Format, [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
 function Get-UtcStamp {
     param([datetime]$Time = (Get-Date))
-    return $Time.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    return (Format-UtcTime -Time $Time -Format 'yyyy-MM-ddTHH:mm:ssZ')
 }
 
 # ---------------------------------------------------------------------------
@@ -180,12 +198,14 @@ function Protect-LogText {
     # (a base64 blob) costs linear time: an unanchored "[a-z]*" before "://" re-scans the rest
     # of the line from each position.
     # A connection string with a password: scheme://user:password@host
-    $out = [regex]::Replace($out, '(?i)(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,31}://[^\s:/@]{1,256}:)[^\s@/]{1,256}@', '$1[secret]@')
+    # IgnoreCase with CultureInvariant (P3-9): a culture such as tr-TR folds "i" differently.
+    $options = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
+    $out = [regex]::Replace($out, '(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,31}://[^\s:/@]{1,256}:)[^\s@/]{1,256}@', '$1[secret]@', $options)
     # KEY=value or "key": "value" lines of secret names.
-    $out = [regex]::Replace($out, '(?i)(?<![A-Z0-9_])([A-Z0-9_]{0,64}(PASSWORD|PASSWD|SECRET|TOKEN|PRIVATE_KEY|API_KEY|_KEY)[A-Z0-9_]{0,64})(\s*[=:]\s*)("[^"]*"|''[^'']*''|\S+)', '$1$3[secret]')
-    $out = [regex]::Replace($out, '(?i)("[a-z0-9_]{0,64}(password|passwd|secret|token|key)[a-z0-9_]{0,64}"\s*:\s*)"[^"]*"', '$1"[secret]"')
+    $out = [regex]::Replace($out, '(?<![A-Z0-9_])([A-Z0-9_]{0,64}(PASSWORD|PASSWD|SECRET|TOKEN|PRIVATE_KEY|API_KEY|_KEY)[A-Z0-9_]{0,64})(\s*[=:]\s*)("[^"]*"|''[^'']*''|\S+)', '$1$3[secret]', $options)
+    $out = [regex]::Replace($out, '("[a-z0-9_]{0,64}(password|passwd|secret|token|key)[a-z0-9_]{0,64}"\s*:\s*)"[^"]*"', '$1"[secret]"', $options)
     # Bearer tokens.
-    $out = [regex]::Replace($out, '(?i)\b(bearer\s+)[a-z0-9._~+/=-]{8,}', '$1[secret]')
+    $out = [regex]::Replace($out, '\b(bearer\s+)[a-z0-9._~+/=-]{8,}', '$1[secret]', $options)
     # BitLocker recovery password: eight groups of six digits.
     $out = [regex]::Replace($out, '\b[0-9]{6}(-[0-9]{6}){7}\b', '[recovery password]')
     return $out
@@ -386,10 +406,12 @@ function Get-ServiceAccessRule {
 }
 
 function Initialize-ProtectedTree {
-    # Creates the root (protected ACL set in the creating call) and every entry folder, then runs
-    # the full safety check. Returns the problems (empty = safe). Creates nothing in a tree that
-    # fails the check. -ServiceSid adds the service account's entries (read on the root itself,
-    # read or modify per entry).
+    # Creates the root (protected ACL set in the creating call) and every missing entry folder,
+    # then runs the full safety check. Returns the problems (empty = safe). Creates nothing in a
+    # tree that fails the check. An existing folder's access list is never changed here (S91-5):
+    # with -ServiceSid, a folder that this call creates gets the service account's entry in the
+    # same creating call; folders that exist before the account get it once, from
+    # Grant-ServiceAccess in the step that created the account.
     param(
         [Parameter(Mandatory = $true)][hashtable]$Tree,
         [string]$ServiceSid = ''
@@ -400,7 +422,9 @@ function Initialize-ProtectedTree {
     } else {
         $parent = Split-Path -Parent $Tree.Root
         if (-not (Test-Path -LiteralPath $parent)) { throw ('The parent folder {0} does not exist.' -f $parent) }
-        [void][System.IO.Directory]::CreateDirectory($Tree.Root, (Get-ProtectedDirectorySecurity))
+        $security = Get-ProtectedDirectorySecurity
+        if ($ServiceSid) { $security.AddAccessRule((Get-ServiceAccessRule -Sid $ServiceSid -Access 'root')) }
+        [void][System.IO.Directory]::CreateDirectory($Tree.Root, $security)
         # Checked again after the create: another user could have created the root between the
         # test and the call; then CreateDirectory keeps that folder unchanged.
         $problems = @(Get-TreeProblem -Tree $Tree -ServiceSid $ServiceSid)
@@ -408,22 +432,135 @@ function Initialize-ProtectedTree {
     }
     foreach ($entry in $Tree.Entries.Keys) {
         $path = Join-Path $Tree.Root $entry
-        if (-not (Test-Path -LiteralPath $path)) { [void][System.IO.Directory]::CreateDirectory($path) }
-    }
-    if ($ServiceSid) {
-        $rootAcl = Get-Acl -LiteralPath $Tree.Root
-        $rootAcl.AddAccessRule((Get-ServiceAccessRule -Sid $ServiceSid -Access 'root'))
-        Set-Acl -LiteralPath $Tree.Root -AclObject $rootAcl
-        foreach ($entry in $Tree.Entries.Keys) {
-            $access = $Tree.Entries[$entry]
-            if ($access -eq 'none') { continue }
-            $path = Join-Path $Tree.Root $entry
+        if (Test-Path -LiteralPath $path) { continue }
+        $access = $Tree.Entries[$entry]
+        # Created plainly, so it inherits Administrators and SYSTEM from the protected root; a
+        # given service account gets its entry in this same, creating call.
+        [void][System.IO.Directory]::CreateDirectory($path)
+        if ($ServiceSid -and ($access -ne 'none')) {
             $acl = Get-Acl -LiteralPath $path
             $acl.AddAccessRule((Get-ServiceAccessRule -Sid $ServiceSid -Access $access))
             Set-Acl -LiteralPath $path -AclObject $acl
         }
     }
     return @(Get-TreeProblem -Tree $Tree -ServiceSid $ServiceSid)
+}
+
+function Grant-ServiceAccess {
+    # Gives the service account its entries in a tree, once: the step that creates the account
+    # calls it right after the creation (S91-5). A folder that already has an entry for the SID
+    # is left as it is. The tree must pass the full check first.
+    param([Parameter(Mandatory = $true)][hashtable]$Tree, [Parameter(Mandatory = $true)][string]$ServiceSid)
+    $problems = @(Get-TreeProblem -Tree $Tree -ServiceSid $ServiceSid)
+    if ($problems.Count -gt 0) { return $problems }
+    $sidType = [System.Security.Principal.SecurityIdentifier]
+    $targets = @(@{ path = $Tree.Root; access = 'root' })
+    foreach ($entry in $Tree.Entries.Keys) {
+        if ($Tree.Entries[$entry] -ne 'none') { $targets += @{ path = (Join-Path $Tree.Root $entry); access = $Tree.Entries[$entry] } }
+    }
+    foreach ($target in $targets) {
+        if (-not (Test-Path -LiteralPath $target.path)) { continue }
+        $acl = Get-Acl -LiteralPath $target.path
+        $has = @($acl.GetAccessRules($true, $false, $sidType) | Where-Object { $_.IdentityReference.Value -eq $ServiceSid }).Count -gt 0
+        if ($has) { continue }
+        $acl.AddAccessRule((Get-ServiceAccessRule -Sid $ServiceSid -Access $target.access))
+        Set-Acl -LiteralPath $target.path -AclObject $acl
+    }
+    return @(Get-TreeProblem -Tree $Tree -ServiceSid $ServiceSid)
+}
+
+function Remove-ServiceAccess {
+    # Removes every explicit entry of a deleted or replaced account from a tree (P2-3), so the
+    # next check of the tree does not see an unknown SID.
+    param([Parameter(Mandatory = $true)][hashtable]$Tree, [Parameter(Mandatory = $true)][string]$Sid)
+    if (-not (Test-Path -LiteralPath $Tree.Root)) { return }
+    $identity = New-Object System.Security.Principal.SecurityIdentifier($Sid)
+    $paths = @($Tree.Root) + @($Tree.Entries.Keys | ForEach-Object { Join-Path $Tree.Root $_ })
+    foreach ($path in $paths) {
+        $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        if ((-not $item) -or ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { continue }
+        $acl = Get-Acl -LiteralPath $path
+        $acl.PurgeAccessRules($identity)
+        Set-Acl -LiteralPath $path -AclObject $acl
+    }
+}
+
+function Test-TreeRootTrusted {
+    # The root alone: it exists, is not a reparse point, is protected and has a trusted owner.
+    # Setup reads nothing from a state folder that fails this (spec 4.1).
+    param([Parameter(Mandatory = $true)][hashtable]$Tree)
+    $item = Get-Item -LiteralPath $Tree.Root -Force -ErrorAction SilentlyContinue
+    if ((-not $item) -or ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { return $false }
+    $acl = Get-Acl -LiteralPath $Tree.Root
+    $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+    return (($SlateOps.SidAdministrators, $SlateOps.SidSystem, $currentUser) -contains $owner) -and $acl.AreAccessRulesProtected
+}
+
+function Get-RecordedServiceSid {
+    # The service account SID from the administrator-only record state\windows-changes.json
+    # (P2-3): it stays known after a partial service step or after the account is removed.
+    # Read only when the state root itself is trusted.
+    param([Parameter(Mandatory = $true)][hashtable]$Layout)
+    if (-not (Test-TreeRootTrusted -Tree $Layout.StateTree)) { return '' }
+    $path = Join-Path $Layout.State 'windows-changes.json'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return '' }
+    try { $value = Read-JsonFile -Path $path } catch { return '' }
+    $sid = [string](Get-DictValue $value 'account_sid')
+    if ($sid -cmatch '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}$') { return $sid }
+    return ''
+}
+
+function Assert-TreeWritable {
+    # Quick check of one folder right before an action writes into it (S91-4).
+    param([Parameter(Mandatory = $true)][hashtable]$Tree, [Parameter(Mandatory = $true)][string]$Directory, [string]$ServiceSid = '')
+    $problems = @(Get-TreeProblem -Tree $Tree -ServiceSid $ServiceSid -Quick -Directory $Directory)
+    if (-not (Test-Path -LiteralPath $Directory)) { $problems += 'missing' }
+    if ($problems.Count -gt 0) {
+        foreach ($problem in $problems) { Write-RunLog 'setup.write_check' 'FAIL' $problem }
+        throw 'state_unsafe'
+    }
+}
+
+function Get-FolderParentProblem {
+    # S91-2: every folder above Path must keep it in place. A folder above is refused when it is
+    # a reparse point, when its owner is not Administrators, SYSTEM or TrustedInstaller, or when
+    # another principal has Delete, DeleteSubdirectoriesAndFiles, ChangePermissions or
+    # TakeOwnership on it (an entry that applies to the folder itself; inherit-only entries do
+    # not). A drive root cannot be deleted or renamed, so its Delete right does not count.
+    # Returns problems "<reason>:<path>[:<sid>]"; empty when the folders above are safe.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $problems = New-Object System.Collections.Generic.List[string]
+    $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $root = [System.IO.Path]::GetPathRoot($full)
+    $trusted = @($SlateOps.SidAdministrators, $SlateOps.SidSystem, $SlateOps.SidTrustedInstaller)
+    $ancestors = @($root)
+    $current = $root.TrimEnd('\')
+    $parts = @($full.Substring($root.Length).Split('\') | Where-Object { $_ })
+    for ($i = 0; $i -lt ($parts.Count - 1); $i++) {
+        $current = '{0}\{1}' -f $current, $parts[$i]
+        $ancestors += $current
+    }
+    $rights = [System.Security.AccessControl.FileSystemRights]
+    $sidType = [System.Security.Principal.SecurityIdentifier]
+    foreach ($ancestor in $ancestors) {
+        $item = Get-Item -LiteralPath $ancestor -Force -ErrorAction SilentlyContinue
+        if (-not $item) { $problems.Add(('missing:{0}' -f $ancestor)); continue }
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { $problems.Add(('reparse_point:{0}' -f $ancestor)); continue }
+        try { $acl = Get-Acl -LiteralPath $ancestor } catch { $problems.Add(('acl_unreadable:{0}' -f $ancestor)); continue }
+        $owner = $acl.GetOwner($sidType).Value
+        if ($trusted -notcontains $owner) { $problems.Add(('owner:{0}:{1}' -f $ancestor, $owner)) }
+        $dangerous = [long]$rights::DeleteSubdirectoriesAndFiles -bor [long]$rights::ChangePermissions -bor [long]$rights::TakeOwnership -bor [long]0x10000000
+        if ($ancestor -ne $root) { $dangerous = $dangerous -bor [long]$rights::Delete }
+        foreach ($rule in $acl.GetAccessRules($true, $true, $sidType)) {
+            if ($rule.AccessControlType -ne 'Allow') { continue }
+            if (($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
+            $sid = $rule.IdentityReference.Value
+            if (($trusted -contains $sid) -or ($sid -eq $SlateOps.SidCreatorOwner)) { continue }
+            if (([long]$rule.FileSystemRights -band $dangerous) -ne 0) { $problems.Add(('rights:{0}:{1}' -f $ancestor, $sid)) }
+        }
+    }
+    return $problems.ToArray()
 }
 
 function Test-ServiceWritablePath {
@@ -686,19 +823,35 @@ function New-StepResult {
         [Parameter(Mandatory = $true)][string]$MessageKey,
         [hashtable]$Values = @{}
     )
-    return @{ code = $Code; message_key = $MessageKey; values = $Values }
+    return [ordered]@{ code = $Code; message_key = $MessageKey; values = $Values }
 }
 
 # ---------------------------------------------------------------------------
 # Small Windows helpers
 # ---------------------------------------------------------------------------
 
+function ConvertTo-HelperResultText {
+    # The helper result as JSON with "code" and "message_key" first (P2-2): the setup program's
+    # ReadResultCode reads the first "code" in the file, so no other key may come before it.
+    param([Parameter(Mandatory = $true)][System.Collections.IDictionary]$Result, [string]$Action = '', [string]$RunId = '')
+    $ordered = [ordered]@{ code = [string]$Result['code']; message_key = [string]$Result['message_key'] }
+    foreach ($key in @($Result.Keys)) {
+        if (@('code', 'message_key') -contains [string]$key) { continue }
+        $ordered[[string]$key] = $Result[$key]
+    }
+    if ($Action) { $ordered['action'] = $Action }
+    if ($RunId) { $ordered['run_id'] = $RunId }
+    return (ConvertTo-JsonText $ordered)
+}
+
 function Test-Administrator {
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function Get-WslExe { return (Join-Path $env:SystemRoot 'System32\wsl.exe') }
+function Get-WslExe { return (Join-Path $SlateOpsPaths.System32 'wsl.exe') }
+
+function Get-UserProfilePath { return [Environment]::GetFolderPath('UserProfile') }
 
 function Get-FileSha256 {
     param([Parameter(Mandatory = $true)][string]$Path)

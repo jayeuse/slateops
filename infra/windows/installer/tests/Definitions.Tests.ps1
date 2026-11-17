@@ -59,7 +59,7 @@ Test-Case 'AC-4 the Exec task keeps the kit settings and has no trigger' {
     Assert-Equal '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "C:\ProgramData\SlateOps\scripts\exec.ps1"' $objects.Action.Arguments
 }
 
-Test-Case 'AC-4 the account is a hidden standard user with batch logon and the three deny rights' {
+Test-Case 'AC-4 P3-6 the account definition that the service step uses: hidden standard user, batch logon, three deny rights' {
     $account = Get-AccountDefinition
     Assert-Equal 'slateops-svc' $account.Name
     Assert-Equal @('S-1-5-32-545') $account.Groups
@@ -120,6 +120,12 @@ Test-Case 'AC-4 the firewall rules open TCP 443 and 80 on the Private profile fr
     Assert-Throws { Get-FirewallRuleDefinition -Cidr 'Any' } 'Not an IPv4 network.'
 }
 
+Test-Case 'AC-4 S91-11 a network of /0 is refused for the Hyper-V rule' {
+    Assert-Throws { Get-FirewallRuleDefinition -Cidr '0.0.0.0/0' } 'Not an IPv4 network.'
+    Assert-Throws { Get-FirewallRuleDefinition -Cidr '192.168.1.0/0' } 'Not an IPv4 network.'
+    Assert-Equal '10.0.0.0/8' (Get-FirewallRuleDefinition -Cidr '10.0.0.0/8').HyperV.RemoteAddresses
+}
+
 Test-Case 'AC-4 the hosts entry is one marked line that a second run does not repeat' {
     $existing = "# Copyright`r`n127.0.0.1 localhost`r`n"
     $once = Get-HostsContent -Existing $existing -HostName 'office-pc.local'
@@ -130,7 +136,7 @@ Test-Case 'AC-4 the hosts entry is one marked line that a second run does not re
 }
 
 Test-Case 'AC-4 the resume starts the original setup file through Explorer, so Windows asks for administrator approval' {
-    Assert-Equal ('"{0}\explorer.exe" "D:\Downloads\SlateOpsSetup-0.2.0.exe"' -f $env:SystemRoot) (Get-ResumeCommand -SetupPath 'D:\Downloads\SlateOpsSetup-0.2.0.exe')
+    Assert-Equal ('"{0}\explorer.exe" "D:\Downloads\SlateOpsSetup-0.2.0.exe"' -f [Environment]::GetFolderPath('Windows')) (Get-ResumeCommand -SetupPath 'D:\Downloads\SlateOpsSetup-0.2.0.exe')
     Assert-Throws { Get-ResumeCommand -SetupPath 'D:\x" /evil "y.exe' } 'Not a setup file path.'
 }
 
@@ -173,3 +179,76 @@ Test-Case 'AC-4 only a self-signed CA certificate is trusted, and its security c
     Assert-Equal 'certificate_invalid' (Install-TrustedCa -Layout $layout -Pem $script:TestLeafPem).code
     Assert-Equal 'certificate_invalid' (Install-TrustedCa -Layout $layout -Pem 'not a certificate').code
 }
+
+Test-Case 'AC-4 P3-5 the hosts file keeps its encoding: a byte order mark stays, none is added' {
+    $layout = New-SlateOpsLayout -StateRoot (Join-Path (New-TestDirectory 'p3-5-hosts') 'SlateOps')
+    $null = Initialize-ProtectedTree -Tree $layout.StateTree
+    $withBom = Join-Path (New-TestDirectory 'p3-5-bom') 'hosts'
+    [System.IO.File]::WriteAllText($withBom, "127.0.0.1 localhost`r`n", (New-Object System.Text.UTF8Encoding($true)))
+    $null = Set-HostsEntry -Layout $layout -HostName 'office-pc.local' -Path $withBom
+    $bytes = [System.IO.File]::ReadAllBytes($withBom)
+    Assert-Equal @(239, 187, 191) @($bytes[0], $bytes[1], $bytes[2])
+    $plain = Join-Path (New-TestDirectory 'p3-5-plain') 'hosts'
+    [System.IO.File]::WriteAllText($plain, "127.0.0.1 localhost`r`n", [System.Text.Encoding]::ASCII)
+    $null = Set-HostsEntry -Layout $layout -HostName 'office-pc.local' -Path $plain
+    Assert-Equal "127.0.0.1 localhost`r`n127.0.0.1 office-pc.local # Slate Operations`r`n" ([System.IO.File]::ReadAllText($plain))
+    Assert-Equal 49 ([System.IO.File]::ReadAllBytes($plain))[0] 'the file starts with "1", no byte order mark'
+}
+
+Test-Case 'AC-4 S91-9 a CA certificate whose self-signature does not verify is refused' {
+    $der = [Convert]::FromBase64String((($script:TestCaPem -replace '-----[A-Z ]+-----', '') -replace '\s', ''))
+    $der[$der.Length - 1] = $der[$der.Length - 1] -bxor 1
+    $tampered = "-----BEGIN CERTIFICATE-----`n{0}`n-----END CERTIFICATE-----" -f [Convert]::ToBase64String($der)
+    Assert-Equal $false (Test-CaSelfSignature -Certificate (ConvertFrom-PemCertificate -Pem $tampered))
+    Assert-Equal $true (Test-CaSelfSignature -Certificate (ConvertFrom-PemCertificate -Pem $script:TestCaPem))
+    $layout = New-SlateOpsLayout -StateRoot (Join-Path (New-TestDirectory 's91-9-tampered') 'SlateOps')
+    Assert-Equal 'certificate_invalid' (Install-TrustedCa -Layout $layout -Pem $tampered).code
+}
+
+Test-Case 'AC-4 S91-9 the trusted root is limited to Server Authentication in LocalMachine Root' {
+    $layout = New-SlateOpsLayout -StateRoot (Join-Path (New-TestDirectory 's91-9-import') 'SlateOps')
+    $null = Initialize-ProtectedTree -Tree $layout.StateTree
+    $ca = ConvertFrom-PemCertificate -Pem $script:TestCaPem
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', 'LocalMachine')
+    try {
+        Assert-Equal 'added' (Install-TrustedCa -Layout $layout -Pem $script:TestCaPem).code
+        $store.Open('ReadOnly')
+        $stored = @($store.Certificates.Find([System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $ca.Thumbprint, $false))
+        Assert-Equal 1 $stored.Count
+        Assert-Equal @('1.3.6.1.5.5.7.3.1') (Get-StoreEnhancedKeyUsage -Certificate $stored[0])
+        $store.Close()
+    } finally {
+        $store.Open('ReadWrite')
+        foreach ($item in @($store.Certificates.Find([System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $ca.Thumbprint, $false))) { $store.Remove($item) }
+        $store.Close()
+    }
+}
+
+Test-Case 'AC-4 S91-7 no resume entries when the elevating user is not the signed-in user' {
+    Assert-Equal $true (Test-ResumeUser -ElevatedUser 'PC1\maria' -SessionUser 'pc1\Maria')
+    Assert-Equal $false (Test-ResumeUser -ElevatedUser 'PC1\admin' -SessionUser 'PC1\maria')
+    Assert-Equal $false (Test-ResumeUser -ElevatedUser 'PC1\admin' -SessionUser '')
+    $result = Register-SetupResume -SetupPath 'D:\Downloads\SlateOpsSetup-0.2.0.exe' -SessionUser 'OTHERPC\someone-else'
+    Assert-Equal 'resume_other_user setup.resume.resume_other_user' ('{0} {1}' -f $result.code, $result.message_key)
+    Assert-Equal $null (Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name 'SlateOpsSetup' -ErrorAction SilentlyContinue)
+}
+
+Test-Case 'AC-4 S91-3 the task folder and its tasks allow only Administrators and SYSTEM' {
+    $service = New-Object -ComObject 'Schedule.Service'
+    $service.Connect()
+    $folderPath = '\SlateOpsW7Sddl'
+    try {
+        $action = New-ScheduledTaskAction -Execute (Join-Path ([Environment]::SystemDirectory) 'cmd.exe') -Argument '/c exit 0'
+        $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount
+        Register-ScheduledTask -TaskPath ($folderPath + '\') -TaskName 'Exec' -Action $action -Principal $principal -Force | Out-Null
+        Assert-Equal 'product' (Get-TaskFolderState -FolderPath $folderPath)
+        Set-TaskSecurity -FolderPath $folderPath -TaskNames @('Exec')
+        Assert-Equal @('A;;FA;;;BA', 'A;;FA;;;SY') (Get-TaskAccessEntries -FolderPath $folderPath -TaskName 'Exec')
+    } finally {
+        Unregister-ScheduledTask -TaskPath ($folderPath + '\') -TaskName 'Exec' -Confirm:$false -ErrorAction SilentlyContinue
+    }
+    Assert-Equal 'unknown' (Get-TaskFolderState -FolderPath $folderPath) 'an empty folder is not the product folder'
+    try { $service.GetFolder('\').DeleteFolder('SlateOpsW7Sddl', 0) } catch { $null = $_ }
+    Assert-Equal 'absent' (Get-TaskFolderState -FolderPath $folderPath)
+}
+

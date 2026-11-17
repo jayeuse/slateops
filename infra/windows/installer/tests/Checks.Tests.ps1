@@ -95,11 +95,19 @@ Test-Case 'AC-1 C14 names the program that holds port 80 or 443' {
     Assert-Equal 'pass' (Get-Check C14 @{ listeners = @() }).class
 }
 
-Test-Case 'AC-1 C15 and C30: address from the computer name, factory name advice' {
-    Assert-Equal 'pass office-pc.local' ('{0} {1}' -f (Get-Check C15 @{ computer_name = 'OFFICE-PC' }).class, (Get-Check C15 @{ computer_name = 'OFFICE-PC' }).values.address)
-    foreach ($bad in @('OFFICE_PC', '1234', '-OFFICE')) { Assert-Equal 'fix' (Get-Check C15 @{ computer_name = $bad }).class $bad }
-    Assert-Equal 'advice factory_name' ('{0} {1}' -f (Get-Check C30 @{ computer_name = 'DESKTOP-7GH2K1A' }).class, (Get-Check C30 @{ computer_name = 'DESKTOP-7GH2K1A' }).code)
-    Assert-Equal 'pass' (Get-Check C30 @{ computer_name = 'OFFICE-PC' }).class
+Test-Case 'AC-1 P3-9 C15 and C30 use the DNS host name in lower case' {
+    $ok = Get-Check C15 @{ dns_host_name = 'office-pc'; computer_name = 'OFFICE-PC' }
+    Assert-Equal 'pass office-pc.local' ('{0} {1}' -f $ok.class, $ok.values.address)
+    foreach ($bad in @('office_pc', '1234', '-office')) { Assert-Equal 'fix' (Get-Check C15 @{ dns_host_name = $bad; computer_name = 'OFFICE-PC' }).class $bad }
+    $differs = Get-Check C15 @{ dns_host_name = 'front-desk-server-01'; computer_name = 'FRONT-DESK-SERV' }
+    Assert-Equal 'advice name_mismatch front-desk-server-01.local' ('{0} {1} {2}' -f $differs.class, $differs.code, $differs.values.address)
+    Assert-Equal 'name_mismatch' (Get-Check C15 @{ dns_host_name = 'office'; computer_name = 'RECEPTION' }).code
+    Assert-Equal 'advice factory_name' ('{0} {1}' -f (Get-Check C30 @{ dns_host_name = 'desktop-7gh2k1a' }).class, (Get-Check C30 @{ dns_host_name = 'desktop-7gh2k1a' }).code)
+    Assert-Equal 'pass' (Get-Check C30 @{ dns_host_name = 'office-pc' }).class
+}
+
+Test-Case 'AC-1 P3-1 an unreadable C15 shows as Advice, because it is a requirement check' {
+    Assert-Equal 'advice cannot_read' ('{0} {1}' -f (Get-Check C15 @{}).class, (Get-Check C15 @{}).code)
 }
 
 Test-Case 'AC-1 C18 is Fix when module logging covers ScheduledTasks and when the policy is unreadable (W80-8)' {
@@ -153,6 +161,24 @@ Test-Case 'AC-1 C29 finds kit parts, a lone account and unknown parts without re
     Assert-Equal 'stop unknown_parts' ('{0} {1}' -f (Get-Check C29 @{ leftovers = $unknown }).class, (Get-Check C29 @{ leftovers = $unknown }).code)
     $installed = $base.Clone(); $installed.account = $true; $installed.slateops_parts = $true; $installed.installed_program = $true
     Assert-Equal 'pass' (Get-Check C29 @{ leftovers = $installed }).class
+}
+
+Test-Case 'AC-1 S91-1 a kit folder that fails the kit safety check is unknown parts (Stop)' {
+    $parts = @{ account = $true; kit_folder = $false; kit_folder_unsafe = $true; kit_distro = $false; kit_tasks = $true; kit_rules = $false; slateops_parts = $false; installed_program = $false }
+    Assert-Equal 'stop unknown_parts' ('{0} {1}' -f (Get-Check C29 @{ leftovers = $parts }).class, (Get-Check C29 @{ leftovers = $parts }).code)
+}
+
+Test-Case 'AC-1 S91-1 a junction at the kit folder reads as unsafe, and nothing below it is read' {
+    $target = New-TestDirectory 's91-1-check-target'
+    [void][System.IO.Directory]::CreateDirectory((Join-Path $target 'distro\vhd'))
+    [System.IO.File]::WriteAllText((Join-Path $target 'distro\vhd\ext4.vhdx'), 'x')
+    $link = Join-Path $script:TestRoot 's91-1-check-kit'
+    $null = & cmd.exe /c mklink /J $link $target 2>&1
+    $kit = @{ AccountName = 'slateops-w7nokit'; Root = $link; TaskPath = '\SlateOpsW7NoKit\'; RuleName = 'SlateOpsW7NoKit-rule'; HyperVRule = 'SlateOpsW7NoKit-hv' }
+    $facts = Get-LeftoverFact -Kit $kit
+    Assert-Equal $true $facts.kit_folder_unsafe
+    Assert-Equal $false $facts.kit_distro 'the distro file behind the junction is not read'
+    Assert-Equal 'stop' (Get-Check C29 @{ leftovers = $facts }).class
 }
 
 Test-Case 'AC-1 the verdict is not suitable on a Stop, counts the Fix items, and carries the restart line' {

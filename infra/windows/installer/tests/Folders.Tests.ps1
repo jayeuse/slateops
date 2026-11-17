@@ -110,3 +110,87 @@ Test-Case 'AC-3 the data folder path is an absolute folder on a drive letter wit
     foreach ($good in @('D:\SlateOps', 'E:\Business data\SlateOps')) { Assert-Equal $true (Test-DataRootPath $good) $good }
     foreach ($bad in @('D:\', 'D:SlateOps', '\\server\share\SlateOps', 'D:\..\Windows', 'D:\a\.\b', 'D:\SlateOps\', 'D:\Slate"Ops', 'D:\x.')) { Assert-Equal $false (Test-DataRootPath $bad) $bad }
 }
+
+function New-AdminOnlyFolder {
+    # A test folder on the system drive that only Administrators and SYSTEM control, owned by
+    # Administrators: the folder above a test data folder, with nothing else wrong.
+    param([Parameter(Mandatory = $true)][string]$Name)
+    $path = Join-Path $env:SystemDrive ('{0}-{1}' -f $Name, ([guid]::NewGuid().ToString('N').Substring(0, 8)))
+    [void][System.IO.Directory]::CreateDirectory($path, (Get-ProtectedDirectorySecurity))
+    $null = & icacls.exe $path /setowner '*S-1-5-32-544' 2>&1
+    $script:SystemDriveFolders.Add($path)
+    return $path
+}
+$script:SystemDriveFolders = New-Object System.Collections.Generic.List[string]
+
+try {
+    Test-Case 'AC-3 S91-2 the default data folder on a drive root passes the parent check' {
+        Assert-Equal 0 @(Get-FolderParentProblem -Path ('{0}\SlateOps' -f $env:SystemDrive)).Count (@(Get-FolderParentProblem -Path ('{0}\SlateOps' -f $env:SystemDrive)) -join '; ')
+        $safe = New-AdminOnlyFolder 'SlateOpsW7Safe'
+        Assert-Equal 0 @(Get-FolderParentProblem -Path (Join-Path $safe 'SlateOps')).Count (@(Get-FolderParentProblem -Path (Join-Path $safe 'SlateOps')) -join '; ')
+    }
+
+    Test-Case 'AC-3 S91-2 a data folder under a junction is refused' {
+        $base = New-AdminOnlyFolder 'SlateOpsW7Junction'
+        $target = New-TestDirectory 's91-2-target'
+        $link = Join-Path $base 'link'
+        $null = & cmd.exe /c mklink /J $link $target 2>&1
+        $problems = @(Get-FolderParentProblem -Path (Join-Path $link 'SlateOps'))
+        Assert-True ($problems -contains ('reparse_point:{0}' -f $link)) ($problems -join '; ')
+        $layout = New-SlateOpsLayout -StateRoot (Join-Path (New-TestDirectory 's91-2-state') 'SlateOps')
+        $result = Initialize-DataFolder -Layout $layout -DataRoot (Join-Path $link 'SlateOps')
+        Assert-Equal 'data_folder_parent_unsafe setup.data.data_folder_parent_unsafe reparse_point' ('{0} {1} {2}' -f $result.code, $result.message_key, $result.values.reason)
+        Assert-Equal $false (Test-Path -LiteralPath (Join-Path $target 'SlateOps')) 'nothing is created behind the junction'
+    }
+
+    Test-Case 'AC-3 S91-2 a folder above the data folder that Authenticated Users can modify is refused' {
+        $base = New-AdminOnlyFolder 'SlateOpsW7Open'
+        $open = Join-Path $base 'open'
+        [void][System.IO.Directory]::CreateDirectory($open)
+        $null = & icacls.exe $open /grant '*S-1-5-11:(OI)(CI)M' 2>&1
+        $problems = @(Get-FolderParentProblem -Path (Join-Path $open 'SlateOps'))
+        Assert-True ($problems -contains ('rights:{0}:S-1-5-11' -f $open)) ($problems -join '; ')
+    }
+
+    Test-Case 'AC-3 S91-1 the C29 removal stops at a junction kit folder and deletes nothing behind it' {
+        $target = New-TestDirectory 's91-1-remove-target'
+        foreach ($folder in @('kit', 'distro', 'logs')) { [void][System.IO.Directory]::CreateDirectory((Join-Path $target $folder)) }
+        [System.IO.File]::WriteAllText((Join-Path $target 'kit\keep.txt'), 'keep')
+        $link = Join-Path $script:TestRoot 's91-1-remove-kit'
+        $null = & cmd.exe /c mklink /J $link $target 2>&1
+        $kit = @{ AccountName = 'slateops-w7nokit'; Root = $link; TaskPath = '\SlateOpsW7NoKit\'; RuleName = 'SlateOpsW7NoKit-rule'; HyperVRule = 'SlateOpsW7NoKit-hv' }
+        $result = Remove-KitLeftovers -Kit $kit
+        Assert-Equal 'kit_folder_unsafe check.c29.unknown_parts' ('{0} {1}' -f $result.code, $result.message_key)
+        Assert-Equal $true (Test-Path -LiteralPath (Join-Path $target 'kit\keep.txt'))
+        Assert-Equal $true (Test-Path -LiteralPath (Join-Path $target 'distro'))
+    }
+} finally {
+    foreach ($path in $script:SystemDriveFolders) { try { Remove-PathNoFollow -Path $path } catch { Write-Host ('cleanup: {0}' -f $_.Exception.Message) } }
+}
+
+Test-Case 'AC-3 P2-3 the recorded service SID keeps the state folder safe after a partial service step' {
+    $layout = New-TestStateLayout 'p2-3-recorded'
+    $problems = @(Initialize-ProtectedTree -Tree $layout.StateTree -ServiceSid $script:ServiceSid)
+    Assert-Equal 0 $problems.Count ($problems -join '; ')
+    Write-JsonFile -Path (Join-Path $layout.State 'windows-changes.json') -Value ([ordered]@{ account_sid = $script:ServiceSid })
+    Assert-Equal 'unsafe' (Test-StateFolder -Layout $layout).code 'without the SID the account entries are unknown'
+    Assert-Equal $script:ServiceSid (Get-RecordedServiceSid -Layout $layout)
+    Assert-Equal 'safe' (Test-StateFolder -Layout $layout -ServiceSid (Get-RecordedServiceSid -Layout $layout)).code
+    Remove-ServiceAccess -Tree $layout.StateTree -Sid $script:ServiceSid
+    $left = @(Get-TreeProblem -Tree $layout.StateTree)
+    Assert-Equal 0 $left.Count ($left -join '; ')
+}
+
+Test-Case 'AC-3 S91-5 an existing folder never gets the service entry again; Grant-ServiceAccess gives it once' {
+    $layout = New-TestStateLayout 's91-5-grants'
+    $null = Initialize-ProtectedTree -Tree $layout.StateTree
+    $before = (Get-Acl -LiteralPath $layout.Scripts).Sddl
+    $null = Initialize-ProtectedTree -Tree $layout.StateTree -ServiceSid $script:ServiceSid
+    Assert-Equal $before (Get-Acl -LiteralPath $layout.Scripts).Sddl 'an existing folder keeps its access list'
+    $problems = @(Grant-ServiceAccess -Tree $layout.StateTree -ServiceSid $script:ServiceSid)
+    Assert-Equal 0 $problems.Count ($problems -join '; ')
+    $granted = (Get-Acl -LiteralPath $layout.Scripts).Sddl
+    Assert-True ($granted -ne $before) 'Grant-ServiceAccess adds the entry'
+    $null = Grant-ServiceAccess -Tree $layout.StateTree -ServiceSid $script:ServiceSid
+    Assert-Equal $granted (Get-Acl -LiteralPath $layout.Scripts).Sddl 'a second grant changes nothing'
+}

@@ -52,8 +52,9 @@ Source: "scripts\*.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "scripts\lib\*.ps1"; DestDir: "{app}\scripts\lib"; Flags: ignoreversion
 
 [Icons]
-; An Internet Shortcut (.url) with the address (spec 12 item 13). Uninstall removes it.
-Name: "{autodesktop}\Slate Operations"; Filename: "https://{computername}.local"
+; An Internet Shortcut (.url) with the address (spec 12 item 13). Uninstall removes it. The
+; address is the DNS host name in lower case (P3-9), the name that Windows answers mDNS for.
+Name: "{autodesktop}\Slate Operations"; Filename: "https://{code:DnsHostName}.local"
 
 [Code]
 type
@@ -65,6 +66,8 @@ procedure GetSystemTime(var SystemTime: TSystemTime);
   external 'GetSystemTime@kernel32.dll stdcall';
 function GetTickCount: Cardinal;
   external 'GetTickCount@kernel32.dll stdcall';
+function GetComputerNameEx(NameType: Integer; Buffer: String; var Size: Cardinal): Boolean;
+  external 'GetComputerNameExW@kernel32.dll stdcall';
 
 var
   HelperScript: String;
@@ -97,6 +100,21 @@ begin
   end;
   Result := Kind + '-' + IntToStr(Clock.Year) + TwoDigits(Clock.Month) + TwoDigits(Clock.Day) + 'T' +
     TwoDigits(Clock.Hour) + TwoDigits(Clock.Minute) + TwoDigits(Clock.Second) + 'Z-' + Suffix;
+end;
+
+{ The DNS host name (ComputerNameDnsHostname = 1) in lower case; the NetBIOS name when the call
+  fails. }
+function DnsHostName(Param: String): String;
+var
+  Buffer: String;
+  Size: Cardinal;
+begin
+  Size := 256;
+  Buffer := StringOfChar(#0, Integer(Size));
+  if GetComputerNameEx(1, Buffer, Size) then
+    Result := Lowercase(Copy(Buffer, 1, Integer(Size)))
+  else
+    Result := Lowercase(ExpandConstant('{computername}'));
 end;
 
 function HelperParams(Action, RunId, OutFile, Extra: String): String;

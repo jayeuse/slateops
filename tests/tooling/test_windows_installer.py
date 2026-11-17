@@ -32,11 +32,19 @@ class WindowsInstallerWorkflowTest(unittest.TestCase):
     def setUp(self) -> None:
         self.source = WORKFLOW.read_text(encoding="utf-8")
 
-    def test_runs_on_pull_requests_and_main_for_the_installer_paths(self) -> None:
+    def test_runs_for_the_installer_and_engine_contract_paths_p3_8(self) -> None:
+        # P3-8: a change to the engine wire contract that the Windows side follows reruns the job.
         on = self.source.split("\non:\n", 1)[1].split("\nconcurrency:", 1)[0]
         self.assertIn("  pull_request:\n", on)
         self.assertIn("  push:\n    branches: [main]\n", on)
-        for path in ('"infra/windows/installer/**"', '".github/workflows/windows-installer.yml"'):
+        for path in (
+            '"infra/windows/installer/**"',
+            '".github/workflows/windows-installer.yml"',
+            '"packaging/engine/receive.py"',
+            '"packaging/engine/status.py"',
+            '"packaging/engine/log_bundle.py"',
+            '"packaging/engine/release.py"',
+        ):
             with self.subTest(path=path):
                 self.assertEqual(on.count(path), 2)
 
@@ -104,7 +112,8 @@ class WindowsInstallerSourcesTest(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertIn(f"\n{line}\n", f"\n{setup}\n")
 
-    def test_bitlocker_is_never_read_beyond_its_status(self) -> None:
+    def test_bitlocker_is_never_read_beyond_its_status_p2_4(self) -> None:
+        # P2-4, S91-10: the BitLocker module loads every key protector, so no script calls it.
         for path in sorted((INSTALLER / "scripts").rglob("*.ps1")):
             code = [
                 line
@@ -112,7 +121,9 @@ class WindowsInstallerSourcesTest(unittest.TestCase):
                 if not line.lstrip().startswith("#")
             ]
             with self.subTest(path=path.relative_to(ROOT)):
-                self.assertNotRegex("\n".join(code), r"(?i)KeyProtector|RecoveryPassword")
+                self.assertNotRegex(
+                    "\n".join(code), r"(?i)KeyProtector|RecoveryPassword|Get-BitLockerVolume"
+                )
 
     def test_the_task_actions_take_no_parameters(self) -> None:
         for name in ("exec.ps1", "start.ps1"):

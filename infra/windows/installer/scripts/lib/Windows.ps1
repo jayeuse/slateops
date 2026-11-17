@@ -53,6 +53,12 @@ function Initialize-DataFolder {
         [string]$ServiceSid = ''
     )
     if (-not (Test-DataRootPath $DataRoot)) { return New-StepResult -Code 'path_invalid' -MessageKey 'setup.data.path_invalid' }
+    # S91-2: every folder above the data folder must keep it in place (W8 writes the copy).
+    $parents = @(Get-FolderParentProblem -Path $DataRoot)
+    if ($parents.Count -gt 0) {
+        foreach ($problem in $parents) { Write-RunLog 'setup.data' 'FAIL' $problem }
+        return New-StepResult -Code 'data_folder_parent_unsafe' -MessageKey 'setup.data.data_folder_parent_unsafe' -Values @{ reason = ($parents[0] -split ':')[0] }
+    }
     $drive = $DataRoot.Substring(0, 2)
     $disk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter ("DeviceID='{0}'" -f $drive)
     if ((-not $disk) -or ([int]$disk.DriveType -ne 3) -or ([string]$disk.FileSystem -ne 'NTFS')) { return New-StepResult -Code 'drive_not_fixed_ntfs' -MessageKey 'setup.data.drive_not_fixed_ntfs' }
@@ -96,7 +102,19 @@ function Install-ScriptsCopy {
 function Copy-PayloadPart {
     # Copies fixed-name parts into the data folder's payload folder. Their hashes are checked
     # where they are used: the Linux image by import-distro, the rest by the engine (receive).
-    param([Parameter(Mandatory = $true)][hashtable]$Layout, [Parameter(Mandatory = $true)][string]$SourceDir, [Parameter(Mandatory = $true)][string[]]$Names)
+    # The folders above the data folder and the data tree are checked again right before the
+    # copy (S91-2).
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Layout,
+        [Parameter(Mandatory = $true)][string]$SourceDir,
+        [Parameter(Mandatory = $true)][string[]]$Names,
+        [string]$ServiceSid = ''
+    )
+    $problems = @(Get-FolderParentProblem -Path $Layout.DataRoot) + @(Get-TreeProblem -Tree $Layout.DataTree -ServiceSid $ServiceSid)
+    if ($problems.Count -gt 0) {
+        foreach ($problem in $problems) { Write-RunLog 'setup.payload' 'FAIL' $problem }
+        return New-StepResult -Code 'data_folder_parent_unsafe' -MessageKey 'setup.data.data_folder_parent_unsafe' -Values @{ reason = ($problems[0] -split ':')[0] }
+    }
     foreach ($name in $Names) {
         if ($name -notmatch '^[A-Za-z0-9._-]+$') { throw 'Not a payload part name.' }
         $source = Join-Path $SourceDir $name
@@ -133,7 +151,7 @@ function Get-ResumeCommand {
     # program picks its first screen from the saved progress, so it needs no switch.
     param([Parameter(Mandatory = $true)][string]$SetupPath)
     if (-not (Test-SetupPath $SetupPath)) { throw 'Not a setup file path.' }
-    return ('"{0}" "{1}"' -f (Join-Path $env:SystemRoot 'explorer.exe'), $SetupPath)
+    return ('"{0}" "{1}"' -f (Join-Path $SlateOpsPaths.Windows 'explorer.exe'), $SetupPath)
 }
 
 function Save-SetupProgress {
@@ -183,13 +201,51 @@ function Get-SetupEntry {
     return @{ screen = 'S01'; next = '' }
 }
 
+function Get-SessionUserName {
+    # The user who is signed in to this session: the owner of explorer.exe in the session of
+    # this process (DOMAIN\user). Empty when it cannot be read.
+    try {
+        $session = (Get-Process -Id $PID).SessionId
+        foreach ($process in @(Get-CimInstance -ClassName Win32_Process -Filter ("Name='explorer.exe' AND SessionId={0}" -f [int]$session))) {
+            $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwner
+            if ($owner.ReturnValue -eq 0) { return ('{0}\{1}' -f $owner.Domain, $owner.User) }
+        }
+    } catch { $null = $_ }
+    return ''
+}
+
+function Test-ResumeUser {
+    # S91-7: the RunOnce entry and the shortcut go into the profile of the user who runs setup.
+    # When an administrator elevated setup for another signed-in user, that profile is not the
+    # signed-in user's, so no entry is written (W8 tells the person to open setup again).
+    param([AllowEmptyString()][string]$ElevatedUser, [AllowEmptyString()][string]$SessionUser)
+    if ((-not $ElevatedUser) -or (-not $SessionUser)) { return $false }
+    return ($ElevatedUser -ieq $SessionUser)
+}
+
+function Test-ResumePath {
+    # S91-6: the desktop folder and the shortcut path are not reparse points.
+    param([Parameter(Mandatory = $true)][string]$Shortcut)
+    foreach ($path in @((Split-Path -Parent $Shortcut), $Shortcut)) {
+        $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        if ($item -and ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { return $false }
+    }
+    return $true
+}
+
 function Register-SetupResume {
     # The RunOnce entry and the desktop shortcut, both starting the original setup file (N-1).
-    param([Parameter(Mandatory = $true)][string]$SetupPath)
+    param([Parameter(Mandatory = $true)][string]$SetupPath, [string]$SessionUser = (Get-SessionUserName))
     $command = Get-ResumeCommand -SetupPath $SetupPath
+    $elevated = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    if (-not (Test-ResumeUser -ElevatedUser $elevated -SessionUser $SessionUser)) {
+        Write-RunLog 'setup.resume' 'WARN' ('setup runs as {0}, the signed-in user is {1}: no resume entries' -f $elevated, $SessionUser)
+        return New-StepResult -Code 'resume_other_user' -MessageKey 'setup.resume.resume_other_user'
+    }
+    $shortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) $SlateOpsResume.ShortcutName
+    if (-not (Test-ResumePath -Shortcut $shortcut)) { return New-StepResult -Code 'resume_path_unsafe' -MessageKey 'setup.resume.resume_path_unsafe' }
     if (-not (Test-Path -LiteralPath $SlateOpsResume.RunOnceKey)) { New-Item -Path $SlateOpsResume.RunOnceKey -Force | Out-Null }
     New-ItemProperty -LiteralPath $SlateOpsResume.RunOnceKey -Name $SlateOpsResume.RunOnceName -PropertyType String -Value $command -Force | Out-Null
-    $shortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) $SlateOpsResume.ShortcutName
     $shell = New-Object -ComObject WScript.Shell
     $link = $shell.CreateShortcut($shortcut)
     $link.TargetPath = $SetupPath
@@ -201,7 +257,8 @@ function Register-SetupResume {
 
 function Clear-SetupResume {
     # Removes the RunOnce entry, the shortcut and (with -Progress) the saved progress (spec 4.5
-    # Cancel; S07 removes the shortcut when it opens, plan F4a).
+    # Cancel; S07 removes the shortcut when it opens, plan F4a). A shortcut path that is a
+    # reparse point is removed itself, never followed.
     param([Parameter(Mandatory = $true)][hashtable]$Layout, [switch]$Progress)
     Remove-ItemProperty -LiteralPath $SlateOpsResume.RunOnceKey -Name $SlateOpsResume.RunOnceName -ErrorAction SilentlyContinue
     $shortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) $SlateOpsResume.ShortcutName
@@ -277,7 +334,7 @@ function Install-WslPackage {
         $record['wsl_version_before_setup'] = $(if ($null -eq $installed) { 'none' } else { $installed.ToString() })
         Save-WindowsChanges -Layout $Layout -Record $record
     }
-    $msiLog = Join-Path (Join-Path $Layout.Logs 'setup') ('wsl-msi-{0}.log' -f (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ'))
+    $msiLog = Join-Path (Join-Path $Layout.Logs 'setup') ('wsl-msi-{0}.log' -f (Format-UtcTime -Format 'yyyyMMddTHHmmssZ'))
     for ($attempt = 1; $attempt -le 4; $attempt++) {
         $hash = Get-FileSha256 -Path $MsiPath
         if ($hash -ne $Sha256) {
@@ -315,7 +372,8 @@ function Get-FirewallRuleDefinition {
     # Hyper-V firewall for the WSL VM (Private, the LAN network; the documentation does not say
     # whether Hyper-V rules accept LocalSubnet, kit design notes).
     param([Parameter(Mandatory = $true)][string]$Cidr)
-    if ($Cidr -notmatch '^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$') { throw 'Not an IPv4 network.' }
+    # /0 would open the rule to every address (S91-11).
+    if ($Cidr -notmatch '^([0-9]{1,3}\.){3}[0-9]{1,3}/([1-9]|[12][0-9]|3[0-2])$') { throw 'Not an IPv4 network.' }
     return @{
         Windows = @{
             Name = $SlateOps.FirewallRuleName; DisplayName = 'Slate Operations (TCP 443 and 80)'; Group = $SlateOps.FirewallGroup
@@ -384,12 +442,21 @@ function Get-HostsContent {
 }
 
 function Set-HostsEntry {
-    param([Parameter(Mandatory = $true)][hashtable]$Layout, [Parameter(Mandatory = $true)][string]$HostName)
-    $path = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+    # Writes the hosts file back in the encoding it was read with (P3-5): a byte order mark
+    # stays, a file without one gets none, and other lines keep their characters.
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Layout,
+        [Parameter(Mandatory = $true)][string]$HostName,
+        [string]$Path = (Join-Path $SlateOpsPaths.System32 'drivers\etc\hosts')
+    )
     $existing = ''
-    if (Test-Path -LiteralPath $path) { $existing = [System.IO.File]::ReadAllText($path) }
+    $encoding = [System.Text.Encoding]::Default
+    if (Test-Path -LiteralPath $Path) {
+        $reader = New-Object System.IO.StreamReader($Path, [System.Text.Encoding]::Default, $true)
+        try { $existing = $reader.ReadToEnd(); $encoding = $reader.CurrentEncoding } finally { $reader.Dispose() }
+    }
     $content = Get-HostsContent -Existing $existing -HostName $HostName
-    if ($content -ne $existing) { [System.IO.File]::WriteAllText($path, $content, [System.Text.Encoding]::ASCII) }
+    if ($content -ne $existing) { [System.IO.File]::WriteAllText($Path, $content, $encoding) }
     $record = Read-WindowsChanges -Layout $Layout
     $record['hosts_name'] = $HostName
     Save-WindowsChanges -Layout $Layout -Record $record
@@ -414,6 +481,88 @@ function Get-CaSecurityCode {
     return (($hash | ForEach-Object { $_.ToString('X2') }) -join ':')
 }
 
+function Initialize-CertPropertyType {
+    # Certificate context properties (crypt32). .NET Framework has no managed call to set the
+    # enhanced key usage property of a certificate in a store.
+    if ('SlateOpsSetup.CertProperty' -as [type]) { return }
+    $source = @'
+using System;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography.X509Certificates;
+namespace SlateOpsSetup
+{
+    public static class CertProperty
+    {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct CRYPT_DATA_BLOB { public int cbData; public IntPtr pbData; }
+
+        [DllImport("crypt32.dll", SetLastError = true)]
+        private static extern bool CertSetCertificateContextProperty(IntPtr context, int propId, int flags, ref CRYPT_DATA_BLOB data);
+
+        [DllImport("crypt32.dll", SetLastError = true)]
+        private static extern bool CertGetCertificateContextProperty(IntPtr context, int propId, byte[] data, ref int size);
+
+        private const int CERT_ENHKEY_USAGE_PROP_ID = 9;
+
+        public static void SetEnhancedKeyUsage(X509Certificate2 certificate, byte[] encoded)
+        {
+            IntPtr memory = Marshal.AllocHGlobal(encoded.Length);
+            try
+            {
+                Marshal.Copy(encoded, 0, memory, encoded.Length);
+                CRYPT_DATA_BLOB blob = new CRYPT_DATA_BLOB();
+                blob.cbData = encoded.Length;
+                blob.pbData = memory;
+                if (!CertSetCertificateContextProperty(certificate.Handle, CERT_ENHKEY_USAGE_PROP_ID, 0, ref blob))
+                {
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                }
+            }
+            finally { Marshal.FreeHGlobal(memory); }
+        }
+
+        public static byte[] GetEnhancedKeyUsage(X509Certificate2 certificate)
+        {
+            int size = 0;
+            if (!CertGetCertificateContextProperty(certificate.Handle, CERT_ENHKEY_USAGE_PROP_ID, null, ref size)) { return null; }
+            byte[] data = new byte[size];
+            if (!CertGetCertificateContextProperty(certificate.Handle, CERT_ENHKEY_USAGE_PROP_ID, data, ref size)) { return null; }
+            return data;
+        }
+    }
+}
+'@
+    Add-Type -TypeDefinition $source -Language CSharp
+}
+
+function Test-CaSelfSignature {
+    # S91-9: the certificate verifies with its own key: a chain of one element whose only status
+    # is "untrusted root" (no revocation check; the certificate is not trusted yet).
+    param([Parameter(Mandatory = $true)][System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate)
+    $chain = New-Object System.Security.Cryptography.X509Certificates.X509Chain
+    try {
+        $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+        [void]$chain.Build($Certificate)
+        if ($chain.ChainElements.Count -ne 1) { return $false }
+        $allowed = [System.Security.Cryptography.X509Certificates.X509ChainStatusFlags]::UntrustedRoot
+        foreach ($status in $chain.ChainElements[0].ChainElementStatus) {
+            if (($status.Status -band (-bnot $allowed)) -ne 0) { return $false }
+        }
+        return $true
+    } finally { $chain.Reset() }
+}
+
+function Get-StoreEnhancedKeyUsage {
+    # The enhanced key usage OIDs set as a property on a certificate in a store; empty when none.
+    param([Parameter(Mandatory = $true)][System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate)
+    Initialize-CertPropertyType
+    $bytes = [SlateOpsSetup.CertProperty]::GetEnhancedKeyUsage($Certificate)
+    if ($null -eq $bytes) { return , @() }
+    $data = New-Object System.Security.Cryptography.AsnEncodedData('2.5.29.37', $bytes)
+    $extension = New-Object System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension($data, $false)
+    return , @($extension.EnhancedKeyUsages | ForEach-Object { $_.Value })
+}
+
 function Test-CaCertificate {
     # A self-signed CA certificate (basic constraints CA=true). Anything else is refused.
     param([Parameter(Mandatory = $true)][System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate)
@@ -430,9 +579,21 @@ function Install-TrustedCa {
     param([Parameter(Mandatory = $true)][hashtable]$Layout, [Parameter(Mandatory = $true)][string]$Pem)
     try { $certificate = ConvertFrom-PemCertificate -Pem $Pem } catch { return New-StepResult -Code 'certificate_invalid' -MessageKey 'install.windows.ca_invalid' }
     if (-not (Test-CaCertificate -Certificate $certificate)) { return New-StepResult -Code 'certificate_invalid' -MessageKey 'install.windows.ca_invalid' }
+    if (-not (Test-CaSelfSignature -Certificate $certificate)) { return New-StepResult -Code 'certificate_invalid' -MessageKey 'install.windows.ca_invalid' }
+    # S91-9: the root is trusted for Server Authentication only (enhanced key usage property on
+    # the store entry; the certificate itself is unchanged).
+    $oids = New-Object System.Security.Cryptography.OidCollection
+    [void]$oids.Add((New-Object System.Security.Cryptography.Oid('1.3.6.1.5.5.7.3.1')))
+    $usage = New-Object System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension($oids, $false)
+    Initialize-CertPropertyType
     $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', 'LocalMachine')
     $store.Open('ReadWrite')
-    try { $store.Add($certificate) } finally { $store.Close() }
+    try {
+        $store.Add($certificate)
+        $stored = @($store.Certificates.Find([System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $certificate.Thumbprint, $false))
+        if ($stored.Count -ne 1) { return New-StepResult -Code 'failed' -MessageKey 'install.windows.ca_failed' }
+        [SlateOpsSetup.CertProperty]::SetEnhancedKeyUsage($stored[0], $usage.RawData)
+    } finally { $store.Close() }
     $code = Get-CaSecurityCode -Certificate $certificate
     $record = Read-WindowsChanges -Layout $Layout
     $record['ca_thumbprint'] = $certificate.Thumbprint
@@ -466,7 +627,10 @@ function Set-KeepAwake {
     }
     Save-WindowsChanges -Layout $Layout -Record $record
     foreach ($setting in $settings) {
-        if ($null -eq $record[$setting.key]) { continue }
+        if ($null -eq $record[$setting.key]) {
+            Write-RunLog 'install.windows.power' 'WARN' ('{0} {1} on mains power cannot be read; it is not changed' -f $setting.group, $setting.name)
+            continue
+        }
         $null = Invoke-Logged -Step 'install.windows.power' -FilePath 'powercfg.exe' -ArgumentList @('/setacvalueindex', $scheme, $setting.group, $setting.name, '0')
     }
     $null = Invoke-Logged -Step 'install.windows.power' -FilePath 'powercfg.exe' -ArgumentList @('/setactive', $scheme)
@@ -481,18 +645,16 @@ function Invoke-KitUnregister {
     # Runs the kit's own "unregister" job as the kit's account through the kit's Exec task, in
     # the kit's request format, when the kit folder passes the kit's safety check. Returns $true
     # when the job reported exit code 0.
-    $kit = $SlateOpsCheck.Kit
-    $tree = @{ Root = $kit.Root; Entries = [ordered]@{ 'kit' = 'read'; 'cache' = 'read'; 'state' = 'read'; 'logs' = 'none'; 'svc-out' = 'modify'; 'distro' = 'modify' } }
-    $account = Get-LocalUser -Name $kit.AccountName -ErrorAction SilentlyContinue
-    $sid = $(if ($account) { $account.SID.Value } else { '' })
-    $problems = @(Get-TreeProblem -Tree $tree -ServiceSid $sid)
+    param([Parameter(Mandatory = $true)][hashtable]$Kit)
+    $problems = @(Get-KitTreeProblem -Kit $Kit)
     if ($problems.Count -gt 0) { Write-RunLog 'check.c29' 'WARN' ('the kit folder fails the safety check: {0}' -f ($problems -join '; ')); return $false }
-    $task = Get-ScheduledTask -TaskPath $kit.TaskPath -TaskName 'Exec' -ErrorAction SilentlyContinue
+    $account = Get-LocalUser -Name $Kit.AccountName -ErrorAction SilentlyContinue
+    $task = Get-ScheduledTask -TaskPath $Kit.TaskPath -TaskName 'Exec' -ErrorAction SilentlyContinue
     if ((-not $task) -or (-not $account)) { return $false }
     $requestId = [guid]::NewGuid().ToString()
-    [System.IO.File]::WriteAllText((Join-Path $kit.Root 'state\request.txt'), ('unregister {0}' -f $requestId), [System.Text.Encoding]::ASCII)
-    Start-ScheduledTask -TaskPath $kit.TaskPath -TaskName 'Exec'
-    $resultFile = Join-Path $kit.Root 'svc-out\svc-exec-result.json'
+    [System.IO.File]::WriteAllText((Join-Path $Kit.Root 'state\request.txt'), ('unregister {0}' -f $requestId), [System.Text.Encoding]::ASCII)
+    Start-ScheduledTask -TaskPath $Kit.TaskPath -TaskName 'Exec'
+    $resultFile = Join-Path $Kit.Root 'svc-out\svc-exec-result.json'
     $deadline = (Get-Date).AddMinutes(10)
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Seconds 5
@@ -508,56 +670,76 @@ function Remove-KitLeftovers {
     # The kit's cleanup order, with no prompt (the C29 form's Continue is the confirmation):
     # boot task off; distribution unregistered as the kit's account, else the WSL service stops
     # for a moment (the C29 form names this); account disabled; tasks and task folder; rules;
-    # sign-in entry, profile, account; rights by SID; the kit folder without its logs. The kit's
-    # power settings are restored only from a kit state file that passes the safety check.
-    $kit = $SlateOpsCheck.Kit
+    # sign-in entry, profile, account; rights by SID; the kit folder without its logs.
+    # S91-1: nothing is removed when the kit folder fails the kit's safety check (a planted
+    # folder or a junction at C:\ProgramData\SlateOpsBootTest), and the account is never touched
+    # when it belongs to an installed Slate Operations (the installed program's version.json or
+    # \SlateOps\ tasks exist).
+    param([hashtable]$Kit = $SlateOpsCheck.Kit)
     $step = 'check.c29.remove'
-    $account = Get-LocalUser -Name $kit.AccountName -ErrorAction SilentlyContinue
+    $problems = @(Get-KitTreeProblem -Kit $Kit)
+    if ($problems.Count -gt 0) {
+        foreach ($problem in $problems) { Write-RunLog $step 'FAIL' $problem }
+        return New-StepResult -Code 'kit_folder_unsafe' -MessageKey 'check.c29.unknown_parts'
+    }
+    $productAccount = (Test-InstalledProgram) -or [bool](Get-ScheduledTask -TaskPath $SlateOps.TaskPath -ErrorAction SilentlyContinue)
+    $account = $null
+    if ($productAccount) { Write-RunLog $step 'WARN' 'Slate Operations is installed: the account and the WSL service are not touched' }
+    else { $account = Get-LocalUser -Name $Kit.AccountName -ErrorAction SilentlyContinue }
     $sid = $(if ($account) { $account.SID.Value } else { '' })
-    $tasks = @(Get-ScheduledTask -TaskPath $kit.TaskPath -ErrorAction SilentlyContinue)
+    $tasks = @(Get-ScheduledTask -TaskPath $Kit.TaskPath -ErrorAction SilentlyContinue)
     if ($tasks | Where-Object { $_.TaskName -eq 'Start' }) {
-        Disable-ScheduledTask -TaskPath $kit.TaskPath -TaskName 'Start' | Out-Null
-        Stop-ScheduledTask -TaskPath $kit.TaskPath -TaskName 'Start'
+        Disable-ScheduledTask -TaskPath $Kit.TaskPath -TaskName 'Start' | Out-Null
+        Stop-ScheduledTask -TaskPath $Kit.TaskPath -TaskName 'Start'
         Write-RunLog $step 'INFO' 'kit boot task disabled and stopped'
     }
-    $vhdx = Join-Path $kit.Root 'distro\vhd\ext4.vhdx'
-    $gone = Invoke-KitUnregister
-    if ((-not $gone) -and (Test-Path -LiteralPath $vhdx)) {
-        Write-RunLog $step 'WARN' 'the kit distribution is still registered; stopping the WSL service for a moment'
-        Stop-Service -Name 'WSLService' -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 5
+    if (-not $productAccount) {
+        $vhdx = Join-Path $Kit.Root 'distro\vhd\ext4.vhdx'
+        $gone = Invoke-KitUnregister -Kit $Kit
+        if ((-not $gone) -and (Test-Path -LiteralPath $vhdx)) {
+            Write-RunLog $step 'WARN' 'the kit distribution is still registered; stopping the WSL service for a moment'
+            Stop-Service -Name 'WSLService' -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 5
+        }
     }
-    if ($account) { Disable-LocalUser -Name $kit.AccountName; Write-RunLog $step 'INFO' 'account disabled' }
-    foreach ($task in $tasks) { Unregister-ScheduledTask -TaskPath $kit.TaskPath -TaskName $task.TaskName -Confirm:$false }
+    if ($account) { Disable-LocalUser -Name $Kit.AccountName; Write-RunLog $step 'INFO' 'account disabled' }
+    foreach ($task in $tasks) { Unregister-ScheduledTask -TaskPath $Kit.TaskPath -TaskName $task.TaskName -Confirm:$false }
     if ($tasks.Count -gt 0) {
         $scheduler = New-Object -ComObject 'Schedule.Service'
         $scheduler.Connect()
-        try { $scheduler.GetFolder('\').DeleteFolder('SlateOpsBootTest', 0) } catch { $null = $_ }
+        try { $scheduler.GetFolder('\').DeleteFolder($Kit.TaskPath.Trim('\'), 0) } catch { $null = $_ }
         Write-RunLog $step 'INFO' 'kit tasks removed'
     }
-    Get-NetFirewallRule -Name $kit.RuleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-    Get-NetFirewallHyperVRule -Name $kit.HyperVRule -ErrorAction SilentlyContinue | Remove-NetFirewallHyperVRule
-    $userList = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList'
-    Remove-ItemProperty -LiteralPath $userList -Name $kit.AccountName -ErrorAction SilentlyContinue
-    if ($sid) {
+    Get-NetFirewallRule -Name $Kit.RuleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+    Get-NetFirewallHyperVRule -Name $Kit.HyperVRule -ErrorAction SilentlyContinue | Remove-NetFirewallHyperVRule
+    if ($account) {
+        $userList = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList'
+        Remove-ItemProperty -LiteralPath $userList -Name $Kit.AccountName -ErrorAction SilentlyContinue
         $userProfile = Get-CimInstance -ClassName Win32_UserProfile -Filter ("SID='{0}'" -f $sid) -ErrorAction SilentlyContinue
         if ($userProfile -and -not $userProfile.Loaded) { Remove-CimInstance -InputObject $userProfile }
-    }
-    if ($account) { Remove-LocalUser -Name $kit.AccountName; Write-RunLog $step 'INFO' 'account removed' }
-    if ($sid) {
+        Remove-LocalUser -Name $Kit.AccountName
+        Write-RunLog $step 'INFO' 'account removed'
         Initialize-LsaRightsType
         [SlateOpsSetup.LsaRights]::Remove($sid, [string[]]$SlateOps.AccountRights)
     }
-    if (Test-Path -LiteralPath $kit.Root) {
-        foreach ($child in @(Get-ChildItem -LiteralPath $kit.Root -Force)) {
+    if (Test-Path -LiteralPath $Kit.Root) {
+        # Checked again right before the delete: the folder may have changed since the start.
+        $again = @(Get-KitTreeProblem -Kit $Kit)
+        if ($again.Count -gt 0) {
+            foreach ($problem in $again) { Write-RunLog $step 'FAIL' $problem }
+            return New-StepResult -Code 'kit_folder_unsafe' -MessageKey 'check.c29.unknown_parts'
+        }
+        foreach ($child in @(Get-ChildItem -LiteralPath $Kit.Root -Force)) {
             if ($child.Name -ieq 'logs') { continue }
             Remove-PathNoFollow -Path $child.FullName
         }
-        if ($sid) { $null = Invoke-Logged -Step $step -FilePath 'icacls.exe' -ArgumentList @($kit.Root, '/remove:g', ('*{0}' -f $sid)) -NoThrow }
+        if ($sid) { $null = Invoke-Logged -Step $step -FilePath (Join-Path $SlateOpsPaths.System32 'icacls.exe') -ArgumentList @($Kit.Root, '/remove:g', ('*{0}' -f $sid)) -NoThrow }
         Write-RunLog $step 'INFO' 'kit folder removed; its logs stay'
     }
-    $left = Get-LeftoverFact
-    $remaining = @(@('account', 'kit_distro', 'kit_tasks', 'kit_rules') | Where-Object { $left[$_] })
+    $left = Get-LeftoverFact -Kit $Kit
+    $check = @('kit_distro', 'kit_tasks', 'kit_rules')
+    if (-not $productAccount) { $check += 'account' }
+    $remaining = @($check | Where-Object { $left[$_] })
     if ($remaining.Count -gt 0) { return New-StepResult -Code 'incomplete' -MessageKey 'check.c29.incomplete' -Values @{ remaining = $remaining } }
     return New-StepResult -Code 'removed' -MessageKey 'check.c29.removed'
 }

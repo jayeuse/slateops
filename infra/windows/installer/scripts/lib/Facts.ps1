@@ -2,7 +2,8 @@
 #
 # Every source is a fixed command or a fixed registry or CIM read; no request field and no
 # value from Linux names a command, a path or an argument (plan 11.1 W7 security cell).
-# BitLocker: VolumeStatus, ProtectionStatus and EncryptionMethod only, never KeyProtector.
+# BitLocker: protection status, conversion status and encryption method only, read through the
+# WMI class Win32_EncryptableVolume; the BitLocker module is not used (P2-4, S91-10).
 # WSL facts of the distribution come from the Exec job wsl-facts (as slateops-svc), because
 # the distribution is registered for that account only.
 # Windows PowerShell 5.1, ASCII only.
@@ -88,10 +89,8 @@ function Get-EnvironmentFacts {
     $mounts = @('C:')
     if ($DataDrive -match '^[A-Za-z]:$') { $mounts += $DataDrive.ToUpperInvariant() }
     $facts.bitlocker = Invoke-Reader 'bitlocker' {
-        # Status only. Select-Object keeps the three properties; KeyProtector is never read.
-        , @(Get-BitLockerVolume -MountPoint @($mounts | Select-Object -Unique) -ErrorAction Stop |
-                Select-Object -Property MountPoint, VolumeStatus, ProtectionStatus, EncryptionMethod |
-                ForEach-Object { @{ mount_point = [string]$_.MountPoint; volume_status = [string]$_.VolumeStatus; protection_status = [string]$_.ProtectionStatus; encryption_method = [string]$_.EncryptionMethod } })
+        # Status only, through Win32_EncryptableVolume (P2-4, S91-10; plan 10.4 command changed).
+        , @(Get-EncryptableVolumeStatus -MountPoints @($mounts | Select-Object -Unique))
     }
     $facts.wsl = Invoke-Reader 'wsl' {
         $version = Get-WslPackageVersion

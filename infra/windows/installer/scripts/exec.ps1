@@ -11,6 +11,8 @@ Windows PowerShell 5.1, ASCII only.
 [CmdletBinding()]
 param()
 
+# S91-6: modules load only from Windows PowerShell's own folder.
+$env:PSModulePath = Join-Path $PSHOME 'Modules'
 foreach ($name in @('Common', 'Checks', 'Exec')) { . (Join-Path $PSScriptRoot ('lib\{0}.ps1' -f $name)) }
 
 $layout = New-SlateOpsLayout

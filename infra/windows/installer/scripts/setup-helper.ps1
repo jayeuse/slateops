@@ -34,6 +34,9 @@ param(
     [switch]$Cancel
 )
 
+# S91-6: modules load only from Windows PowerShell's own folder, never from a folder in the
+# caller's module path.
+$env:PSModulePath = Join-Path $PSHOME 'Modules'
 foreach ($name in @('Common', 'Checks', 'Facts', 'Exec', 'Service', 'Windows')) { . (Join-Path $PSScriptRoot ('lib\{0}.ps1' -f $name)) }
 
 $helperRoot = Split-Path -Parent $PSScriptRoot
@@ -47,16 +50,14 @@ function Assert-InsideRoot {
 }
 
 function Write-HelperResult {
+    # "code" and "message_key" come first in the file (P2-2; the setup program reads the first
+    # "code").
     param([Parameter(Mandatory = $true)][System.Collections.IDictionary]$Result)
-    $Result['action'] = $Action
-    $Result['run_id'] = $RunId
-    Write-JsonFile -Path $script:outPath -Value $Result
-}
-
-function Get-StateServiceSid {
-    $account = Get-LocalUser -Name $SlateOps.AccountName -ErrorAction SilentlyContinue
-    if ($account -and (Get-ScheduledTask -TaskPath $SlateOps.TaskPath -ErrorAction SilentlyContinue)) { return $account.SID.Value }
-    return ''
+    $text = ConvertTo-HelperResultText -Result $Result -Action $Action -RunId $RunId
+    $temp = $script:outPath + '.tmp'
+    [System.IO.File]::WriteAllText($temp, $text, (New-Object System.Text.UTF8Encoding($false)))
+    if (Test-Path -LiteralPath $script:outPath) { Remove-PathNoFollow -Path $script:outPath }
+    [System.IO.File]::Move($temp, $script:outPath)
 }
 
 function Read-HelperVersion {
@@ -71,7 +72,8 @@ try {
 
     # Log: the state tree's setup folder when it exists and passes the quick check, else the
     # helper's own folder (before S07 creates the state tree, plan 10.1 item 4).
-    $serviceSid = Get-StateServiceSid
+    # P2-3: the SID from the administrator-only record, also after a partial service step.
+    $serviceSid = Get-RecordedServiceSid -Layout $layout
     $logDir = Open-LogDirectory -Layout $layout -Kind 'setup' -ServiceSid $serviceSid
     if (-not $logDir) {
         $logDir = Join-Path $helperRoot 'logs'
@@ -134,7 +136,10 @@ try {
             if (@('check_restart', 'feature_restart') -contains $Stage) { $result = Register-SetupResume -SetupPath $SetupPath }
             else { $result = New-StepResult -Code 'saved' -MessageKey 'setup.progress.saved' }
         }
-        'clear-resume' { $result = Clear-SetupResume -Layout $layout -Progress:$Cancel }
+        'clear-resume' {
+            if ($Cancel -and (Test-Path -LiteralPath $layout.State)) { Assert-TreeWritable -Tree $layout.StateTree -Directory $layout.State -ServiceSid $serviceSid }
+            $result = Clear-SetupResume -Layout $layout -Progress:$Cancel
+        }
         'restart' { $result = Invoke-PcRestart -Firmware:$Firmware }
         'prepare-pc' {
             $version = Read-HelperVersion
@@ -156,7 +161,8 @@ try {
             $copy = Install-ScriptsCopy -Layout $layout -SourceDir $PSScriptRoot
             if ($copy.code -ne 'copied') { $result = $copy; break }
             $parts = @($version.linux_image_name) + @(Get-ReceivePartNames -Version $version.version)
-            $null = Copy-PayloadPart -Layout $layout -SourceDir (Join-Path $helperRoot 'payload') -Names $parts
+            $copied = Copy-PayloadPart -Layout $layout -SourceDir (Join-Path $helperRoot 'payload') -Names $parts -ServiceSid $serviceSid
+            if ($copied.code -ne 'copied') { $result = $copied; break }
             $result = New-StepResult -Code 'ready' -MessageKey 'setup.data.ready' -Values $data.values
         }
         'service' {
@@ -167,6 +173,7 @@ try {
         'job' {
             $bytes = New-Object byte[] 0
             if ($InputFile) { $bytes = [System.IO.File]::ReadAllBytes((Assert-InsideRoot $InputFile)) }
+            Assert-TreeWritable -Tree $layout.StateTree -Directory $layout.Requests -ServiceSid $serviceSid
             $id = Submit-ExecRequest -Layout $layout -Job $Job -RunId $RunId -InputBytes $bytes
             $result = New-StepResult -Code 'started' -MessageKey 'exec.started' -Values @{ request_id = $id }
         }
@@ -192,9 +199,12 @@ try {
             $lan = Get-LanFact
             if (-not $lan) { $result = New-StepResult -Code 'no_network' -MessageKey 'check.c09.not_connected'; break }
             $cidr = ConvertTo-NetworkCidr -Address $lan.address -PrefixLength $lan.prefix_length
+            Assert-TreeWritable -Tree $layout.StateTree -Directory $layout.State -ServiceSid $serviceSid
+            # P3-9: the address is the DNS host name in lower case.
+            $hostName = ([string](Get-CimInstance -ClassName Win32_ComputerSystem).DNSHostName).ToLowerInvariant()
             $steps = @()
             $steps += Set-FirewallRules -Layout $layout -Cidr $cidr
-            $steps += Set-HostsEntry -Layout $layout -HostName ('{0}.local' -f $env:COMPUTERNAME.ToLowerInvariant())
+            $steps += Set-HostsEntry -Layout $layout -HostName ('{0}.local' -f $hostName)
             $pem = [System.IO.File]::ReadAllText((Assert-InsideRoot $PemFile), [System.Text.Encoding]::ASCII)
             $ca = Install-TrustedCa -Layout $layout -Pem $pem
             $steps += $ca

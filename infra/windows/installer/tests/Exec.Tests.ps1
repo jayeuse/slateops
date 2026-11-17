@@ -26,6 +26,15 @@ public static class StandIn
             Emit("{\"code\":\"payload_too_large\",\"message_key\":\"receive.payload_too_large\"}");
             return 2;
         }
+        if (mode == "big")
+        {
+            Stream big = Console.OpenStandardOutput();
+            byte[] block = new byte[1024 * 1024];
+            for (int i = 0; i < block.Length; i++) { block[i] = (byte)'x'; }
+            for (int i = 0; i < 3; i++) { big.Write(block, 0, block.Length); }
+            big.Flush();
+            return 0;
+        }
         Stream input = Console.OpenStandardInput();
         SHA256 sha = SHA256.Create();
         byte[] buffer = new byte[65536];
@@ -229,3 +238,39 @@ Test-Case 'AC-2 the request key check sorts by code points, not by culture' {
     Assert-Equal @('import-distro', 'wsl-facts', 'wslconfig') (Get-OrdinalSorted @('wslconfig', 'wsl-facts', 'import-distro'))
     Assert-Equal 'accepted' (Test-ExecRequest -RequestText '{"run_id":"install-20261117T032000Z-abc123","job":"wsl-facts","request_id":"0b9a1c64-6c2e-4f55-9b1e-2f0d3c7a8e11"}' -InputBytes $null).code
 }
+
+Test-Case 'AC-2 S91-8 standard output stops at its cap while it is read, and the total is reported' {
+    $dir = New-TestDirectory 's91-8-cap'
+    $env:SLATEOPS_STANDIN_MODE = 'big'
+    try {
+        $run = Invoke-ProcessWithInput -FilePath $script:StandIn -ArgumentList @('status') -WriteInput { param($sink) $null = $sink } `
+            -StdoutPath (Join-Path $dir 'out.json') -StderrPath (Join-Path $dir 'err.txt') -StdoutCap 1048576
+    } finally { Remove-Item Env:\SLATEOPS_STANDIN_MODE }
+    Assert-Equal 3145728 $run.stdout_total
+    Assert-Equal 1048576 (Get-Item -LiteralPath (Join-Path $dir 'out.json')).Length
+}
+
+Test-Case 'AC-2 P3-3 only an early end of the process counts as a closed input; another IO error is thrown' {
+    $dir = New-TestDirectory 'p3-3-io'
+    Assert-Throws {
+        $null = Invoke-ProcessWithInput -FilePath $script:StandIn -ArgumentList @('status') -WriteInput { param($sink) throw (New-Object System.IO.IOException('disk_failed')) } `
+            -StdoutPath (Join-Path $dir 'out.json') -StderrPath (Join-Path $dir 'err.txt')
+    } '*disk_failed*'
+}
+
+Test-Case 'AC-2 S91-3 the request and its input are removed once the result is read' {
+    $layout = New-ExecLayout 's91-3-spent'
+    Set-ExecRequest -Layout $layout -RequestText (Get-RequestText 'status') -InputBytes $script:StatusInput
+    $null = Invoke-ExecRequest -Layout $layout -WslPath $script:StandIn
+    $result = Get-ExecResult -Layout $layout -RequestId '0b9a1c64-6c2e-4f55-9b1e-2f0d3c7a8e11'
+    Assert-Equal 'ok' (Get-DictValue $result 'code')
+    Assert-Equal $false (Test-Path -LiteralPath $layout.RequestFile)
+    Assert-Equal $false (Test-Path -LiteralPath $layout.InputFile)
+}
+
+Test-Case 'AC-2 P2-2 a helper result file starts with the code, whatever order the result had' {
+    $result = @{ values = @{ verdict = 'ready' }; message_key = 'check.verdict.ready'; code = 'ready' }
+    $text = ConvertTo-HelperResultText -Result $result -Action 'check' -RunId 'install-20261117T032000Z-abc123'
+    Assert-True ($text.StartsWith('{"code":"ready","message_key":"check.verdict.ready",')) $text
+}
+

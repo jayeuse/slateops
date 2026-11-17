@@ -80,3 +80,17 @@ Test-Case 'AC-5 rotation also keeps a folder under its byte limit' {
     $removed = @(Invoke-LogRotation -Directory $dir -MaxBytes 1000)
     Assert-Equal @('package-night-20261102T000000Z-cccccc', 'package-night-20261101T000000Z-cccccc') $removed
 }
+
+Test-Case 'AC-5 P2-1 run IDs and time stamps use the invariant culture (th-TH set in the same statement)' {
+    $time = [datetime]::new(2026, 11, 17, 3, 20, 0, [System.DateTimeKind]::Utc)
+    $values = & {
+        [System.Threading.Thread]::CurrentThread.CurrentCulture = New-Object System.Globalization.CultureInfo('th-TH')
+        Get-UtcStamp -Time $time
+        New-RunId -Kind 'install' -Time $time
+        Format-LogLine -RunId 'install-20261117T032000Z-abc123' -Step 'install.check' -Level 'INFO' -Message 'x' -Time $time
+    }
+    Assert-Equal '2026-11-17T03:20:00Z' $values[0]
+    Assert-True ($values[1] -cmatch '^install-20261117T032000Z-[a-z0-9]{6}$') $values[1]
+    Assert-Equal '2026-11-17T03:20:00Z install-20261117T032000Z-abc123 install.check INFO x' $values[2]
+}
+
