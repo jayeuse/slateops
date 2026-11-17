@@ -102,3 +102,30 @@ Test-Case 'W13b-10 the setup program orders -rc.N by number, so rc.10 updates rc
     Assert-Equal 'M05' (Get-SetupEntry -Progress $null -Installed '0.1.0-rc.9' -SetupVersion '0.1.0-rc.10').screen
     Assert-Equal 'M01' (Get-SetupEntry -Progress $null -Installed '0.1.0-rc.10' -SetupVersion '0.1.0-rc.9').screen
 }
+
+Test-Case 'W13b after an update only the receive parts of other versions leave the payload folder, and a link is removed as a link' {
+    # Parent decision (DEC-0036, TASK-0095): the fixed part names of other versions go; the parts
+    # of this version, the shared manifest names, the Linux image and other files stay.
+    $outside = New-TestDirectory 'w13b-payload-outside'
+    [System.IO.File]::WriteAllText((Join-Path $outside 'keep.txt'), 'outside')
+    $root = New-AdminOnlyFolder 'SlateOpsW13bPayload'
+    try {
+        $layout = New-SlateOpsLayout -StateRoot (Join-Path $root 'ProgramData\SlateOps') -DataRoot (Join-Path $root 'SlateOps')
+        $null = Initialize-ProtectedTree -Tree $layout.DataTree
+        [void][System.IO.Directory]::CreateDirectory($layout.Payload)
+        $names = @('release-manifest.json', 'release-manifest.json.sigstore.json',
+            'slateops-engine-0.2.1.tar.gz', 'slateops-server-0.2.1-amd64.oci.tar', 'slateops-caddy-0.2.1-amd64.oci.tar',
+            'slateops-engine-0.2.0.tar.gz', 'slateops-server-0.2.0-amd64.oci.tar', 'slateops-caddy-0.2.1-rc.3-amd64.oci.tar',
+            'slateops-linux-0.2.0-amd64.tar.gz', 'notes.txt')
+        foreach ($name in $names) { [System.IO.File]::WriteAllText((Join-Path $layout.Payload $name), 'part') }
+        $null = New-Item -ItemType SymbolicLink -Path (Join-Path $layout.Payload 'slateops-engine-0.1.0.tar.gz') -Target $outside
+        $result = Remove-OldPayloadParts -Layout $layout -Version '0.2.1'
+        Assert-Equal 'removed 4' ('{0} {1}' -f $result.code, $result.values.count)
+        $left = @(Get-ChildItem -LiteralPath $layout.Payload -Force | ForEach-Object { $_.Name } | Sort-Object)
+        Assert-Equal @('notes.txt', 'release-manifest.json', 'release-manifest.json.sigstore.json', 'slateops-caddy-0.2.1-amd64.oci.tar',
+            'slateops-engine-0.2.1.tar.gz', 'slateops-linux-0.2.0-amd64.tar.gz', 'slateops-server-0.2.1-amd64.oci.tar') $left
+        Assert-Equal $true (Test-Path -LiteralPath (Join-Path $outside 'keep.txt')) 'the folder behind the link stays'
+        $again = Remove-OldPayloadParts -Layout $layout -Version '0.2.1'
+        Assert-Equal 'none 0' ('{0} {1}' -f $again.code, $again.values.count) 'a second run finds nothing'
+    } finally { Remove-PathNoFollow -Path $root }
+}

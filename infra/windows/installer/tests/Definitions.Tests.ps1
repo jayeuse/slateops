@@ -50,7 +50,10 @@ Test-Case 'AC-4 the boot task keeps the kit settings (W7-6)' {
 Test-Case 'AC-4 the Exec task keeps the kit settings and has no trigger' {
     $definition = Get-ExecTaskDefinition -ScriptsDir 'C:\ProgramData\SlateOps\scripts'
     $objects = New-TaskSettingsFromDefinition -Definition $definition
-    Assert-Equal 'PT2H' $objects.Settings.ExecutionTimeLimit
+    # Parent decision (DEC-0036, TASK-0095): 8 hours, not the kit's 2. The engine update job runs
+    # its backup and, after a failure, a restore in one Exec run; Task Scheduler stops a longer
+    # run. No installation exists yet, so every install gets the new limit.
+    Assert-Equal 'PT8H' $objects.Settings.ExecutionTimeLimit
     Assert-Equal 'IgnoreNew' ([string]$objects.Settings.MultipleInstances)
     Assert-Equal $false $objects.Settings.DisallowStartIfOnBatteries
     Assert-Equal $false $objects.Settings.StopIfGoingOnBatteries

@@ -131,6 +131,35 @@ function Copy-PayloadPart {
     return New-StepResult -Code 'copied' -MessageKey 'setup.payload.copied'
 }
 
+function Remove-OldPayloadParts {
+    # After a successful update (parent decision, DEC-0036, TASK-0095): the receive parts of other
+    # versions leave the payload folder. Only the fixed names of the engine bundle and the two
+    # image archives with a valid version other than this one; the manifest names are shared and
+    # stay; every other file stays. A link is removed as a link, never followed. A folder that
+    # fails the checks of Copy-PayloadPart is left as it is.
+    param([Parameter(Mandatory = $true)][hashtable]$Layout, [Parameter(Mandatory = $true)][string]$Version, [string]$ServiceSid = '')
+    if (-not (Test-ReleaseVersion $Version)) { throw 'Not a release version.' }
+    $folder = Get-Item -LiteralPath $Layout.Payload -Force -ErrorAction SilentlyContinue
+    if ((-not $folder) -or ($folder.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { return New-StepResult -Code 'none' -MessageKey 'setup.payload.none' -Values @{ count = 0 } }
+    $problems = @(Get-FolderParentProblem -Path $Layout.DataRoot) + @(Get-TreeProblem -Tree $Layout.DataTree -ServiceSid $ServiceSid)
+    if ($problems.Count -gt 0) {
+        foreach ($problem in $problems) { Write-RunLog 'update.payload' 'WARN' $problem }
+        return New-StepResult -Code 'data_folder_parent_unsafe' -MessageKey 'setup.data.data_folder_parent_unsafe' -Values @{ count = 0 }
+    }
+    $count = 0
+    foreach ($item in @(Get-ChildItem -LiteralPath $Layout.Payload -Force)) {
+        $found = [regex]::Match($item.Name, '^slateops-(?:engine-(?<v>.+)\.tar\.gz|(?:server|caddy)-(?<v>.+)-amd64\.oci\.tar)$')
+        if (-not $found.Success) { continue }
+        $other = $found.Groups['v'].Value
+        if ((-not (Test-ReleaseVersion $other)) -or ($other -ceq $Version)) { continue }
+        Remove-PathNoFollow -Path $item.FullName
+        Write-RunLog 'update.payload' 'INFO' ('removed {0}' -f $item.Name)
+        $count++
+    }
+    if ($count -eq 0) { return New-StepResult -Code 'none' -MessageKey 'setup.payload.none' -Values @{ count = 0 } }
+    return New-StepResult -Code 'removed' -MessageKey 'setup.payload.removed' -Values @{ count = $count }
+}
+
 # ---------------------------------------------------------------------------
 # Saved progress, the RunOnce entry and the desktop shortcut (plan F4a; spec 4.1, 4.5; N-1)
 # ---------------------------------------------------------------------------

@@ -281,7 +281,18 @@ try {
             $version = Read-HelperVersion
             $result = Invoke-UpdateWsl -Layout $layout -RunId $RunId -Version $version -MsiPath (Join-Path (Join-Path $helperRoot 'payload') $version.wsl_msi_name)
         }
-        'update-done' { $result = Install-ScriptsCopy -Layout $layout -SourceDir $PSScriptRoot }
+        'update-done' {
+            $result = Install-ScriptsCopy -Layout $layout -SourceDir $PSScriptRoot
+            # Parent decision (DEC-0036): the receive parts of other versions go. A failure here
+            # is logged only; the update itself is done.
+            if ($result.code -eq 'copied') {
+                try {
+                    $state = Read-InstallState -Layout $layout
+                    Set-LayoutDataRoot -Layout $layout -DataRoot $state.data_root
+                    $null = Remove-OldPayloadParts -Layout $layout -Version (Read-HelperVersion).version -ServiceSid $serviceSid
+                } catch { Write-RunLog 'update.payload' 'WARN' ('old parts not removed: {0}' -f $_.Exception.Message) }
+            }
+        }
         'security-code' { $result = Get-SecurityCodeFromStore -Layout $layout }
         'fix-mdns' {
             # C17 "Fix it for me": turns on the existing built-in rule for Private networks only;

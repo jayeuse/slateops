@@ -13,7 +13,9 @@ function Get-ExecTaskDefinition {
         Trigger   = 'none'
         RunLevel  = 'Limited'
         Settings  = [ordered]@{
-            ExecutionTimeLimit         = 'PT2H'
+            # 8 hours, not the kit's 2 (parent decision, DEC-0036, TASK-0095): the update job
+            # runs its backup and, after a failure, a restore in one run.
+            ExecutionTimeLimit         = 'PT8H'
             MultipleInstances          = 'IgnoreNew'
             AllowStartIfOnBatteries    = $true
             DontStopIfGoingOnBatteries = $true
