@@ -22,6 +22,7 @@ DEFAULT = "172.31.248.0/28"
 # The default's /21 first, then a second private /21 (Proposed; 256 choices in all).
 RANGES = ("172.31.248.0/21", "10.213.248.0/21")
 Network = ipaddress.IPv4Network
+MIN_ROUTE_PREFIX = 8
 
 
 def candidates() -> Iterator[Network]:
@@ -52,7 +53,11 @@ def host_networks(ctx: Context, step: str) -> list[Network]:
         for route in _json(routes.text()):
             destination = str(route.get("dst", ""))
             if destination and destination != "default":
-                found.append(ipaddress.IPv4Network(destination, strict=False))
+                network = ipaddress.IPv4Network(destination, strict=False)
+                # A route wider than /8 is a default route in parts (a VPN client's
+                # 0.0.0.0/1 and 128.0.0.0/1), not a network that the subnet can collide with.
+                if network.prefixlen >= MIN_ROUTE_PREFIX:
+                    found.append(network)
     except (ValueError, KeyError, TypeError) as error:
         raise failed("subnet_unknown") from error
     return found

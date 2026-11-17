@@ -65,12 +65,11 @@ def bootstrap_argv(
         "operations/bootstrap_admin.py",
         "--confirm",
         "--json",
-        "--name",
-        given["business_name"],
-        "--slug",
-        given["slug"],
-        "--time-zone",
-        given["time_zone"],
+        # One argument per value ("--name=<value>"): a name that starts with "-" stays the
+        # value of --name and never becomes an option of its own.
+        f"--name={given['business_name']}",
+        f"--slug={given['slug']}",
+        f"--time-zone={given['time_zone']}",
     ]
 
 

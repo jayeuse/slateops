@@ -54,6 +54,7 @@ from engine.core import (
     refused,
 )
 from engine.env_templates import TemplateError, render
+from engine.held import load_held
 from engine.smtp_env import parse as parse_smtp
 
 KEYS = {
@@ -90,6 +91,13 @@ PREFETCH_WAIT_SECONDS = 3600
 PROVISION_SECONDS = 4 * 900 + 120  # the W5a job's four step limits, plus start-up
 _SAFE = re.compile(r"[a-z_]{1,40}\Z")
 _LINE = re.compile(r"([A-Z_][A-Z0-9_]*)=(.*)\Z")
+# S86-3: the secret generator (step 4) and the CA job (step 6) run as root (UID 0) in their
+# containers, an exception to the Compose baseline's non-root rule. The need: their output
+# must be owned by root inside root-only 0700 folders (`/etc/slateops/new`, `ca/`), which a
+# non-root user could not write and which the backup admission requires (owner root). The
+# other controls hold: no network, a read-only root file system, every capability dropped
+# (so root cannot pass file permissions or change owners), no-new-privileges, `--pull never`
+# on the verified server image, and only the one or two folders that the job writes mounted.
 ONE_SHOT_ROOT = [
     "--user",
     "0:0",
@@ -171,6 +179,14 @@ def _folder(ctx: Context, path: Path, mode: int, owner: tuple[int, int] = (0, 0)
     path.mkdir(mode=0o700, exist_ok=True)
     os.chmod(path, mode)
     ctx.deps.chown(path, *owner)
+
+
+def hold_new_values(ctx: Context) -> None:
+    """Mask the values this run has just created (F2, S86-1). The job loads the held values
+    once at its start, before the answers are stored (step 0) and before steps 4 and 5
+    create the secrets; from here on every log line and step output masks them too."""
+    ctx.redactor = ctx.redactor.with_values(*load_held(ctx.paths))
+    ctx.log.redact = ctx.redactor
 
 
 def _server_image(state: dict[str, Any]) -> str:
@@ -585,6 +601,7 @@ def _start(ctx: Context, request: dict[str, Any]) -> tuple[dict[str, Any], dict[
         if not staged:
             raise refused("smtp_not_staged")
         answers.store(paths, parsed)
+        hold_new_values(ctx)
         state = journal.new(version, ctx.run_id, _at(ctx))
         journal.save(paths, state)
         return state, parsed
@@ -595,9 +612,15 @@ def _start(ctx: Context, request: dict[str, Any]) -> tuple[dict[str, Any], dict[
     stored = answers.load(paths)
     if stored is None:
         raise refused("install_state_mismatch", part="answers")
-    if given is not None and answers.parse(given) != stored:
-        raise refused("answers_changed")
+    if given is not None:
+        parsed = answers.parse(given)
+        if parsed is None:
+            raise refused("invalid_input")
+        if parsed != stored:
+            raise refused("answers_changed")
     check_state(ctx, state)
+    if journal.done(state, 13):
+        return state, stored  # complete: a rerun changes no state file (only its own log)
     if not journal.done(state, 4) and not (
         paths.staged_smtp.is_file() or (paths.etc / SMTP_COPY).is_file()
     ):
@@ -641,6 +664,8 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
             _space(ctx, step)
         ctx.log.line(step, "INFO", f"start {name}")
         RUNNERS[number](ctx, step, state, given, manifest)
+        if number in (4, 5):
+            hold_new_values(ctx)
         journal.mark(ctx.paths, state, number, name, _at(ctx))
         if number == 5:
             cleanup_generator_output(ctx)

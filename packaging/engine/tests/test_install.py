@@ -84,6 +84,7 @@ class World:
         self.active = False
         self.bootstrap_exit: tuple[int, str] | None = None
         self.provisioning: tuple[int, str] = (0, '{"result":"provisioned"}')
+        self.provisioning_stderr = "provision.roles info ok\n"
         self.healthy = True
         self.host_addresses: list[dict[str, Any]] = []
         self.host_routes: list[dict[str, Any]] = []
@@ -137,7 +138,7 @@ class World:
             return self._compose(argv)
         if "operations.install.provisioning" in argv:
             code, out = self.provisioning
-            return Result(code, out.encode() + b"\n", b"provision.roles info ok\n")
+            return Result(code, out.encode() + b"\n", self.provisioning_stderr.encode())
         if "operations/bootstrap_admin.py" in argv:
             return self._bootstrap(env)
         if text.startswith(("systemctl", "journalctl", "docker ps", "docker logs")):
@@ -482,16 +483,55 @@ def test_ac_i11_ac_s1_the_email_and_user_name_reach_bootstrap_only_through_its_e
         "operations/bootstrap_admin.py",
         "--confirm",
         "--json",
-        "--name",
-        "Front Desk Dental",
-        "--slug",
-        "front-desk",
-        "--time-zone",
-        "Asia/Manila",
+        "--name=Front Desk Dental",
+        "--slug=front-desk",
+        "--time-zone=Asia/Manila",
     ]
     everything = json.dumps(fake.calls) + log_text(paths)
     for value in (EMAIL, USERNAME, SMTP_PASSWORD, "g1-postgres_password", "restic-g1"):
         assert value not in everything, value
+
+
+def test_f2_s86_1_a_first_run_masks_the_answers_and_the_generated_secrets(
+    world: tuple[Paths, World],
+) -> None:
+    # The job starts before the answers are stored and the secrets exist (cli.py loads the
+    # held values once); a child that prints them on the first run must not reach the log.
+    paths, fake = world
+    generated = "g1-postgres_password-0123456789abcdef"
+    fake.provisioning_stderr = (
+        f"provision.roles error connect as {USERNAME} with password {generated}\n"
+    )
+    fake.bootstrap_exit = (3, f"user {USERNAME} at {EMAIL} key {generated}")
+
+    code, result = run(paths, fake)
+
+    assert (code, result["code"]) == (3, "bootstrap_failed")
+    logs = log_text(paths)
+    assert "provision.roles error connect as" in logs
+    for value in (USERNAME, EMAIL, generated, SMTP_PASSWORD):
+        assert value not in logs, value
+
+
+@pytest.mark.parametrize("name", ["-Clinic", "--json", "--provider-user-id=0000"])
+def test_architect_a_name_that_looks_like_an_option_stays_one_value(
+    world: tuple[Paths, World], name: str
+) -> None:
+    # A name that step 1 accepts must reach bootstrap as the value of --name, never as an
+    # option of its own (argparse reads "--name -Clinic" as a missing value).
+    paths, fake = world
+    request = {"run_id": RUN_ID, "version": VERSION, "answers": {**ANSWERS, "business_name": name}}
+
+    code, _ = run(paths, fake, request)
+
+    [argv] = _commands(fake, "bootstrap_admin.py")
+    values = argv[argv.index("operations/bootstrap_admin.py") + 1 :]
+    assert code == 0
+    assert values[2] == f"--name={name}"
+    assert all(
+        item.startswith("--") and (item in ("--confirm", "--json") or "=" in item)
+        for item in values
+    )
 
 
 # AC-I1, AC-I2: input and resume ----------------------------------------------------------------
@@ -547,7 +587,10 @@ def test_ac_i2_a_resume_takes_the_stored_answers_and_refuses_changed_ones(
     other_version = run(paths, fake, {**resume, "version": "0.1.0-rc.10"})
     resumed = run(paths, fake, resume)
 
+    invalid = run(paths, fake, {**resume, "answers": {**ANSWERS, "public_host": "x.lan"}})
+
     assert changed == (2, {"code": "answers_changed", "message_key": "install.answers_changed"})
+    assert invalid == (2, {"code": "invalid_input", "message_key": "install.invalid_input"})
     assert other_version[1]["code"] == "version_mismatch"
     assert resumed[0] == 0 and resumed[1]["code"] == "installed"
     assert json.loads(paths.journal.read_text())["runs"][-1] == resume["run_id"]
@@ -697,12 +740,15 @@ def test_ac_k1_a_rerun_after_completion_changes_nothing_and_sends_nothing(
     first = run(paths, fake)
     calls, sent = len(fake.calls), fake.sent
     before = {path: path.read_bytes() for path in paths.etc.rglob("*") if path.is_file()}
+    state = {path: path.read_bytes() for path in (paths.journal, paths.answers, paths.installation)}
 
     again = run(paths, fake, {"run_id": "install-20261117T120000Z-ee55ff", "version": VERSION})
 
     assert again == first
     assert (len(fake.calls), fake.sent) == (calls, sent)
     assert {path: path.read_bytes() for path in paths.etc.rglob("*") if path.is_file()} == before
+    # Architect 6: a rerun after completion writes nothing, the journal included.
+    assert {path: path.read_bytes() for path in state} == state
 
 
 # AC-N1 (W5b-7): the app subnet ------------------------------------------------------------------
@@ -726,11 +772,31 @@ def test_ac_n1_a_route_collision_counts_and_no_free_subnet_refuses(
     world: tuple[Paths, World],
 ) -> None:
     paths, fake = world
-    fake.host_routes = [{"dst": "default"}, {"dst": "0.0.0.0/1"}, {"dst": "128.0.0.0/1"}]
+    fake.host_routes = [{"dst": "172.31.248.0/21"}, {"dst": "10.213.248.0/21"}]
 
     code, result = run(paths, fake)
 
     assert (code, result["code"]) == (2, "subnet_unavailable")
+
+
+def test_architect_4_a_vpn_split_default_route_does_not_block_the_subnet(
+    world: tuple[Paths, World],
+) -> None:
+    # VPN clients replace the default route with 0.0.0.0/1 and 128.0.0.0/1; routes wider
+    # than /8 do not count, while a narrower route does.
+    paths, fake = world
+    fake.host_routes = [
+        {"dst": "default"},
+        {"dst": "0.0.0.0/1"},
+        {"dst": "128.0.0.0/1"},
+        {"dst": "172.31.0.0/16"},
+    ]
+
+    code, _ = run(paths, fake)
+
+    assert code == 0
+    provider = (paths.etc / "provider.env").read_text()
+    assert "SLATEOPS_APP_PRIVATE_SUBNET=10.213.248.0/28" in provider
 
 
 def test_ac_n1_unreadable_host_networks_never_pass(world: tuple[Paths, World]) -> None:
@@ -897,4 +963,4 @@ def test_ac_v1_resend_sends_again_or_reports_an_active_administrator(
     assert failure[0] == 3 and failure[1]["code"] == "bootstrap_failed"
     assert fake.records == {EMAIL: 1} and fake.sent == 2
     first, resent = _commands(fake, "bootstrap_admin.py")[:2]
-    assert resent[-9:] == first[-9:]  # the same fixed arguments from the stored answers
+    assert resent[-6:] == first[-6:]  # the same fixed arguments from the stored answers

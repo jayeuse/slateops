@@ -16,12 +16,18 @@ services:
         condition: service_healthy
       storage:
         condition: service_healthy
+    # S86-2: gateway-host exists only for that loopback publication and studio-ingress only
+    # for Studio. Envoy serves provider and Realtime ingress and needs no outbound network.
+    networks: !override
+      - provider
+      - realtime-ingress
 
   storage:
     # Files pass through FastAPI, which never asks Storage for a transform, so Storage
     # runs without image transformation and without imgproxy.
     environment:
       ENABLE_IMAGE_TRANSFORMATION: "false"
+      IMGPROXY_URL: !reset null
     depends_on: !override
       db:
         condition: service_healthy

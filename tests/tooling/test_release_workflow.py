@@ -642,6 +642,9 @@ class InstallProofTests(unittest.TestCase):
             "the second install sent mail",
             "resend-invitation",
             "chronyd -x",
+            "owners and modes differ from the installation rules",
+            "/etc/slateops/Caddyfile 1000:1000 600",
+            "/var/log/slateops/app 10001:10001 700",
         ):
             with self.subTest(promise=promise):
                 self.assertIn(promise.replace("slateops-engine receive", "receive"), script)

@@ -176,8 +176,25 @@ log "HTTPS /api/ready through loopback, trusting only the installation's CA (W5b
 docker exec "$machine" curl --fail --silent --show-error --max-time 20 \
     --cacert /etc/slateops/ca/current/root.crt --resolve "$host:443:127.0.0.1" \
     "https://$host/api/ready"; echo
-docker exec "$machine" stat -c '%n %u:%g %a' /etc/slateops/Caddyfile /etc/slateops/tls/server.key \
-    /etc/slateops/provider.env /etc/slateops/app.env /etc/slateops/provision.env /var/log/slateops/app
+owners="$(docker exec "$machine" stat -c '%n %u:%g %a' /etc/slateops/Caddyfile \
+    /etc/slateops/tls/server.key /etc/slateops/provider.env /etc/slateops/app.env \
+    /etc/slateops/provision.env /etc/slateops/restic-password /etc/slateops /etc/slateops/ca \
+    /etc/slateops/tls /var/log/slateops/app /var/lib/slateops/backup-exports \
+    /var/lib/slateops/installation.json)"
+echo "$owners"
+expected="/etc/slateops/Caddyfile 1000:1000 600
+/etc/slateops/tls/server.key 1000:1000 600
+/etc/slateops/provider.env 0:0 600
+/etc/slateops/app.env 0:0 600
+/etc/slateops/provision.env 0:0 600
+/etc/slateops/restic-password 0:0 600
+/etc/slateops 0:0 700
+/etc/slateops/ca 0:0 700
+/etc/slateops/tls 0:0 755
+/var/log/slateops/app 10001:10001 700
+/var/lib/slateops/backup-exports 0:10001 750
+/var/lib/slateops/installation.json 0:0 600"
+[ "$owners" = "$expected" ] || fail "owners and modes differ from the installation rules (AC-I7, AC-I8)"
 docker exec "$machine" docker compose ls
 for _ in $(seq 1 30); do [ "$(mails)" -ge 1 ] && break; sleep 2; done
 [ "$(mails)" -eq 1 ] || fail "expected one invitation in Mailpit, found $(mails)"

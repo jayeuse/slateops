@@ -39,7 +39,12 @@ class ComposeLoader(yaml.SafeLoader):
 
 ComposeLoader.add_constructor("!reset", lambda loader, node: Reset())
 ComposeLoader.add_constructor(
-    "!override", lambda loader, node: Override(loader.construct_mapping(node, deep=True))
+    "!override",
+    lambda loader, node: Override(
+        loader.construct_sequence(node, deep=True)
+        if isinstance(node, yaml.SequenceNode)
+        else loader.construct_mapping(node, deep=True)
+    ),
 )
 
 
@@ -65,7 +70,11 @@ def merged() -> dict[str, dict[str, Any]]:
                 elif isinstance(value, Override):
                     target[key] = value.value
                 elif isinstance(value, dict) and isinstance(target.get(key), dict):
-                    target[key] = {**target[key], **value}
+                    target[key] = {
+                        name: item
+                        for name, item in {**target[key], **value}.items()
+                        if not isinstance(item, Reset)
+                    }
                 elif isinstance(value, list) and isinstance(target.get(key), list):
                     target[key] = [*target[key], *value]  # Compose merges sequences
                 else:
@@ -105,11 +114,18 @@ class InstallerOverlayTests(unittest.TestCase):
 
         self.assertEqual(storage["environment"]["ENABLE_IMAGE_TRANSFORMATION"], "false")
         self.assertNotIn("imgproxy", storage["depends_on"])
+        # Architect 3: no setting names a service that customer installs never start.
+        self.assertNotIn("IMGPROXY_URL", storage["environment"])
 
     def test_ac_o1_only_caddy_publishes_a_port(self) -> None:
         published = {name for name in self.started if self.services[name].get("ports")}
 
         self.assertEqual(published, {"caddy"})
+
+    def test_s86_2_the_gateway_joins_only_the_networks_it_serves(self) -> None:
+        # gateway-host exists only for the loopback publication that customer installs drop,
+        # and studio-ingress only for Studio; Envoy needs no outbound network.
+        self.assertEqual(self.services["api-gw"]["networks"], ["provider", "realtime-ingress"])
 
     def test_ac_o1_our_images_are_never_pulled_or_built(self) -> None:
         for name in compose.APP_SERVICES:
