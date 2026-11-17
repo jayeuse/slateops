@@ -240,6 +240,46 @@ def test_s85_1_a_64_kib_line_is_redacted_in_linear_time(unit: str) -> None:
     assert time.perf_counter() - started < 0.5
 
 
+UNHELD_SECRET = "Hx7" + "kPq2Lm9Rt4Wv8Zc1Nb6Qa5Ys3Ux0Jf"
+
+
+def _logged(capsys: pytest.CaptureFixture[str], result: ChildResult) -> list[str]:
+    """The child output lines that the job logs for one failing step."""
+
+    def child(command: Sequence[str], cwd: Path, limit: float) -> ChildResult:
+        return result
+
+    assert provisioning.main(["--confirm"], run_child=child) == 3
+    lines = capsys.readouterr().err.splitlines()
+    return [line.split(" ", 4)[4] for line in lines if line.split(" ")[3] == "stdout"]
+
+
+@pytest.mark.parametrize("status", [
+    pytest.param(None, id="killed-at-the-time-limit"),
+    pytest.param(1, id="failed"),
+])
+def test_w84_1_an_unfinished_last_line_is_not_logged(
+    capsys: pytest.CaptureFixture[str], status: int | None,
+) -> None:
+    # The child printed half of a password with no newline, then hung or stopped.
+    data = f"connecting\nretry with {UNHELD_SECRET[:16]}".encode()
+
+    logged = _logged(capsys, ChildResult(status, data, b"", len(data), 0))
+
+    assert logged == ["connecting"]
+
+
+def test_w84_2_a_window_cut_drops_the_partial_first_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The kept window starts 22 characters before the end of an unheld secret.
+    data = (UNHELD_SECRET[-22:] + "\nnext line\nlast line\n").encode()
+
+    logged = _logged(capsys, ChildResult(1, data, b"", len(data) + 5000, 0))
+
+    assert logged == ["next line", "last line"]
+
+
 def test_d7_child_output_is_logged_redacted_and_capped_after_the_step_line(
     monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str],
 ) -> None:

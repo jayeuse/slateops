@@ -111,6 +111,11 @@ def _log_stream(
     if total > len(data):
         # The window starts inside a line; that fragment could hold part of a secret.
         text = text.partition("\n")[2]
+    unfinished = 0
+    if text and not text.endswith("\n"):
+        # A stream cut by the time limit or a crash can end inside a secret; never log it.
+        text, _, tail = text.rpartition("\n")
+        unfinished = len(tail.encode())
     kept, written = 0, []
     for line in reversed(redact(text).splitlines()):
         formatted = format_line(f"provision.{step}", name, line)
@@ -119,7 +124,10 @@ def _log_stream(
             break
         kept += size
         written.append(formatted)
-    log_line(f"provision.{step}", "info", f"{name}_bytes={total} kept_bytes={kept}")
+    log_line(
+        f"provision.{step}", "info",
+        f"{name}_bytes={total} kept_bytes={kept} unfinished_bytes_dropped={unfinished}",
+    )
     for formatted in reversed(written):
         print(formatted, file=sys.stderr, flush=True)
 
