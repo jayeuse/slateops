@@ -411,6 +411,15 @@ class AnalyzeTests(unittest.TestCase):
                     violations = self.analyze([change(path, added=[line])])
                     self.assertEqual(len(violations), 1, violations)
 
+    def test_install_engine_tests_are_guarded_like_the_other_python_tests(self):
+        # TASK-0085 AC-C1: the engine tests live in packaging/engine/tests/.
+        for line in ("@pytest.mark.skip(reason='later')", "    time.sleep(0.5)"):
+            with self.subTest(line=line):
+                violations = self.analyze(
+                    [change("packaging/engine/tests/test_receive.py", added=[line])]
+                )
+                self.assertEqual(len(violations), 1, violations)
+
     def test_suppression_with_an_inline_reason_is_rejected(self):
         for path, line in (
             (

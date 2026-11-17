@@ -344,6 +344,107 @@ class ReleaseManifestTests(unittest.TestCase):
             self.assertEqual(json.loads(output.read_text())["images"]["caddy"], CADDY_INFO)
 
 
+ENGINE_INFO = {
+    "archive": "slateops-engine-0.2.0-rc.1.tar.gz",
+    "sha256": "3" * 64,
+    "size": 61234,
+}
+STARTED_COMPOSE = textwrap.dedent(
+    f"""\
+    services:
+      db:
+        image: ghcr.io/supabase/postgres:17.11.0.004@{DIGEST_A}
+      imgproxy:
+        image: darthsim/imgproxy:v3.31.4@sha256:{"e" * 64}
+      provider-volume-init:
+        image: ghcr.io/supabase/storage-api:v1.81.0@{DIGEST_B}
+      storage:
+        image: ghcr.io/supabase/storage-api:v1.81.0@{DIGEST_B}
+      meta:
+        image: supabase/postgres-meta:v0.100.0@sha256:{"f" * 64}
+      studio:
+        image: supabase/studio:2026.10.05@sha256:{"d" * 64}
+      api-gw:
+        image: envoyproxy/envoy:v1.39.1@{DIGEST_C}
+    """
+)
+
+
+class EngineManifestTests(unittest.TestCase):
+    """TASK-0085 AC-B4 and design choice 4 (space-cut carry in TASK-0083 Notes)."""
+
+    def test_manifest_adds_the_engine_bundle_and_the_known_bad_wsl_list(self):
+        manifest = release_artifacts.build_manifest(
+            "0.2.0-rc.1", SERVER_INFO, CADDY_INFO, [], engine=ENGINE_INFO, known_bad_wsl=[]
+        )
+
+        self.assertEqual(manifest["schema_version"], 1)
+        self.assertEqual(manifest["engine_bundle"], ENGINE_INFO)
+        self.assertEqual(manifest["known_bad_wsl_versions"], [])
+
+    def test_manifest_refuses_an_engine_entry_that_is_not_the_tagged_bundle(self):
+        for field, value in (
+            ("archive", "slateops-engine-0.2.0-rc.2.tar.gz"),
+            ("sha256", "A" * 64),
+            ("size", 0),
+            ("size", True),
+            ("extra", "x"),
+        ):
+            entry = {**ENGINE_INFO, field: value}
+            with (
+                self.subTest(field=field, value=value),
+                self.assertRaisesRegex(ReleaseError, "engine bundle"),
+            ):
+                release_artifacts.build_manifest(
+                    "0.2.0-rc.1", SERVER_INFO, CADDY_INFO, [], engine=entry
+                )
+
+    def test_every_install_provider_service_exists_in_the_repository_compose_file(self):
+        # Architect finding 5: a renamed service would drop its image from the pull list.
+        compose = (ROOT / "infra/supabase/compose.yaml").read_text()
+        services = set(
+            re.findall(r"(?m)^  ([A-Za-z0-9_.-]+):\s*$", compose.split("\nvolumes:", 1)[0])
+        )
+
+        self.assertEqual(release_artifacts.INSTALL_PROVIDER_SERVICES - services, set())
+
+    def test_the_manifest_lists_only_the_providers_that_customer_installs_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "compose.yaml").write_text(STARTED_COMPOSE)
+            for name, info in (
+                ("server", SERVER_INFO),
+                ("caddy", CADDY_INFO),
+                ("engine", ENGINE_INFO),
+            ):
+                (root / f"{name}.json").write_text(json.dumps(info))
+            output = root / "release-manifest.json"
+
+            status = release_artifacts.main(
+                [
+                    "manifest", "--version", "0.2.0-rc.1",
+                    "--server-info", str(root / "server.json"),
+                    "--caddy-info", str(root / "caddy.json"),
+                    "--engine-info", str(root / "engine.json"),
+                    "--compose", str(root / "compose.yaml"),
+                    "--output", str(output),
+                ]
+            )
+
+            manifest = json.loads(output.read_text())
+            self.assertEqual(status, 0)
+            self.assertEqual(
+                manifest["images"]["providers"],
+                [
+                    f"envoyproxy/envoy:v1.39.1@{DIGEST_C}",
+                    f"ghcr.io/supabase/postgres:17.11.0.004@{DIGEST_A}",
+                    f"ghcr.io/supabase/storage-api:v1.81.0@{DIGEST_B}",
+                ],
+            )
+            self.assertEqual(manifest["engine_bundle"], ENGINE_INFO)
+            self.assertEqual(manifest["known_bad_wsl_versions"], [])
+
+
 LINUX_INFO = {
     "archive": "slateops-linux-0.2.0-rc.1-amd64.tar.gz",
     "sha256": "2" * 64,

@@ -68,6 +68,10 @@ def dpkg_status(pins: dict[str, str], extra: str = "") -> str:
 
 
 Files = dict[str, bytes | str | None]
+# W5b (TASK-0085 AC-B3): the engine bundle in the image, its link and its record.
+ENGINE_HOME = "opt/slateops/engine/0.2.0-rc.1"
+ENGINE_RECORD = {"archive": "slateops-engine-0.2.0-rc.1.tar.gz", "sha256": "4" * 64}
+ENGINE_LINK = {"usr/local/bin/slateops-engine": f"/{ENGINE_HOME}/slateops-engine"}
 
 
 def valid_files(pins: dict[str, str]) -> Files:
@@ -92,7 +96,11 @@ def valid_files(pins: dict[str, str]) -> Files:
             "var/log/slateops": None,
             "opt/slateops/engine": None,
             "etc/ssl/private": None,
-            "usr/share/slateops/linux-image.json": json.dumps({"version": "0.2.0-rc.1"}),
+            "usr/share/slateops/linux-image.json": json.dumps(
+                {"version": "0.2.0-rc.1", "engine_bundle": ENGINE_RECORD}
+            ),
+            f"{ENGINE_HOME}/slateops-engine": "#!/usr/bin/python3 -I\n",
+            f"{ENGINE_HOME}/engine/VERSION": "0.2.0-rc.1\n",
         }
     )
     return files
@@ -119,7 +127,8 @@ def write_tarball(
                 continue
             data = content.encode() if isinstance(content, str) else content
             info.size = len(data)
-            info.mode = 0o755 if name == "usr/local/bin/cosign" else 0o644
+            executable = name == "usr/local/bin/cosign" or name.endswith("/slateops-engine")
+            info.mode = 0o755 if executable else 0o644
             tar.addfile(info, io.BytesIO(data))
         for unit in units:
             info = tarfile.TarInfo(f"./etc/systemd/system/multi-user.target.wants/{unit}")
@@ -143,9 +152,40 @@ class RootFileSystemCheckTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.tarball = Path(self.directory.name) / "slateops-linux-0.2.0-rc.1-amd64.tar.gz"
 
-    def problems(self, files: Files, units: tuple[str, ...] = UNITS) -> list[str]:
-        write_tarball(self.tarball, files, units)
-        return release_linux_image.check_rootfs(self.tarball, self.pins, "amd64")
+    def problems(
+        self,
+        files: Files,
+        units: tuple[str, ...] = UNITS,
+        links: dict[str, str] | None = None,
+        engine_sha256: str | None = None,
+    ) -> list[str]:
+        write_tarball(self.tarball, files, units, ENGINE_LINK if links is None else links)
+        return release_linux_image.check_rootfs(
+            self.tarball, self.pins, "amd64", engine_sha256=engine_sha256
+        )
+
+    def test_the_engine_bundle_is_installed_linked_and_recorded(self):
+        # TASK-0085 AC-B3: build.sh --engine-bundle; prepare compares the recorded SHA-256.
+        record = "usr/share/slateops/linux-image.json"
+        cases: list[tuple[str, Files, dict[str, str], str | None]] = []
+        files = valid_files(self.pins)
+        cases.append(("no link", files, {}, None))
+        cases.append(
+            ("link elsewhere", files, {"usr/local/bin/slateops-engine": "/tmp/x"}, None)
+        )
+        cases.append(("other bundle", files, ENGINE_LINK, "5" * 64))
+        no_sha = {**files, record: json.dumps({"version": "0.2.0-rc.1"})}
+        cases.append(("no recorded SHA-256", no_sha, ENGINE_LINK, None))
+        other_version = {**files, f"{ENGINE_HOME}/engine/VERSION": "0.2.0-rc.2\n"}
+        cases.append(("engine of another version", other_version, ENGINE_LINK, None))
+        no_launcher = {k: v for k, v in files.items() if not k.endswith("/slateops-engine")}
+        cases.append(("no launcher", no_launcher, ENGINE_LINK, None))
+        for name, case_files, links, engine_sha256 in cases:
+            with self.subTest(name):
+                problems = self.problems(case_files, links=links, engine_sha256=engine_sha256)
+                self.assertTrue(problems, name)
+                self.assertTrue(all(problem.startswith("W5b") for problem in problems), problems)
+        self.assertEqual(self.problems(valid_files(self.pins), engine_sha256="4" * 64), [])
 
     def test_the_repository_image_files_with_valid_package_data_pass(self):
         self.assertEqual(self.problems(valid_files(self.pins)), [])
@@ -524,7 +564,7 @@ class ImageOutputTests(unittest.TestCase):
     def test_check_command_fails_closed_on_any_problem(self):
         files = valid_files(self.pins)
         files["etc/machine-id"] = "0123\n"
-        write_tarball(self.tarball, files)
+        write_tarball(self.tarball, files, links=ENGINE_LINK)
         pins = self.root / "pins.env"
         pins.write_text("".join(f'{key}="{value}"\n' for key, value in self.pins.items()))
 

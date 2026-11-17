@@ -99,6 +99,10 @@ case "$(value docker_store)" in
     *io.containerd.snapshotter.v1*) ;;
     *) problems+=("AC-W4-8: Docker does not use the containerd image store: $(value docker_store)") ;;
 esac
+case "$(value engine_status)" in
+    *\"code\":\"ok\"*) ;;
+    *) problems+=("W5b: slateops-engine status did not answer ok: $(value engine_status)") ;;
+esac
 [ -z "$(value listen_tcp)" ] || problems+=("W4-6: TCP listeners: $(value listen_tcp)")
 [ -z "$(value listen_udp)" ] || problems+=("W4-6: UDP listeners: $(value listen_udp)")
 if [ "${#problems[@]}" -gt 0 ]; then
@@ -107,5 +111,5 @@ if [ "${#problems[@]}" -gt 0 ]; then
     tail -n 80 /check/console.log
     exit 1
 fi
-log "passed: systemd running; containerd, Docker and chrony active; containerd image store; no listener"
+log "passed: systemd running; containerd, Docker and chrony active; containerd image store; engine status ok; no listener"
 '

@@ -9,7 +9,8 @@
 - `image-info` checks an image archive against the pushed digest and records its size,
   SHA-256 and config digest.
 - `manifest` writes `release-manifest.json` (decision H11) with the fields that exist:
-  the two images (W3) and the Linux image (W4).
+  the two images (W3), the Linux image (W4), the engine bundle and the known-bad WSL
+  versions (W5b).
 - `notices` writes `THIRD-PARTY-NOTICES.txt` from the installed packages, from the
   package databases copied out of the two images and the Linux image, the Python runtime
   and Caddy, and `SOURCE-OFFER.txt` for the Debian and Alpine source packages and the
@@ -185,8 +186,18 @@ def check_branch_commit(commit: str, root: Path) -> None:
         raise ReleaseError(f"rc tag commit {commit} is on no pushed branch")
 
 
-def provider_images(compose_text: str) -> list[str]:
-    """Return the unique image references of the Compose services, as written."""
+# The provider services that customer installs start (TASK-0083 Notes, space-cut carry):
+# studio, meta and imgproxy stay in the development stack only. provider-volume-init is
+# the one-shot volume step of storage and uses the same image.
+INSTALL_PROVIDER_SERVICES = frozenset(
+    {"db", "auth", "storage", "provider-volume-init", "realtime", "api-gw"}
+)
+
+
+def provider_images(compose_text: str, services: frozenset[str] | None = None) -> list[str]:
+    """Return the unique image references of the Compose services, as written.
+
+    With ``services``, only those services count (the manifest's pull list)."""
     images: set[str] = set()
     in_services = False
     service = ""
@@ -198,7 +209,7 @@ def provider_images(compose_text: str) -> list[str]:
             continue
         if found := _SERVICE.match(line):
             service = found[1]
-        elif found := _IMAGE.match(line):
+        elif (found := _IMAGE.match(line)) and (services is None or service in services):
             image = found[1].strip("\"'")
             if not _PINNED.fullmatch(image):
                 raise ReleaseError(
@@ -287,10 +298,19 @@ def image_info(reference: str, archive: Path) -> dict[str, object]:
 # 4. A reader refuses a manifest whose "schema_version" is higher than the one it knows.
 # 5. images.server and images.caddy are objects with "ref" (by digest), "archive" (the
 #    release asset file name), "sha256" and "size" (of the archive) and "config_digest";
-#    images.providers is the sorted list of Compose references by digest.
+#    images.providers is the sorted list of Compose references by digest, for the
+#    services in INSTALL_PROVIDER_SERVICES only (rule 8; the Software Architect accepted
+#    in TASK-0085, D-3, that this narrowing keeps schema_version 1: no released manifest
+#    has a reader yet).
 # 6. linux_image (added by W4, so schema_version stays 1) is an object with "archive"
 #    (the release asset file name, always amd64 in v1), "sha256" and "size".
+# 7. engine_bundle (added by W5b) is an object with "archive" (slateops-engine-<version>
+#    .tar.gz), "sha256" and "size"; known_bad_wsl_versions (W5b, plan 7.4) is a list of
+#    WSL version strings for which the engine status says "needs support".
+# 8. images.providers lists only the services that customer installs start
+#    (INSTALL_PROVIDER_SERVICES; W5b). The engine pulls exactly this list.
 SCHEMA_VERSION = 1
+KNOWN_BAD_WSL_VERSIONS: tuple[str, ...] = ()
 IMAGE_FIELDS = frozenset({"ref", "archive", "sha256", "size", "config_digest"})
 LINUX_FIELDS = frozenset({"archive", "sha256", "size"})
 
@@ -333,12 +353,31 @@ def _linux_entry(info: Mapping[str, object], version: str) -> dict[str, object]:
     return {"archive": archive, "sha256": sha256, "size": size}
 
 
+def engine_bundle_name(version: str) -> str:
+    return f"slateops-engine-{version}.tar.gz"
+
+
+def _engine_entry(info: Mapping[str, object], version: str) -> dict[str, object]:
+    if set(info) != LINUX_FIELDS:
+        raise ReleaseError(f"engine bundle fields {sorted(info)} are not {sorted(LINUX_FIELDS)}")
+    archive, sha256, size = info["archive"], info["sha256"], info["size"]
+    if archive != engine_bundle_name(version):
+        raise ReleaseError(f"engine bundle {archive!r} is not {engine_bundle_name(version)}")
+    if not isinstance(sha256, str) or not _SHA256.fullmatch(sha256):
+        raise ReleaseError(f"engine bundle sha256 {sha256!r} is not 64 hex digits")
+    if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+        raise ReleaseError(f"engine bundle size {size!r} is not a positive integer")
+    return {"archive": archive, "sha256": sha256, "size": size}
+
+
 def build_manifest(
     version: str,
     server: Mapping[str, object],
     caddy: Mapping[str, object],
     providers: list[str],
     linux: Mapping[str, object] | None = None,
+    engine: Mapping[str, object] | None = None,
+    known_bad_wsl: Sequence[str] | None = None,
 ) -> dict[str, object]:
     """Build the manifest (format rules above).
 
@@ -357,6 +396,10 @@ def build_manifest(
     }
     if linux is not None:
         manifest["linux_image"] = _linux_entry(linux, version)
+    if engine is not None:
+        manifest["engine_bundle"] = _engine_entry(engine, version)
+    if known_bad_wsl is not None:
+        manifest["known_bad_wsl_versions"] = list(known_bad_wsl)
     return manifest
 
 
@@ -774,6 +817,7 @@ def _parser() -> argparse.ArgumentParser:
     manifest.add_argument("--server-info", type=Path, required=True)
     manifest.add_argument("--caddy-info", type=Path, required=True)
     manifest.add_argument("--linux-info", type=Path, help="the Linux image entry (W4)")
+    manifest.add_argument("--engine-info", type=Path, help="the engine bundle entry (W5b)")
     manifest.add_argument("--compose", type=Path, required=True)
     manifest.add_argument("--output", type=Path, required=True)
 
@@ -887,11 +931,20 @@ def main(argv: list[str] | None = None) -> int:
                         f"- `{entry['archive']}` (archive): {size} bytes, {size / 2**20:.1f} MiB\n"
                     )
         elif args.command == "manifest":
-            providers = provider_images(args.compose.read_text())
+            providers = provider_images(args.compose.read_text(), INSTALL_PROVIDER_SERVICES)
             server = json.loads(args.server_info.read_text())
             caddy = json.loads(args.caddy_info.read_text())
             linux = json.loads(args.linux_info.read_text()) if args.linux_info else None
-            content = build_manifest(args.version, server, caddy, providers, linux)
+            engine = json.loads(args.engine_info.read_text()) if args.engine_info else None
+            content = build_manifest(
+                args.version,
+                server,
+                caddy,
+                providers,
+                linux,
+                engine,
+                known_bad_wsl=KNOWN_BAD_WSL_VERSIONS,
+            )
             _write(args.output, json.dumps(content, indent=2) + "\n")
         elif args.command == "notices":
             _write_notices(args)

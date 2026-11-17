@@ -20,6 +20,10 @@ mkdir -p "$(dirname "$result")"
         sleep 2
     done
     echo "docker_store=$(docker info --format '{{.Driver}} {{json .DriverStatus}}' 2>&1)"
+    # W5b: the engine of the image runs with the image's Python (status changes nothing
+    # but report.json in this throwaway copy).
+    echo "engine_status=$(printf '%s' '{"run_id":"boot-20260101T000000Z-check1","windows_part_version":"0.0.1","wsl_version":"2.6.1.0"}' \
+        | slateops-engine status 2>&1 | head -c 400)"
     echo "listen_tcp=$(ss -H -ltn 2>&1 | paste -sd'|' -)"
     echo "listen_udp=$(ss -H -lun 2>&1 | paste -sd'|' -)"
     echo "done=yes"

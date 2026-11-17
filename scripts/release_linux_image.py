@@ -332,7 +332,41 @@ def _time_problems(root: RootFileSystem) -> list[str]:
     return problems
 
 
-def check_rootfs(tarball: Path, pins: Mapping[str, str], arch: str) -> list[str]:
+ENGINE_LINK = "usr/local/bin/slateops-engine"
+IMAGE_RECORD = "usr/share/slateops/linux-image.json"
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+
+
+def _engine_problems(root: RootFileSystem, engine_sha256: str | None) -> list[str]:
+    """W5b: the bundle under /opt/slateops/engine/<version>/, its link and its record."""
+    try:
+        record = json.loads(root.text(IMAGE_RECORD) or "null")
+    except ValueError:
+        record = None
+    record = record if isinstance(record, dict) else {}
+    version = str(record.get("version", ""))
+    bundle = record.get("engine_bundle")
+    recorded = str(bundle.get("sha256", "")) if isinstance(bundle, dict) else ""
+    problems: list[str] = []
+    if not _HEX64.fullmatch(recorded):
+        problems.append(f"W5b: /{IMAGE_RECORD} records no engine bundle SHA-256")
+    elif engine_sha256 is not None and recorded != engine_sha256:
+        problems.append(f"W5b: the image holds engine bundle {recorded}, not {engine_sha256}")
+    home = f"opt/slateops/engine/{version}"
+    launcher = root.members.get(f"{home}/slateops-engine")
+    if launcher is None or not launcher.isfile() or launcher.mode & 0o111 != 0o111:
+        problems.append(f"W5b: /{home}/slateops-engine is missing or not executable")
+    if (root.text(f"{home}/engine/VERSION") or "").strip() != version:
+        problems.append(f"W5b: /{home}/engine/VERSION is not {version}")
+    link = root.members.get(ENGINE_LINK)
+    if link is None or not link.issym() or link.linkname != f"/{home}/slateops-engine":
+        problems.append(f"W5b: /{ENGINE_LINK} does not link /{home}/slateops-engine")
+    return problems
+
+
+def check_rootfs(
+    tarball: Path, pins: Mapping[str, str], arch: str, engine_sha256: str | None = None
+) -> list[str]:
     """Return every problem of the image tarball; an empty list means it passes."""
     with tarfile.open(tarball) as tar:
         root = RootFileSystem(tar)
@@ -346,6 +380,7 @@ def check_rootfs(tarball: Path, pins: Mapping[str, str], arch: str) -> list[str]
             *_apt_problems(root),
             *_docker_problems(root, stanzas, pins),
             *_time_problems(root),
+            *_engine_problems(root, engine_sha256),
         ]
         problems += [
             f"W4-3: package {package} is not installed"
@@ -469,6 +504,10 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--tarball", type=Path, required=True)
         command.add_argument("--arch", required=True)
         command.add_argument("--pins", type=Path, required=True)
+        if name == "check":
+            command.add_argument(
+                "--engine-info", type=Path, help="the engine bundle entry the image must hold"
+            )
         if name == "outputs":
             command.add_argument("--output", type=Path, required=True, help="the two lists")
             command.add_argument("--entry", type=Path, required=True, help="the manifest entry")
@@ -481,7 +520,8 @@ def main(argv: list[str] | None = None) -> int:
     pins = read_pins(args.pins)
     try:
         if args.command == "check":
-            problems = check_rootfs(args.tarball, pins, args.arch)
+            engine = json.loads(args.engine_info.read_text()) if args.engine_info else {}
+            problems = check_rootfs(args.tarball, pins, args.arch, engine.get("sha256"))
             for problem in problems:
                 LOG.error(problem)
             if problems:

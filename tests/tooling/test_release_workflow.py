@@ -17,7 +17,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/release.yml"
-JOBS = ("check", "images", "linux-image", "manifest", "notices", "source-packages", "release")
+JOBS = (
+    "check",
+    "images",
+    "engine-bundle",
+    "linux-image",
+    "manifest",
+    "notices",
+    "source-packages",
+    "release",
+)
 
 
 def job_blocks(source: str) -> dict[str, str]:
@@ -334,7 +343,7 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         # any check, the static check runs before the boot, and only a copy boots.
         job = self.jobs["linux-image"]
         tarball = '"dist/slateops-linux-$VERSION-amd64.tar.gz"'
-        self.assertRegex(job, r"(?m)^    needs: check$")
+        self.assertRegex(job, r"(?m)^    needs: \[check, engine-bundle\]$")
         steps = [
             'packaging/linux-image/build.sh --arch amd64 --version "$VERSION" --output dist',
             "python3 scripts/release_linux_image.py outputs",
@@ -353,7 +362,9 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
 
     def test_manifest_lists_the_linux_image_and_notices_read_its_package_files(self):
         manifest = self.jobs["manifest"]
-        self.assertRegex(manifest, r"(?m)^    needs: \[check, images, linux-image\]$")
+        self.assertRegex(
+            manifest, r"(?m)^    needs: \[check, images, linux-image, engine-bundle\]$"
+        )
         self.assertIn("name: linux-info\n          path: linux-info", manifest)
         self.assertIn("--linux-info linux-info/linux-image.json", manifest)
         notices = self.jobs["notices"]
@@ -478,6 +489,40 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
             with self.subTest(argument=argument):
                 self.assertIn(argument, job)
         self.assertIn("name: asset-sources\n          path: dist/", job)
+
+    def test_the_engine_bundle_is_built_first_then_the_image_then_the_manifest(self):
+        # TASK-0085 AC-B2 (W4 carry): bundle, then linux-image, then manifest; no manifest
+        # in the bundle; the image records the bundle's SHA-256 and the check compares it.
+        bundle = self.jobs["engine-bundle"]
+        self.assertRegex(bundle, r"(?m)^    needs: check$")
+        self.assertEqual(mapping(bundle, "permissions", 4), {"contents": "read"})
+        self.assertIn("REPOSITORY: ${{ github.repository }}", bundle)
+        self.assertIn(
+            'python3 scripts/release_engine_bundle.py build --version "$VERSION"\n'
+            '          --repository "$REPOSITORY" --output dist'
+            " --entry engine-info/engine-bundle.json",
+            bundle,
+        )
+        self.assertIn("name: asset-engine\n          path: dist/", bundle)
+        self.assertIn("name: engine-info\n          path: engine-info/", bundle)
+        image = self.jobs["linux-image"]
+        self.assertIn("name: asset-engine\n          path: engine-dist", image)
+        self.assertIn(
+            '--output dist --engine-bundle "engine-dist/slateops-engine-$VERSION.tar.gz"', image
+        )
+        self.assertIn("--engine-info engine-info/engine-bundle.json", image)
+        manifest = self.jobs["manifest"]
+        self.assertIn("name: engine-info\n          path: engine-info", manifest)
+        self.assertIn("--engine-info engine-info/engine-bundle.json", manifest)
+        jobs = ("engine-bundle", "linux-image", "manifest")
+        order = [self.source.index(f"\n  {job}:\n") for job in jobs]
+        self.assertEqual(order, sorted(order))
+
+    def test_backend_ci_type_checks_the_engine_bundle_script(self):
+        backend = (ROOT / ".github/workflows/backend.yml").read_text()
+        mypy = backend.split("      - name: Run mypy\n", 1)[1].split("\n      - ", 1)[0]
+
+        self.assertIn("../scripts/release_engine_bundle.py", mypy)
 
     def test_release_waits_for_every_asset_and_refuses_one_of_2_gib_or_more(self):
         release = self.jobs["release"]

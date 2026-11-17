@@ -26,7 +26,12 @@ from typing import Final
 
 LEDGER_PATH: Final = "docs/plans/test-ledger.md"
 _EXEMPT: Final = frozenset({"scripts/assertion_guard.py", "tests/tooling/test_assertion_guard.py"})
-_PY_TEST_PREFIXES: Final = ("backend/tests/", "tests/tooling/", "packaging/backup/tests/")
+_PY_TEST_PREFIXES: Final = (
+    "backend/tests/",
+    "tests/tooling/",
+    "packaging/backup/tests/",
+    "packaging/engine/tests/",
+)
 _TS_TEST_PREFIXES: Final = ("frontend/tests/",)
 _TS_CONFIG_FILES: Final = frozenset(
     {"frontend/playwright.config.ts", "frontend/playwright.fullstack.config.ts"}

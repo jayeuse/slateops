@@ -528,6 +528,14 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("../scripts/dev.py", source)
         self.assertIn("../scripts/run_tests.py", source)
 
+    def test_backend_quality_runs_the_install_engine_tests(self):
+        # TASK-0085 AC-C1: the engine tests run in the quality job, without coverage.
+        backend = self.source("backend.yml")
+        quality = backend.split("\n  quality:\n", 1)[1].split("\n  unit:\n", 1)[0]
+
+        self.assertIn("uv run pytest ../packaging/engine/tests\n", quality)
+        self.assertIn("--no-cov --basetemp .engine-tests", quality)
+
     def test_unified_server_image_uses_injected_process_configuration(self):
         source = (ROOT / "infra/docker/backend.Dockerfile").read_text()
         runtime_stage = source.rsplit("FROM python:3.14-slim", 1)[1]

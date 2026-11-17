@@ -4,9 +4,10 @@
 # setup:     before apt resolves anything: the apt preferences that allow only the four
 #            Docker Engine packages from Docker's repository (plan 7.4).
 # customize: after all packages are installed: our files (rootfs/), cosign, the final
-#            apt sources, the enabled units, the empty folders that later slices fill,
-#            the image record, and the cleanup (no machine ID, no build-host files, no
-#            apt lists or logs). scripts/release_linux_image.py check verifies the result.
+#            apt sources, the enabled units, the engine bundle ($ENGINE_BUNDLE, W5b),
+#            the empty folders that later slices fill, the image record, and the
+#            cleanup (no machine ID, no build-host files, no apt lists or logs).
+#            scripts/release_linux_image.py check verifies the result.
 set -euo pipefail
 
 # /build is this folder, mounted read-only by build.sh.
@@ -52,6 +53,20 @@ install_cosign() {
     log "installed: cosign $COSIGN_VERSION (sha256 $sha)"
 }
 
+install_engine() {
+    # W5b: the bundle of this release, unpacked under its version; the link is the command.
+    local target="$root/opt/slateops/engine/$VERSION"
+    [ -f "$ENGINE_BUNDLE" ] || fail "no engine bundle at $ENGINE_BUNDLE"
+    ENGINE_SHA256="$(sha256sum "$ENGINE_BUNDLE" | cut -d' ' -f1)"
+    install -d -o 0 -g 0 -m 0755 "$root/opt/slateops/engine" "$target"
+    tar -xzf "$ENGINE_BUNDLE" -C "$target" --no-same-owner
+    [ -f "$target/slateops-engine" ] || fail "the engine bundle has no launcher"
+    [ "$(cat "$target/engine/VERSION")" = "$VERSION" ] \
+        || fail "the engine bundle is not version $VERSION"
+    ln -s "/opt/slateops/engine/$VERSION/slateops-engine" "$root/usr/local/bin/slateops-engine"
+    log "installed: engine bundle $(basename "$ENGINE_BUNDLE") (sha256 $ENGINE_SHA256)"
+}
+
 write_record() {
     # A safe record of what the image is, for status and Save report (plan 10.4).
     install -d -o 0 -g 0 -m 0755 "$root/usr/share/slateops"
@@ -67,7 +82,11 @@ write_record() {
     "containerd.io": "$CONTAINERD_IO_VERSION",
     "docker-compose-plugin": "$DOCKER_COMPOSE_PLUGIN_VERSION"
   },
-  "cosign": "$COSIGN_VERSION"
+  "cosign": "$COSIGN_VERSION",
+  "engine_bundle": {
+    "archive": "$(basename "$ENGINE_BUNDLE")",
+    "sha256": "$ENGINE_SHA256"
+  }
 }
 EOF
     chmod 0644 "$root/usr/share/slateops/linux-image.json"
@@ -89,8 +108,8 @@ customize() {
     chroot "$root" systemctl enable containerd.service docker.service chrony.service
     log "enabled: containerd.service docker.service chrony.service"
 
-    # Folders that later slices fill: the engine (W5b), its secrets, state and logs.
-    install -d -o 0 -g 0 -m 0755 "$root/opt/slateops/engine"
+    # The engine (W5b), and the folders that later slices fill: secrets, state and logs.
+    install_engine
     install -d -o 0 -g 0 -m 0700 "$root/etc/slateops" "$root/var/lib/slateops" "$root/var/log/slateops"
     write_record
 

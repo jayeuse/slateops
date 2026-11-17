@@ -15,6 +15,7 @@
 **/playwright-report
 **/test-results
 /backend/.backup-contracts/
+/backend/.engine-tests/
 
 # next.js
 /.next/

@@ -14,7 +14,8 @@ set -euo pipefail
 # /build is this folder, mounted read-only by build.sh.
 # shellcheck source=pins.env
 . /build/pins.env
-: "${ARCH:?}" "${VERSION:?}"
+: "${ARCH:?}" "${VERSION:?}" "${ENGINE_BUNDLE:?}"
+export ENGINE_BUNDLE
 export DEBIAN_FRONTEND=noninteractive
 SOURCE_DATE_EPOCH="$(date -u -d "${SNAPSHOT:0:4}-${SNAPSHOT:4:2}-${SNAPSHOT:6:2}T${SNAPSHOT:9:2}:${SNAPSHOT:11:2}:${SNAPSHOT:13:2}Z" +%s)"
 export SOURCE_DATE_EPOCH
