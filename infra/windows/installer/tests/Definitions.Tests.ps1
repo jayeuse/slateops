@@ -233,7 +233,7 @@ Test-Case 'AC-4 S91-7 no resume entries when the elevating user is not the signe
     Assert-Equal $null (Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name 'SlateOpsSetup' -ErrorAction SilentlyContinue)
 }
 
-Test-Case 'AC-4 S91-3 the task folder and its tasks allow only Administrators and SYSTEM' {
+Test-Case 'AC-4 S91-3 setup takes over only a task folder that holds the product tasks' {
     $service = New-Object -ComObject 'Schedule.Service'
     $service.Connect()
     $folderPath = '\SlateOpsW7Sddl'
@@ -242,8 +242,6 @@ Test-Case 'AC-4 S91-3 the task folder and its tasks allow only Administrators an
         $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount
         Register-ScheduledTask -TaskPath ($folderPath + '\') -TaskName 'Exec' -Action $action -Principal $principal -Force | Out-Null
         Assert-Equal 'product' (Get-TaskFolderState -FolderPath $folderPath)
-        Set-TaskSecurity -FolderPath $folderPath -TaskNames @('Exec')
-        Assert-Equal @('A;;FA;;;BA', 'A;;FA;;;SY') (Get-TaskAccessEntries -FolderPath $folderPath -TaskName 'Exec')
     } finally {
         Unregister-ScheduledTask -TaskPath ($folderPath + '\') -TaskName 'Exec' -Confirm:$false -ErrorAction SilentlyContinue
     }

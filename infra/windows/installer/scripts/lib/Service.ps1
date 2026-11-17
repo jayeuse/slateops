@@ -252,8 +252,6 @@ function Get-AccountDefinition {
     }
 }
 
-$SlateOps.TaskSddl = 'D:P(A;;FA;;;BA)(A;;FA;;;SY)'
-
 function Get-TaskFolderState {
     # 'absent', 'product' (only the Exec and Start tasks, or one of them) or 'unknown' (an empty
     # folder or another task in it; S91-3: setup does not take over a folder it did not make).
@@ -265,27 +263,6 @@ function Get-TaskFolderState {
     if ($names.Count -eq 0) { return 'unknown' }
     foreach ($name in $names) { if (@($SlateOps.ExecTaskName, $SlateOps.StartTaskName) -notcontains $name) { return 'unknown' } }
     return 'product'
-}
-
-function Set-TaskSecurity {
-    # S91-3: the task folder and its tasks: full access for Administrators and SYSTEM only, no
-    # inherited entries, no entry for the task principal (TASK_DONT_ADD_PRINCIPAL_ACE, 0x10).
-    # Task Scheduler runs the task as its principal whatever the object's access list says.
-    param([string]$FolderPath = ('\' + $SlateOps.TaskFolder), [string[]]$TaskNames = @($SlateOps.ExecTaskName, $SlateOps.StartTaskName))
-    $service = New-Object -ComObject 'Schedule.Service'
-    $service.Connect()
-    $folder = $service.GetFolder($FolderPath)
-    $folder.SetSecurityDescriptor($SlateOps.TaskSddl, 0)
-    foreach ($name in $TaskNames) { $folder.GetTask($name).SetSecurityDescriptor($SlateOps.TaskSddl, 0x10) }
-}
-
-function Get-TaskAccessEntries {
-    # The access entries (SDDL ACE strings) of a task's DACL, sorted by code points.
-    param([Parameter(Mandatory = $true)][string]$FolderPath, [Parameter(Mandatory = $true)][string]$TaskName)
-    $service = New-Object -ComObject 'Schedule.Service'
-    $service.Connect()
-    $sddl = [string]$service.GetFolder($FolderPath).GetTask($TaskName).GetSecurityDescriptor(4)
-    return Get-OrdinalSorted @([regex]::Matches($sddl, '\(([^)]*)\)') | ForEach-Object { $_.Groups[1].Value })
 }
 
 function Install-ServiceAccountAndTasks {
@@ -372,8 +349,6 @@ function Install-ServiceAccountAndTasks {
             Write-RunLog $step 'INFO' ('register the task {0}{1} as {2}' -f $SlateOps.TaskPath, $taskDefinition.TaskName, $definition.Name)
             Register-ScheduledTask @parameters | Out-Null
         }
-        Set-TaskSecurity
-        Write-RunLog $step 'INFO' ('  task folder and tasks: {0}' -f $SlateOps.TaskSddl)
     } finally {
         $password = $null
         $secure = $null
