@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import re
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,7 @@ from engine import cli
 from engine.context import Context
 from engine.logs import KEEP_MARK, RunLog, cap
 from engine.redaction import Redactor
-from engine.runner import ENVIRONMENT, Runner
+from engine.runner import ENVIRONMENT, Result, Runner
 
 from .helpers import RUN_ID, Clock, Script, call, deps, fail, log_text, make_paths, ok
 
@@ -261,6 +262,59 @@ def test_ac_l5_a_failed_job_saves_a_snapshot_without_inspect_or_config(tmp_path:
         "2026-11-17T10:15:01Z",
         "slateops-db-1",
     ] in script.calls
+
+
+W84_SECRET = "Wq4" + "nRt8Lm2Kp6Vz9Xc3Hb7Jd1Fg5Sy0Ue"
+
+
+def test_w84_1_a_timed_out_child_leaves_no_unfinished_last_line(tmp_path: Path) -> None:
+    # A child stopped by the time limit can end in the middle of a secret: the first half
+    # matches no held value and no pattern, so the unfinished line never reaches the log.
+    paths = make_paths(tmp_path)
+    half = W84_SECRET[:16]
+
+    class StoppedRunner(Runner):
+        def _execute(self, argv: list[str], timeout: float, env: dict[str, str]) -> Result:
+            raise subprocess.TimeoutExpired(
+                argv,
+                timeout,
+                output=f"step one done\nkey {half}".encode(),
+                stderr=f"warning\npassword={half}".encode(),
+            )
+
+    runner = StoppedRunner(RunLog(paths, RUN_ID, "install", Redactor([W84_SECRET], [])))
+
+    result = runner.run("install.08.provision", ["docker", "run"], timeout=1)
+
+    folder = paths.logs / "install" / RUN_ID
+    stdout = (folder / "001-install.08.provision.stdout.log").read_text()
+    stderr = (folder / "002-install.08.provision.stderr.log").read_text()
+    assert result.returncode is None
+    assert stdout.startswith("step one done\n") and stderr.startswith("warning\n")
+    assert "unfinished last line left out" in stdout
+    assert half not in log_text(paths)
+
+
+def test_w84_1_a_container_log_tail_ending_mid_line_is_cut_in_the_snapshot(
+    tmp_path: Path,
+) -> None:
+    paths = make_paths(tmp_path)
+    half = W84_SECRET[:16]
+    script = Script(
+        {
+            ("docker", "ps"): ok("slateops-db-1\trunning\tUp\n"),
+            ("docker", "logs"): ok(f"db ready\nkey {half}", f"FATAL stop\ntoken {half}"),
+            ("systemctl", "is-system-running"): fail(1, "offline\n"),
+        }
+    )
+    paths.releases.joinpath("0.1.0-rc.9").mkdir(parents=True)
+    paths.releases.joinpath("0.1.0-rc.9/release-manifest.json").write_text("{}")
+
+    call(["prepare"], {"run_id": RUN_ID, "version": "0.1.0-rc.9"}, deps(paths, script))
+
+    [tail] = list((paths.logs / "install" / RUN_ID).glob("snapshot-*/logs-slateops-db-1.txt"))
+    assert "db ready" in tail.read_text() and "FATAL stop" in tail.read_text()
+    assert half not in log_text(paths)
 
 
 def test_s85_2_a_cut_drops_the_partial_first_line(tmp_path: Path) -> None:

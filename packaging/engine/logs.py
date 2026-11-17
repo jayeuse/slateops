@@ -3,7 +3,7 @@
 A line is ``<UTC time> <run ID> <step ID> <level> <text>`` (the W5a format in
 ``backend/operations/install/joblog.py``): the text is redacted, then every control
 character is written as a visible escape. Step output is captured in memory, cut to the
-last 1 MiB, redacted as one text, and only then written.
+last 1 MiB, cut after its last complete line, redacted as one text, and only then written.
 """
 
 from __future__ import annotations
@@ -47,6 +47,17 @@ def cap(data: bytes, limit: int = STREAM_CAP_BYTES) -> bytes:
     kept = data[-limit:]
     newline = kept.find(b"\n")
     return kept[newline + 1 :] if newline >= 0 else b""
+
+
+def drop_unfinished(data: bytes) -> bytes:
+    """Leave out a last line that has no newline (W84-1): a child stopped by the time limit
+    or a signal can end in the middle of a secret, and half a secret matches no held value
+    and no pattern. A note with the byte count takes its place."""
+    if not data or data.endswith(b"\n"):
+        return data
+    kept = data[: data.rfind(b"\n") + 1]
+    left_out = len(data) - len(kept)
+    return kept + f"[unfinished last line left out: {left_out} bytes]\n".encode()
 
 
 def _size(folder: Path) -> int:
@@ -126,7 +137,7 @@ class RunLog:
         """Write one capped, redacted command stream; return the file name."""
         self._counter += 1
         name = f"{self._counter:03d}-{step}.{stream}.log"
-        text = self.redact(cap(data).decode("utf-8", errors="replace"))
+        text = self.redact(drop_unfinished(cap(data)).decode("utf-8", errors="replace"))
         self._write(self.folder / name, text.encode())
         return name
 

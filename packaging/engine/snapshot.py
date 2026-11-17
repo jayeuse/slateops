@@ -15,7 +15,7 @@ from datetime import datetime
 from engine import compose, journal
 from engine.context import Context
 from engine.core import INSTANCE_ID
-from engine.logs import cap
+from engine.logs import cap, drop_unfinished
 
 TAIL_LINES = 200  # planning value, plan 10.5 item 4
 _CONTAINER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
@@ -55,15 +55,20 @@ def take(ctx: Context, since: datetime | None, folder: str | None = None) -> str
             (
                 "compose-ps",
                 compose.argv(
-                    ctx.paths, project, "ps", "--all", "--format",
+                    ctx.paths,
+                    project,
+                    "ps",
+                    "--all",
+                    "--format",
                     "{{.Service}}\t{{.State}}\t{{.Health}}",
                 ),
             )
         )
         for path in ("/api/ready", "/api/health"):
             code, body = compose.api_read(ctx, step, project, path)
-            ctx.log.text(f"{name}/api{path.replace('/api', '').replace('/', '-')}.txt",
-                         f"{code} {body}\n")
+            ctx.log.text(
+                f"{name}/api{path.replace('/api', '').replace('/', '-')}.txt", f"{code} {body}\n"
+            )
     containers: list[str] = []
     for part, argv in commands:
         result = ctx.runner.run(step, argv, timeout=60, log_output=False)
@@ -80,6 +85,6 @@ def take(ctx: Context, since: datetime | None, folder: str | None = None) -> str
         if since is not None:
             argv += ["--since", since.strftime("%Y-%m-%dT%H:%M:%SZ")]
         result = ctx.runner.run(step, [*argv, container], timeout=60, log_output=False)
-        both = cap(result.stdout) + b"\n" + cap(result.stderr)
+        both = drop_unfinished(cap(result.stdout)) + b"\n" + drop_unfinished(cap(result.stderr))
         ctx.log.text(f"{name}/logs-{container}.txt", both.decode("utf-8", errors="replace"))
     return name
