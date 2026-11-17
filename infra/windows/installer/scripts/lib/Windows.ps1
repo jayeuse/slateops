@@ -399,6 +399,66 @@ function Install-WslPackage {
     return New-StepResult -Code 'failed' -MessageKey 'prepare.wsl.failed' -Values @{ exit_code = $run.ExitCode }
 }
 
+function Invoke-UpdateWsl {
+    # W13b-5 (plan 7.4, 10.3 F10): the WSL step of the update path. Only a WSL older than the
+    # pinned one is replaced, and only while the engine status reports engine_idle (on
+    # engine_busy the setup program asks again later). Install-WslPackage checks the SHA-256
+    # right before msiexec. Then the engine must answer status within BackSeconds of the
+    # msiexec end, else wsl_not_back (F10).
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Layout,
+        [Parameter(Mandatory = $true)][string]$RunId,
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Version,
+        [Parameter(Mandatory = $true)][string]$MsiPath,
+        [int]$BackSeconds = 600,
+        [int]$PollSeconds = 15
+    )
+    $step = 'update.wsl'
+    $pinned = [version][string]$Version['wsl_version']
+    $installed = Get-WslPackageVersion
+    if (($null -ne $installed) -and ($installed -ge $pinned)) {
+        Write-RunLog $step 'INFO' ('WSL {0} is installed (pinned {1}); not changed' -f $installed, $pinned)
+        return New-StepResult -Code 'present' -MessageKey 'update.wsl.present'
+    }
+    $status = Get-EngineStatus -Layout $Layout -RunId $RunId -WindowsPartVersion ([string]$Version['version'])
+    if ($status.code -ne 'ok') {
+        Write-RunLog $step 'WARN' ('no engine status ({0}); WSL not changed' -f $status.code)
+        return New-StepResult -Code 'engine_unreachable' -MessageKey 'update.wsl.engine_unreachable'
+    }
+    if ((Get-DictValue $status.values 'engine_idle') -ne $true) {
+        Write-RunLog $step 'INFO' 'the engine is not idle; WSL waits'
+        return New-StepResult -Code 'engine_busy' -MessageKey 'update.wsl.engine_busy'
+    }
+    Write-RunLog $step 'INFO' ('engine idle; WSL {0} is replaced by the pinned {1}' -f $(if ($null -eq $installed) { 'none' } else { $installed }), $pinned)
+    $wsl = Install-WslPackage -Layout $Layout -MsiPath $MsiPath -Sha256 ([string]$Version['wsl_msi_sha256']) -PinnedVersion $pinned
+    if ($wsl.code -ne 'installed') { return $wsl }
+    $deadline = (Get-Date).AddSeconds($BackSeconds)
+    do {
+        $status = Get-EngineStatus -Layout $Layout -RunId $RunId -WindowsPartVersion ([string]$Version['version'])
+        if ($status.code -eq 'ok') {
+            Write-RunLog $step 'INFO' 'the engine answers status after the WSL install'
+            return New-StepResult -Code 'wsl_updated' -MessageKey 'update.wsl.updated'
+        }
+        if ($PollSeconds -gt 0) { Start-Sleep -Seconds $PollSeconds }
+    } while ((Get-Date) -lt $deadline)
+    Write-RunLog $step 'FAIL' ('no engine status in {0} s after the WSL install (F10)' -f $BackSeconds)
+    return New-StepResult -Code 'wsl_not_back' -MessageKey 'update.wsl.not_back'
+}
+
+function Get-UpdateOutcome {
+    # P2-3 (TASK-0095): from a failed update job, only the journal state (a fixed word) and the
+    # space need (a whole number) go to the setup program, which picks its sentence by them.
+    param([Parameter(Mandatory = $true)][hashtable]$Layout, [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Result)
+    $outcome = [ordered]@{ update_state = ''; needs_gb = 0 }
+    try { $output = Read-EngineOutput -Layout $Layout -Result $Result } catch { return $outcome }
+    if (-not ($output -is [System.Collections.IDictionary])) { return $outcome }
+    $state = Get-DictValue $output 'update'
+    if (($state -is [string]) -and (@('rolled_back', 'failed', 'needs_support') -ccontains $state)) { $outcome.update_state = $state }
+    $need = Get-DictValue $output 'needs_gb'
+    if ((($need -is [int]) -or ($need -is [long])) -and ($need -gt 0) -and ($need -lt 100000)) { $outcome.needs_gb = [int]$need }
+    return $outcome
+}
+
 # ---------------------------------------------------------------------------
 # Windows-side install steps (plan 6.2): firewall, hosts, CA, sleep and the lid
 # ---------------------------------------------------------------------------

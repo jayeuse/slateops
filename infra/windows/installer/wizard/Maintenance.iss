@@ -410,6 +410,322 @@ begin
 end;
 
 { ------------------------------------------------------------------------------------------- }
+{ M05 Update (plan 7.4 setup-program path, 7.3, 10.3 F10; wizard spec M05; W13b part 2)          }
+{ ------------------------------------------------------------------------------------------- }
+
+{ Phases: idle (engine status until engine_idle), copy (the receive parts into the data folder),
+  receive, wsl (W13b-5), update (the engine job), scripts (the state-tree scripts, only after the
+  engine succeeded), done (Inno copies the program folder, then the finished page). pause waits
+  UPDATE_WAIT_MS before idle or wsl again. A failure shows in place in the S13 layout. }
+
+function UpdStageName(Index: Integer): String;
+begin
+  case Index of
+    1: Result := CM('m05_stage1');
+    2: Result := CM('m05_stage2');
+    3: Result := CM('m05_stage3');
+  else
+    Result := CM('m05_stage4');
+  end;
+end;
+
+{ P2-4: Cancel closes when no step is in flight, after a result, and in the slow state of the
+  engine job, which goes on without setup (a later run of this setup waits for it, then finds
+  version_not_newer). }
+function UpdCanStop: Boolean;
+begin
+  Result := UpdFailed or (UpdPhase = '') or (UpdPhase = 'idle') or (UpdPhase = 'pause') or ((UpdPhase = 'update') and UpdSlowShown);
+end;
+
+procedure UpdStep(Phase, Action, Extra: String);
+begin
+  UpdPhase := Phase;
+  UpdAt := GetTickCount;
+  UpdOut := '';
+  if Action <> '' then
+  begin
+    UpdOut := NewOut(Action);
+    StartHelper(Action, RunId, UpdOut, Extra);
+  end;
+end;
+
+procedure UpdPause(NextPhase: String);
+begin
+  UpdWaiting := True;
+  UpdNext := NextPhase;
+  UpdStep('pause', '', '');
+  RenderPage(P_UPDATE);
+end;
+
+procedure UpdFail(Stage: Integer; Text: String; Retry: Boolean);
+begin
+  UpdFailed := True;
+  UpdRetry := Retry;
+  UpdWaiting := False;
+  UpdPhase := '';
+  UpdFailStage := UpdStageName(Stage);
+  UpdFailText := Text;
+  WizardForm.CancelButton.Enabled := True;
+  RenderPage(P_UPDATE);
+end;
+
+{ A step that did not reach the engine's update changed nothing (spec 7.5 for the helper codes). }
+function UpdStepText(Code: String): String;
+begin
+  if Code = 'helper_timeout' then
+    Result := CM('av_blocked')
+  else if Code = 'service_logon_failed' then
+    Result := CM('service_logon_failed')
+  else
+    Result := FM('m05_not_changed', [InstalledVersion]);
+end;
+
+{ P2-3: the sentence follows the engine's journal state (job-result update_state), because only
+  a rollback restores and revokes the sessions. }
+procedure UpdateFailed;
+begin
+  UpdState := JsonValue(JobRaw, 'update_state');
+  UpdNeedsGb := JsonLiteral(JobRaw, 'needs_gb');
+  if UpdState = 'rolled_back' then
+    UpdFail(4, FM('m05_rolled_back', [InstalledVersion]), True)
+  else if UpdState = 'needs_support' then
+    UpdFail(4, CM('m05_support'), False)
+  else if JobCode = 'insufficient_space' then
+    UpdFail(2, FM('m05_space', [UpdNeedsGb]), False)
+  else
+    UpdFail(3, UpdStepText(JobCode), True);
+end;
+
+{ The receive parts and the WSL package of this setup; not the Linux image. }
+procedure ExtractUpdateParts;
+begin
+  try
+    ExtractTemporaryFiles('{tmp}\payload\slateops-engine-*');
+    ExtractTemporaryFiles('{tmp}\payload\slateops-server-*');
+    ExtractTemporaryFiles('{tmp}\payload\slateops-caddy-*');
+    ExtractTemporaryFiles('{tmp}\payload\release-manifest.json*');
+    ExtractTemporaryFiles('{tmp}\payload\wsl.*');
+  except
+    Log('The setup payload is not in this setup file.');
+  end;
+end;
+
+procedure StartUpdate;
+begin
+  UpdFailed := False;
+  UpdWaiting := False;
+  UpdSlowShown := False;
+  UpdState := '';
+  UpdStep('idle', 'engine-status', '');
+  RenderPage(P_UPDATE);
+end;
+
+procedure RenderUpdate;
+var
+  I, Running: Integer;
+  StateWord: String;
+begin
+  BeginBody(P_UPDATE);
+  WizardForm.PageNameLabel.Caption := CM('m05_title');
+  WizardForm.PageDescriptionLabel.Caption := FM('m05_subtitle', [InstalledVersion, SetupVersion]);
+  WizardForm.BackButton.Visible := False;
+  if UpdFailed then
+  begin
+    AddFailure(UpdFailStage, UpdFailText, UpdRetry);
+    Exit;
+  end;
+  if UpdPhase = '' then
+  begin
+    AddText(FM('m05_backup', [InstalledVersion]), False);
+    AddText(CM('m05_people'), False);
+    WizardForm.NextButton.Caption := CM('m05_next');
+    WizardForm.NextButton.Enabled := True;
+    Exit;
+  end;
+  WizardForm.NextButton.Enabled := False;
+  WizardForm.CancelButton.Enabled := UpdCanStop;
+  { Stage 1 runs on Windows (the idle check, the parts, the WSL step). Stages 2 to 4 run inside
+    one engine job that reports no step while it runs, so they show "Now" together (as S12). }
+  if (UpdPhase = 'scripts') or (UpdPhase = 'done') then Running := 5
+  else if UpdPhase = 'update' then Running := 2
+  else Running := 1;
+  for I := 1 to 4 do
+  begin
+    StateWord := '';
+    if I < Running then StateWord := CM('s12_done_word')
+    else if (I = Running) or ((Running = 2) and (I > 2)) then StateWord := CM('s12_now_word');
+    if StateWord <> '' then
+      AddText(IntToStr(I) + '. ' + UpdStageName(I) + '   ' + StateWord, I >= Running)
+    else
+      AddText(IntToStr(I) + '. ' + UpdStageName(I), False);
+  end;
+  if UpdWaiting then
+    AddText(CM('m05_waiting'), True);
+  if Running < 5 then
+    AddMarquee;
+  { P2-5: no verdict at a time limit; the slow line and Save report, and no Try again while the
+    engine still works. }
+  if (UpdPhase = 'update') and UpdSlowShown then
+  begin
+    AddText(CM('s12_slow'), True);
+    AddText(CM('m05_slow_close'), False);
+    AddReportControls;
+  end;
+  CurY := CurY + ScaleY(6);
+  AddText(CM('m05_people'), False);
+end;
+
+{ From the timer. }
+procedure PollUpdate;
+var
+  Code: String;
+begin
+  if (EntryScreen <> 'M05') or (UpdPhase = '') or (UpdPhase = 'done') then
+    Exit;
+  if UpdPhase = 'pause' then
+  begin
+    if Elapsed(UpdAt) < UPDATE_WAIT_MS then
+      Exit;
+    if UpdNext = 'idle' then
+      UpdStep('idle', 'engine-status', '')
+    else
+      UpdStep('wsl', 'update-wsl', '');
+    Exit;
+  end;
+  if (UpdPhase = 'receive') or (UpdPhase = 'update') then
+  begin
+    if JobState <> JOB_DONE then
+    begin
+      if (UpdPhase = 'update') and JobSlow and not UpdSlowShown then
+      begin
+        UpdSlowShown := True;
+        { As S12 (correction 5): the task's last result once; an account that cannot sign in
+          never runs the job. }
+        if TaskTimeoutCode = 'service_logon_failed' then
+        begin
+          RunHelper('job-stop', RunId, NewOut('job-stop'), '');
+          JobState := JOB_IDLE;
+          UpdFail(3, CM('service_logon_failed'), True);
+          Exit;
+        end;
+        RenderPage(P_UPDATE);
+      end;
+      Exit;
+    end;
+    JobState := JOB_IDLE;
+    if UpdPhase = 'receive' then
+    begin
+      if JobExit = 0 then
+        UpdStep('wsl', 'update-wsl', '')
+      else
+        UpdFail(1, UpdStepText(JobCode), True);
+    end
+    { P2-2: "version_not_newer" is an update that the tick finished (section 12). }
+    else if (JobExit = 0) or (JobCode = 'version_not_newer') then
+    begin
+      UpdEngineDone := True;
+      UpdStep('scripts', 'update-done', '');
+      RenderPage(P_UPDATE);
+    end
+    else if (JobCode = 'runner_busy') or (JobCode = 'engine_busy') then
+      UpdPause('idle')
+    else
+      UpdateFailed;
+    Exit;
+  end;
+  Code := ReadResultCode(UpdOut);
+  if (Code = '') and (UpdPhase = 'wsl') and (Elapsed(UpdAt) > WSL_LIMIT_MS) then
+    Code := 'helper_timeout';
+  if (Code = '') and (UpdPhase <> 'wsl') and (Elapsed(UpdAt) > HELPER_LIMIT_MS) then
+    Code := 'helper_timeout';
+  if Code = '' then
+    Exit;
+  if UpdPhase = 'idle' then
+  begin
+    if Code <> 'ok' then
+      UpdFail(1, CM('m05_unreachable'), True)
+    else if JsonLiteral(ReadText(UpdOut), 'engine_idle') <> 'true' then
+      UpdPause('idle')
+    else
+    begin
+      UpdWaiting := False;
+      UpdPhase := 'copy';
+      RenderPage(P_UPDATE);
+      WizardForm.Refresh;
+      ExtractUpdateParts;
+      UpdStep('copy', 'update-prepare', '');
+    end;
+  end
+  else if UpdPhase = 'copy' then
+  begin
+    if Code = 'copied' then
+    begin
+      { Its own purpose: receive keeps the job runner's time limit (only the update job has none). }
+      UpdPhase := 'receive';
+      StartJob('receive', '{"run_id":"' + RunId + '","setup_version":"' + SetupVersion + '"}', 'updreceive', False, False, 15);
+    end
+    else
+      UpdFail(1, UpdStepText(Code), True);
+  end
+  else if UpdPhase = 'wsl' then
+  begin
+    if (Code = 'present') or (Code = 'wsl_updated') then
+    begin
+      UpdWaiting := False;
+      UpdPhase := 'update';
+      StartJob('update', '{"run_id":"' + RunId + '","version":"' + SetupVersion + '"}', 'update', False, False, UPDATE_SLOW_MINUTES);
+      RenderPage(P_UPDATE);
+    end
+    else if Code = 'engine_busy' then
+      UpdPause('wsl')
+    else if Code = 'wsl_not_back' then
+      UpdFail(1, CM('f10'), True)
+    else if Code = 'engine_unreachable' then
+      UpdFail(1, CM('m05_unreachable'), True)
+    else if Code = 'helper_timeout' then
+      UpdFail(1, CM('av_blocked'), True)
+    else
+      UpdFail(1, CM('s05_failed'), Code <> 'hash_mismatch');
+  end
+  else if UpdPhase = 'scripts' then
+  begin
+    if Code = 'copied' then
+    begin
+      UpdPhase := 'done';
+      WizardForm.NextButton.Enabled := True;
+      WizardForm.NextButton.OnClick(WizardForm.NextButton);
+    end
+    else if Code = 'helper_timeout' then
+      UpdFail(4, CM('av_blocked'), True)
+    else
+      { The engine runs the new version; Try again reaches here again through version_not_newer. }
+      UpdFail(4, FM('m05_finish_failed', [SetupVersion]), True);
+  end;
+end;
+
+{ Next on M05: "Update now", then Try again; True (Inno's file copy) only after success. }
+function UpdateNext: Boolean;
+begin
+  Result := UpdPhase = 'done';
+  if Result then
+    Exit;
+  if UpdFailed and not UpdRetry then
+    Exit;
+  if UpdFailed then
+    RunId := NewRunId('update');
+  { The engine already runs this version: only the Windows part is left. }
+  if UpdFailed and UpdEngineDone then
+  begin
+    UpdFailed := False;
+    UpdStep('scripts', 'update-done', '');
+    RenderPage(P_UPDATE);
+    Exit;
+  end;
+  if UpdFailed or (UpdPhase = '') then
+    StartUpdate;
+end;
+
+{ ------------------------------------------------------------------------------------------- }
 { Cancel at S08 to S11: "Remove everything" (default) or "Keep it and continue later" (spec 4.5) }
 { ------------------------------------------------------------------------------------------- }
 

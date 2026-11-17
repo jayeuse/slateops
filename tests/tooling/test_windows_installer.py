@@ -447,5 +447,148 @@ class InstallerReleaseJobTest(unittest.TestCase):
                 self.assertIn(f'"{key}":', self.job)
 
 
+def read_copy() -> dict[str, str]:
+    text = COPY.read_text(encoding="utf-8").split("[CustomMessages]\n", 1)[1]
+    pairs = (
+        line.split("=", 1) for line in text.splitlines() if "=" in line and not line.startswith(";")
+    )
+    return {key: value for key, value in pairs}
+
+
+class UpdatePathTest(unittest.TestCase):
+    """W13b part 2 (TASK-0095): the setup program's update path M05, as a static read shows it.
+    The PowerShell side (the WSL step, the result read) is in tests/Update.Tests.ps1."""
+
+    def setUp(self) -> None:
+        self.code = code_only(pascal_code())
+
+    def test_p2_1_a_newer_setup_opens_m05_and_the_settings_program_stays_on_m01(self) -> None:
+        start = routine(self.code, "function InitializeSetup(): Boolean;")
+        self.assertRegex(
+            start, r"if \(EntryScreen = ''\) and SETTINGS_BUILD then\s+EntryScreen := ''"
+        )
+        self.assertNotRegex(start, r"if EntryScreen = ''\s+then\s+EntryScreen := ''")
+        # The literal values are blanked by code_only; the raw text names them.
+        raw = routine(pascal_code(), "function InitializeSetup(): Boolean;")
+        self.assertIn(
+            "if (EntryScreen = 'M05') and SETTINGS_BUILD then\n    EntryScreen := 'M01';", raw
+        )
+        self.assertIn("RunId := NewRunId('update');", raw)
+        skip = routine(pascal_code(), "function ShouldSkipPage(PageID: Integer): Boolean;")
+        self.assertIn("Result := (PageID <> Pages[P_UPDATE].ID) and (PageID <> wpFinished);", skip)
+
+    def test_p2_2_the_windows_part_changes_only_after_the_engine_reports_success(self) -> None:
+        raw = pascal_code()
+        post = routine(raw, "procedure CurStepChanged(CurStep: TSetupStep);")
+        self.assertRegex(
+            post,
+            r"if EntryScreen <> 'M05' then\s+begin\s+OutFile := NewOut\('save'\);\s+"
+            r"RunHelper\('save-progress', RunId, OutFile, '-Stage install_finished'\);",
+        )
+        poll = routine(raw, "procedure PollUpdate;\nvar")
+        # The scripts copy and Next (Inno's file copy) follow only "updated" or
+        # "version_not_newer" (an update that the tick finished, section 12).
+        self.assertRegex(
+            poll,
+            r"if \(JobExit = 0\) or \(JobCode = 'version_not_newer'\) then\s+begin\s+"
+            r"UpdEngineDone := True;\s+UpdStep\('scripts', 'update-done', ''\);",
+        )
+        # The second call is Try again after a failed scripts copy, once the engine is done.
+        self.assertEqual(raw.count("'update-done'"), 2)
+        self.assertRegex(
+            routine(raw, "function UpdateNext: Boolean;\nbegin"),
+            r"if UpdFailed and UpdEngineDone then\s+begin\s+UpdFailed := False;\s+"
+            r"UpdStep\('scripts', 'update-done', ''\);",
+        )
+        self.assertEqual(raw.count("UpdEngineDone := True;"), 1)
+        self.assertIn(
+            "Result := UpdPhase = 'done';", routine(raw, "function UpdateNext: Boolean;\nbegin")
+        )
+
+    def test_p2_3_the_result_sentence_follows_the_update_state(self) -> None:
+        result = routine(pascal_code(), "procedure UpdateFailed;")
+        self.assertRegex(
+            result, r"if UpdState = 'rolled_back' then\s+UpdFail\(4, FM\('m05_rolled_back'"
+        )
+        self.assertRegex(
+            result,
+            r"else if UpdState = 'needs_support' then\s+UpdFail\(4, CM\('m05_support'\), False\)",
+        )
+        self.assertRegex(
+            result,
+            r"JobCode = 'insufficient_space' then\s+UpdFail\(2, FM\('m05_space', \[UpdNeedsGb\]\)",
+        )
+        self.assertEqual(pascal_code().count("'m05_rolled_back'"), 1)
+
+    def test_p2_4_cancel_in_m05_never_removes_anything(self) -> None:
+        cancel = routine(
+            pascal_code(),
+            "procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);",
+        )
+        branch = cancel.split("if EntryScreen = 'M05' then", 1)
+        self.assertEqual(len(branch), 2, "M05 has its own branch")
+        self.assertLess(
+            cancel.index("if EntryScreen = 'M05' then"), cancel.index("AskCancelChoice")
+        )
+        m05 = branch[1].split("Exit;", 1)[0]
+        self.assertNotIn("RemoveEverything", m05)
+        self.assertIn("UpdCanStop", m05)
+        # No dead end: Close works in the slow state of the engine job, which goes on alone.
+        stop = routine(pascal_code(), "function UpdCanStop: Boolean;\nbegin")
+        self.assertIn("((UpdPhase = 'update') and UpdSlowShown)", stop)
+        skip = routine(pascal_code(), "function ShouldSkipPage(PageID: Integer): Boolean;")
+        self.assertLess(skip.index("EntryScreen = 'M05'"), skip.index("P_KEY"))
+
+    def test_p2_5_the_wizard_gives_no_time_limit_verdict_on_a_running_update(self) -> None:
+        raw = pascal_code()
+        # Only the engine update job has purpose 'update'; receive keeps the runner's limit.
+        self.assertEqual(re.findall(r"StartJob\('([a-z-]+)'[^;]*, 'update', ", raw), ["update"])
+        self.assertIn("StartJob('receive', ", raw)
+        self.assertRegex(raw, r"StartJob\('receive', [^;]*'updreceive', False, False, 15\)")
+        # At the slow point the task's last result is read once, as on S12.
+        self.assertIn(
+            "if TaskTimeoutCode = 'service_logon_failed' then",
+            routine(raw, "procedure PollUpdate;\nvar"),
+        )
+        poll = routine(pascal_code(), "procedure PollJob;")
+        self.assertIn(
+            "(JobPurpose <> 'install') and (JobPurpose <> 'update') and "
+            "(Elapsed(JobStartedAt) > JobLimitMs)",
+            poll,
+        )
+
+    def test_w13b_5_the_wsl_step_has_its_own_limit_and_shows_f10(self) -> None:
+        raw = pascal_code()
+        limit = re.search(r"WSL_LIMIT_MS = ([0-9]+);", raw)
+        self.assertIsNotNone(limit)
+        # 10 minutes after msiexec, plus the idle check and three 60 s waits on code 1618.
+        self.assertGreater(int(limit.group(1)), 600000 + 4 * 60000)
+        poll = routine(raw, "procedure PollUpdate;\nvar")
+        self.assertRegex(poll, r"Code = 'wsl_not_back' then\s+UpdFail\(1, CM\('f10'\), True\)")
+        self.assertRegex(poll, r"Code = 'engine_busy' then\s+UpdPause\('wsl'\)")
+        helper = (INSTALLER / "scripts/setup-helper.ps1").read_text(encoding="ascii")
+        for action in ("'update-prepare'", "'update-wsl'", "'update-done'"):
+            with self.subTest(action=action):
+                self.assertIn(action, helper.split("[string]$Action", 1)[0])
+
+    def test_m05_copy_is_the_spec_text(self) -> None:
+        copy = read_copy()
+        expected = {
+            "m05_title": "Update Slate Operations",
+            "m05_subtitle": "Version %1 is installed. This setup installs version %2.",
+            "m05_backup": "Setup makes a backup first. If the update fails, Slate Operations "
+            "goes back to version %1 by itself.",
+            "m05_next": "Update &now",
+            "m05_done": "Slate Operations is updated to version %1.",
+            "m05_rolled_back": "The update did not work. Slate Operations went back to version "
+            "%1. Everybody must sign in again.",
+            "f10": "The server part did not start again after a Windows update of one of its "
+            "parts.",
+        }
+        for key, value in expected.items():
+            with self.subTest(key=key):
+                self.assertEqual(copy.get(key), value)
+
+
 if __name__ == "__main__":
     unittest.main()

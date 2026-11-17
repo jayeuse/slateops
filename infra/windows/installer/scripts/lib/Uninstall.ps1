@@ -69,6 +69,9 @@ function Get-EngineStatus {
     }
     $instance = [string](Get-DictValue $output 'instance_id')
     if ($instance -cmatch $SlateOpsKept.InstancePattern) { $values.instance_id = $instance }
+    # W13b-5 (plan 7.4): the only engine value that Windows acts on; true only as a JSON true.
+    $idle = Get-DictValue $output 'engine_idle'
+    $values.engine_idle = (($idle -is [bool]) -and $idle)
     return New-StepResult -Code 'ok' -MessageKey 'maintenance.status.ok' -Values $values
 }
 

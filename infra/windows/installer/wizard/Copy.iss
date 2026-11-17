@@ -457,3 +457,27 @@ m03_first=Your new backup drive has its own lock. The old recovery key does not 
 m03_done=Backups go to %1 from tonight at 2:00.
 m04_first=The old key stops working when you finish.
 btn_done=&Done
+; ---- W13b: M05 Update (spec M05, plan 7.4, 7.5, 10.3 F10). m05_title to m05_rolled_back and
+; f10 are the spec text. The engineer wrote m05_people without "About N minutes" (N is TBD in
+; the spec), the stage order (stage 1 runs first; the spec lists the backup first) and
+; m05_waiting, m05_not_changed, m05_space, m05_support, m05_unreachable, m05_finish_failed,
+; m05_slow_close (no spec text yet).
+m05_title=Update Slate Operations
+m05_subtitle=Version %1 is installed. This setup installs version %2.
+m05_backup=Setup makes a backup first. If the update fails, Slate Operations goes back to version %1 by itself.
+m05_people=People cannot use Slate Operations while it updates. Tell your people before you start.
+m05_next=Update &now
+m05_stage1=Download the parts
+m05_stage2=Make a backup
+m05_stage3=Update
+m05_stage4=Check that it works
+m05_waiting=Slate Operations is busy with a backup or another task. Setup waits and tries again by itself.
+m05_done=Slate Operations is updated to version %1.
+m05_rolled_back=The update did not work. Slate Operations went back to version %1. Everybody must sign in again.
+m05_not_changed=The update did not work. Slate Operations still runs version %1. Nothing changed.
+m05_space=There is not enough free space for a safe update (needs %1 GB). Select Save report and send the file to Slate Operations support.
+m05_support=The update did not finish. Select Save report and send the file to Slate Operations support.
+m05_unreachable=Setup cannot reach the server part of Slate Operations. Nothing changed.
+f10=The server part did not start again after a Windows update of one of its parts.
+m05_finish_failed=Slate Operations is updated to version %1, but setup could not finish its part on this PC. Select Try again.
+m05_slow_close=The update goes on by itself. You can close setup now. To see the result, run this setup again later.

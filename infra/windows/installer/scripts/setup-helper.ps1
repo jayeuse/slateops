@@ -21,7 +21,7 @@ param(
         'start-boot', 'windows-steps', 'account-sid', 'r7', 'provider-detect', 'drives', 'drive-check', 'prepare-backup',
         'printers', 'https-check', 'job-stop', 'report-collect', 'report-zip', 'fix-mdns',
         'uninstall-info', 'uninstall-stop', 'uninstall-data', 'remove-windows', 'kept-read', 'restore-kept', 'kept-status',
-        'kept-return', 'kept-done', 'engine-status', 'repair', 'security-code')]
+        'kept-return', 'kept-done', 'engine-status', 'repair', 'security-code', 'update-prepare', 'update-wsl', 'update-done')]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$RunId,
     [Parameter(Mandatory = $true)][string]$OutFile,
@@ -268,6 +268,20 @@ try {
             if ($result.code -eq 'ok') { $result.values.backup_folder = [string](Get-DictValue (Read-WindowsChanges -Layout $layout) 'backup_folder') }
         }
         'repair' { $result = Invoke-Repair -Layout $layout }
+        # W13b part 2 (plan 7.4 setup-program path, M05): the five receive parts of this setup
+        # into the data folder's payload folder; the WSL step; after the engine succeeded, the
+        # scripts that the tasks run (P2-2).
+        'update-prepare' {
+            $version = Read-HelperVersion
+            $state = Read-InstallState -Layout $layout
+            Set-LayoutDataRoot -Layout $layout -DataRoot $state.data_root
+            $result = Copy-PayloadPart -Layout $layout -SourceDir (Join-Path $helperRoot 'payload') -Names @(Get-ReceivePartNames -Version $version.version) -ServiceSid $serviceSid
+        }
+        'update-wsl' {
+            $version = Read-HelperVersion
+            $result = Invoke-UpdateWsl -Layout $layout -RunId $RunId -Version $version -MsiPath (Join-Path (Join-Path $helperRoot 'payload') $version.wsl_msi_name)
+        }
+        'update-done' { $result = Install-ScriptsCopy -Layout $layout -SourceDir $PSScriptRoot }
         'security-code' { $result = Get-SecurityCodeFromStore -Layout $layout }
         'fix-mdns' {
             # C17 "Fix it for me": turns on the existing built-in rule for Private networks only;
@@ -345,6 +359,12 @@ try {
                 if (((Get-DictValue $value 'job') -eq 'log-bundle') -and ((Get-DictValue $value 'exit_code') -eq 0)) {
                     $output = Read-EngineOutput -Layout $layout -Result $value
                     $values.bundle = Save-LogBundle -Output $output -DestinationPath (Join-Path $helperRoot ('linux-{0}.tar.gz' -f $RunId))
+                }
+                # P2-3: a failed update names its journal state and the space it needs.
+                if (((Get-DictValue $value 'job') -eq 'update') -and ((Get-DictValue $value 'exit_code') -ne 0)) {
+                    $outcome = Get-UpdateOutcome -Layout $layout -Result $value
+                    $values.update_state = $outcome.update_state
+                    $values.needs_gb = $outcome.needs_gb
                 }
                 $result = New-StepResult -Code 'done' -MessageKey 'exec.done' -Values $values
             }

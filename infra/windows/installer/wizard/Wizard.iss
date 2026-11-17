@@ -66,7 +66,13 @@ const
   LOGPIXELSY = 90;
   HORZRES = 8;
   P_CHECK = 0; P_RESTART = 1; P_BACK = 2; P_DATA = 3; P_ORG = 4; P_EMAIL = 5; P_BACKUP = 6; P_READY = 7;
-  P_INSTALL = 8; P_KEY = 9; P_MAINT = 10; P_COUNT = 11;
+  P_INSTALL = 8; P_KEY = 9; P_MAINT = 10; P_UPDATE = 11; P_COUNT = 12;
+  { W13b part 2 (M05): the WSL step's own limit: the idle check, msiexec with three 60 s waits
+    on code 1618, then 10 minutes for the engine status (F10). The wait between two idle
+    checks, and the planning time after which the update shows the slow line. }
+  WSL_LIMIT_MS = 1800000;
+  UPDATE_WAIT_MS = 30000;
+  UPDATE_SLOW_MINUTES = 60;
   JOB_IDLE = 0; JOB_SUBMIT = 1; JOB_WAIT = 2; JOB_DONE = 3;
 
 procedure GetSystemTime(var SystemTime: TSystemTime);
@@ -231,6 +237,11 @@ var
   { Save report }
   ReportLine, ReportPath: String;
 
+  { W13b part 2: M05 Update (Maintenance.iss). JobRaw is the job-result text of the last job. }
+  InstalledVersion, UpdPhase, UpdNext, UpdOut, UpdState, UpdNeedsGb, UpdFailText, UpdFailStage, JobRaw: String;
+  UpdAt: Cardinal;
+  UpdFailed, UpdRetry, UpdWaiting, UpdSlowShown, UpdEngineDone: Boolean;
+
 procedure RenderPage(Index: Integer); forward;
 procedure SaveReport(Sender: TObject); forward;
 procedure StartBackground; forward;
@@ -246,6 +257,11 @@ function MaintSkip(PageID: Integer): Boolean; forward;
 function AskCancelChoice: Integer; forward;
 procedure RemoveEverything; forward;
 function SettingsEntry: Boolean; forward;
+{ W13b part 2, in Maintenance.iss. }
+procedure RenderUpdate; forward;
+procedure PollUpdate; forward;
+function UpdateNext: Boolean; forward;
+function UpdCanStop: Boolean; forward;
 
 { ------------------------------------------------------------------------------------------- }
 { W7 plumbing: run ID, host name, helper start and result read                                  }
@@ -805,6 +821,7 @@ begin
   JobPurpose := Purpose;
   JobCode := '';
   JobText := '';
+  JobRaw := '';
   JobExit := -1;
   JobRequestId := NewRequestId;
   JobLimitMs := LimitMinutes * 60000;
@@ -885,7 +902,8 @@ begin
     begin
       { Cheap check first: the result file names this request (it holds no secret). }
       Text := ReadText(ExecResultFile);
-      if (Pos('"request_id":"' + JobRequestId + '"', Text) = 0) and (JobPurpose <> 'install') and (Elapsed(JobStartedAt) > JobLimitMs) then
+      { W13b P2-5: no verdict at a limit on a running update either; the engine has its own. }
+      if (Pos('"request_id":"' + JobRequestId + '"', Text) = 0) and (JobPurpose <> 'install') and (JobPurpose <> 'update') and (Elapsed(JobStartedAt) > JobLimitMs) then
       begin
         { W8 correction 5: at the limit, the task's last result once (spec 7.5). }
         JobCode := TaskTimeoutCode;
@@ -908,6 +926,7 @@ begin
       Exit;
     end;
     Text := ReadText(JobResultOut);
+    JobRaw := Text;
     JobCode := JsonValueFrom(Text, 'code', Pos('"exec":', Text));
     JobExit := StrToIntDef(JsonLiteral(Copy(Text, Pos('"exec":', Text), Length(Text)), 'exit_code'), -1);
     if JobPipeOut then
@@ -3821,7 +3840,8 @@ begin
   else if Index = P_READY then RenderReady
   else if Index = P_INSTALL then RenderInstall
   else if Index = P_KEY then RenderKey
-  else if Index = P_MAINT then RenderMaint;
+  else if Index = P_MAINT then RenderMaint
+  else if Index = P_UPDATE then RenderUpdate;
 end;
 
 procedure TimerTick(H, Msg, Id, Tick: Longword);
@@ -3925,6 +3945,7 @@ begin
     PollInstall;
     PollKey;
     PollMaint;
+    PollUpdate;
     if (Pages[P_EMAIL] <> nil) and (WizardForm.CurPageID = Pages[P_EMAIL].ID) and (MailChangedAt > 0) and (Elapsed(MailChangedAt) > 1500) then
     begin
       MailChangedAt := 0;
@@ -3964,6 +3985,13 @@ var
   OutFile: String;
 begin
   Confirm := False;
+  { W13b P2-4: M05 never removes anything. It closes when no step is in flight, after a result,
+    and in the slow state of the engine job (UpdCanStop). }
+  if EntryScreen = 'M05' then
+  begin
+    Cancel := UpdCanStop;
+    Exit;
+  end;
   if ForceClose or StateUnsafe or (EntryScreen = 'M01') or ((Pages[P_CHECK] <> nil) and (CurPageID = Pages[P_CHECK].ID) and (CheckVerdict = 'not_suitable')) then
   begin
     Cancel := True;
@@ -4041,11 +4069,14 @@ begin
   StateText := Text;
   if (EntryScreen = '') or StateUnsafe then
     EntryScreen := 'S01';
-  { M05 (update) is W13b; until then an installed newer setup opens M01. }
-  if EntryScreen = 'M05' then
+  { W13b P2-1: a newer setup file opens M05; the settings program never updates and opens M01. }
+  InstalledVersion := JsonValue(Text, 'installed');
+  if (EntryScreen = 'M05') and SETTINGS_BUILD then
     EntryScreen := 'M01';
   if EntryScreen = 'M01' then
-    RunId := NewRunId('maintenance');
+    RunId := NewRunId('maintenance')
+  else if EntryScreen = 'M05' then
+    RunId := NewRunId('update');
   if (EntryNext = 'S08') or (EntryNext = 'S09') or (EntryNext = 'S12') or (EntryNext = 'S14') or (EntryScreen = 'M01') then
   begin
     OutFile := NewOut('account');
@@ -4087,6 +4118,7 @@ begin
   SetArrayLength(Pages, P_COUNT);
   SetArrayLength(Bodies, P_COUNT);
   Pages[P_MAINT] := CreateCustomPage(wpWelcome, CM('m01_title'), '');
+  Pages[P_UPDATE] := CreateCustomPage(Pages[P_MAINT].ID, CM('m05_title'), '');
   Pages[P_CHECK] := CreateCustomPage(Pages[P_MAINT].ID, CM('s02_title'), CM('s02_subtitle'));
   Pages[P_RESTART] := CreateCustomPage(wpLicense, CM('s05_title'), CM('s05_subtitle'));
   Pages[P_BACK] := CreateCustomPage(Pages[P_RESTART].ID, CM('s06_title'), CM('s06_continue'));
@@ -4131,6 +4163,17 @@ var
 begin
   Result := False;
   Resumed := EntryScreen = 'S06';
+  { W13b: M05 shows its page, then Inno's file copy and the finished page; no key page. }
+  if EntryScreen = 'M05' then
+  begin
+    Result := (PageID <> Pages[P_UPDATE].ID) and (PageID <> wpFinished);
+    Exit;
+  end;
+  if PageID = Pages[P_UPDATE].ID then
+  begin
+    Result := True;
+    Exit;
+  end;
   if EntryScreen = 'M01' then
   begin
     Result := MaintSkip(PageID);
@@ -4282,6 +4325,15 @@ begin
       StartMaintStatus;
     RenderMaint;
   end
+  else if CurPageID = Pages[P_UPDATE].ID then
+    RenderUpdate
+  else if (CurPageID = wpFinished) and (EntryScreen = 'M05') then
+  begin
+    WizardForm.FinishedHeadingLabel.Caption := CM('m05_title');
+    WizardForm.FinishedLabel.Caption := FM('m05_done', [SetupVersion]);
+    WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);
+    WizardForm.NextButton.Caption := CM('s15_finish');
+  end
   else if CurPageID = wpFinished then
   begin
     WizardForm.FinishedHeadingLabel.Caption := CM('s15_title');
@@ -4313,6 +4365,12 @@ var
   OutFile: String;
 begin
   Result := True;
+  { W13b: M05 runs on its page; Inno moves on (its file copy) only after the engine succeeded. }
+  if (EntryScreen = 'M05') and (CurPageID = Pages[P_UPDATE].ID) then
+  begin
+    Result := UpdateNext;
+    Exit;
+  end;
   { W9: M02 and M03 run in maintenance; Inno never moves past them. }
   if (EntryScreen = 'M01') and ((CurPageID = Pages[P_EMAIL].ID) or (CurPageID = Pages[P_BACKUP].ID)) then
   begin
@@ -4435,8 +4493,12 @@ var
 begin
   if CurStep = ssPostInstall then
   begin
-    OutFile := NewOut('save');
-    RunHelper('save-progress', RunId, OutFile, '-Stage install_finished');
+    { W13b P2-4: an update keeps the saved stage; it makes no new recovery key. }
+    if EntryScreen <> 'M05' then
+    begin
+      OutFile := NewOut('save');
+      RunHelper('save-progress', RunId, OutFile, '-Stage install_finished');
+    end;
     { A kept installation needs no new key (spec 4.3): the key of the first install still opens
       its backups; the kept folder goes once the disk runs again. }
     if KeptMode then
