@@ -117,14 +117,16 @@ Test-Case 'W9-1 Delete everything keeps the S91-2 parent rule, removes a link in
     Assert-Equal 'data_folder_parent_unsafe' (Remove-DataFolder -DataRoot $unsafe).code
     Assert-Equal $true (Test-Path -LiteralPath $unsafe) 'nothing is removed under an unsafe parent'
     Assert-Equal 'backup_path_invalid' (Remove-BackupFolder -Folder (Join-Path $root 'SlateOps-backups')).code
-    $backups = '{0}\SlateOps-backups' -f (Split-Path -Qualifier $script:TestRoot)
-    $existed = Test-Path -LiteralPath $backups
-    if (-not $existed) {
-        # A folder that setup created: a protected list for Administrators and SYSTEM (W9-S1).
-        [void][System.IO.Directory]::CreateDirectory($backups, (Get-ProtectedDirectorySecurity))
+    $backups = '{0}\SlateOps-backups' -f $env:SystemDrive
+    # The system drive root, which keeps the Windows default access list (the runner's temporary
+    # D: root fails the S91-2 parent rule, as W9-S4 intends).
+    Assert-Equal $false (Test-Path -LiteralPath $backups) 'no backup folder is left from another run'
+    # A folder that setup created: a protected list for Administrators and SYSTEM (W9-S1).
+    [void][System.IO.Directory]::CreateDirectory($backups, (Get-ProtectedDirectorySecurity))
+    try {
         Assert-Equal 'removed' (Remove-BackupFolder -Folder $backups).code
         Assert-Equal $false (Test-Path -LiteralPath $backups)
-    }
+    } finally { if (Test-Path -LiteralPath $backups) { Remove-PathNoFollow -Path $backups } }
 }
 
 Test-Case 'W9-2 W9-3 kept data is read after its checks, a newer version blocks, and the disk comes back owned by Administrators' {
@@ -222,7 +224,8 @@ Test-Case 'W9 review item 10 S91-2 a backup folder that a standard user can chan
         Assert-True (@($found | Where-Object { $_ -like 'writer:*:S-1-5-11' }).Count -gt 0) ($found -join '; ')
         Assert-Equal 0 @($found | Where-Object { $_ -like 'inherits:*' }).Count 'the folder is protected'
     } finally { Remove-PathNoFollow -Path $root }
-    $backups = '{0}\SlateOps-backups' -f (Split-Path -Qualifier $script:TestRoot)
+    $backups = '{0}\SlateOps-backups' -f $env:SystemDrive
+    Assert-Equal $false (Test-Path -LiteralPath $backups) 'no backup folder is left from another run'
     if (-not (Test-Path -LiteralPath $backups)) {
         [void][System.IO.Directory]::CreateDirectory($backups)
         $null = & icacls.exe $backups /grant '*S-1-5-11:(OI)(CI)M' 2>&1
@@ -290,8 +293,9 @@ Test-Case 'W9 option b Repair sets the backup folder rights when the drive is th
     $log = [System.IO.File]::ReadAllText((Join-Path $logDir 'maintenance-20261117T160000Z-w9rpba.log'))
     Assert-True ($log -match 'is not present; backup folder rights skipped') $log
     Assert-Equal $old ((Read-WindowsChanges -Layout $layout)['kept_account_sid']) 'the replaced account stays recorded for the next Repair'
-    # The drive is there: the test drive's root, only when it has no backup folder of its own.
-    $backups = '{0}\SlateOps-backups' -f (Split-Path -Qualifier $script:TestRoot)
+    # The drive is there: the system drive root (Windows default access list).
+    $backups = '{0}\SlateOps-backups' -f $env:SystemDrive
+    Assert-Equal $false (Test-Path -LiteralPath $backups) 'no backup folder is left from another run'
     if (-not (Test-Path -LiteralPath $backups)) {
         $security = Get-ProtectedDirectorySecurity
         $security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule((New-Object System.Security.Principal.SecurityIdentifier($old)), 'Modify, Synchronize', 'ContainerInherit, ObjectInherit', 'None', 'Allow')))
@@ -345,13 +349,14 @@ Test-Case 'W9-S2 F-2 a backup folder that a standard user can change gets no acc
     $log = [System.IO.File]::ReadAllText((Join-Path $logDir 'install-20261117T170000Z-w9s2ab.log'))
     Assert-True ($log -match 'fails the tree rule; old-account walk skipped') $log
     # Initialize-BackupFolder: a pre-made folder at the drive root with Authenticated Users Modify.
-    $backups = '{0}\SlateOps-backups' -f (Split-Path -Qualifier $script:TestRoot)
+    $backups = '{0}\SlateOps-backups' -f $env:SystemDrive
+    Assert-Equal $false (Test-Path -LiteralPath $backups) 'no backup folder is left from another run'
     if (-not (Test-Path -LiteralPath $backups)) {
         [void][System.IO.Directory]::CreateDirectory($backups)
         $null = & icacls.exe $backups /grant '*S-1-5-11:(OI)(CI)M' 2>&1
         $data = New-AdminOnlyFolder 'SlateOpsW9S2Data'
         try {
-            $result = Initialize-BackupFolder -Drive (Split-Path -Qualifier $script:TestRoot) -DataRoot (Join-Path $data 'SlateOps') -ServiceSid $new
+            $result = Initialize-BackupFolder -Drive $env:SystemDrive -DataRoot (Join-Path $data 'SlateOps') -ServiceSid $new
             Assert-Equal 'backup_target_unsafe' $result.code
             $rules = @((Get-Acl -LiteralPath $backups).GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value })
             Assert-True ($rules -notcontains $new) 'no entry was added'
