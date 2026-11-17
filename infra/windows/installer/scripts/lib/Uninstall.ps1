@@ -285,7 +285,9 @@ function Get-UninstallLeftovers {
     foreach ($folder in @('state', 'requests', 'svc-out', 'scripts', 'settings')) {
         if (Test-Path -LiteralPath (Join-Path $Layout.StateRoot $folder)) { $left.Add(('state_folder:{0}' -f $folder)) }
     }
-    return , $left.ToArray()
+    # Plain array output: the callers wrap it in @(), so no leftover is an empty list (a
+    # comma-wrapped array became one item, and an empty one broke the log line).
+    return $left.ToArray()
 }
 
 function Invoke-UninstallPart {
