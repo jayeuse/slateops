@@ -21,7 +21,7 @@ Test-Case 'AC-6 the facts of this PC hold the 10.4 sections, and BitLocker entri
     Assert-True ($facts['time'].iana -match '^[A-Za-z_]+(/[A-Za-z0-9_+-]+)*$') ([string]$facts['time'].iana)
     foreach ($entry in @($facts['bitlocker'])) {
         if ($null -eq $entry) { continue }
-        Assert-Equal @('encryption_method', 'mount_point', 'protection_status', 'volume_status') @($entry.Keys | Sort-Object)
+        Assert-Equal @('encryption_method', 'mount_point', 'protection_status', 'volume_status') (Get-OrdinalSorted @($entry.Keys))
     }
     $text = ConvertTo-JsonText $facts
     Assert-Equal $false ($text -match '(?i)keyprotector|recoverypassword')

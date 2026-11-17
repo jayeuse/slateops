@@ -45,7 +45,7 @@ function Test-ExecRequest {
     if ($RequestText.Length -gt 4096) { return Get-ExecRefusal 'request_invalid' }
     try { $request = ConvertFrom-JsonUnlimited $RequestText } catch { return Get-ExecRefusal 'request_invalid' }
     if (-not ($request -is [System.Collections.IDictionary])) { return Get-ExecRefusal 'request_invalid' }
-    $keys = @($request.Keys | Sort-Object)
+    $keys = Get-OrdinalSorted @($request.Keys)
     if (($keys.Count -ne 3) -or (($keys -join ',') -cne 'job,request_id,run_id')) { return Get-ExecRefusal 'request_invalid' }
     $requestId = $request['request_id']
     $guid = [guid]::Empty
@@ -98,7 +98,7 @@ function Test-ReceiveInput {
     if ($InputBytes.Length -gt $SlateOpsExec.ReceiveRequestLimit) { return $null }
     try { $value = ConvertFrom-JsonUnlimited ([System.Text.Encoding]::UTF8.GetString($InputBytes)) } catch { return $null }
     if (-not ($value -is [System.Collections.IDictionary])) { return $null }
-    if ((@($value.Keys | Sort-Object) -join ',') -cne 'run_id,setup_version') { return $null }
+    if (((Get-OrdinalSorted @($value.Keys)) -join ',') -cne 'run_id,setup_version') { return $null }
     if ($value['run_id'] -cne $RunId) { return $null }
     if (-not (Test-ReleaseVersion $value['setup_version'])) { return $null }
     return [string]$value['setup_version']

@@ -88,9 +88,10 @@ Test-Case 'AC-2 the request check accepts one allow-listed job and refuses the r
 }
 
 Test-Case 'AC-2 the allow-list is the plan 6.2 list plus resend-invitation, and three Windows-side jobs' {
+    # Ordinal order (code points): "-" (0x2D) sorts before letters.
     Assert-Equal @('export-trust', 'install', 'log-bundle', 'new-recovery-key', 'prefetch', 'prepare', 'prepare-uninstall', 'receive', 'resend-invitation',
-        'restore', 'set-backup-target', 'set-email', 'smtp-test', 'status', 'update') @($SlateOpsExec.EngineJobs | Sort-Object)
-    Assert-Equal @('import-distro', 'wsl-facts', 'wslconfig') @($SlateOpsExec.WindowsJobs | Sort-Object)
+        'restore', 'set-backup-target', 'set-email', 'smtp-test', 'status', 'update') (Get-OrdinalSorted $SlateOpsExec.EngineJobs)
+    Assert-Equal @('import-distro', 'wsl-facts', 'wslconfig') (Get-OrdinalSorted $SlateOpsExec.WindowsJobs)
 }
 
 Test-Case 'AC-2 an engine job has one fixed command line with no shell' {
@@ -210,4 +211,19 @@ Test-Case 'AC-2 the log bundle is stored as one opaque file only when its size a
     $wrong = @{ code = 'ok'; bundle_base64 = 'YWJj'; bundle_size = 3; bundle_sha256 = ('0' * 64) }
     Assert-Throws { Save-LogBundle -Output $wrong -DestinationPath (Join-Path $dir 'other.tar.gz') } 'bundle_invalid'
     Assert-Equal $false (Test-Path -LiteralPath (Join-Path $dir 'other.tar.gz'))
+}
+
+Test-Case 'AC-2 the result serializer unwraps cmdlet output, flattens a PSCustomObject and refuses other objects' {
+    # Windows PowerShell 5.1's JavaScriptSerializer stops on a PSObject-wrapped value with a
+    # circular reference (first Windows CI run); Split-Path returns such a wrapped string.
+    $wrapped = [ordered]@{ stdout_file = (Split-Path -Leaf 'C:\x\0b9a1c64-6c2e-4f55-9b1e-2f0d3c7a8e11.stdout.json'); bytes = [long]99 }
+    Assert-Equal '{"stdout_file":"0b9a1c64-6c2e-4f55-9b1e-2f0d3c7a8e11.stdout.json","bytes":99}' (ConvertTo-JsonText $wrapped)
+    $custom = [ordered]@{ item = [pscustomobject]@{ name = 'wsl'; version = [version]'3.0.3.0' }; list = @('a', (Split-Path -Leaf 'C:\b')) }
+    Assert-Equal '{"item":{"name":"wsl","version":"3.0.3.0"},"list":["a","b"]}' (ConvertTo-JsonText $custom)
+    Assert-Throws { ConvertTo-JsonText @{ file = (Get-Item -LiteralPath $env:SystemRoot) } } 'json_unsupported_type'
+}
+
+Test-Case 'AC-2 the request key check sorts by code points, not by culture' {
+    Assert-Equal @('import-distro', 'wsl-facts', 'wslconfig') (Get-OrdinalSorted @('wslconfig', 'wsl-facts', 'import-distro'))
+    Assert-Equal 'accepted' (Test-ExecRequest -RequestText '{"run_id":"install-20261117T032000Z-abc123","job":"wsl-facts","request_id":"0b9a1c64-6c2e-4f55-9b1e-2f0d3c7a8e11"}' -InputBytes $null).code
 }

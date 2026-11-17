@@ -180,7 +180,7 @@ function Test-C08 {
     param([hashtable]$Facts)
     $pending = Get-FactValue $Facts 'restart_pending'
     if ($null -eq $pending) { return New-UnreadableResult 'C08' }
-    $set = @($pending.Keys | Where-Object { $pending[$_] -eq $true } | Sort-Object)
+    $set = Get-OrdinalSorted @($pending.Keys | Where-Object { $pending[$_] -eq $true })
     if ($set.Count -gt 0) { return New-CheckResult 'C08' 'fix' 'pending' @{ values_set = $set } }
     return New-CheckResult 'C08' 'pass' 'ok'
 }
@@ -219,7 +219,7 @@ function Test-C12 {
     $internet = Get-FactValue $Facts 'internet'
     if ($null -eq $internet) { return New-UnreadableResult 'C12' }
     if ($internet.proxy -eq $true) { return New-CheckResult 'C12' 'fix' 'proxy' }
-    $failed = @($internet.hosts.Keys | Where-Object { $internet.hosts[$_] -ne 'ok' } | Sort-Object)
+    $failed = Get-OrdinalSorted @($internet.hosts.Keys | Where-Object { $internet.hosts[$_] -ne 'ok' })
     if ($failed.Count -gt 0) { return New-CheckResult 'C12' 'fix' 'no_connection' @{ hosts = $failed } }
     return New-CheckResult 'C12' 'pass' 'ok'
 }
@@ -239,7 +239,7 @@ function Test-C14 {
     if ($null -eq $listeners) { return New-UnreadableResult 'C14' }
     $foreign = @($listeners | Where-Object { -not $_.ours })
     if ($foreign.Count -gt 0) {
-        $names = @($foreign | ForEach-Object { [string]$_.process_name } | Sort-Object -Unique)
+        $names = Get-OrdinalSorted @($foreign | ForEach-Object { [string]$_.process_name } | Select-Object -Unique)
         return New-CheckResult 'C14' 'fix' 'in_use' @{ programs = $names; ports = @($foreign | ForEach-Object { [int]$_.port } | Sort-Object -Unique) }
     }
     return New-CheckResult 'C14' 'pass' 'ok'
@@ -283,7 +283,7 @@ function Test-C20 {
     param([hashtable]$Facts)
     $products = Get-FactValue $Facts 'antivirus'
     if ($null -eq $products) { return New-UnreadableResult 'C20' }
-    $other = @($products | Where-Object { $_ -and ($_ -notmatch '^(Windows Defender|Microsoft Defender)') } | Sort-Object -Unique)
+    $other = Get-OrdinalSorted @($products | Where-Object { $_ -and ($_ -notmatch '^(Windows Defender|Microsoft Defender)') } | Select-Object -Unique)
     if ($other.Count -gt 0) { return New-CheckResult 'C20' 'advice' 'other_antivirus' @{ products = $other } }
     return New-CheckResult 'C20' 'pass' 'ok'
 }
@@ -380,7 +380,7 @@ function Test-C29 {
     if ($null -eq $parts) { return New-UnreadableResult 'C29' }
     $kit = @()
     foreach ($name in @('kit_distro', 'kit_tasks', 'kit_rules', 'kit_folder')) { if ($parts[$name]) { $kit += $name } }
-    $values = @{ found = @($parts.Keys | Where-Object { $parts[$_] -eq $true } | Sort-Object) }
+    $values = @{ found = (Get-OrdinalSorted @($parts.Keys | Where-Object { $parts[$_] -eq $true })) }
     if ($parts['slateops_parts'] -and (-not $parts['installed_program'])) { return New-CheckResult 'C29' 'stop' 'unknown_parts' $values }
     if ($kit.Count -gt 0) { return New-CheckResult 'C29' 'fix' 'earlier_test' $values }
     if ($parts['account'] -and (-not $parts['installed_program'])) { return New-CheckResult 'C29' 'fix' 'leftover_account' $values }

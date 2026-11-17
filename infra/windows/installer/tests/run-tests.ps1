@@ -90,7 +90,7 @@ function New-TestUser {
     $existing = Get-LocalUser -Name $Name -ErrorAction SilentlyContinue
     if ($existing) { Remove-LocalUser -Name $Name }
     $secure = ConvertTo-SecureText -Text (New-RandomPassword)
-    $user = New-LocalUser -Name $Name -Password $secure -Description 'Slate Operations W7 test user; removed by run-tests.ps1.'
+    $user = New-LocalUser -Name $Name -Password $secure -Description 'Slate Operations W7 test user'
     $script:TestUsers.Add($Name)
     return $user.SID.Value
 }
@@ -98,7 +98,14 @@ function New-TestUser {
 try {
     foreach ($file in @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.Tests.ps1' | Sort-Object Name)) {
         Write-Host ('--- {0}' -f $file.Name)
-        . $file.FullName
+        # An error outside a Test-Case (the file's own setup) is one failure; the next files
+        # still run, so one broken setup cannot hide the other tests.
+        try { . $file.FullName }
+        catch {
+            $script:TestResults.Add(@{ name = ('{0} setup' -f $file.Name); ok = $false; message = $_.Exception.Message })
+            Write-Host ('FAIL  {0} setup: {1}' -f $file.Name, $_.Exception.Message)
+            if ($_.InvocationInfo) { Write-Host $_.InvocationInfo.PositionMessage }
+        }
     }
 } finally {
     foreach ($name in $script:TestUsers) { Remove-LocalUser -Name $name -ErrorAction SilentlyContinue }

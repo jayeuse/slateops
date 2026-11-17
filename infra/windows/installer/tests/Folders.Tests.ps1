@@ -14,8 +14,8 @@ function New-TestStateLayout {
 function Get-ExplicitAllowSids {
     param([Parameter(Mandatory = $true)][string]$Path)
     $acl = Get-Acl -LiteralPath $Path
-    return @($acl.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]) | Where-Object { $_.AccessControlType -eq 'Allow' } |
-            ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique)
+    return Get-OrdinalSorted @($acl.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]) | Where-Object { $_.AccessControlType -eq 'Allow' } |
+            ForEach-Object { $_.IdentityReference.Value } | Select-Object -Unique)
 }
 
 Test-Case 'AC-3 a new state tree is protected, holds every entry, and passes the check' {
@@ -37,7 +37,7 @@ Test-Case 'AC-3 the service account reads scripts, state and requests, and write
     $expected = [ordered]@{ 'scripts' = 'ReadAndExecute, Synchronize'; 'requests' = 'ReadAndExecute, Synchronize'; 'svc-out' = 'Modify, Synchronize'; 'logs\exec' = 'Modify, Synchronize'; 'logs\setup' = '' }
     foreach ($entry in $expected.Keys) {
         $rules = @((Get-Acl -LiteralPath (Join-Path $layout.StateRoot $entry)).GetAccessRules($true, $true, $sidType) | Where-Object { $_.IdentityReference.Value -eq $script:ServiceSid })
-        $rights = (@($rules | ForEach-Object { [string]$_.FileSystemRights }) | Sort-Object -Unique) -join ';'
+        $rights = (Get-OrdinalSorted @($rules | ForEach-Object { [string]$_.FileSystemRights } | Select-Object -Unique)) -join ';'
         Assert-Equal $expected[$entry] $rights $entry
     }
 }

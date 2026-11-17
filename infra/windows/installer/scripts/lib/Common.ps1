@@ -587,12 +587,62 @@ function Get-DictValue {
     return $null
 }
 
+function Get-OrdinalSorted {
+    # Sorts strings by their code points. Sort-Object in Windows PowerShell 5.1 sorts by culture,
+    # which ignores hyphens ("wsl-facts" after "wslconfig"); key checks need a fixed order.
+    param([AllowNull()][AllowEmptyCollection()][object[]]$Items)
+    $list = New-Object System.Collections.Generic.List[string]
+    foreach ($item in @($Items)) { if ($null -ne $item) { $list.Add([string]$item) } }
+    $array = $list.ToArray()
+    [Array]::Sort($array, [StringComparer]::Ordinal)
+    return , $array
+}
+
+function ConvertTo-PlainValue {
+    # Turns a value into what JavaScriptSerializer can write without walking PowerShell's
+    # wrappers: strings, booleans, numbers, dictionaries with string keys, and arrays. Cmdlet
+    # output arrives wrapped in a PSObject (Split-Path, Get-Item ...); the serializer of Windows
+    # PowerShell 5.1 then walks the wrapper and stops on a circular reference. A wrapped value
+    # is unwrapped, a PSCustomObject becomes a dictionary of its note properties, a date
+    # becomes a UTC stamp, a version, GUID, time span or enum value becomes its text. Anything
+    # else is refused (json_unsupported_type), so no object graph reaches a result file.
+    param([AllowNull()]$Value, [int]$Depth = 0)
+    if ($Depth -gt 16) { throw 'json_too_deep' }
+    if ($null -eq $Value) { return $null }
+    $base = $Value.PSObject.BaseObject
+    if (($base -is [string]) -or ($base -is [bool])) { return $base }
+    if ($base -is [char]) { return [string]$base }
+    foreach ($type in @([int], [long], [double], [decimal], [single], [byte], [sbyte], [int16], [uint16], [uint32], [uint64])) {
+        if ($base -is $type) { return $base }
+    }
+    if ($base -is [datetime]) { return (Get-UtcStamp -Time $base) }
+    if (($base -is [version]) -or ($base -is [guid]) -or ($base -is [timespan]) -or ($base -is [System.Enum])) { return $base.ToString() }
+    if ($base -is [System.Collections.IDictionary]) {
+        $out = New-Object 'System.Collections.Generic.Dictionary[string,object]'
+        foreach ($key in @($base.Keys)) { $out[[string]$key] = (ConvertTo-PlainValue -Value $base[$key] -Depth ($Depth + 1)) }
+        return , $out
+    }
+    if ($base -is [System.Management.Automation.PSCustomObject]) {
+        $out = New-Object 'System.Collections.Generic.Dictionary[string,object]'
+        foreach ($property in @($Value.PSObject.Properties | Where-Object { $_.MemberType -eq 'NoteProperty' })) {
+            $out[[string]$property.Name] = (ConvertTo-PlainValue -Value $property.Value -Depth ($Depth + 1))
+        }
+        return , $out
+    }
+    if ($base -is [System.Collections.IEnumerable]) {
+        $list = New-Object System.Collections.Generic.List[object]
+        foreach ($item in $base) { $list.Add((ConvertTo-PlainValue -Value $item -Depth ($Depth + 1))) }
+        return , $list.ToArray()
+    }
+    throw 'json_unsupported_type'
+}
+
 function ConvertTo-JsonText {
-    param([Parameter(Mandatory = $true)]$Value)
+    param([Parameter(Mandatory = $true)][AllowNull()]$Value)
     Add-Type -AssemblyName System.Web.Extensions
     $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
     $serializer.MaxJsonLength = [int]::MaxValue
-    return $serializer.Serialize($Value)
+    return $serializer.Serialize((ConvertTo-PlainValue -Value $Value))
 }
 
 function Write-JsonFile {

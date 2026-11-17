@@ -65,7 +65,7 @@ Test-Case 'AC-5 rotation keeps the newest 20 runs and every install run' {
         [System.IO.File]::WriteAllText((Join-Path $dir ($name + '.log')), 'run')
         [void][System.IO.Directory]::CreateDirectory((Join-Path $dir $name))
     }
-    $removed = @(Invoke-LogRotation -Directory $dir | Sort-Object)
+    $removed = Get-OrdinalSorted @(Invoke-LogRotation -Directory $dir)
     Assert-Equal @('maintenance-20261101T000000Z-bbbbbb', 'maintenance-20261102T000000Z-bbbbbb', 'maintenance-20261103T000000Z-bbbbbb',
         'maintenance-20261104T000000Z-bbbbbb', 'maintenance-20261105T000000Z-bbbbbb') $removed
     Assert-Equal $true (Test-Path -LiteralPath (Join-Path $dir 'install-20261101T000000Z-aaaaaa.log'))

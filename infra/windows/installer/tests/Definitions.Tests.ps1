@@ -67,6 +67,19 @@ Test-Case 'AC-4 the account is a hidden standard user with batch logon and the t
     Assert-Equal $true $account.Hidden
 }
 
+Test-Case 'AC-4 Windows accepts the account definition (description at most 48 characters)' {
+    $account = Get-AccountDefinition
+    Assert-True ($account.Description.Length -le 48) ('{0} characters' -f $account.Description.Length)
+    Assert-True ($account.Name.Length -le 20) $account.Name
+    # The real call that the first Windows CI run refused, under a test name.
+    $secure = ConvertTo-SecureText -Text (New-RandomPassword)
+    $script:TestUsers.Add('slateops-w7def')
+    $user = New-LocalUser -Name 'slateops-w7def' -Password $secure -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires `
+        -FullName $account.FullName -Description $account.Description
+    Assert-Equal $account.Description $user.Description
+    Remove-LocalUser -Name 'slateops-w7def'
+}
+
 Test-Case 'AC-4 setup never reuses an existing slateops-svc account' {
     $layout = New-SlateOpsLayout -StateRoot (Join-Path (New-TestDirectory 'reuse') 'SlateOps')
     $null = New-TestUser 'slateops-svc'
@@ -142,7 +155,7 @@ Test-Case 'AC-4 the saved progress holds the stage, the run ID and true or false
     $null = Initialize-ProtectedTree -Tree $layout.StateTree
     Save-SetupProgress -Layout $layout -Stage 'feature_restart' -RunId 'install-20261117T032000Z-abc123'
     $saved = Read-SetupProgress -Layout $layout
-    Assert-Equal @('run_id', 'saved_at', 'schema_version', 'stage') @($saved.Keys | Sort-Object)
+    Assert-Equal @('run_id', 'saved_at', 'schema_version', 'stage') (Get-OrdinalSorted @($saved.Keys))
     Assert-Throws { Save-SetupProgress -Layout $layout -Stage 'install_started' -RunId 'install-20261117T032000Z-abc123' -Marks @{ admin_email = 'maria@example.com' } } 'A mark is true or false.'
     Assert-Throws { Save-SetupProgress -Layout $layout -Stage 'anything' -RunId 'install-20261117T032000Z-abc123' } 'Unknown stage.'
 }

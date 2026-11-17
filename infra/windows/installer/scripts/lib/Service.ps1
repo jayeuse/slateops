@@ -241,7 +241,8 @@ function Get-AccountDefinition {
     return @{
         Name        = $SlateOps.AccountName
         FullName    = 'Slate Operations service'
-        Description = 'Runs Slate Operations. Removed by the Slate Operations uninstaller.'
+        # Windows limits a local user's description to 48 characters (New-LocalUser).
+        Description = 'Runs Slate Operations. Uninstall removes it.'
         Groups      = @($SlateOps.SidUsers)
         Rights      = @($SlateOps.AccountRights)
         Hidden      = $true
