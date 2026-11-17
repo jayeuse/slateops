@@ -645,6 +645,15 @@ class InstallProofTests(unittest.TestCase):
             "owners and modes differ from the installation rules",
             "/etc/slateops/Caddyfile 1000:1000 600",
             "/var/log/slateops/app 10001:10001 700",
+            # TASK-0089 (W6a): the trust routes, the security code, Realtime, the renewal.
+            "port 80 serves exactly three trust paths",
+            "the trust page does not show the engine's security code",
+            "every other :80 path and name redirects to HTTPS",
+            "/trust/ok sets a cookie or CORS header",
+            '-H "Origin: https://$host"',
+            '[ "$upgrade" = 101 ]',
+            "Caddy still serves the old certificate",
+            "the renewal outage was longer than a reload",
         ):
             with self.subTest(promise=promise):
                 self.assertIn(promise.replace("slateops-engine receive", "receive"), script)

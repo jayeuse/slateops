@@ -23,6 +23,7 @@ from engine import (
     prefetch,
     prepare,
     receive,
+    renewal,
     smtp,
     snapshot,
     status,
@@ -62,6 +63,8 @@ JOBS: dict[str, Job] = {
     "log-bundle": Job(log_bundle.handle, log_bundle.KEYS, log_bundle.REQUIRED, locked=False),
     "install": Job(install.handle, install.KEYS, install.REQUIRED),
     "resend-invitation": Job(invitation.handle, invitation.KEYS, invitation.REQUIRED),
+    # Run by W10b's slateops-runner.timer once a day (plan 6.3); not a Windows Exec job.
+    "renew-certificate": Job(renewal.handle, renewal.KEYS, renewal.REQUIRED),
 }
 
 

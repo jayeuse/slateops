@@ -8,6 +8,7 @@ before or after a command's effect, as a power cut would stop the process.
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import re
@@ -96,6 +97,12 @@ class World:
         self.calls: list[list[str]] = []
         self.environments: list[dict[str, str]] = []
         self.chowns: list[tuple[str, int, int]] = []
+        self.leaves = 0
+        self.key_owner = 0
+        self.check_fails = False
+        self.renew_due = False
+        self.served: bytes | None = None  # the leaf that Caddy serves (DER)
+        self.reloads = 0
 
     # The runner -----------------------------------------------------------------------------
 
@@ -133,7 +140,7 @@ class World:
         if "operations/supabase_keys.py" in argv:
             return self._generate(_mount(argv, "/new"))
         if "operations/local_ca.py" in argv:
-            return self._ca(_mount(argv, "/ca"), _mount(argv, "/tls"))
+            return self._ca(argv, _mount(argv, "/ca"), _mount(argv, "/tls"))
         if argv[:2] == ["docker", "compose"]:
             return self._compose(argv)
         if "operations.install.provisioning" in argv:
@@ -157,10 +164,34 @@ class World:
         second.write_text(f"restic-g{n}-dummy-value")
         return Result(0, b"Created installation keys; no secret values were printed.\n", b"")
 
-    def _ca(self, ca: Path, tls: Path) -> Result:
+    def _leaf_pem(self) -> str:
+        body = base64.b64encode(f"leaf-{self.leaves}".encode()).decode()
+        return f"-----BEGIN CERTIFICATE-----\n{body}\n-----END CERTIFICATE-----\n"
+
+    def _issue_leaf(self, tls: Path) -> None:
+        self.leaves += 1
+        (tls / "server.crt").write_text(self._leaf_pem() + "-----BEGIN CERTIFICATE-----\naW50\n"
+                                        "-----END CERTIFICATE-----\n")  # fmt: skip
+        (tls / "server.key").write_text(f"leaf key {self.leaves}")
+        self.key_owner = 0  # a new key file belongs to the job's user (root)
+
+    def _ca(self, argv: list[str], ca: Path, tls: Path) -> Result:
+        command = argv[argv.index("operations/local_ca.py") + 1]
+        # Root with every capability dropped cannot read a key owned by Caddy (UID 1000).
+        readable = self.key_owner == 0 or "DAC_READ_SEARCH" in argv
+        leaf = readable and all((tls / name).exists() for name in ("server.crt", "server.key"))
         current = ca / "current"
+        if command == "check":
+            if self.check_fails or not leaf:
+                return Result(3 if self.check_fails else 2,
+                              b'{"code":"self_check_failed"}', b"")  # fmt: skip
+            return Result(0, b'{"result":"valid","root_sha256":"x"}', b"")
+        if command == "renew":
+            if self.renew_due or not leaf:
+                self._issue_leaf(tls)
+                return Result(0, b'{"result":"renewed","root_sha256":"x"}', b"")
+            return Result(0, b'{"result":"not_due","root_sha256":"x"}', b"")
         if current.exists():
-            leaf = all((tls / name).exists() for name in ("server.crt", "server.key"))
             result = "exists" if leaf else "created"
         else:
             current.mkdir()
@@ -169,8 +200,8 @@ class World:
             (current / "intermediate.key").write_text("intermediate key")
             self.ca_created += 1
             result = "created"
-        (tls / "server.crt").write_text("leaf")
-        (tls / "server.key").write_text("leaf key")
+        if not leaf:
+            self._issue_leaf(tls)
         return Result(0, json.dumps({"result": result, "root_sha256": "x"}).encode(), b"")
 
     def _compose(self, argv: list[str]) -> Result:
@@ -179,6 +210,8 @@ class World:
         if tail[0] == "up":
             services = [item for item in tail[1:] if not item.startswith("--") and item != "never"]
             self.started.update(services)
+            if "caddy" in services:
+                self.served = self.file_leaf()  # Caddy reads the files when it starts
             if "db" in services:
                 for volume in ("supabase-db-data", "supabase-storage-data"):
                     name = f"{project}_{volume}"
@@ -193,6 +226,11 @@ class World:
                 for name in sorted(self.started)
             ]  # fmt: skip
             return Result(0, "\n".join(json.dumps(row) for row in rows).encode(), b"")
+        if tail[:4] == ["exec", "-T", "caddy", "caddy"]:
+            assert tail[4:6] == ["reload", "--force"], tail
+            self.reloads += 1
+            self.served = self.file_leaf()
+            return Result(0, b"", b"")
         if tail[0] == "exec":
             if "api" not in self.started:
                 return Result(1, b"", b"service api is not running")
@@ -222,6 +260,17 @@ class World:
 
     def chown(self, path: Path, uid: int, gid: int) -> None:
         self.chowns.append((path.name, uid, gid))
+        if path.name == "server.key":
+            self.key_owner = uid
+
+    def file_leaf(self) -> bytes:
+        """The DER of the leaf in server.crt (the fake PEM body is base64 of this)."""
+        return f"leaf-{self.leaves}".encode()
+
+    def served_certificate(self, host: str, cafile: Path, timeout: float) -> bytes:
+        if "caddy" not in self.started or self.served is None:
+            raise ConnectionRefusedError("connection refused")
+        return self.served
 
 
 class FakeApi:
@@ -297,6 +346,7 @@ def run(
         docker_api=world.docker_api,
         https_get=world.https_get,
         chown=world.chown,
+        served_certificate=world.served_certificate,
     )
     code = cli.main(
         [job], stdin=io.BytesIO(json.dumps(request).encode()), stdout=out, deps=dependencies
@@ -348,6 +398,7 @@ def test_ac_i13_the_result_is_safe_and_names_the_ca_and_the_invitation(
 
     assert set(result) == {
         "code", "version", "invitation", "backup_setup", "ca_root_sha256", "ca_certificate_pem",
+        "ca_security_code",
     }  # fmt: skip
     assert result["code"] == "installed"
     assert result["invitation"] == "sent"
@@ -397,8 +448,10 @@ def test_ac_i5_ac_i7_one_shot_jobs_have_no_network_and_only_their_folders(
 
     run(paths, fake)
 
-    for marker, mounts in (("supabase_keys.py", ["/new"]), ("local_ca.py", ["/ca", "/tls"])):
-        [argv] = _commands(fake, marker)
+    jobs = [(argv, ["/new"]) for argv in _commands(fake, "supabase_keys.py")]
+    jobs += [(argv, ["/ca", "/tls"]) for argv in _commands(fake, "local_ca.py")]
+    assert len(jobs) == 3  # the generator, then local_ca init and check (TASK-0089)
+    for argv, mounts in jobs:
         assert argv[argv.index("--network") + 1] == "none"
         assert [a.rsplit("target=", 1)[1] for a in argv if a.startswith("type=bind")] == mounts
         for flag in ("--read-only", "--no-healthcheck"):
@@ -407,8 +460,8 @@ def test_ac_i5_ac_i7_one_shot_jobs_have_no_network_and_only_their_folders(
         assert argv[argv.index("--security-opt") + 1] == "no-new-privileges"
         assert argv[argv.index("--pull") + 1] == "never"
         assert "-v" not in argv and "--volume" not in argv
-    [ca] = _commands(fake, "local_ca.py")
-    assert ca[ca.index("--host") + 1] == "frontdesk-pc.local"
+    for ca in _commands(fake, "local_ca.py"):
+        assert ca[ca.index("--host") + 1] == "frontdesk-pc.local"
 
 
 def test_ac_i8_ac_i7_owners_and_modes_follow_the_installation_rules(
@@ -698,7 +751,7 @@ def test_ac_k1_a_kill_at_any_command_then_a_rerun_completes_one_installation(
     tmp_path: Path, after: bool
 ) -> None:
     total = _complete_run_length(tmp_path)
-    assert total == 15  # every command of a full run is a kill point
+    assert total == 16  # every command of a full run is a kill point
     for kill_at in range(1, total + 1):
         paths, fake = _setup(tmp_path / f"kill-{kill_at}")
         fake.kill_at, fake.kill_after = kill_at, after
@@ -964,3 +1017,160 @@ def test_ac_v1_resend_sends_again_or_reports_an_active_administrator(
     assert fake.records == {EMAIL: 1} and fake.sent == 2
     first, resent = _commands(fake, "bootstrap_admin.py")[:2]
     assert resent[-6:] == first[-6:]  # the same fixed arguments from the stored answers
+
+
+# TASK-0089 (W6a): the trust files, the chain check, the key that Caddy owns, renewal ---------
+
+
+def test_ac_e1_ac_e7_install_writes_the_trust_files_and_returns_the_security_code(
+    world: tuple[Paths, World],
+) -> None:
+    paths, fake = world
+
+    code, result = run(paths, fake)
+
+    assert code == 0
+    files = sorted(path.name for path in paths.trust.iterdir())
+    assert files == ["slateops-ca.crt", "slateops-ca.sha256", "slateops.mobileconfig"]
+    assert (paths.trust / "slateops-ca.sha256").read_text() == result["ca_security_code"] + "\n"
+    assert result["ca_security_code"] == ":".join(
+        result["ca_root_sha256"].upper()[i : i + 2] for i in range(0, 64, 2)
+    )
+    caddyfile = (paths.etc / "Caddyfile").read_text()
+    assert "\nhttp://:80 {\n" in caddyfile
+    assert 'templates {\n            root "/srv/slateops-trust"' in caddyfile
+
+
+def test_ac_e4_a_failed_chain_check_writes_no_trust_file_and_no_caddyfile(
+    world: tuple[Paths, World],
+) -> None:
+    # W6a-5: local_ca.py init checks the chain before it writes the CA (W2 owner test
+    # test_w2_4_chain_verifies_only_for_the_host); the engine adds `check` before its files.
+    paths, fake = world
+    fake.check_fails = True
+
+    code, result = run(paths, fake)
+
+    assert (code, result["code"]) == (3, "ca_check_failed")
+    assert not (paths.trust / "slateops-ca.sha256").exists()
+    assert not (paths.etc / "Caddyfile").exists()
+    [check] = _commands(fake, "local_ca.py check")
+    assert check[check.index("--network") + 1] == "none"
+
+
+def test_ac_e5_a_rerun_of_step_6_reads_the_key_that_caddy_owns(
+    world: tuple[Paths, World], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths, fake = world
+    commit = install.commit_new
+
+    def stop_after_caddyfile(ctx: Any, path: Path, data: bytes, **kwargs: Any) -> bool:
+        changed = commit(ctx, path, data, **kwargs)
+        if path.name == "Caddyfile":
+            raise Killed
+        return changed
+
+    monkeypatch.setattr(install, "commit_new", stop_after_caddyfile)
+    with pytest.raises(Killed):
+        run(paths, fake)
+    monkeypatch.setattr(install, "commit_new", commit)
+    assert fake.key_owner == 1000
+
+    code, _ = run(paths, fake, {"run_id": RUN_ID, "version": VERSION})
+
+    assert code == 0
+    assert fake.leaves == 1  # the rerun kept the leaf: no second certificate
+    assert fake.key_owner == 1000
+    for argv in _commands(fake, "operations/local_ca.py"):
+        caps = [argv[i + 1] for i, item in enumerate(argv) if item == "--cap-add"]
+        assert caps == ["DAC_READ_SEARCH"], argv
+
+
+RENEW = {"run_id": "renewal-20261118T020000Z-rr11ss"}
+
+
+def renew(paths: Paths, fake: World) -> tuple[int, dict[str, Any]]:
+    return run(paths, fake, RENEW, job="renew-certificate")
+
+
+def test_ac_e6_renewal_before_the_install_is_refused(world: tuple[Paths, World]) -> None:
+    paths, fake = world
+
+    assert renew(paths, fake) == (
+        2,
+        {"code": "not_installed", "message_key": "renew-certificate.not_installed"},
+    )
+    assert fake.calls == []
+
+
+def test_ac_e6_a_certificate_that_is_not_due_changes_nothing_and_reloads_nothing(
+    world: tuple[Paths, World],
+) -> None:
+    paths, fake = world
+    run(paths, fake)
+    before = (paths.etc / "tls" / "server.crt").read_bytes()
+
+    code, result = renew(paths, fake)
+
+    assert (code, result) == (0, {"code": "not_due", "reloaded": False})
+    assert (paths.etc / "tls" / "server.crt").read_bytes() == before
+    assert fake.reloads == 0
+    assert (paths.trust / "slateops-ca.sha256").exists()
+
+
+def test_ac_e6_w6a_4_a_due_certificate_is_renewed_and_caddy_reloads_it(
+    world: tuple[Paths, World],
+) -> None:
+    paths, fake = world
+    run(paths, fake)
+    fake.renew_due = True
+
+    code, result = renew(paths, fake)
+
+    assert (code, result) == (0, {"code": "renewed", "reloaded": True})
+    assert fake.leaves == 2 and fake.served == fake.file_leaf() == b"leaf-2"
+    assert fake.reloads == 1 and fake.key_owner == 1000
+    order = [" ".join(argv) for argv in fake.calls[-3:]]
+    assert "local_ca.py renew" in order[0] and "local_ca.py check" in order[1]
+    assert "caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile" in order[2]
+
+
+@pytest.mark.parametrize("stop", ["after-renew", "after-owner"])
+def test_ac_e6_a_kill_inside_a_renewal_is_finished_by_the_next_run(
+    world: tuple[Paths, World], monkeypatch: pytest.MonkeyPatch, stop: str
+) -> None:
+    paths, fake = world
+    run(paths, fake)
+    fake.renew_due = True
+    if stop == "after-renew":
+        fake.kill_at, fake.kill_after = fake.count + 1, True  # the renew command
+    else:
+        real_chown = fake.chown
+
+        def chown_then_stop(path: Path, uid: int, gid: int) -> None:
+            real_chown(path, uid, gid)
+            if path.name == "server.key":
+                raise Killed
+
+        monkeypatch.setattr(fake, "chown", chown_then_stop)
+    with pytest.raises(Killed):
+        renew(paths, fake)
+    monkeypatch.setattr(fake, "chown", World.chown.__get__(fake))
+    fake.kill_at, fake.renew_due = None, False
+
+    code, result = renew(paths, fake)
+
+    assert (code, result) == (0, {"code": "not_due", "reloaded": True})
+    assert fake.key_owner == 1000 and fake.served == fake.file_leaf()
+
+
+def test_ac_e6_renewal_does_not_need_caddy_to_answer(world: tuple[Paths, World]) -> None:
+    paths, fake = world
+    run(paths, fake)
+    fake.renew_due = True
+    fake.started.discard("caddy")
+
+    code, result = renew(paths, fake)
+
+    assert (code, result) == (0, {"code": "renewed", "reloaded": False})
+    assert "Caddy does not answer" in log_text(paths)

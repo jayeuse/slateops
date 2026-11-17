@@ -95,6 +95,12 @@ class Paths:
         return self.etc / "new" / "smtp.env"
 
     @property
+    def trust(self) -> Path:
+        """The public trust files that Caddy serves (TASK-0089 R3): a sibling of ``tls/``
+        and ``ca/``, never either of them or their parent."""
+        return self.etc / "trust"
+
+    @property
     def new(self) -> Path:
         return self.etc / "new"
 

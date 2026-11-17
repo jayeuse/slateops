@@ -54,6 +54,15 @@ def https_get(host: str, path: str, cafile: Path, timeout: float) -> tuple[int, 
         connection.close()
 
 
+def served_certificate(host: str, cafile: Path, timeout: float) -> bytes:
+    """The DER of the leaf that 127.0.0.1:443 serves for ``host``, checked against ``cafile``
+    (TASK-0089: a renewal reloads Caddy when it serves another leaf than ``server.crt``)."""
+    context = tls_client_context(cafile)
+    raw = socket.create_connection(("127.0.0.1", 443), timeout=timeout)
+    with context.wrap_socket(raw, server_hostname=host) as connection:
+        return connection.getpeercert(binary_form=True) or b""
+
+
 @dataclass
 class Dependencies:
     paths: Paths = field(default_factory=Paths)
@@ -65,6 +74,7 @@ class Dependencies:
     disk_free: Callable[[Path], int] = lambda path: shutil.disk_usage(path).free
     chown: Callable[[Path, int, int], None] = os.chown
     https_get: Callable[[str, str, Path, float], tuple[int, bytes]] = https_get
+    served_certificate: Callable[[str, Path, float], bytes] = served_certificate
 
 
 @dataclass

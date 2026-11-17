@@ -179,8 +179,9 @@ docker exec "$machine" curl --fail --silent --show-error --max-time 20 \
 owners="$(docker exec "$machine" stat -c '%n %u:%g %a' /etc/slateops/Caddyfile \
     /etc/slateops/tls/server.key /etc/slateops/provider.env /etc/slateops/app.env \
     /etc/slateops/provision.env /etc/slateops/restic-password /etc/slateops /etc/slateops/ca \
-    /etc/slateops/tls /var/log/slateops/app /var/lib/slateops/backup-exports \
-    /var/lib/slateops/installation.json)"
+    /etc/slateops/tls /etc/slateops/trust /etc/slateops/trust/slateops-ca.sha256 \
+    /etc/slateops/trust/slateops-ca.crt /etc/slateops/trust/slateops.mobileconfig \
+    /var/log/slateops/app /var/lib/slateops/backup-exports /var/lib/slateops/installation.json)"
 echo "$owners"
 expected="/etc/slateops/Caddyfile 1000:1000 600
 /etc/slateops/tls/server.key 1000:1000 600
@@ -191,10 +192,56 @@ expected="/etc/slateops/Caddyfile 1000:1000 600
 /etc/slateops 0:0 700
 /etc/slateops/ca 0:0 700
 /etc/slateops/tls 0:0 755
+/etc/slateops/trust 0:0 755
+/etc/slateops/trust/slateops-ca.sha256 0:0 644
+/etc/slateops/trust/slateops-ca.crt 0:0 644
+/etc/slateops/trust/slateops.mobileconfig 0:0 644
 /var/log/slateops/app 10001:10001 700
 /var/lib/slateops/backup-exports 0:10001 750
 /var/lib/slateops/installation.json 0:0 600"
 [ "$owners" = "$expected" ] || fail "owners and modes differ from the installation rules (AC-I7, AC-I8)"
+
+# W6a (TASK-0089): the trust site on :80, the trust routes on :443, Realtime through Caddy.
+code="$(field ca_security_code <<<"$result")"
+fingerprint="$(field ca_root_sha256 <<<"$result")"
+[[ "$code" =~ ^([0-9A-F]{2}:){31}[0-9A-F]{2}$ ]] || fail "the install result has no security code"
+in_machine_curl() { docker exec "$machine" curl --silent --max-time 15 "$@"; }
+answer() { in_machine_curl -o /dev/null -w '%{http_code} %{content_type} %{redirect_url}' "$@"; }
+log "port 80 serves exactly three trust paths for $host (W6a-1)"
+for line in "/trust 200 text/html; charset=utf-8" \
+    "/trust/slateops-ca.crt 200 application/x-x509-ca-cert" \
+    "/trust/slateops.mobileconfig 200 application/x-apple-aspen-config"; do
+    path="${line%% *}"
+    seen="$(answer --resolve "$host:80:127.0.0.1" "http://$host$path")"
+    [ "$seen" = "${line#* } " ] || fail "http $path answered '$seen'"
+done
+page="$(in_machine_curl --resolve "$host:80:127.0.0.1" "http://$host/trust")"
+grep -qF "$code" <<<"$page" || fail "the trust page does not show the engine's security code $code"
+crt_hash="$(in_machine_curl --resolve "$host:80:127.0.0.1" "http://$host/trust/slateops-ca.crt" | sha256sum | cut -d' ' -f1)"
+[ "$crt_hash" = "$fingerprint" ] || fail "slateops-ca.crt is not the root certificate"
+log "every other :80 path and name redirects to HTTPS"
+for path in / /trust/ /trust/index.html /trust/slateops-ca.sha256 /trust/ok /api/health; do
+    seen="$(answer --resolve "$host:80:127.0.0.1" "http://$host$path")"
+    [ "$seen" = "308  https://$host$path" ] || fail "http $path answered '$seen'"
+done
+seen="$(answer -H "Host: 127.0.0.1" "http://127.0.0.1/trust")"
+[ "$seen" = "308  https://$host/trust" ] || fail "http by IP answered '$seen'"
+log ":443 serves /trust and /trust/ok with no cookie and no CORS header (W6a-7, R10)"
+tls=(--cacert /etc/slateops/ca/current/root.crt --resolve "$host:443:127.0.0.1")
+seen="$(answer "${tls[@]}" "https://$host/trust")"
+[ "$seen" = "200 text/html; charset=utf-8 " ] || fail "https /trust answered '$seen'"
+ok_headers="$(in_machine_curl "${tls[@]}" -D - -o /dev/null -w 'size=%{size_download}' "https://$host/trust/ok")"
+echo "$ok_headers"
+grep -q '^HTTP/[0-9.]* 204' <<<"$ok_headers" || fail "/trust/ok is not 204"
+grep -q 'size=0$' <<<"$ok_headers" || fail "/trust/ok has a body"
+if grep -qiE '^(set-cookie|access-control-)' <<<"$ok_headers"; then fail "/trust/ok sets a cookie or CORS header"; fi
+log "one WebSocket upgrade to Realtime through Caddy with the matching Origin (TASK-0086 carry)"
+ws_key="$(head -c 16 /dev/urandom | base64)"  # the protocol's random nonce (RFC 6455)
+upgrade="$(docker exec "$machine" curl --http1.1 --silent --max-time 5 -o /dev/null -w '%{http_code}' \
+    "${tls[@]}" -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" \
+    -H "Sec-WebSocket-Key: $ws_key" -H "Origin: https://$host" \
+    "https://$host/realtime/v1/websocket?vsn=1.0.0" || true)"
+[ "$upgrade" = 101 ] || fail "the Realtime WebSocket upgrade answered '$upgrade'"
 docker exec "$machine" docker compose ls
 for _ in $(seq 1 30); do [ "$(mails)" -ge 1 ] && break; sleep 2; done
 [ "$(mails)" -eq 1 ] || fail "expected one invitation in Mailpit, found $(mails)"
@@ -217,4 +264,50 @@ echo "$resend"
 [ "$(field code <<<"$resend")" = sent ] || fail "resend-invitation: $resend"
 for _ in $(seq 1 30); do [ "$(mails)" -ge 2 ] && break; sleep 2; done
 [ "$(mails)" -eq 2 ] || fail "expected a second invitation, found $(mails)"
-log "passed: receive, prefetch, install, HTTPS /api/ready, invitation, rerun without change, resend"
+log "renewal (W6a-4): delete the leaf pair, renew, Caddy reloads, requests keep answering"
+served_leaf() {
+    docker exec -i "$machine" python3 -I - "$host" <<'PY'
+import hashlib, socket, ssl, sys
+context = ssl.create_default_context(cafile="/etc/slateops/ca/current/root.crt")
+with context.wrap_socket(socket.create_connection(("127.0.0.1", 443), timeout=10),
+                         server_hostname=sys.argv[1]) as connection:
+    print(hashlib.sha256(connection.getpeercert(binary_form=True)).hexdigest())
+PY
+}
+before_leaf="$(served_leaf)"
+docker exec "$machine" rm /etc/slateops/tls/server.crt /etc/slateops/tls/server.key
+printf '{"run_id":"renewal-%s-proof4"}' "$(date -u +%Y%m%dT%H%M%SZ)" \
+    | "${engine[@]}" renew-certificate > "$output/renewal.json" &
+renewal=$!
+: > "$output/during-renewal.txt"
+probe() {
+    printf '%s %s\n' "$(date +%s%3N)" "$(in_machine_curl "${tls[@]}" -o /dev/null \
+        -w '%{http_code}' "https://$host/trust/ok" || true)" >> "$output/during-renewal.txt"
+}
+while kill -0 "$renewal" 2>/dev/null; do probe; done
+wait "$renewal" || fail "renew-certificate: $(cat "$output/renewal.json")"
+requests="$(wc -l < "$output/during-renewal.txt")"
+for _ in 1 2 3 4 5; do probe; done
+renewed="$(cat "$output/renewal.json")"
+echo "$renewed"; log "$requests requests during the renewal, 5 after it"
+cut -d' ' -f2 "$output/during-renewal.txt" | sort | uniq -c
+[ "$requests" -ge 3 ] || fail "too few requests ran during the renewal to show an outage"
+# W6a-4: a handshake in flight when Caddy switches can fail (seen locally: at most one per
+# reload, TLS error or empty reply, on the base image and ours). The outage is the span of
+# failed requests; it must stay within a reload (2 s, planning value; a reload took ~0.1 s).
+python3 - "$output/during-renewal.txt" "$requests" <<'PY' || fail "the renewal outage was longer than a reload"
+import sys
+rows = [line.split() for line in open(sys.argv[1]) if line.strip()]
+failed = [int(at) for at, code in rows if code != "204"]
+after = [code for _, code in rows[int(sys.argv[2]):]]
+span = (max(failed) - min(failed)) if failed else 0
+print(f"failed requests: {len(failed)}, failure span: {span} ms, after the renewal: {after}")
+sys.exit(0 if span <= 2000 and len(failed) <= 3 and after == ["204"] * 5 else 1)
+PY
+[ "$renewed" = '{"code":"renewed","reloaded":true}' ] || fail "renew-certificate: $renewed"
+[ "$(served_leaf)" != "$before_leaf" ] || fail "Caddy still serves the old certificate"
+again="$(printf '{"run_id":"renewal-%s-proof5"}' "$(date -u +%Y%m%dT%H%M%SZ)" | "${engine[@]}" renew-certificate)"
+[ "$again" = '{"code":"not_due","reloaded":false}' ] || fail "second renew-certificate: $again"
+docker exec "$machine" stat -c '%n %u:%g %a' /etc/slateops/tls/server.key | grep -q ' 1000:1000 600$' \
+    || fail "the renewed key is not Caddy's"
+log "passed: receive, prefetch, install, HTTPS /api/ready, trust routes, WebSocket, invitation, rerun without change, resend, renewal"

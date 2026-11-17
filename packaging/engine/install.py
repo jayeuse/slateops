@@ -41,7 +41,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from engine import answers, compose, invitation, journal, prefetch, release, subnet
+from engine import answers, compose, invitation, journal, prefetch, release, subnet, trust
 from engine.context import Context
 from engine.core import (
     INSTANCE_ID,
@@ -83,6 +83,7 @@ GENERATED = "generated.env"
 RESTIC = "restic-password"
 SMTP_COPY = "install-smtp.env"
 CADDYFILE = "Caddyfile"
+TRUST_MOUNT = "/srv/slateops-trust"  # the Caddy template root (generate_config --trust-root)
 API_UID = 10001  # the server image's appuser (infra/docker/backend.Dockerfile)
 CADDY_UID = 1000  # the Caddy image's user (infra/docker/caddy.Dockerfile)
 EXPORT_ROOT = "backup-exports"  # W10b moves it next to the Restic repository (TASK-0081 O-2)
@@ -91,13 +92,15 @@ PREFETCH_WAIT_SECONDS = 3600
 PROVISION_SECONDS = 4 * 900 + 120  # the W5a job's four step limits, plus start-up
 _SAFE = re.compile(r"[a-z_]{1,40}\Z")
 _LINE = re.compile(r"([A-Z_][A-Z0-9_]*)=(.*)\Z")
-# S86-3: the secret generator (step 4) and the CA job (step 6) run as root (UID 0) in their
-# containers, an exception to the Compose baseline's non-root rule. The need: their output
-# must be owned by root inside root-only 0700 folders (`/etc/slateops/new`, `ca/`), which a
-# non-root user could not write and which the backup admission requires (owner root). The
-# other controls hold: no network, a read-only root file system, every capability dropped
-# (so root cannot pass file permissions or change owners), no-new-privileges, `--pull never`
-# on the verified server image, and only the one or two folders that the job writes mounted.
+# S86-3: the secret generator (step 4) and the CA jobs (step 6, renewal) run as root (UID 0)
+# in their containers, an exception to the Compose baseline's non-root rule. The need: their
+# output must be owned by root inside root-only 0700 folders (`/etc/slateops/new`, `ca/`),
+# which a non-root user could not write and which the backup admission requires (owner
+# root). The other controls hold: no network, a read-only root file system, every capability
+# dropped except, for the CA jobs only, DAC_READ_SEARCH (read only: the server key belongs to
+# Caddy, UID 1000, and without it `local_ca.py` cannot read the key and issues a new
+# certificate on every run; TASK-0089), no-new-privileges, `--pull never` on the verified
+# server image, and only the one or two folders that the job writes mounted.
 ONE_SHOT_ROOT = [
     "--user",
     "0:0",
@@ -229,6 +232,7 @@ def step_folders(
     _folder(ctx, paths.new, 0o700)
     _folder(ctx, paths.etc / "ca", 0o700)  # never mounted except into the CA job
     _folder(ctx, paths.etc / "tls", 0o755)  # Caddy's only TLS mount (read only)
+    _folder(ctx, paths.trust, 0o755)  # the public trust files, Caddy's template root (R3)
     private_dir(paths.logs)
     _folder(ctx, paths.logs / "app", 0o700, (API_UID, API_UID))  # SLATEOPS_LOG_ROOT
     private_dir(paths.state)
@@ -392,36 +396,65 @@ def _render_caddyfile(ctx: Context, host: str) -> str:
         upstream_host="api",
         cert_file=Path("/run/caddy-tls/server.crt"),
         key_file=Path("/run/caddy-tls/server.key"),
+        trust_root=Path(TRUST_MOUNT),
     )
     return text
+
+
+def ca_argv(ctx: Context, server_image: str, command: str, host: str) -> list[str]:
+    """``local_ca.py <command>`` in a one-shot container: no network, only ``ca/`` and
+    ``tls/`` mounted, root with only DAC_READ_SEARCH (see S86-3 above)."""
+    ca, tls = ctx.paths.etc / "ca", ctx.paths.etc / "tls"
+    return [
+        "docker", "run", "--rm", "--pull", "never", "--network", "none", *ONE_SHOT_ROOT,
+        "--cap-add", "DAC_READ_SEARCH",
+        "--mount", f"type=bind,source={ca},target=/ca",
+        "--mount", f"type=bind,source={tls},target=/tls",
+        "--env", f"SLATEOPS_RUN_ID={ctx.run_id}",
+        "--entrypoint", "python", server_image,
+        "operations/local_ca.py", command, "--host", host,
+        "--ca-dir", "/ca", "--tls-dir", "/tls",
+    ]  # fmt: skip
+
+
+def run_ca(ctx: Context, step: str, server_image: str, command: str, host: str) -> str:
+    """Run one ``local_ca.py`` command; return its ``result`` or raise its safe code."""
+    result = ctx.runner.run(step, ca_argv(ctx, server_image, command, host), timeout=120)
+    output = _json_tail(result.text())
+    wanted = {
+        "init": ("created", "exists"),
+        "renew": ("renewed", "not_due"),
+        "check": ("valid",),
+    }[command]
+    if not result.ok or output.get("result") not in wanted:
+        code = "ca_check_failed" if command == "check" else "ca_failed"
+        raise failed(code, cause=_safe(output.get("code")))
+    ctx.log.line(step, "INFO", f"local CA {command}: {output['result']}")
+    return str(output["result"])
+
+
+def give_key_to_caddy(ctx: Context) -> None:
+    """Caddy (UID 1000) reads the key through its read-only mount; every CA run keeps this
+    owner and mode (TASK-0083 carry to W6a)."""
+    key = ctx.paths.etc / "tls" / "server.key"
+    if key.is_symlink() or not key.is_file():
+        raise failed("ca_failed", cause="leaf_missing")
+    ctx.deps.chown(key, CADDY_UID, CADDY_UID)
+    os.chmod(key, 0o600)
 
 
 def step_tls(
     ctx: Context, step: str, state: dict[str, Any], given: dict[str, Any], manifest: dict[str, Any]
 ) -> None:
     paths = ctx.paths
-    ca, tls = paths.etc / "ca", paths.etc / "tls"
-    argv = [
-        "docker", "run", "--rm", "--pull", "never", "--network", "none", *ONE_SHOT_ROOT,
-        "--mount", f"type=bind,source={ca},target=/ca",
-        "--mount", f"type=bind,source={tls},target=/tls",
-        "--env", f"SLATEOPS_RUN_ID={ctx.run_id}",
-        "--entrypoint", "python", _server_image(state),
-        "operations/local_ca.py", "init", "--host", given["public_host"],
-        "--ca-dir", "/ca", "--tls-dir", "/tls",
-    ]  # fmt: skip
-    result = ctx.runner.run(step, argv, timeout=120)
-    output = _json_tail(result.text())
-    if not result.ok or output.get("result") not in ("created", "exists"):
-        raise failed("ca_failed", cause=_safe(output.get("code")))
-    ctx.log.line(step, "INFO", f"local CA: {output['result']}")
-    key = tls / "server.key"
-    if key.is_symlink() or not key.is_file():
-        raise failed("ca_failed", cause="leaf_missing")
-    # Caddy (UID 1000) reads the key through its read-only mount; W6a keeps this rule.
-    ctx.deps.chown(key, CADDY_UID, CADDY_UID)
-    os.chmod(key, 0o600)
-    text = _render_caddyfile(ctx, given["public_host"])
+    host = given["public_host"]
+    # W6a-5: init runs the F6 self-check before it writes any CA file (W2); check proves the
+    # chain again, and the real certificate passes, before the engine writes its own files.
+    run_ca(ctx, step, _server_image(state), "init", host)
+    run_ca(ctx, step, _server_image(state), "check", host)
+    give_key_to_caddy(ctx)
+    trust.write(ctx, step)
+    text = _render_caddyfile(ctx, host)
     # W5b-6: Caddy reads the Caddyfile as its owner; no group or other access, so the
     # backup admission's mode rule holds (its owner rule is W10b-4, TASK-0086 D-1).
     commit_new(ctx, paths.etc / CADDYFILE, text.encode(), owner=(CADDY_UID, CADDY_UID))
@@ -570,7 +603,7 @@ def check_state(ctx: Context, state: dict[str, Any] | None) -> None:
     if not journal.done(steps, 4) and any(_exists(path) for path in later):
         raise refused("install_state_mismatch", part="secrets")
     required = {
-        2: [etc, paths.new, etc / "ca", etc / "tls", paths.logs / "app",
+        2: [etc, paths.new, etc / "ca", etc / "tls", paths.trust, paths.logs / "app",
             paths.state / EXPORT_ROOT],
         5: [etc / name for name in (*ENV_FILES, RESTIC)],
         6: [etc / "ca" / "current" / "root.crt", etc / "tls" / "server.crt",
@@ -639,6 +672,8 @@ def _result(ctx: Context, state: dict[str, Any]) -> dict[str, Any]:
         "backup_setup": state.get("backup_setup", "not_built"),
         "ca_root_sha256": fingerprint,
         "ca_certificate_pem": pem,
+        # R7: the one formatted value that the trust page and W8 show.
+        "ca_security_code": trust.format_fingerprint(fingerprint),
     }
 
 

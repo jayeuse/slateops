@@ -51,3 +51,14 @@ services:
   caddy:
     pull_policy: never
     build: !reset null
+    # W6a (H10): port 80 serves only the trust page and the two trust files and redirects
+    # every other path; the engine's public trust files are the template root (R3).
+    ports:
+      - "${CADDY_PUBLIC_BIND_HOST:-0.0.0.0}:80:80"
+    volumes:
+      - type: bind
+        source: /etc/slateops/trust
+        target: /srv/slateops-trust
+        read_only: true
+        bind:
+          create_host_path: false
