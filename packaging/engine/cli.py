@@ -16,7 +16,17 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from typing import Any, BinaryIO, TextIO
 
-from engine import log_bundle, prefetch, prepare, receive, smtp, snapshot, status
+from engine import (
+    install,
+    invitation,
+    log_bundle,
+    prefetch,
+    prepare,
+    receive,
+    smtp,
+    snapshot,
+    status,
+)
 from engine.context import Context, Dependencies
 from engine.core import (
     FAILED,
@@ -50,6 +60,8 @@ JOBS: dict[str, Job] = {
     "status": Job(status.handle, status.KEYS, status.REQUIRED, locked=False, logged=False),
     "smtp-test": Job(smtp.handle, smtp.KEYS, smtp.REQUIRED),
     "log-bundle": Job(log_bundle.handle, log_bundle.KEYS, log_bundle.REQUIRED, locked=False),
+    "install": Job(install.handle, install.KEYS, install.REQUIRED),
+    "resend-invitation": Job(invitation.handle, invitation.KEYS, invitation.REQUIRED),
 }
 
 

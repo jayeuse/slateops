@@ -1,0 +1,47 @@
+# Customer installs made by the install engine (docs/plans/windows-installer.md 6.2, slice
+# W5b; space-cut and W2 carries in TASK-0083). Use only after compose.yaml and
+# compose.production.yaml:
+#   docker compose --project-name <instance> --env-file /etc/slateops/provider.env \
+#     -f compose.yaml -f compose.production.yaml -f compose.installer.yaml ...
+# A customer install starts db, auth, storage, realtime, api-gw, api and caddy only. The
+# development stack does not use this file and keeps every service.
+services:
+  api-gw:
+    # W81-3: no started service needs the loopback operator port (Studio is not started),
+    # and mirrored WSL networking can show it to every Windows account.
+    ports: !reset []
+    # The base file also waits for studio, which customer installs do not start.
+    depends_on: !override
+      auth:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+
+  storage:
+    # Files pass through FastAPI, which never asks Storage for a transform, so Storage
+    # runs without image transformation and without imgproxy.
+    environment:
+      ENABLE_IMAGE_TRANSFORMATION: "false"
+    depends_on: !override
+      db:
+        condition: service_healthy
+      provider-volume-init:
+        condition: service_completed_successfully
+
+  # Operator tools that customer installs never start. The engine never enables this
+  # profile, so a plain `up` cannot start them either.
+  studio:
+    profiles: [operator-tools]
+  meta:
+    profiles: [operator-tools]
+  imgproxy:
+    profiles: [operator-tools]
+
+  # Our two images come from the setup payload (receive loads them under their
+  # ghcr.io/<owner>/slateops-<role>:<version> names): never pull or build them here.
+  api:
+    pull_policy: never
+    build: !reset null
+  caddy:
+    pull_policy: never
+    build: !reset null

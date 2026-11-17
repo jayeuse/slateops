@@ -25,7 +25,7 @@ LINE = re.compile(
 )
 
 
-@pytest.mark.parametrize("argv", [["rm"], ["install"], ["status", "extra"], [], ["STATUS"]])
+@pytest.mark.parametrize("argv", [["rm"], ["update"], ["status", "extra"], [], ["STATUS"]])
 def test_ac_j1_only_allow_listed_jobs_run(tmp_path: Path, argv: list[str]) -> None:
     paths = make_paths(tmp_path)
 
@@ -129,6 +129,37 @@ def test_ac_j5_commands_get_only_the_minimal_environment(
 
     seen = dict(line.split("=", 1) for line in result.text().splitlines() if "=" in line)
     assert {k: v for k, v in seen.items() if not k.startswith("__CF")} == ENVIRONMENT
+
+
+def test_ac_r1_named_extras_reach_the_child_and_their_values_are_never_logged(
+    tmp_path: Path,
+) -> None:
+    paths = make_paths(tmp_path)
+    runner = Runner(RunLog(paths, RUN_ID, "install", Redactor()), programs=frozenset({"env"}))
+    email = "owner" + "@frontdesk.test"
+
+    result = runner.run(
+        "install.11.admin",
+        ["env"],
+        timeout=10,
+        extra_env={"ADMIN_EMAIL": email, "ADMIN_USERNAME": "owner77"},
+    )
+
+    seen = dict(line.split("=", 1) for line in result.text().splitlines() if "=" in line)
+    seen = {k: v for k, v in seen.items() if not k.startswith("__CF")}
+    assert seen == {**ENVIRONMENT, "ADMIN_EMAIL": email, "ADMIN_USERNAME": "owner77"}
+    engine_log = (paths.logs / "install" / RUN_ID / "engine.log").read_text()
+    assert "ADMIN_EMAIL, ADMIN_USERNAME" in engine_log
+    assert "owner77" not in engine_log
+    assert "frontdesk.test" not in engine_log
+
+
+@pytest.mark.parametrize("name", ["DOCKER_HOST", "PATH", "SMTP_PASS", "COMPOSE_FILE"])
+def test_ac_r1_an_extra_outside_the_allow_list_is_refused(tmp_path: Path, name: str) -> None:
+    runner = Runner(RunLog(make_paths(tmp_path), RUN_ID, "install", Redactor()))
+
+    with pytest.raises(ValueError, match="is not allowed"):
+        runner.run("install.11.admin", ["docker", "version"], timeout=5, extra_env={name: "x"})
 
 
 def test_ac_l1_lines_carry_time_run_id_step_level_and_escape_controls(tmp_path: Path) -> None:

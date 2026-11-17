@@ -584,10 +584,94 @@ jobs:
           retention-days: 1
           compression-level: 0
 
+  install-proof:
+    # W5b-1 (TASK-0086): every test build installs itself on a Linux host from its own
+    # artifacts. Our Linux image boots systemd in a privileged container, so its Docker,
+    # Compose, cosign and engine run as in WSL; receive, prefetch, install, HTTPS
+    # /api/ready, the invitation in a test Mailpit, an install rerun (W5b-2) and
+    # resend-invitation (packaging/linux-image/install-proof.sh). The W2 env-file reader
+    # test also runs here, with the image's own Docker CLI and Compose binaries. The
+    # release waits for this job. Windows and WSL themselves are W14.
+    needs: [check, images, linux-image, engine-bundle, manifest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          # The uv of the server image (infra/docker/backend.Dockerfile); bump both together.
+          version: "0.12.13"
+          enable-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: asset-images
+          path: payload
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: asset-engine
+          path: payload
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: asset-manifest
+          path: payload
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: asset-linux
+          path: linux
+      - name: Read the env files with the image's Docker CLI and Compose (W2-2)
+        # Every env-file reader parses in the client (the Docker CLI's --env-file, Compose's
+        # env_file and --env-file), so the image's own binaries read the rendered files here.
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          extract="$RUNNER_TEMP/image-cli"
+          bin="$RUNNER_TEMP/image-bin"
+          config="$RUNNER_TEMP/image-docker-config"
+          mkdir -p "$extract" "$bin" "$config/cli-plugins"
+          tar -xzf "linux/slateops-linux-$VERSION-amd64.tar.gz" -C "$extract" --wildcards \
+            '*usr/bin/docker' '*usr/libexec/docker/cli-plugins/docker-compose'
+          cp "$(find "$extract" -path '*usr/bin/docker' -type f)" "$bin/docker"
+          cp "$(find "$extract" -path '*cli-plugins/docker-compose' -type f)" "$config/cli-plugins/"
+          export PATH="$bin:$PATH" DOCKER_CONFIG="$config"
+          docker version --format 'image Docker CLI {{.Client.Version}}'
+          docker compose version
+          cd backend
+          uv run pytest tests/operations/test_installer_env_docker_readers.py -m integration --no-cov
+      - name: Free disk space for the installation
+        # The provider images, our two images and the archives need about 20 GB.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Install from this build's artifacts and check it (W5b-1, W5b-2)
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: >-
+          packaging/linux-image/install-proof.sh --version "$VERSION"
+          --tarball "linux/slateops-linux-$VERSION-amd64.tar.gz" --payload payload --output proof
+      - name: Keep the redacted diagnostics of a failed proof
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: install-proof-diagnostics
+          path: |
+            proof/log-bundle.tar.gz
+            proof/console.log
+            proof/journal.txt
+            proof/containers.txt
+          if-no-files-found: warn
+          retention-days: 7
+
   release:
     # The only job that writes to the repository. It checks out nothing and runs no
     # repository code; it downloads the assets, writes SHA256SUMS and creates the draft.
-    needs: [check, images, linux-image, manifest, notices, source-packages]
+    needs: [check, images, linux-image, manifest, notices, source-packages, install-proof]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

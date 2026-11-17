@@ -9,6 +9,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import tarfile
 from pathlib import Path
 from typing import Any
@@ -278,3 +279,50 @@ def test_ac_l6_files_past_the_limit_are_left_out_by_size(
     assert code == 0
     assert "size" in {item["reason"] for item in index["left_out"]}
     assert sum(len(text) for text in _bundle(result).values()) < 2000 + 4096
+
+
+def test_s85_8_only_the_engine_log_kinds_are_read(tmp_path: Path) -> None:
+    # /var/log/slateops/app belongs to UID 10001 (the API); the bundle never reads it.
+    paths = make_paths(tmp_path)
+    _seed(paths)
+    app = paths.logs / "app" / "api"
+    app.mkdir(parents=True)
+    (app / "api.log").write_text("api line\n")
+    stray = paths.logs / "unknown-kind" / OLD_RUN
+    stray.mkdir(parents=True)
+    (stray / "engine.log").write_text("stray line\n")
+
+    code, result, _ = call(["log-bundle"], {"run_id": REPORT_RUN}, deps(paths, Script()))
+
+    names = set(_bundle(result))
+    assert code == 0
+    assert not any(name.startswith(("slateops/app/", "slateops/unknown-kind/")) for name in names)
+    assert f"slateops/install/{OLD_RUN}/snapshot-1/logs-gotrue.log" in names
+
+
+def test_s85_8_a_file_swapped_for_a_symlink_or_fifo_after_listing_is_left_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = make_paths(tmp_path)
+    _seed(paths)
+    folder = paths.logs / "install" / OLD_RUN
+    secret_file = paths.etc / "app.env"
+    listed = log_bundle._candidates
+
+    def swap_after_listing(ctx: Any) -> list[tuple[str, Path]]:
+        found = listed(ctx)
+        link, fifo = folder / "linked.log", folder / "fifo.log"
+        link.symlink_to(secret_file)
+        os.mkfifo(fifo)
+        return [*found, (f"slateops/install/{OLD_RUN}/linked.log", link),
+                (f"slateops/install/{OLD_RUN}/fifo.log", fifo)]
+
+    monkeypatch.setattr(log_bundle, "_candidates", swap_after_listing)
+
+    code, result, _ = call(["log-bundle"], {"run_id": REPORT_RUN}, deps(paths, Script()))
+
+    index = json.loads(_bundle(result)["bundle-index.json"])
+    left_out = {item["file"]: item["reason"] for item in index["left_out"]}
+    assert code == 0
+    assert left_out[f"slateops/install/{OLD_RUN}/linked.log"] == "not_regular"
+    assert left_out[f"slateops/install/{OLD_RUN}/fifo.log"] == "not_regular"

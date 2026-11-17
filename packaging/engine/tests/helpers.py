@@ -58,9 +58,11 @@ class Script:
 
     answers: dict[tuple[str, ...], Response] = field(default_factory=dict)
     calls: list[list[str]] = field(default_factory=list)
+    environments: list[dict[str, str]] = field(default_factory=list)
 
-    def answer(self, argv: list[str]) -> Result:
+    def answer(self, argv: list[str], env: dict[str, str] | None = None) -> Result:
         self.calls.append(argv)
+        self.environments.append(dict(env or {}))
         for prefix in sorted(self.answers, key=len, reverse=True):
             if tuple(argv[: len(prefix)]) == prefix:
                 found = self.answers[prefix]
@@ -71,8 +73,8 @@ class Script:
         script = self
 
         class ScriptedRunner(Runner):
-            def _execute(self, argv: list[str], timeout: float) -> Result:
-                return script.answer(argv)
+            def _execute(self, argv: list[str], timeout: float, env: dict[str, str]) -> Result:
+                return script.answer(argv, env)
 
         return ScriptedRunner(log)
 

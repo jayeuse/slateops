@@ -17,14 +17,16 @@ import base64
 import hashlib
 import io
 import json
+import os
 import shutil
+import stat
 import tarfile
 from pathlib import Path
 from typing import Any
 
 from engine import facts, report, snapshot
 from engine.context import Context
-from engine.core import is_run_id
+from engine.core import RUN_KINDS, is_run_id
 from engine.logs import cap
 
 KEYS = {"run_id": is_run_id}
@@ -32,6 +34,27 @@ REQUIRED = frozenset(KEYS)
 BUNDLE_LIMIT = 32 * 1024 * 1024
 FILE_LIMIT = 4 * 1024 * 1024  # the newest 4 MiB of one file (engine.log can grow)
 INDEX = "bundle-index.json"
+# S85-8: only the engine's own log folders (plan 10.1 item 4). /var/log/slateops/app is
+# owned by UID 10001 (the API), so its content is never read here.
+KINDS = frozenset({*RUN_KINDS, "receive"})
+
+
+def _folders(folder: Path) -> list[Path]:
+    """Real folders directly in ``folder`` (symbolic links are never followed)."""
+    try:
+        entries = list(os.scandir(folder))
+    except OSError:
+        return []
+    return [Path(entry.path) for entry in entries if entry.is_dir(follow_symlinks=False)]
+
+
+def _files(run: Path) -> list[Path]:
+    """Every regular file below ``run``, walked without following a symbolic link."""
+    found: list[Path] = []
+    for top, folders, files in os.walk(run, followlinks=False):
+        folders.sort()
+        found += [Path(top) / name for name in sorted(files)]
+    return found
 
 
 def _candidates(ctx: Context) -> list[tuple[str, Path]]:
@@ -40,16 +63,27 @@ def _candidates(ctx: Context) -> list[tuple[str, Path]]:
     if paths.report.is_file():
         found.append(("report.json", paths.report))
     runs: list[Path] = []
-    if paths.logs.is_dir():
-        for kind in sorted(p for p in paths.logs.iterdir() if p.is_dir() and not p.is_symlink()):
-            runs += [p for p in kind.iterdir() if p.is_dir() and not p.is_symlink()]
+    for kind in sorted(_folders(paths.logs)):
+        if kind.name in KINDS:
+            runs += _folders(kind)
     current = ctx.log.folder
-    runs.sort(key=lambda run: (run != current, -run.stat().st_mtime, run.name))
+    runs.sort(key=lambda run: (run != current, -run.lstat().st_mtime, run.name))
     for run in runs:
-        for file in sorted(run.rglob("*")):
-            if file.is_file() and not file.is_symlink():
-                found.append((str(file.relative_to(paths.logs.parent)), file))
+        found += [(str(file.relative_to(paths.logs.parent)), file) for file in _files(run)]
     return found
+
+
+def _read(path: Path) -> bytes | None:
+    """The file's bytes, or None when it is not a regular file when opened (S85-8: a file
+    can be replaced by a link or a FIFO after the listing)."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    with os.fdopen(descriptor, "rb") as file:
+        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+            return None
+        return file.read()
 
 
 def _add(tar: tarfile.TarFile, name: str, data: bytes) -> None:
@@ -70,7 +104,11 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
         for name, path in _candidates(ctx):
-            raw = cap(path.read_bytes(), FILE_LIMIT)
+            content = _read(path)
+            if content is None:
+                left_out.append({"file": name, "reason": "not_regular"})
+                continue
+            raw = cap(content, FILE_LIMIT)
             try:
                 text = raw.decode("utf-8")
             except UnicodeDecodeError:

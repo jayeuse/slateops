@@ -68,6 +68,8 @@ next-env.d.ts
 
 # Supabase CLI working state (can hold local secrets); this project runs its own stack in infra/supabase.
 supabase/
+# The pinned provider stack is source; without this, a new file there is ignored.
+!/infra/supabase/
 # mutmut working copy
 backend/mutants/
 # Hypothesis example database (property tests)

@@ -25,6 +25,7 @@ JOBS = (
     "manifest",
     "notices",
     "source-packages",
+    "install-proof",
     "release",
 )
 
@@ -528,7 +529,8 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         release = self.jobs["release"]
         self.assertRegex(
             release,
-            r"(?m)^    needs: \[check, images, linux-image, manifest, notices, source-packages\]$",
+            r"(?m)^    needs: \[check, images, linux-image, manifest, notices, source-packages,"
+            r" install-proof\]$",
         )
         step = release.split("      - name: Refuse an asset of 2 GiB or more", 1)[1]
         body = textwrap.dedent(step.split("        run: |\n", 1)[1].split("\n      - ", 1)[0])
@@ -580,3 +582,66 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InstallProofTests(unittest.TestCase):
+    """TASK-0086 AC-P1, AC-P2: every test build installs itself on a Linux host (W5b-1)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.source = WORKFLOW.read_text()
+        cls.job = job_blocks(cls.source)["install-proof"]
+
+    def test_ac_p1_the_proof_installs_from_this_builds_own_artifacts(self) -> None:
+        self.assertRegex(
+            self.job, r"(?m)^    needs: \[check, images, linux-image, engine-bundle, manifest\]$"
+        )
+        self.assertEqual(mapping(self.job, "permissions", 4), {"contents": "read"})
+        for name in ("asset-images", "asset-engine", "asset-manifest"):
+            self.assertIn(f"name: {name}\n          path: payload", self.job)
+        self.assertIn("name: asset-linux\n          path: linux", self.job)
+        self.assertIn(
+            'packaging/linux-image/install-proof.sh --version "$VERSION"\n'
+            '          --tarball "linux/slateops-linux-$VERSION-amd64.tar.gz" --payload payload'
+            " --output proof",
+            self.job,
+        )
+        self.assertIn("runs-on: ubuntu-latest", self.job)
+
+    def test_ac_p1_a_failed_proof_keeps_its_redacted_diagnostics(self) -> None:
+        name = "      - name: Keep the redacted diagnostics of a failed proof\n"
+        upload = self.job.split(name, 1)[1]
+        self.assertTrue(upload.startswith("        if: failure()\n"))
+        self.assertIn("name: install-proof-diagnostics", upload)
+        for name in ("proof/log-bundle.tar.gz", "proof/console.log", "proof/journal.txt"):
+            self.assertIn(name, upload)
+        self.assertNotIn("proof/payload", upload)
+
+    def test_ac_p2_the_reader_test_runs_with_the_images_docker_cli_and_compose(self) -> None:
+        step = self.job.split("      - name: Read the env files with the image's Docker CLI", 1)[1]
+        body = step.split("\n      - ", 1)[0]
+        self.assertIn("*usr/bin/docker", body)
+        self.assertIn("*usr/libexec/docker/cli-plugins/docker-compose", body)
+        self.assertIn('DOCKER_CONFIG="$config"', body)
+        self.assertIn("tests/operations/test_installer_env_docker_readers.py", body)
+        self.assertIn("-m integration --no-cov", body)
+        self.assertIn("docker compose version", body)
+
+    def test_ac_p1_the_harness_boots_the_image_and_checks_each_promise(self) -> None:
+        script = (ROOT / "packaging/linux-image/install-proof.sh").read_text()
+        for promise in (
+            "docker import",
+            "systemctl is-system-running --wait",
+            "io.containerd.snapshotter.v1",
+            "slateops-engine receive",
+            "prefetch_done",
+            '"${engine[@]}" install)',
+            "--cacert /etc/slateops/ca/current/root.crt",
+            'fail "expected one invitation in Mailpit',
+            "the second install changed a file",
+            "the second install sent mail",
+            "resend-invitation",
+            "chronyd -x",
+        ):
+            with self.subTest(promise=promise):
+                self.assertIn(promise.replace("slateops-engine receive", "receive"), script)

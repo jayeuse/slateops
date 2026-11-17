@@ -97,6 +97,25 @@ class DockerApi:
         finally:
             connection.close()
 
+    def networks(self) -> list[str]:
+        """The IPAM subnets of every Docker network (W5b-7); configuration, not containers."""
+        connection, response = self._request("GET", "/networks")
+        try:
+            if response.status != 200:
+                raise self._error(response)
+            data = json.loads(response.read(16 * LINE_LIMIT))
+        except ValueError as error:
+            raise DockerError("unreadable network list") from error
+        finally:
+            connection.close()
+        subnets: list[str] = []
+        for network in data if isinstance(data, list) else []:
+            ipam = network.get("IPAM") if isinstance(network, dict) else None
+            for config in (ipam or {}).get("Config") or []:
+                if isinstance(config, dict) and isinstance(config.get("Subnet"), str):
+                    subnets.append(config["Subnet"])
+        return subnets
+
     def image_exists(self, reference: str) -> bool:
         connection, response = self._request("GET", f"/images/{quote(reference, safe='')}/json")
         try:

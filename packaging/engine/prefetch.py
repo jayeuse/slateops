@@ -216,7 +216,7 @@ def worker(deps: Dependencies, run_id: str, version: str) -> int:
         log.line(step, "WARN", "another pull holds the prefetch lock")
         return 2
     try:
-        code = _pull_all(deps, log, step, run_id, version)
+        code = pull_all(deps, log, step, run_id, version)
     except Exception as error:
         code = error.code if isinstance(error, JobError) else "pull_failed"
         log.line(step, "ERROR", traceback.format_exc())  # redacted by the run log
@@ -227,7 +227,7 @@ def worker(deps: Dependencies, run_id: str, version: str) -> int:
     return 0 if code == "prefetch_done" else 3
 
 
-def _pull_all(deps: Dependencies, log: RunLog, step: str, run_id: str, version: str) -> str:
+def pull_all(deps: Dependencies, log: RunLog, step: str, run_id: str, version: str) -> str:
     paths = deps.paths
     images = release.providers(release.require(paths, version))
     base = {"run_id": run_id, "version": version, "steps_total": len(images)}

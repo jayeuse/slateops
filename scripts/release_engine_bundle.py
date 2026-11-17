@@ -1,9 +1,11 @@
 """Build the engine bundle ``slateops-engine-<version>.tar.gz`` (plan 3.1, 5.2; slice W5b).
 
 The bundle holds the launcher ``slateops-engine``, the ``engine`` package of
-``packaging/engine/`` without its tests, its env templates and ``engine/VERSION``, and the
+``packaging/engine/`` without its tests, its env templates and ``engine/VERSION``, the
 Compose files the engine starts (``infra/supabase/compose.yaml``,
-``compose.production.yaml`` and ``upstream/``), at the same relative paths as in the
+``compose.production.yaml``, the installer overlay ``compose.installer.yaml`` and
+``upstream/``) and the Caddyfile renderer of install step 6 (``infra/caddy/generate_config.py``
+and ``Caddyfile.template``, standard library only), at the same relative paths as in the
 repository. It holds no ``release-manifest.json``: the manifest names the bundle's SHA-256,
 the Linux image records it, and the engine reads the signed manifest only from the setup
 payload (TASK-0083 W4 code review).
@@ -30,6 +32,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = ROOT / "packaging" / "engine"
 SUPABASE = ROOT / "infra" / "supabase"
+CADDY = ROOT / "infra" / "caddy"
 VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?\Z")
 
 
@@ -63,7 +66,13 @@ def members(version: str) -> list[tuple[str, bytes, int]]:
         ):
             continue
         files.append((f"engine/{relative.as_posix()}", path.read_bytes(), 0o644))
-    sources = [SUPABASE / "compose.yaml", SUPABASE / "compose.production.yaml"]
+    sources = [
+        SUPABASE / "compose.yaml",
+        SUPABASE / "compose.production.yaml",
+        SUPABASE / "compose.installer.yaml",
+        CADDY / "generate_config.py",
+        CADDY / "Caddyfile.template",
+    ]
     sources += [path for path in sorted((SUPABASE / "upstream").rglob("*")) if path.is_file()]
     for path in sources:
         mode = 0o755 if path.stat().st_mode & 0o111 else 0o644

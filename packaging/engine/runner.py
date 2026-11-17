@@ -5,7 +5,9 @@ Every command goes through ``Runner.run``:
 - only an allow-listed Linux program, named without a path (never a Windows program:
   interop is off, and no value from Windows becomes a program or an argument here);
 - a fixed minimal environment, so no inherited variable overrides a Compose ``--env-file``
-  value or points Docker somewhere else;
+  value or points Docker somewhere else; a call may add only the named ``EXTRA_NAMES``
+  (personal values that ``docker run -e NAME`` takes from the caller, so they never become
+  an argument); their names are logged, never their values;
 - its arguments, exit code and duration on the run log; its output captured in memory,
   cut to 1 MiB per stream, redacted, then written.
 """
@@ -15,7 +17,7 @@ from __future__ import annotations
 import shlex
 import subprocess
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from engine.logs import RunLog
@@ -25,6 +27,7 @@ PROGRAMS = frozenset(
         "chronyc",
         "cosign",
         "docker",
+        "ip",
         "journalctl",
         "ss",
         "systemctl",
@@ -38,6 +41,9 @@ ENVIRONMENT = {
     "HOME": "/root",
     "LANG": "C.UTF-8",
 }
+# Values a child may take from the engine's environment (TASK-0081 A-3: step 11 passes the
+# administrator email and user name to ``docker run -e NAME``).
+EXTRA_NAMES = frozenset({"ADMIN_EMAIL", "ADMIN_USERNAME"})
 MISSING = 127
 
 
@@ -76,14 +82,19 @@ class Runner:
         *,
         timeout: float,
         log_output: bool = True,
+        extra_env: Mapping[str, str] | None = None,
     ) -> Result:
         program = argv[0] if argv else ""
         if program not in self.programs:
             raise ValueError(f"program {program!r} is not allowed")
-        self.log.line(step, "INFO", f"run: {shlex.join(argv)}")
+        extras = dict(extra_env or {})
+        if not extras.keys() <= EXTRA_NAMES:
+            raise ValueError(f"environment {sorted(extras)!r} is not allowed")
+        added = f" (child environment adds {', '.join(sorted(extras))})" if extras else ""
+        self.log.line(step, "INFO", f"run: {shlex.join(argv)}{added}")
         started = self.clock()
         try:
-            result = self._execute(list(argv), timeout)
+            result = self._execute(list(argv), timeout, {**ENVIRONMENT, **extras})
         except subprocess.TimeoutExpired as expired:
             result = Result(None, _bytes(expired.stdout), _bytes(expired.stderr))
         except FileNotFoundError:
@@ -98,10 +109,10 @@ class Runner:
                     self.log.line(step, "INFO", f"{stream}: {self.log.output(step, stream, data)}")
         return result
 
-    def _execute(self, argv: list[str], timeout: float) -> Result:
+    def _execute(self, argv: list[str], timeout: float, env: dict[str, str]) -> Result:
         completed = subprocess.run(
             argv,
-            env=dict(ENVIRONMENT),
+            env=env,
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=timeout,

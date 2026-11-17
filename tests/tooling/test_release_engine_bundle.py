@@ -58,6 +58,11 @@ class EngineBundleTests(unittest.TestCase):
         self.assertIn("infra/supabase/compose.yaml", names)
         self.assertIn("infra/supabase/compose.production.yaml", names)
         self.assertIn("infra/supabase/upstream/envoy/envoy.yaml", names)
+        # TASK-0086 AC-O2: the installer overlay and the Caddyfile renderer of step 6.
+        self.assertIn("infra/supabase/compose.installer.yaml", names)
+        self.assertIn("infra/caddy/generate_config.py", names)
+        self.assertIn("infra/caddy/Caddyfile.template", names)
+        self.assertFalse([name for name in names if name.startswith("infra/caddy/reference")])
         self.assertNotIn("infra/supabase/compose.dev.yaml", names)
         self.assertFalse([name for name in names if "release-manifest" in name])
         self.assertFalse([name for name in names if "/tests" in name or "__pycache__" in name])

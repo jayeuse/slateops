@@ -30,6 +30,8 @@ RUN_KINDS = (
 RUN_ID = re.compile(r"(" + "|".join(RUN_KINDS) + r")-[0-9]{8}T[0-9]{6}Z-[a-z0-9]{6}\Z")
 _NUMBER = r"(?:0|[1-9][0-9]{0,3})"
 VERSION = re.compile(rf"{_NUMBER}\.{_NUMBER}\.{_NUMBER}(?:-rc\.[1-9][0-9]{{0,3}})?\Z")
+# The generated SLATEOPS_INSTANCE_ID (backend instance.py:30), also the Compose project name.
+INSTANCE_ID = re.compile(r"[a-z][a-z0-9-]{2,62}\Z")
 INPUT_LIMIT = 64 * 1024
 REFUSED, FAILED = 2, 3
 
@@ -91,6 +93,23 @@ class Paths:
     @property
     def staged_smtp(self) -> Path:
         return self.etc / "new" / "smtp.env"
+
+    @property
+    def new(self) -> Path:
+        return self.etc / "new"
+
+    @property
+    def journal(self) -> Path:
+        return self.state / "install-journal.json"
+
+    @property
+    def installation(self) -> Path:
+        return self.state / "installation.json"
+
+    @property
+    def bundle_root(self) -> Path:
+        """The unpacked engine bundle: ``engine/``, ``slateops-engine`` and ``infra/``."""
+        return self.engine_home.parent
 
     @property
     def engine_lock(self) -> Path:
