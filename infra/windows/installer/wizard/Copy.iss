@@ -426,7 +426,7 @@ cancel_keep_option=Keep it and continue later
 
 ; ---- W9: maintenance (spec M01 to M04, plan 9.3)
 m01_running=Running.
-m01_needs_backup=Needs attention: plug in the backup drive (%1).
+m01_needs_backup_repair=Needs attention: plug in the backup drive (%1). If backups still fail when it is back, select Repair.
 m01_needs_support=Needs support. Select Save report and send the file to Slate Operations support.
 ; Copy gaps (W9): the engine reports no "not ready since" time and no running line.
 m01_not_ready=Not ready. Select Repair. If that does not help, select Save report.
@@ -479,7 +479,7 @@ f10=The server part did not start again after a Windows update of one of its par
 m05_finish_failed=Slate Operations is updated to version %1, but setup could not finish its part on this PC.
 m05_slow_close=The update goes on by itself. You can close setup now. Later, run this setup again and select Update now. Setup then finishes the update on this PC.
 ; ---- W9 review (TASK-0096 round 2; spec 4.5, M01, M03, M04; design review copy)
-c29_uninstall_leftovers=This PC has leftovers of an earlier Slate Operations uninstall. Setup removes them before it continues.
+c29_uninstall_leftovers=This PC has parts left by an earlier Slate Operations uninstall. Setup removes them before it continues. Your data and backups do not change.
 m01_needs_network=Needs attention: the network changed. Select Repair.
 report_start=Setup saves a report for Slate Operations support. This takes up to 3 minutes.
 m03_key_failed=Backups now go to %1, but setup could not make their recovery key. Select Make a new recovery key now.

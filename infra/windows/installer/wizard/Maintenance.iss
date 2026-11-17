@@ -161,7 +161,8 @@ begin
   end
   else if MaintBackup = 'backup_target_missing' then
   begin
-    Result := FM('m01_needs_backup', [Copy(MaintBackupFolder, 1, 2)]);
+    { Option b: when the drive is back and backups still fail, Repair sets the rights again. }
+    Result := FM('m01_needs_backup_repair', [Copy(MaintBackupFolder, 1, 2)]);
     Line := CM('m01_runs_line');
   end
   else

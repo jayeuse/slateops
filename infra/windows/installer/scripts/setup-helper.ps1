@@ -43,7 +43,8 @@ param(
     [switch]$DeleteBackups,
     [switch]$UseKept,
     [switch]$KeptMark,
-    [switch]$DataLeft
+    [switch]$DataLeft,
+    [switch]$Restored
 )
 
 # S91-6: modules load only from Windows PowerShell's own folder, never from a folder in the
@@ -217,7 +218,8 @@ try {
         'kept-read' {
             $setupVersion = ''
             try { $setupVersion = (Read-HelperVersion).version } catch { $setupVersion = '0.0.0' }
-            $result = Get-KeptData -DataRoot $DataRoot -SetupVersion $setupVersion
+            # Design N-1: -Restored reads kept.json after restore-kept moved the disk back.
+            $result = Get-KeptData -DataRoot $DataRoot -SetupVersion $setupVersion -Restored:$Restored
         }
         'restore-kept' {
             $state = Read-InstallState -Layout $layout
@@ -227,12 +229,27 @@ try {
             if ($result.code -eq 'restored') {
                 $kept = Read-JsonFile -Path (Get-KeptPaths -Layout $layout).Record
                 $folder = [string](Get-DictValue $kept 'backup_folder')
+                $old = [string](Get-DictValue $kept 'account_sid')
+                if ($old -notmatch $SlateOpsKept.SidPattern) { $old = '' }
+                $done = $false
                 if (($folder -cmatch '^[A-Z]:\\SlateOps-backups$') -and (Test-Path -LiteralPath $folder)) {
                     $backup = Initialize-BackupFolder -Drive $folder.Substring(0, 2) -DataRoot $state.data_root -ServiceSid $serviceSid -Layout $layout
                     Write-RunLog 'setup.kept' 'INFO' ('backup folder {0}: {1}' -f $folder, $backup.code)
                     # W9 gap 1: the removed account's entries and owned items go (P2-3).
-                    $old = [string](Get-DictValue $kept 'account_sid')
-                    if (($backup.code -eq 'ready') -and $old -and ($old -ne $serviceSid)) { $null = Remove-OldAccountAccess -Folder $folder -OldSid $old }
+                    if ($backup.code -eq 'ready') {
+                        if ($old -and ($old -ne $serviceSid)) { $null = Remove-OldAccountAccess -Folder $folder -OldSid $old }
+                        $done = $true
+                    }
+                }
+                # Option b (parent decision): with the drive out, the record keeps the folder and the
+                # replaced account, so Repair finishes both when the drive is back (kept.json goes
+                # at the end of this install).
+                if ((-not $done) -and ($folder -cmatch '^[A-Z]:\\SlateOps-backups$')) {
+                    Write-RunLog 'setup.kept' 'INFO' ('backup folder {0} not ready; Repair sets its rights later' -f $folder)
+                    $record = Read-WindowsChanges -Layout $layout
+                    $record['backup_folder'] = $folder
+                    if ($old -and ($old -ne $serviceSid)) { $record['kept_account_sid'] = $old }
+                    Save-WindowsChanges -Layout $layout -Record $record
                 }
             }
         }

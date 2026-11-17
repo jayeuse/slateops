@@ -646,6 +646,31 @@ class W9ReviewCorrectionTest(unittest.TestCase):
         self.assertLess(kept.index("'--list', '--quiet'"), kept.index("'--import-in-place'"))
         self.assertIn("$Result.code = 'already_imported'", kept)
 
+    def test_n1_a_resumed_kept_reinstall_shows_the_organization_name(self) -> None:
+        # Design N-1: S07 does not run on a resume, so the name comes from kept.json through the
+        # helper at start; the row is left out while the name is still empty.
+        start = routine(self.raw, "function InitializeSetup(): Boolean;")
+        kept = start.split("KeptFor := DataRoot;", 1)[1].split("end;", 1)[0]
+        self.assertIn("NewOutRun('kept-read', '-DataRoot ' + AddQuotes(DataRoot)", kept)
+        self.assertIn("KeptName := JsonValue(Text, 'business_name');", kept)
+        ready = routine(self.raw, "procedure RenderReady;")
+        self.assertRegex(
+            ready, r"if KeptName <> '' then\s+AddRow\(FM\('s11_org', \[KeptName\]\), -1\);"
+        )
+        helper = (INSTALLER / "scripts/setup-helper.ps1").read_text(encoding="ascii")
+        self.assertIn("-Restored:$Restored", helper)
+
+    def test_option_b_m01_names_repair_for_a_missing_backup_drive(self) -> None:
+        sentence = routine(self.raw, "function MaintSentence(var Line: String): String;")
+        self.assertIn("FM('m01_needs_backup_repair', [Copy(MaintBackupFolder, 1, 2)])", sentence)
+        copy = read_copy()
+        self.assertIn("select Repair", copy.get("m01_needs_backup_repair", ""))
+        self.assertEqual(
+            copy.get("c29_uninstall_leftovers"),
+            "This PC has parts left by an earlier Slate Operations uninstall. Setup removes them "
+            "before it continues. Your data and backups do not change.",
+        )
+
     def test_item_2_a_kept_failure_on_s11_can_open(self) -> None:
         ready = routine(self.raw, "procedure RenderReady;")
         self.assertIn(

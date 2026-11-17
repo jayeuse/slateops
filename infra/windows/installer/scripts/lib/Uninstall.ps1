@@ -175,18 +175,20 @@ function Clear-DataTreeForKeep {
 function Get-KeptData {
     # S07 kept-data card (spec 4.3): reads kept.json after the folder checks (advisor item 3).
     # Codes: none, kept, kept_newer (W9-3), kept_unreadable.
-    param([Parameter(Mandatory = $true)][string]$DataRoot, [Parameter(Mandatory = $true)][string]$SetupVersion)
+    # -Restored (a resumed kept reinstall, design N-1): the disk is already back in distro.
+    param([Parameter(Mandatory = $true)][string]$DataRoot, [Parameter(Mandatory = $true)][string]$SetupVersion, [switch]$Restored)
     if (-not (Test-DataRootPath $DataRoot)) { return New-StepResult -Code 'none' -MessageKey 'setup.kept.none' }
     $layout = New-SlateOpsLayout -DataRoot $DataRoot
     $paths = Get-KeptPaths -Layout $layout
     if (-not (Test-Path -LiteralPath $paths.Record -PathType Leaf)) { return New-StepResult -Code 'none' -MessageKey 'setup.kept.none' }
-    foreach ($path in @($DataRoot, $paths.Folder, $paths.Record, $paths.Disk)) {
+    $disk = $(if ($Restored) { $paths.Live } else { $paths.Disk })
+    foreach ($path in @($DataRoot, $paths.Folder, $paths.Record, $disk)) {
         if (-not (Test-NoLink $path)) { return New-StepResult -Code 'kept_unreadable' -MessageKey 'setup.kept.kept_unreadable' }
     }
     if (@(Get-FolderParentProblem -Path $DataRoot).Count -gt 0) { return New-StepResult -Code 'kept_unreadable' -MessageKey 'setup.kept.kept_unreadable' }
     try { $kept = Read-JsonFile -Path $paths.Record } catch { return New-StepResult -Code 'kept_unreadable' -MessageKey 'setup.kept.kept_unreadable' }
     $version = [string](Get-DictValue $kept 'version')
-    if ((-not (Test-ReleaseVersion $version)) -or (-not (Test-KeptInfo $kept)) -or (-not (Test-Path -LiteralPath $paths.Disk -PathType Leaf))) {
+    if ((-not (Test-ReleaseVersion $version)) -or (-not (Test-KeptInfo $kept)) -or (-not (Test-Path -LiteralPath $disk -PathType Leaf))) {
         return New-StepResult -Code 'kept_unreadable' -MessageKey 'setup.kept.kept_unreadable'
     }
     $when = ''
@@ -254,30 +256,39 @@ function Remove-OldAccountAccess {
     # W9 gap 1 (kept reinstall): the backup folder of the kept installation drops every explicit
     # entry of the account that the uninstall removed (P2-3), and its items get Administrators as
     # owner, so the folder passes the W9-S1 rule again. The new account's entry comes from
-    # Initialize-BackupFolder. Links are removed from the walk, never followed. Returns the number
-    # of items changed.
+    # Initialize-BackupFolder. Links are removed from the walk, never followed. Every item is
+    # checked: a folder that .NET created with a protected list gives its children copies of its
+    # entries that Windows does not mark as inherited, so each item can hold its own entry of the
+    # old account. Returns one line per changed item: "<path below the folder>:<what changed>"
+    # ("." is the folder itself; "owner", "entry").
     param([Parameter(Mandatory = $true)][string]$Folder, [AllowEmptyString()][string]$OldSid)
-    if ($OldSid -cnotmatch $SlateOpsKept.SidPattern) { return 0 }
+    $changes = New-Object System.Collections.Generic.List[string]
+    if ($OldSid -cnotmatch $SlateOpsKept.SidPattern) { return $changes.ToArray() }
     $item = Get-Item -LiteralPath $Folder -Force -ErrorAction SilentlyContinue
-    if ((-not $item) -or ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { return 0 }
+    if ((-not $item) -or ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { return $changes.ToArray() }
+    $base = $item.FullName.TrimEnd('\')
     $sidType = [System.Security.Principal.SecurityIdentifier]
     $old = New-Object System.Security.Principal.SecurityIdentifier($OldSid)
     $admins = New-Object System.Security.Principal.SecurityIdentifier($SlateOps.SidAdministrators)
-    $count = 0
     $stack = New-Object System.Collections.Generic.Stack[object]
     $stack.Push($item)
     while ($stack.Count -gt 0) {
         $item = $stack.Pop()
         if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { continue }
         $acl = Get-Acl -LiteralPath $item.FullName
-        $changed = $false
-        if ($acl.GetOwner($sidType).Value -eq $OldSid) { $acl.SetOwner($admins); $changed = $true }
-        if (@($acl.GetAccessRules($true, $false, $sidType) | Where-Object { $_.IdentityReference.Value -eq $OldSid }).Count -gt 0) { $acl.PurgeAccessRules($old); $changed = $true }
-        if ($changed) { Set-Acl -LiteralPath $item.FullName -AclObject $acl; $count++ }
+        $what = @()
+        if ($acl.GetOwner($sidType).Value -eq $OldSid) { $acl.SetOwner($admins); $what += 'owner' }
+        if (@($acl.GetAccessRules($true, $false, $sidType) | Where-Object { $_.IdentityReference.Value -eq $OldSid }).Count -gt 0) { $acl.PurgeAccessRules($old); $what += 'entry' }
+        if ($what.Count -gt 0) {
+            Set-Acl -LiteralPath $item.FullName -AclObject $acl
+            $relative = $item.FullName.Substring($base.Length).TrimStart('\')
+            if (-not $relative) { $relative = '.' }
+            $changes.Add(('{0}:{1}' -f $relative, ($what -join ' ')))
+        }
         if ($item.PSIsContainer) { foreach ($child in @(Get-ChildItem -LiteralPath $item.FullName -Force)) { $stack.Push($child) } }
     }
-    Write-RunLog 'setup.kept' 'INFO' ('backup folder {0}: {1} items moved from the earlier account {2}' -f $Folder, $count, $OldSid)
-    return $count
+    Write-RunLog 'setup.kept' 'INFO' ('backup folder {0}: moved from the earlier account {1}: {2}' -f $Folder, $OldSid, ($changes -join ', '))
+    return $changes.ToArray()
 }
 
 function Get-BackupFolderProblem {
@@ -473,6 +484,37 @@ function Remove-WindowsParts {
 # Repair (plan 9.3, 10.7 "The service account cannot sign in"; spec M01)
 # ---------------------------------------------------------------------------
 
+function Repair-BackupAccess {
+    # Option b (parent decision, TASK-0096): Repair gives the account its entry on the recorded
+    # backup folder again when the drive is present (a kept reinstall with the drive out, or a
+    # lost entry), and moves the folder from the account that a kept reinstall replaced
+    # (kept_account_sid in the record). With the drive absent it logs a skip.
+    param([Parameter(Mandatory = $true)][hashtable]$Layout, [Parameter(Mandatory = $true)][string]$ServiceSid)
+    $step = 'maintenance.repair'
+    $folder = [string](Get-DictValue (Read-WindowsChanges -Layout $Layout) 'backup_folder')
+    if ($folder -cnotmatch '^[A-Z]:\\SlateOps-backups$') {
+        Write-RunLog $step 'INFO' 'no backup folder recorded; backup folder rights skipped'
+        return New-StepResult -Code 'none' -MessageKey 'maintenance.backup.none'
+    }
+    $drive = $folder.Substring(0, 2)
+    if (-not (Test-Path -LiteralPath ('{0}\' -f $drive))) {
+        Write-RunLog $step 'INFO' ('backup drive {0} is not present; backup folder rights skipped' -f $drive)
+        return New-StepResult -Code 'drive_missing' -MessageKey 'maintenance.backup.drive_missing'
+    }
+    if (-not $Layout.DataRoot) { Set-LayoutDataRoot -Layout $Layout -DataRoot (Read-InstallState -Layout $Layout).data_root }
+    $backup = Initialize-BackupFolder -Drive $drive -DataRoot $Layout.DataRoot -ServiceSid $ServiceSid -Layout $Layout
+    Write-RunLog $step 'INFO' ('backup folder {0}: {1}' -f $folder, $backup.code)
+    if ($backup.code -ne 'ready') { return $backup }
+    $record = Read-WindowsChanges -Layout $Layout
+    $old = [string](Get-DictValue $record 'kept_account_sid')
+    if ($old) {
+        if ($old -ne $ServiceSid) { $null = Remove-OldAccountAccess -Folder $folder -OldSid $old }
+        $record.Remove('kept_account_sid')
+        Save-WindowsChanges -Layout $Layout -Record $record
+    }
+    return $backup
+}
+
 function Invoke-Repair {
     # Sets the Windows parts up again: a new password for the account and its rights, both
     # tasks, the firewall rules for the current network, the hosts entry, the boot start. The
@@ -503,6 +545,9 @@ function Invoke-Repair {
     Start-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.StartTaskName
     $failed = @($steps | Where-Object { $_.code -ne 'added' })
     if ($failed.Count -gt 0) { return $failed[0] }
+    # Option b: the backup folder rights (a skip when the drive is out is not a failure).
+    $backup = Repair-BackupAccess -Layout $Layout -ServiceSid $sid
+    if (@('ready', 'none', 'drive_missing') -notcontains $backup.code) { return $backup }
     return New-StepResult -Code 'repaired' -MessageKey 'maintenance.repaired'
 }
 

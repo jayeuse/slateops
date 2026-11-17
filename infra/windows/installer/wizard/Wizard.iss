@@ -3140,7 +3140,8 @@ begin
   if KeptMode then
   begin
     { Spec 4.3: the summary of the kept installation; the kept data holds the answers. }
-    AddRow(FM('s11_org', [KeptName]), -1);
+    if KeptName <> '' then
+      AddRow(FM('s11_org', [KeptName]), -1);
     AddRow(FM('s11_data', [DataRoot]), -1);
     AddRow(FM('s11_address', [AddressUrl]), -1);
     AddRow(CM('s11_edition'), -1);
@@ -4123,6 +4124,13 @@ begin
       KeptState := 'kept';
       KeptUse := True;
       KeptFor := DataRoot;
+      { Design N-1: the organization name from kept.json through the helper, as RefreshKept
+        reads it; after restore-kept the disk is back in distro (-Restored). }
+      if FileExists(AddBackslash(DataRoot) + 'kept\ext4.vhdx') then
+        Text := ReadText(NewOutRun('kept-read', '-DataRoot ' + AddQuotes(DataRoot)))
+      else
+        Text := ReadText(NewOutRun('kept-read', '-DataRoot ' + AddQuotes(DataRoot) + ' -Restored'));
+      KeptName := JsonValue(Text, 'business_name');
     end;
     { Done background preparation: the count of this mode (8 kept steps, 7 otherwise). }
     BgIndex := BgCount;

@@ -258,7 +258,14 @@ Test-Case 'W9 gap 1 a kept reinstall moves the backup folder from the removed ac
         [System.IO.File]::WriteAllText($pack, 'x')
         $null = & icacls.exe $pack /setowner ('*{0}' -f $old) 2>&1
         Assert-True (@(Get-BackupFolderProblem -Folder $folder -ServiceSid $new).Count -gt 0) 'before: the removed account is a writer and an owner'
-        Assert-Equal 2 (Remove-OldAccountAccess -Folder $folder -OldSid $old)
+        # The exact items: the folder, the subfolder and the file each hold their own entry of the
+        # old account (CI run 44086654344 counted 3, not 2), because a folder that .NET created with
+        # a protected list gives its children copies that Windows does not mark as inherited; the
+        # file also had the old account as owner.
+        $changes = @(Remove-OldAccountAccess -Folder $folder -OldSid $old)
+        Assert-Equal @('.', 'data', 'data\pack') @($changes | ForEach-Object { ($_ -split ':')[0] }) ($changes -join '; ')
+        Assert-True ($changes[0] -match ':.*entry') ($changes -join '; ')
+        Assert-True ($changes[2] -match ':.*owner') ($changes -join '; ')
         $sidType = [System.Security.Principal.SecurityIdentifier]
         foreach ($path in @($folder, (Join-Path $folder 'data'), $pack)) {
             $acl = Get-Acl -LiteralPath $path
@@ -269,4 +276,35 @@ Test-Case 'W9 gap 1 a kept reinstall moves the backup folder from the removed ac
         $found = @(Get-BackupFolderProblem -Folder $folder -ServiceSid $new)
         Assert-Equal 0 $found.Count ($found -join '; ')
     } finally { Remove-PathNoFollow -Path $root }
+}
+
+Test-Case 'W9 option b Repair sets the backup folder rights when the drive is there and skips them when it is out' {
+    $old = New-TestUser 'slateops-w9rpo'
+    $new = New-TestUser 'slateops-w9rpn'
+    $layout = New-UninstallLayout 'w9-repair-backup'
+    $logDir = New-TestDirectory 'w9-repair-backup-log'
+    Start-RunLog -RunId 'maintenance-20261117T160000Z-w9rpba' -Directory $logDir -NoConsole
+    $free = @([char[]](70..90) | ForEach-Object { '{0}:' -f $_ } | Where-Object { -not (Test-Path -LiteralPath ('{0}\' -f $_)) })[0]
+    Write-JsonFile -Path (Join-Path $layout.State 'windows-changes.json') -Value ([ordered]@{ backup_folder = ('{0}\SlateOps-backups' -f $free); kept_account_sid = $old })
+    Assert-Equal 'drive_missing' (Repair-BackupAccess -Layout $layout -ServiceSid $new).code
+    $log = [System.IO.File]::ReadAllText((Join-Path $logDir 'maintenance-20261117T160000Z-w9rpba.log'))
+    Assert-True ($log -match 'is not present; backup folder rights skipped') $log
+    Assert-Equal $old ((Read-WindowsChanges -Layout $layout)['kept_account_sid']) 'the replaced account stays recorded for the next Repair'
+    # The drive is there: the test drive's root, only when it has no backup folder of its own.
+    $backups = '{0}\SlateOps-backups' -f (Split-Path -Qualifier $script:TestRoot)
+    if (-not (Test-Path -LiteralPath $backups)) {
+        $security = Get-ProtectedDirectorySecurity
+        $security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule((New-Object System.Security.Principal.SecurityIdentifier($old)), 'Modify, Synchronize', 'ContainerInherit, ObjectInherit', 'None', 'Allow')))
+        [void][System.IO.Directory]::CreateDirectory($backups, $security)
+        try {
+            $data = New-AdminOnlyFolder 'SlateOpsW9RepairData'
+            Set-LayoutDataRoot -Layout $layout -DataRoot (Join-Path $data 'SlateOps')
+            Write-JsonFile -Path (Join-Path $layout.State 'windows-changes.json') -Value ([ordered]@{ backup_folder = $backups; kept_account_sid = $old })
+            Assert-Equal 'ready' (Repair-BackupAccess -Layout $layout -ServiceSid $new).code
+            $rules = @((Get-Acl -LiteralPath $backups).GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value })
+            Assert-True ($rules -contains $new) 'the account has its entry'
+            Assert-True ($rules -notcontains $old) 'the replaced account has none'
+            Assert-Equal $false ((Read-WindowsChanges -Layout $layout).Contains('kept_account_sid')) 'done once'
+        } finally { Remove-PathNoFollow -Path $backups; Remove-PathNoFollow -Path $data }
+    }
 }
