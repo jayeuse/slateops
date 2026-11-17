@@ -205,3 +205,12 @@ Test-Case 'AC-1 the check reads this PC without changing it and returns every ch
         Assert-True (@('pass', 'stop', 'fix', 'advice', 'auto', 'log') -contains $result.class) $result.id
     }
 }
+
+Test-Case 'W9 review item 3 C29 offers to remove the parts of an earlier uninstall; other unknown parts still stop' {
+    $base = @{ account = $false; kit_folder = $false; kit_distro = $false; kit_tasks = $false; kit_rules = $false; slateops_parts = $true; installed_program = $false; uninstall_log = $true }
+    Assert-Equal 'fix uninstall_leftovers' ('{0} {1}' -f (Get-Check C29 @{ leftovers = $base }).class, (Get-Check C29 @{ leftovers = $base }).code)
+    $nolog = $base.Clone(); $nolog.uninstall_log = $false
+    Assert-Equal 'stop unknown_parts' ('{0} {1}' -f (Get-Check C29 @{ leftovers = $nolog }).class, (Get-Check C29 @{ leftovers = $nolog }).code)
+    $installed = $base.Clone(); $installed.installed_program = $true
+    Assert-Equal 'pass' (Get-Check C29 @{ leftovers = $installed }).class
+}

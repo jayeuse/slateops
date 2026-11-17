@@ -153,6 +153,12 @@ begin
     Result := CM('m01_not_ready')
   else if MaintState = 'needs_support' then
     Result := CM('m01_needs_support')
+  { W9 review item 5 (plan 10.7): the network differs from the range of the firewall rules. }
+  else if MaintNetwork then
+  begin
+    Result := CM('m01_needs_network');
+    Line := CM('m01_runs_line');
+  end
   else if MaintBackup = 'backup_target_missing' then
   begin
     Result := FM('m01_needs_backup', [Copy(MaintBackupFolder, 1, 2)]);
@@ -186,6 +192,48 @@ begin
   StartJob('new-recovery-key', '{"run_id":"' + RunId + '"}', 'maintkey', False, True, 10);
 end;
 
+{ D-B (spec M04): the engine removes the old key when it makes the new one, so the person
+  confirms first; "Go back" is the default. }
+function ConfirmNewKey: Boolean;
+var
+  Form: TSetupForm;
+  Text: TNewStaticText;
+  Go, Back: TNewButton;
+  Y: Integer;
+begin
+  Form := CreateCustomForm(ScaleX(440), ScaleY(170), False, False);
+  try
+    Form.Caption := CM('m04_confirm_title');
+    Y := ScaleY(12);
+    Text := AddTextTo(Form, Y, CM('m04_confirm_title'), True);
+    Text.Left := ScaleX(14);
+    Text.Width := Form.ClientWidth - ScaleX(28);
+    WizardForm.AdjustLabelHeight(Text);
+    Y := Y + Text.Height + ScaleY(8);
+    Text := AddTextTo(Form, Y, CM('m04_confirm_text'), False);
+    Text.Left := ScaleX(14);
+    Text.Width := Form.ClientWidth - ScaleX(28);
+    WizardForm.AdjustLabelHeight(Text);
+    Go := TNewButton.Create(Form);
+    Go.Parent := Form;
+    Go.Caption := CM('m04_confirm_go');
+    Go.ModalResult := mrOk;
+    Go.SetBounds(Form.ClientWidth - ScaleX(250), Form.ClientHeight - ScaleY(38), ScaleX(115), ScaleY(26));
+    Back := TNewButton.Create(Form);
+    Back.Parent := Form;
+    Back.Caption := CM('btn_go_back');
+    Back.ModalResult := mrCancel;
+    Back.Cancel := True;
+    Back.Default := True;
+    Back.SetBounds(Form.ClientWidth - ScaleX(128), Form.ClientHeight - ScaleY(38), ScaleX(115), ScaleY(26));
+    ModalOpen := True;
+    Result := Form.ShowModal = mrOk;
+  finally
+    ModalOpen := False;
+    Form.Free;
+  end;
+end;
+
 procedure MaintActionClick(Sender: TObject);
 var
   Text, Code: String;
@@ -205,6 +253,8 @@ begin
     3: GoToMaintPage('email');
     4: GoToMaintPage('backup');
     5: begin
+         if not ConfirmNewKey then
+           Exit;
          StartMaintKey('key4');
          MaintLine := CM('s14_making');
          RenderPage(P_MAINT);
@@ -348,6 +398,7 @@ begin
       MaintState := JsonValue(Text, 'state');
       MaintBackup := JsonValue(Text, 'backup');
       MaintBackupFolder := JsonValue(Text, 'backup_folder');
+      MaintNetwork := JsonLiteral(Text, 'network_changed') = 'true';
       RenderPage(P_MAINT);
     end;
   end;
@@ -380,7 +431,8 @@ begin
     JobText := '';
     if KeyText = '' then
     begin
-      if MaintPhase = 'key3' then BackToMaint(CM('s14_key_failed')) else begin MaintPhase := ''; MaintLine := CM('s14_key_failed'); RenderPage(P_MAINT); end;
+      { W9 review item 9: the drive changed, but its key was not made. }
+      if MaintPhase = 'key3' then BackToMaint(FM('m03_key_failed', [MaintTarget])) else begin MaintPhase := ''; MaintLine := CM('s14_key_failed'); RenderPage(P_MAINT); end;
       Exit;
     end;
     if MaintPhase = 'key3' then
@@ -801,7 +853,9 @@ begin
   WizardForm.BeveledLabel.Caption := ' ' + CM('u03_remove');
   WizardForm.Refresh;
   NewOutRun('uninstall-stop', '');
-  if KeptMode then
+  { W9 review item 1 (QA W9-B1): kept data in the folder goes back to kept\, never deleted,
+    whatever mode this run of setup is in. }
+  if (DataRoot <> '') and FileExists(AddBackslash(DataRoot) + 'kept\kept.json') then
     NewOutRun('kept-return', '')
   else
     NewOutRun('uninstall-data', '');
@@ -821,6 +875,8 @@ begin
     Exit;
   if ExpandConstant('{param:SAVEREPORT|0}') = '1' then
   begin
+    { W9 review item 8 (design W9-B5): say what happens first, then the result. }
+    MsgBox(CM('report_start'), mbInformation, MB_OK);
     SaveReport(nil);
     if ReportLine <> '' then
       MsgBox(ReportLine, mbInformation, MB_OK);

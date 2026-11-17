@@ -142,3 +142,18 @@ Test-Case 'W13b after an update only the receive parts of other versions leave t
         Remove-PathNoFollow -Path (Join-Path $layout.Payload 'slateops-engine-0.1.0.tar.gz')
     } finally { Remove-PathNoFollow -Path $root }
 }
+
+Test-Case 'W13b review item 11 update-done copies the scripts into a state tree that has the service entries' {
+    # Security (functional): the scripts copy checks the tree with the recorded account SID, so
+    # the account's own entries are not a problem once the account exists.
+    $layout = New-UpdateLayout 'w13b-review-11'
+    $sid = New-TestUser 'slateops-w13bsc'
+    Write-JsonFile -Path (Join-Path $layout.State 'windows-changes.json') -Value ([ordered]@{ account_sid = $sid })
+    $granted = @(Grant-ServiceAccess -Tree $layout.StateTree -ServiceSid $sid)
+    Assert-Equal 0 $granted.Count ('grant: ' + ($granted -join '; '))
+    $source = New-TestDirectory 'w13b-review-11-source'
+    [void][System.IO.Directory]::CreateDirectory((Join-Path $source 'lib'))
+    foreach ($name in @('exec.ps1', 'start.ps1', 'setup-helper.ps1', 'version.json', 'lib\Common.ps1')) { [System.IO.File]::WriteAllText((Join-Path $source $name), 'new') }
+    Assert-Equal 'copied' (Install-ScriptsCopy -Layout $layout -SourceDir $source).code
+    Assert-Equal 'new' ([System.IO.File]::ReadAllText((Join-Path $layout.Scripts 'exec.ps1')))
+}

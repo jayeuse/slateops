@@ -576,14 +576,188 @@ class UpdatePathTest(unittest.TestCase):
         expected = {
             "m05_title": "Update Slate Operations",
             "m05_subtitle": "Version %1 is installed. This setup installs version %2.",
-            "m05_backup": "Setup makes a backup first. If the update fails, Slate Operations "
-            "goes back to version %1 by itself.",
+            "m05_backup": "Setup makes a backup before it changes anything. If the update "
+            "fails, Slate Operations goes back to version %1 by itself.",
             "m05_next": "Update &now",
             "m05_done": "Slate Operations is updated to version %1.",
             "m05_rolled_back": "The update did not work. Slate Operations went back to version "
             "%1. Everybody must sign in again.",
             "f10": "The server part did not start again after a Windows update of one of its "
             "parts.",
+        }
+        for key, value in expected.items():
+            with self.subTest(key=key):
+                self.assertEqual(copy.get(key), value)
+
+
+class W9ReviewCorrectionTest(unittest.TestCase):
+    """Round-2 review of W9 and M05 (TASK-0096, TASK-0095): what a static read of the setup
+    program shows. The PowerShell side is in the Windows tests (Wizard, Checks, Uninstall and
+    Update .Tests.ps1)."""
+
+    def setUp(self) -> None:
+        self.raw = pascal_code()
+
+    def test_item_1_a_resumed_kept_reinstall_stays_kept_and_never_deletes_kept_data(self) -> None:
+        start = routine(self.raw, "function InitializeSetup(): Boolean;")
+        self.assertRegex(
+            start, r"if Pos\('\"kept\":true', StateText\) > 0 then\s+begin\s+KeptState := 'kept';"
+        )
+        self.assertIn("KeptFor := DataRoot;", start)
+        # No second restore: with the disk already back, the resume starts at import-kept.
+        self.assertRegex(
+            start,
+            r"if FileExists\(AddBackslash\(DataRoot\) \+ 'kept\\ext4\.vhdx'\) then\s+"
+            r"BgIndex := 1\s+else\s+BgIndex := 3;",
+        )
+        later = routine(self.raw, "procedure SaveContinueLater;")
+        self.assertEqual(later.count("if KeptMode then\n    Extra := Extra + ' -KeptMark';"), 1)
+        install = routine(self.raw, "procedure InstallNextStep;")
+        self.assertIn("if KeptMode then\n      Extra := Extra + ' -KeptMark';", install)
+        remove = routine(self.raw, "procedure RemoveEverything;\nvar")
+        self.assertRegex(
+            remove,
+            r"if \(DataRoot <> ''\) and FileExists\(AddBackslash\(DataRoot\) \+ "
+            r"'kept\\kept\.json'\) then\s+NewOutRun\('kept-return', ''\)",
+        )
+        self.assertNotIn("if KeptMode then", remove)
+        helper = (INSTALLER / "scripts/setup-helper.ps1").read_text(encoding="ascii")
+        self.assertIn("if ($KeptMark) { $marks.kept = $true }", helper)
+
+    def test_item_1_no_helper_parameter_name_is_reused_as_a_variable(self) -> None:
+        # PowerShell names ignore case, and a typed parameter keeps its type: a switch -Kept
+        # turns the helper's own "$kept = Get-KeptPaths ..." into an error.
+        helper = (INSTALLER / "scripts/setup-helper.ps1").read_text(encoding="ascii")
+        block = helper.split("[CmdletBinding()]", 1)[1].split("\n)\n", 1)
+        names = re.findall(r"\]\$([A-Za-z]+)", block[0])
+        self.assertIn("RunId", names)
+        for name in names:
+            with self.subTest(name=name):
+                self.assertNotRegex(block[1], rf"(?im)^\s*\${name}\s*=")
+
+    def test_item_1_a_kept_resume_after_the_background_finished_is_done(self) -> None:
+        start = routine(self.raw, "function InitializeSetup(): Boolean;")
+        self.assertNotIn("BgIndex := 7;", start)
+        self.assertLess(start.index("KeptFor := DataRoot;"), start.index("BgIndex := BgCount;"))
+
+    def test_item_1_import_kept_repeats_safely_on_a_resume(self) -> None:
+        exec_source = (INSTALLER / "scripts/lib/Exec.ps1").read_text(encoding="ascii")
+        kept = exec_source.split("'import-kept' {", 1)[1].split("'wsl-facts' {", 1)[0]
+        self.assertLess(kept.index("'--list', '--quiet'"), kept.index("'--import-in-place'"))
+        self.assertIn("$Result.code = 'already_imported'", kept)
+
+    def test_item_2_a_kept_failure_on_s11_can_open(self) -> None:
+        ready = routine(self.raw, "procedure RenderReady;")
+        self.assertIn(
+            "WizardForm.NextButton.Enabled := (not KeptMode) or BgDone or BgFailed;", ready
+        )
+        poll = routine(self.raw, "procedure PollBackground;")
+        self.assertEqual(poll.count("RedrawKeptReady;"), 2)
+
+    def test_item_3_c29_uninstall_leftovers_run_remove_windows(self) -> None:
+        click = routine(self.raw, "procedure ItemButtonClick(Sender: TObject);")
+        self.assertRegex(
+            click,
+            r"\(Id = 'C29'\) and \(Items\[Index\]\.Code = 'uninstall_leftovers'\) then\s+"
+            r"StartFix\('remove-windows', ''\)",
+        )
+        checks = (INSTALLER / "scripts/lib/Checks.ps1").read_text(encoding="ascii")
+        self.assertIn("uninstall_log     =", checks)
+        self.assertIn("c29_uninstall_leftovers=", COPY.read_text(encoding="utf-8"))
+
+    def test_item_4_uninstall_failures_offer_save_report(self) -> None:
+        text = UNINSTALL.read_text(encoding="ascii")
+        self.assertNotIn("MsgBox(CM('u04_keep_failed'), mbError, MB_OK);", text)
+        step = routine(text, "procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);")
+        self.assertIn("UStopped(CM('u04_keep_failed'), True);", step)
+        self.assertIn("UStopped(CM('f4c_stopped'), True);", step)
+        self.assertRegex(
+            step,
+            r"if ULeft = 'data' then\s+Extra := '-DataLeft';\s+"
+            r"Text := URun\('remove-windows', URunId, Extra\);",
+        )
+
+    def test_item_5_m01_names_a_changed_network(self) -> None:
+        sentence = routine(self.raw, "function MaintSentence(var Line: String): String;")
+        self.assertRegex(
+            sentence,
+            r"else if MaintNetwork then\s+begin\s+Result := CM\('m01_needs_network'\);\s+"
+            r"Line := CM\('m01_runs_line'\);",
+        )
+        self.assertIn("MaintNetwork := JsonLiteral(Text, 'network_changed') = 'true';", self.raw)
+
+    def test_item_6_the_s09_resume_keeps_the_started_install(self) -> None:
+        later = routine(self.raw, "procedure SaveContinueLater;")
+        self.assertIn(
+            "if (InstallStep >= 2) or (EntryNext = 'S12') or (EntryNext = 'S09') then", later
+        )
+
+    def test_item_7_m02_has_no_continue_later(self) -> None:
+        build = routine(self.raw, "procedure BuildMailPage;")
+        self.assertIn("Later.Visible := EntryScreen <> 'M01';", build)
+
+    def test_item_8_the_start_menu_report_says_what_it_does_first(self) -> None:
+        entry = routine(self.raw, "function SettingsEntry: Boolean;\nbegin")
+        self.assertLess(entry.index("CM('report_start')"), entry.index("SaveReport(nil);"))
+
+    def test_item_9_a_drive_change_without_a_key_says_so(self) -> None:
+        poll = routine(self.raw, "procedure PollMaint;\nvar")
+        self.assertIn("BackToMaint(FM('m03_key_failed', [MaintTarget]))", poll)
+
+    def test_item_12_m04_asks_before_the_key_changes(self) -> None:
+        click = routine(self.raw, "procedure MaintActionClick(Sender: TObject);")
+        self.assertRegex(
+            click, r"5: begin\s+if not ConfirmNewKey then\s+Exit;\s+StartMaintKey\('key4'\);"
+        )
+        confirm = routine(self.raw, "function ConfirmNewKey: Boolean;")
+        self.assertIn("Back.Default := True;", confirm)
+        self.assertIn("CM('m04_confirm_text')", confirm)
+
+    def test_item_13_s06_before_s14_has_no_cancel_answer(self) -> None:
+        cancel = routine(
+            self.raw,
+            "procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);",
+        )
+        self.assertLess(cancel.index("if EntryNext = 'S14' then"), cancel.index("AskCancelChoice"))
+        # Only S06 and S14 close; every other page of that session (Inno's file copy) refuses.
+        self.assertIn(
+            "Cancel := (CurPageID = Pages[P_BACK].ID) or (CurPageID = Pages[P_KEY].ID);", cancel
+        )
+        changed = routine(self.raw, "procedure CurPageChanged(CurPageID: Integer);")
+        self.assertIn("WizardForm.CancelButton.Visible := EntryNext <> 'S14';", changed)
+
+    def test_item_14_the_copy_is_the_design_text(self) -> None:
+        copy = read_copy()
+        expected = {
+            "u02_text": "This deletes all your records, files and settings in Slate Operations on "
+            "this PC. It cannot be undone.",
+            "s07_kept_older": "This data is from Slate Operations version %1. This setup cannot "
+            "open it. Install with setup version %1 first, then run this setup to update.",
+            "m01_runs_line": "Slate Operations is running.",
+            "m01_not_installed": "Slate Operations is not installed on this PC. To install it, "
+            "open the Slate Operations setup file.",
+            "report_start": "Setup saves a report for Slate Operations support. This takes up "
+            "to 3 minutes.",
+            "m03_key_failed": "Backups now go to %1, but setup could not make their recovery "
+            "key. Select Make a new recovery key now.",
+            "m04_confirm_title": "Make a new recovery key?",
+            "m04_confirm_text": "Your current recovery key stops working. Have a printer or a "
+            "USB drive ready to save the new key.",
+            "m04_confirm_go": "&Make a new key",
+            "m04_first": "Your old recovery key no longer works. Save this new key now.",
+            "m01_needs_network": "Needs attention: the network changed. Select Repair.",
+            "m05_stage1": "Prepare the update",
+            "m05_people": "People cannot use Slate Operations while it updates. This can take "
+            "up to 1 hour. Tell your people before you start.",
+            "m05_space": "The server part of Slate Operations needs %1 GB of free space for a "
+            "safe update. Nothing changed. Select Save report and send the file to Slate "
+            "Operations support.",
+            "m05_support": "The update did not finish, and Slate Operations could not go back "
+            "by itself. Select Save report and send the file to Slate Operations support.",
+            "m05_finish_failed": "Slate Operations is updated to version %1, but setup could "
+            "not finish its part on this PC.",
+            "m05_slow_close": "The update goes on by itself. You can close setup now. Later, run "
+            "this setup again and select Update now. Setup then finishes the update on this PC.",
         }
         for key, value in expected.items():
             with self.subTest(key=key):

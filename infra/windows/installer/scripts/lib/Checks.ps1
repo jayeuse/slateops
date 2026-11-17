@@ -467,7 +467,12 @@ function Test-C29 {
     # S91-1: a kit folder that fails the kit's own safety check is not "an earlier test": setup
     # removes nothing there and stops.
     if ($parts['kit_folder_unsafe']) { return New-CheckResult 'C29' 'stop' 'unknown_parts' $values }
-    if ($parts['slateops_parts'] -and (-not $parts['installed_program'])) { return New-CheckResult 'C29' 'stop' 'unknown_parts' $values }
+    # W9 review item 3: parts with no installed program but an uninstall log are the leftovers of
+    # an earlier uninstall: Fix (remove-windows). Without the log they stay unknown (Stop).
+    if ($parts['slateops_parts'] -and (-not $parts['installed_program'])) {
+        if ($parts['uninstall_log']) { return New-CheckResult 'C29' 'fix' 'uninstall_leftovers' $values }
+        return New-CheckResult 'C29' 'stop' 'unknown_parts' $values
+    }
     if ($kit.Count -gt 0) { return New-CheckResult 'C29' 'fix' 'earlier_test' $values }
     if ($parts['account'] -and (-not $parts['installed_program'])) { return New-CheckResult 'C29' 'fix' 'leftover_account' $values }
     return New-CheckResult 'C29' 'pass' 'ok' $values
@@ -776,6 +781,7 @@ function Get-LeftoverFact {
         kit_rules         = ([bool](Get-NetFirewallRule -Name $Kit.RuleName -ErrorAction SilentlyContinue)) -or ([bool](Get-NetFirewallHyperVRule -Name $Kit.HyperVRule -ErrorAction SilentlyContinue))
         slateops_parts    = [bool](Get-ScheduledTask -TaskPath $SlateOps.TaskPath -ErrorAction SilentlyContinue)
         installed_program = (Test-InstalledProgram)
+        uninstall_log     = (@(Get-ChildItem -LiteralPath (Join-Path (New-SlateOpsLayout).Logs 'uninstall') -Filter 'uninstall-*.log' -File -Force -ErrorAction SilentlyContinue).Count -gt 0)
     }
 }
 

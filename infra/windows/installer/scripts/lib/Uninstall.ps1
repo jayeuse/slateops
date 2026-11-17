@@ -245,12 +245,54 @@ function Remove-DataFolder {
     return New-StepResult -Code 'removed' -MessageKey 'uninstall.data_removed'
 }
 
+function Get-BackupFolderProblem {
+    # W9 review item 10 (Security W9-S1, S91-2 class): on NTFS the backup folder passes the tree
+    # rule before an elevated delete: the folder owned by Administrators, SYSTEM or this
+    # administrator, a protected list, and below it no link, no other owner than those and the
+    # service account, and no writer other than Administrators, SYSTEM and the service account.
+    # FAT and exFAT have no access lists and stay as before (shape and link checks).
+    param([Parameter(Mandatory = $true)][string]$Folder, [string]$ServiceSid = '')
+    $problems = New-Object System.Collections.Generic.List[string]
+    $format = ''
+    try { $format = (New-Object System.IO.DriveInfo((Split-Path -Qualifier $Folder))).DriveFormat } catch { $format = '' }
+    if ($format -ne 'NTFS') { return $problems.ToArray() }
+    $sidType = [System.Security.Principal.SecurityIdentifier]
+    $trusted = @($SlateOps.SidAdministrators, $SlateOps.SidSystem, [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+    $writers = @($SlateOps.SidAdministrators, $SlateOps.SidSystem)
+    if ($ServiceSid) { $writers += $ServiceSid }
+    $root = Get-Acl -LiteralPath $Folder
+    if ($trusted -notcontains $root.GetOwner($sidType).Value) { $problems.Add(('owner:{0}' -f $Folder)) }
+    if (-not $root.AreAccessRulesProtected) { $problems.Add(('inherits:{0}' -f $Folder)) }
+    $stack = New-Object System.Collections.Generic.Stack[object]
+    $stack.Push((Get-Item -LiteralPath $Folder -Force))
+    while ($stack.Count -gt 0) {
+        $item = $stack.Pop()
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { $problems.Add(('reparse_point:{0}' -f $item.FullName)); continue }
+        try { $acl = Get-Acl -LiteralPath $item.FullName } catch { $problems.Add(('acl_unreadable:{0}' -f $item.FullName)); continue }
+        $owner = $acl.GetOwner($sidType).Value
+        if (($trusted -notcontains $owner) -and ($owner -ne $ServiceSid)) { $problems.Add(('owner:{0}:{1}' -f $item.FullName, $owner)) }
+        foreach ($rule in $acl.GetAccessRules($true, $true, $sidType)) {
+            if ($rule.AccessControlType -ne 'Allow') { continue }
+            if ($writers -contains $rule.IdentityReference.Value) { continue }
+            if (-not (Test-RuleReadOnly $rule)) { $problems.Add(('writer:{0}:{1}' -f $item.FullName, $rule.IdentityReference.Value)) }
+        }
+        if ($item.PSIsContainer) { foreach ($child in @(Get-ChildItem -LiteralPath $item.FullName -Force)) { $stack.Push($child) } }
+    }
+    return $problems.ToArray()
+}
+
 function Remove-BackupFolder {
-    # "Also delete the backups on E:": only exactly <drive>:\SlateOps-backups from the record.
-    param([AllowEmptyString()][string]$Folder)
+    # "Also delete the backups on E:": only exactly <drive>:\SlateOps-backups from the record, and
+    # on NTFS only after the tree rule (W9-S1); a folder that fails it stays and is a leftover.
+    param([AllowEmptyString()][string]$Folder, [string]$ServiceSid = '')
     if ($Folder -cnotmatch '^[A-Z]:\\SlateOps-backups$') { return New-StepResult -Code 'backup_path_invalid' -MessageKey 'uninstall.backup_path_invalid' }
     if (-not (Test-Path -LiteralPath $Folder)) { return New-StepResult -Code 'removed' -MessageKey 'uninstall.backups_removed' }
     if (-not (Test-NoLink $Folder)) { return New-StepResult -Code 'backup_link' -MessageKey 'uninstall.backup_link' }
+    $problems = @(Get-BackupFolderProblem -Folder $Folder -ServiceSid $ServiceSid)
+    if ($problems.Count -gt 0) {
+        foreach ($problem in $problems) { Write-RunLog 'uninstall.backups' 'FAIL' $problem }
+        return New-StepResult -Code 'backup_folder_unsafe' -MessageKey 'uninstall.backup_folder_unsafe'
+    }
     Remove-PathNoFollow -Path $Folder
     Write-RunLog 'uninstall.backups' 'INFO' ('backups {0} removed' -f $Folder)
     return New-StepResult -Code 'removed' -MessageKey 'uninstall.backups_removed'
@@ -305,7 +347,8 @@ function Remove-WindowsParts {
     # item and logs every leftover (W9-1, W9-6). WSL and VirtualMachinePlatform stay.
     param(
         [Parameter(Mandatory = $true)][hashtable]$Layout,
-        [hashtable]$Names = (Get-UninstallNames)
+        [hashtable]$Names = (Get-UninstallNames),
+        [switch]$DataLeft
     )
     $step = 'uninstall.windows'
     $record = Read-WindowsChanges -Layout $Layout
@@ -379,7 +422,8 @@ function Remove-WindowsParts {
         Invoke-UninstallPart ('state_folder:{0}' -f $folder) { if (Test-Path -LiteralPath $path) { Remove-PathNoFollow -Path $path } }
     }
     $left = @(Get-UninstallLeftovers -Record $record -Names $Names -Layout $Layout | Where-Object { $_ -ne 'state_folder:scripts' })
-    if ($left.Count -eq 0) {
+    # W9 review item 4: a data folder that is left over keeps the scripts too.
+    if (($left.Count -eq 0) -and -not $DataLeft) {
         $scripts = Join-Path $Layout.StateRoot 'scripts'
         Invoke-UninstallPart 'state_folder:scripts' { if (Test-Path -LiteralPath $scripts) { Remove-PathNoFollow -Path $scripts } }
         $left = @(Get-UninstallLeftovers -Record $record -Names $Names -Layout $Layout)

@@ -120,7 +120,8 @@ Test-Case 'W9-1 Delete everything keeps the S91-2 parent rule, removes a link in
     $backups = '{0}\SlateOps-backups' -f (Split-Path -Qualifier $script:TestRoot)
     $existed = Test-Path -LiteralPath $backups
     if (-not $existed) {
-        [void][System.IO.Directory]::CreateDirectory($backups)
+        # A folder that setup created: a protected list for Administrators and SYSTEM (W9-S1).
+        [void][System.IO.Directory]::CreateDirectory($backups, (Get-ProtectedDirectorySecurity))
         Assert-Equal 'removed' (Remove-BackupFolder -Folder $backups).code
         Assert-Equal $false (Test-Path -LiteralPath $backups)
     }
@@ -166,4 +167,68 @@ Test-Case 'W9-1 engine carry a failed keep path terminates the distribution befo
     Assert-Equal @('terminate-distro') @($script:W9Jobs)
     $log = [System.IO.File]::ReadAllText((Join-Path $logDir 'uninstall-20261117T060000Z-w9rest.log'))
     Assert-True ($log -match 'distribution terminated: terminated') $log
+}
+
+Test-Case 'W9 review item 4 a data folder left over keeps the scripts folder, so U04 can save a report' {
+    $layout = New-UninstallLayout 'w9-review-4'
+    $hosts = Join-Path (New-TestDirectory 'w9-review-4-hosts') 'hosts'
+    [System.IO.File]::WriteAllText($hosts, "127.0.0.1 localhost`r`n")
+    $names = Get-TestNames -Tag 'Review4' -HostsPath $hosts
+    $result = Remove-WindowsParts -Layout $layout -Names $names -DataLeft
+    Assert-Equal $true (Test-Path -LiteralPath $layout.Scripts) 'scripts stays'
+    Assert-Equal $false (Test-Path -LiteralPath $layout.State) 'the rest goes'
+    Assert-Equal 'removed' $result.code
+    $plain = New-UninstallLayout 'w9-review-4c'
+    $null = Remove-WindowsParts -Layout $plain -Names $names
+    Assert-Equal $false (Test-Path -LiteralPath $plain.Scripts) 'without a data leftover the scripts go'
+}
+
+Test-Case 'W9 review item 5 M01 reads a changed network from the recorded rule range' {
+    $layout = New-UninstallLayout 'w9-review-5'
+    Write-JsonFile -Path (Join-Path $layout.State 'windows-changes.json') -Value ([ordered]@{ hyperv_cidr = '192.168.1.0/24' })
+    function Get-LanFact { return $script:W9Lan }
+    $script:W9Lan = @{ address = '192.168.1.23'; prefix_length = 24 }
+    Assert-Equal $false (Test-NetworkChanged -Layout $layout) 'same range'
+    $script:W9Lan = @{ address = '10.0.0.5'; prefix_length = 24 }
+    Assert-Equal $true (Test-NetworkChanged -Layout $layout) 'another range'
+    $script:W9Lan = $null
+    Assert-Equal $false (Test-NetworkChanged -Layout $layout) 'no network: no claim'
+    Write-JsonFile -Path (Join-Path $layout.State 'windows-changes.json') -Value ([ordered]@{ account_sid = 'S-1-5-21-1-2-3-1001' })
+    $script:W9Lan = @{ address = '10.0.0.5'; prefix_length = 24 }
+    Assert-Equal $false (Test-NetworkChanged -Layout $layout) 'no recorded range: no claim'
+}
+
+Test-Case 'W9 review item 10 S91-2 a backup folder that a standard user can change is not deleted' {
+    # Security W9-S1: before the delete, the folder passes the tree rule: owner Administrators or
+    # SYSTEM, a protected list, writers only Administrators, SYSTEM and the service account.
+    $sid = New-TestUser 'slateops-w9bk'
+    $open = New-TestDirectory 'w9-review-10-open'
+    [System.IO.File]::WriteAllText((Join-Path $open 'snapshot'), 'x')
+    $null = & icacls.exe $open /grant '*S-1-5-11:(OI)(CI)M' 2>&1
+    Assert-True (@(Get-BackupFolderProblem -Folder $open -ServiceSid $sid).Count -gt 0) 'Authenticated Users Modify is a problem'
+    $root = New-AdminOnlyFolder 'SlateOpsW9Backup'
+    try {
+        $closed = Join-Path $root 'SlateOps-backups'
+        $security = Get-ProtectedDirectorySecurity
+        $security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule((New-Object System.Security.Principal.SecurityIdentifier($sid)), 'Modify, Synchronize', 'ContainerInherit, ObjectInherit', 'None', 'Allow')))
+        [void][System.IO.Directory]::CreateDirectory($closed, $security)
+        [System.IO.File]::WriteAllText((Join-Path $closed 'snapshot'), 'x')
+        $found = @(Get-BackupFolderProblem -Folder $closed -ServiceSid $sid)
+        Assert-Equal 0 $found.Count ('protected folder: ' + ($found -join '; '))
+        # A protected folder with an explicit Authenticated Users Modify entry: the writer rule
+        # alone refuses it.
+        $null = & icacls.exe $closed /grant '*S-1-5-11:(OI)(CI)M' 2>&1
+        $found = @(Get-BackupFolderProblem -Folder $closed -ServiceSid $sid)
+        Assert-True (@($found | Where-Object { $_ -like 'writer:*:S-1-5-11' }).Count -gt 0) ($found -join '; ')
+        Assert-Equal 0 @($found | Where-Object { $_ -like 'inherits:*' }).Count 'the folder is protected'
+    } finally { Remove-PathNoFollow -Path $root }
+    $backups = '{0}\SlateOps-backups' -f (Split-Path -Qualifier $script:TestRoot)
+    if (-not (Test-Path -LiteralPath $backups)) {
+        [void][System.IO.Directory]::CreateDirectory($backups)
+        $null = & icacls.exe $backups /grant '*S-1-5-11:(OI)(CI)M' 2>&1
+        try {
+            Assert-Equal 'backup_folder_unsafe' (Remove-BackupFolder -Folder $backups -ServiceSid $sid).code
+            Assert-Equal $true (Test-Path -LiteralPath $backups) 'nothing is deleted'
+        } finally { Remove-PathNoFollow -Path $backups }
+    }
 }

@@ -940,9 +940,16 @@ function Invoke-WindowsJob {
                 foreach ($problem in $problems) { Write-RunLog $step 'FAIL' $problem }
                 $Result.code = 'data_folder_parent_unsafe'; $Result.exit_code = 3; $Result.message_key = 'exec.data_folder_parent_unsafe'; return $Result
             }
-            $disk = Join-Path $Layout.Distro 'ext4.vhdx'
-            $run = Invoke-Logged -Step $step -FilePath $WslPath -ArgumentList @('--import-in-place', $SlateOps.DistroName, $disk) -NoThrow
-            if ($run.ExitCode -eq 0) { $Result.code = 'imported' } else { $Result.code = 'import_failed'; $Result.exit_code = 3; $Result.message_key = 'exec.import_failed' }
+            # W9 review item 1: a resume after this step finds the distribution registered, as
+            # import-distro does.
+            $list = Invoke-Logged -Step $step -FilePath $WslPath -ArgumentList @('--list', '--quiet') -NoThrow
+            if (@($list.Output | Where-Object { $_.Trim() -eq $SlateOps.DistroName }).Count -gt 0) {
+                $Result.code = 'already_imported'
+            } else {
+                $disk = Join-Path $Layout.Distro 'ext4.vhdx'
+                $run = Invoke-Logged -Step $step -FilePath $WslPath -ArgumentList @('--import-in-place', $SlateOps.DistroName, $disk) -NoThrow
+                if ($run.ExitCode -eq 0) { $Result.code = 'imported' } else { $Result.code = 'import_failed'; $Result.exit_code = 3; $Result.message_key = 'exec.import_failed' }
+            }
         }
         'wsl-facts' {
             foreach ($arguments in @(@('--version'), @('--status'), @('--list', '--verbose'))) {

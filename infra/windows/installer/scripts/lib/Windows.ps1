@@ -88,8 +88,13 @@ function Install-ScriptsCopy {
     # service account reads), as the kit ran from its own protected folder: a custom program
     # folder can be writable by standard users.
     param([Parameter(Mandatory = $true)][hashtable]$Layout, [Parameter(Mandatory = $true)][string]$SourceDir)
-    $problems = @(Get-TreeProblem -Tree $Layout.StateTree -ServiceSid '')
-    if ($problems.Count -gt 0) { return New-StepResult -Code 'unsafe' -MessageKey 'setup.state.unsafe' }
+    # W13b review item 11: the recorded account SID, so the account's own entries pass once the
+    # account exists (update-done); before the account it is empty, as before.
+    $problems = @(Get-TreeProblem -Tree $Layout.StateTree -ServiceSid (Get-RecordedServiceSid -Layout $Layout))
+    if ($problems.Count -gt 0) {
+        foreach ($problem in $problems) { Write-RunLog 'setup.scripts' 'FAIL' $problem }
+        return New-StepResult -Code 'unsafe' -MessageKey 'setup.state.unsafe'
+    }
     foreach ($child in @(Get-ChildItem -LiteralPath $Layout.Scripts -Force)) { Remove-PathNoFollow -Path $child.FullName }
     foreach ($name in @('exec.ps1', 'start.ps1', 'setup-helper.ps1', 'version.json')) {
         $source = Join-Path $SourceDir $name
@@ -129,6 +134,20 @@ function Copy-PayloadPart {
         Write-RunLog 'setup.payload' 'INFO' ('{0}: {1} bytes' -f $name, (Get-Item -LiteralPath $target).Length)
     }
     return New-StepResult -Code 'copied' -MessageKey 'setup.payload.copied'
+}
+
+function Test-NetworkChanged {
+    # W9 review item 5 (plan 10.7 "the network changed"): the current LAN range against the range
+    # of the recorded Hyper-V rule. No network, or no recorded range, is no claim.
+    param([Parameter(Mandatory = $true)][hashtable]$Layout)
+    $recorded = [string](Get-DictValue (Read-WindowsChanges -Layout $Layout) 'hyperv_cidr')
+    if (-not $recorded) { return $false }
+    $lan = Get-LanFact
+    if (-not $lan) { return $false }
+    $current = ConvertTo-NetworkCidr -Address ([string]$lan.address) -PrefixLength ([int]$lan.prefix_length)
+    if ($current -eq $recorded) { return $false }
+    Write-RunLog 'maintenance.network' 'WARN' ('network {0}, rules for {1}' -f $current, $recorded)
+    return $true
 }
 
 function Remove-OldPayloadParts {
@@ -246,19 +265,24 @@ function Get-SetupEntry {
     # Spec 4.1: the first screen from Windows-side records only: the saved progress, then the
     # installed version (W8): this setup newer gives M05 (W13b), the same or older gives M01.
     param([AllowNull()][System.Collections.IDictionary]$Progress, [string]$Installed = '', [string]$SetupVersion = '')
+    # W9 review item 3: "key saved" with no installed program is progress that an uninstall left;
+    # it opens a new setup, not maintenance.
+    if ((-not $Installed) -and ($null -ne $Progress) -and ([string](Get-DictValue $Progress 'stage') -eq 'key_saved')) { $Progress = $null }
     if ($Installed -and $SetupVersion -and (($null -eq $Progress) -or ([string](Get-DictValue $Progress 'stage') -eq 'key_saved'))) {
         if ((Compare-ReleaseVersion -Left $SetupVersion -Right $Installed) -gt 0) { return @{ screen = 'M05'; next = ''; installed = $Installed } }
         return @{ screen = 'M01'; next = ''; installed = $Installed }
     }
     if ($null -eq $Progress) { return @{ screen = 'S01'; next = '' } }
+    # W9 review item 1: a kept reinstall stays kept on resume.
+    $kept = ((Get-DictValue $Progress 'kept') -eq $true)
     switch ([string](Get-DictValue $Progress 'stage')) {
         'check_restart'    { return @{ screen = 'S02'; next = ''; welcome_back = $true } }
         'feature_restart'  { return @{ screen = 'S06'; next = 'S07' } }
         # W8 correction 4: the background preparation runs again on resume unless it finished.
-        'continue_later'   { return @{ screen = 'S06'; next = 'S08'; background_done = ((Get-DictValue $Progress 'background_done') -eq $true) } }
+        'continue_later'   { return @{ screen = 'S06'; next = 'S08'; background_done = ((Get-DictValue $Progress 'background_done') -eq $true); kept = $kept } }
         'install_started'  {
-            if ((Get-DictValue $Progress 'email_discarded') -eq $true) { return @{ screen = 'S06'; next = 'S09' } }
-            return @{ screen = 'S06'; next = 'S12' }
+            if ((Get-DictValue $Progress 'email_discarded') -eq $true) { return @{ screen = 'S06'; next = 'S09'; kept = $kept } }
+            return @{ screen = 'S06'; next = 'S12'; kept = $kept }
         }
         'install_finished' { return @{ screen = 'S06'; next = 'S14'; new_recovery_key = $true } }
         'key_saved'        { return @{ screen = 'M01'; next = '' } }

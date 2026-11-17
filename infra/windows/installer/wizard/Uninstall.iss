@@ -72,17 +72,17 @@ begin
   UReportSaved(JsonValue(URun('report-zip', ReportRun, ''), 'path'));
 end;
 
-{ F4c: the form cannot open, or the state folder fails its check. With an unsafe folder nothing
-  more runs from it, so no Save report then. }
-procedure UStopped(CanReport: Boolean);
+{ F4c and F3: a stop with its sentence and, while the helper can run, Save report (W9 review
+  item 4). With an unsafe folder nothing more runs from it, so no Save report then. }
+procedure UStopped(Text: String; CanReport: Boolean);
 begin
   if CanReport then
   begin
-    if TaskDialogMsgBox(CM('f4c_stopped'), '', mbError, MB_YESNO, [CM('btn_save_report'), CM('btn_close')], 0) = IDYES then
+    if TaskDialogMsgBox(Text, '', mbError, MB_YESNO, [CM('btn_save_report'), CM('btn_close')], 0) = IDYES then
       USaveReport;
   end
   else
-    MsgBox(CM('f4c_stopped'), mbError, MB_OK);
+    MsgBox(Text, mbError, MB_OK);
 end;
 
 procedure URadioClick(Sender: TObject);
@@ -214,7 +214,7 @@ begin
     Text := URun('state-check', URunId, '');
     if JsonValue(Text, 'code') <> 'safe' then
     begin
-      UStopped(False);
+      UStopped(CM('f4c_stopped'), False);
       Exit;
     end;
     Text := URun('uninstall-info', URunId, '');
@@ -232,7 +232,7 @@ begin
     UKeep := Answer = 1;
     Result := True;
   except
-    UStopped(True);
+    UStopped(CM('f4c_stopped'), True);
     Result := False;
   end;
 end;
@@ -257,8 +257,11 @@ begin
     Code := JsonValue(URun('uninstall-stop', URunId, Extra), 'code');
     if Code <> 'stopped' then
     begin
-      { F3 (uninstall): nothing was removed; Inno removes nothing either. }
-      MsgBox(CM('u04_keep_failed'), mbError, MB_OK);
+      { F3 (uninstall) or F4c: nothing was removed; Inno removes nothing either. }
+      if UKeep then
+        UStopped(CM('u04_keep_failed'), True)
+      else
+        UStopped(CM('f4c_stopped'), True);
       Abort;
     end;
     { U03 stage 2. }
@@ -274,14 +277,18 @@ begin
     Code := JsonValue(URun('uninstall-data', URunId, Extra), 'code');
     if UKeep and (Code <> 'kept') then
     begin
-      MsgBox(CM('u04_keep_failed'), mbError, MB_OK);
+      UStopped(CM('u04_keep_failed'), True);
       Abort;
     end;
     if (not UKeep) and (Code <> 'removed') then
       ULeft := 'data';
     { U03 stage 3: the Windows parts; each leftover is logged (W9-6). }
     UStatus(CM('u03_remove'));
-    Text := URun('remove-windows', URunId, '');
+    { W9 review item 4: with the data folder left over, the scripts stay for the U04 report. }
+    Extra := '';
+    if ULeft = 'data' then
+      Extra := '-DataLeft';
+    Text := URun('remove-windows', URunId, Extra);
     if JsonValue(Text, 'code') = 'leftovers' then
       ULeft := ULeft + ' windows';
   end;

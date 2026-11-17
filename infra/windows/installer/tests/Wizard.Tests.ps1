@@ -291,3 +291,19 @@ Test-Case 'W8 correction 7 Save report before S07 holds the helper logs and name
     Assert-True ($summary.Contains('C:\ProgramData\SlateOps (not created yet)')) $summary
     Assert-True (-not $summary.Contains('failed the safety check')) $summary
 }
+
+Test-Case 'W9 review item 1 a resume of a kept reinstall keeps the kept mark' {
+    # QA W9-B1: the kept mark survives "continue later" and a started install, so the resume
+    # knows the data folder holds kept data.
+    Assert-Equal $true ((Get-SetupEntry -Progress @{ stage = 'continue_later'; kept = $true })['kept']) 'continue later'
+    Assert-Equal $true ((Get-SetupEntry -Progress @{ stage = 'install_started'; kept = $true })['kept']) 'install started'
+    Assert-Equal $true ((Get-SetupEntry -Progress @{ stage = 'install_started'; kept = $true; email_discarded = $true })['kept']) 'install started, email discarded'
+    Assert-Equal $false ((Get-SetupEntry -Progress @{ stage = 'continue_later' })['kept'] -eq $true) 'no mark, no kept mode'
+}
+
+Test-Case 'W9 review item 3 a saved key_saved stage with no installed program starts a new setup' {
+    # QA W9-B3: progress left by an uninstall with leftovers does not open maintenance.
+    Assert-Equal 'S01' (Get-SetupEntry -Progress @{ stage = 'key_saved' }).screen
+    Assert-Equal 'S01' (Get-SetupEntry -Progress @{ stage = 'key_saved' } -Installed '' -SetupVersion '0.2.1').screen
+    Assert-Equal 'M01' (Get-SetupEntry -Progress @{ stage = 'key_saved' } -Installed '0.2.1' -SetupVersion '0.2.1').screen
+}

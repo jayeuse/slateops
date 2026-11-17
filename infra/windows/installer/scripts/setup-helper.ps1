@@ -41,7 +41,9 @@ param(
     [switch]$BackgroundDone,
     [switch]$Keep,
     [switch]$DeleteBackups,
-    [switch]$UseKept
+    [switch]$UseKept,
+    [switch]$KeptMark,
+    [switch]$DataLeft
 )
 
 # S91-6: modules load only from Windows PowerShell's own folder, never from a folder in the
@@ -126,9 +128,9 @@ try {
         'facts' {
             $setupVersion = ''
             try { $setupVersion = (Read-HelperVersion).version } catch { $setupVersion = '' }
-            $drive = ''
-            if ($DataRoot -and (Test-DataRootPath $DataRoot)) { $drive = $DataRoot.Substring(0, 2) }
-            $facts = Get-EnvironmentFacts -SetupVersion $setupVersion -DataDrive $drive
+            $dataDrive = ''
+            if ($DataRoot -and (Test-DataRootPath $DataRoot)) { $dataDrive = $DataRoot.Substring(0, 2) }
+            $facts = Get-EnvironmentFacts -SetupVersion $setupVersion -DataDrive $dataDrive
             Write-RunLog 'facts' 'INFO' (Protect-LogText (ConvertTo-JsonText $facts))
             $result = @{ code = 'recorded'; message_key = 'facts.recorded'; values = $facts }
         }
@@ -165,11 +167,11 @@ try {
             Stop-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.StartTaskName -ErrorAction SilentlyContinue
             $result = New-StepResult -Code 'stopped' -MessageKey 'uninstall.stopped'
             if ($Keep) {
-                $job = Invoke-ExecJobAndWait -Layout $layout -Job 'prepare-uninstall' -RunId $RunId -InputText ('{{"run_id":"{0}"}}' -f $RunId) -TimeoutSeconds 600
+                $jobResult = Invoke-ExecJobAndWait -Layout $layout -Job 'prepare-uninstall' -RunId $RunId -InputText ('{{"run_id":"{0}"}}' -f $RunId) -TimeoutSeconds 600
                 $info = $null
-                if ((Get-DictValue $job 'exit_code') -eq 0) { try { $info = Read-EngineOutput -Layout $layout -Result $job } catch { $info = $null } }
+                if ((Get-DictValue $jobResult 'exit_code') -eq 0) { try { $info = Read-EngineOutput -Layout $layout -Result $jobResult } catch { $info = $null } }
                 if (-not (Test-KeptInfo $info)) {
-                    $result = New-StepResult -Code 'keep_failed' -MessageKey 'uninstall.keep_failed' -Values @{ reason = [string](Get-DictValue $job 'code') }
+                    $result = New-StepResult -Code 'keep_failed' -MessageKey 'uninstall.keep_failed' -Values @{ reason = [string](Get-DictValue $jobResult 'code') }
                     # Nothing was removed: the server starts again (Docker comes back with the next
                     # Linux start).
                     Restore-ServerAfterKeepFailure -Layout $layout -RunId $RunId
@@ -191,8 +193,8 @@ try {
                 $result = Move-KeptDisk -Layout $layout -Info $info -Version $version -BackupFolder $backupFolder -Record
                 if ($result.code -eq 'kept') {
                     $bytes = [long]$result.values.bytes
-                    $job = Invoke-ExecJobAndWait -Layout $layout -Job 'unregister-distro' -RunId $RunId -TimeoutSeconds 300
-                    if (((Get-DictValue $job 'exit_code') -ne 0) -or -not (Test-KeptAfterUnregister -Layout $layout -Bytes $bytes)) {
+                    $jobResult = Invoke-ExecJobAndWait -Layout $layout -Job 'unregister-distro' -RunId $RunId -TimeoutSeconds 300
+                    if (((Get-DictValue $jobResult 'exit_code') -ne 0) -or -not (Test-KeptAfterUnregister -Layout $layout -Bytes $bytes)) {
                         $result = New-StepResult -Code 'keep_failed' -MessageKey 'uninstall.keep_failed' -Values @{ reason = 'unregister' }
                         # Still registered: the disk goes back where the distribution expects it.
                         $kept = Get-KeptPaths -Layout $layout
@@ -201,16 +203,17 @@ try {
                 }
                 if ($result.code -ne 'kept') { Restore-ServerAfterKeepFailure -Layout $layout -RunId $RunId }
             } else {
-                $job = Invoke-ExecJobAndWait -Layout $layout -Job 'unregister-distro' -RunId $RunId -TimeoutSeconds 300
-                Write-RunLog 'uninstall.data' 'INFO' ('unregister: {0}' -f (Get-DictValue $job 'code'))
+                $jobResult = Invoke-ExecJobAndWait -Layout $layout -Job 'unregister-distro' -RunId $RunId -TimeoutSeconds 300
+                Write-RunLog 'uninstall.data' 'INFO' ('unregister: {0}' -f (Get-DictValue $jobResult 'code'))
                 $result = Remove-DataFolder -DataRoot $state.data_root
                 if (($result.code -eq 'removed') -and $DeleteBackups) {
-                    $backups = Remove-BackupFolder -Folder ([string](Get-DictValue (Read-WindowsChanges -Layout $layout) 'backup_folder'))
+                    $backups = Remove-BackupFolder -Folder ([string](Get-DictValue (Read-WindowsChanges -Layout $layout) 'backup_folder')) -ServiceSid $serviceSid
                     if ($backups.code -ne 'removed') { $result = $backups }
                 }
             }
         }
-        'remove-windows' { $result = Remove-WindowsParts -Layout $layout }
+        # W9 review item 4: with the data folder left over, the scripts stay for Save report.
+        'remove-windows' { $result = Remove-WindowsParts -Layout $layout -DataLeft:$DataLeft }
         'kept-read' {
             $setupVersion = ''
             try { $setupVersion = (Read-HelperVersion).version } catch { $setupVersion = '0.0.0' }
@@ -248,8 +251,8 @@ try {
             $null = Invoke-ExecJobAndWait -Layout $layout -Job 'terminate-distro' -RunId $RunId -TimeoutSeconds 120
             $result = Move-KeptDisk -Layout $layout
             if ($result.code -eq 'kept') {
-                $job = Invoke-ExecJobAndWait -Layout $layout -Job 'unregister-distro' -RunId $RunId -TimeoutSeconds 300
-                if (((Get-DictValue $job 'exit_code') -ne 0) -or -not (Test-KeptAfterUnregister -Layout $layout -Bytes ([long]$result.values.bytes))) {
+                $jobResult = Invoke-ExecJobAndWait -Layout $layout -Job 'unregister-distro' -RunId $RunId -TimeoutSeconds 300
+                if (((Get-DictValue $jobResult 'exit_code') -ne 0) -or -not (Test-KeptAfterUnregister -Layout $layout -Bytes ([long]$result.values.bytes))) {
                     $result = New-StepResult -Code 'keep_failed' -MessageKey 'uninstall.keep_failed' -Values @{ reason = 'unregister' }
                 } else { $result = New-StepResult -Code 'returned' -MessageKey 'setup.kept.returned' }
             }
@@ -266,6 +269,8 @@ try {
             try { $version = (Read-HelperVersion).version } catch { $version = '0.0.0' }
             $result = Get-EngineStatus -Layout $layout -RunId $RunId -WindowsPartVersion $version
             if ($result.code -eq 'ok') { $result.values.backup_folder = [string](Get-DictValue (Read-WindowsChanges -Layout $layout) 'backup_folder') }
+            # W9 review item 5 (plan 10.7): the network against the recorded rule range.
+            $result.values.network_changed = (Test-NetworkChanged -Layout $layout)
         }
         'repair' { $result = Invoke-Repair -Layout $layout }
         # W13b part 2 (plan 7.4 setup-program path, M05): the five receive parts of this setup
@@ -313,6 +318,8 @@ try {
             $marks = @{}
             if ($EmailDiscarded) { $marks.email_discarded = $true }
             if ($BackgroundDone) { $marks.background_done = $true }
+            # W9 review item 1: a kept reinstall stays kept on resume.
+            if ($KeptMark) { $marks.kept = $true }
             Save-SetupProgress -Layout $layout -Stage $Stage -RunId $RunId -Marks $marks
             if (@('check_restart', 'feature_restart') -contains $Stage) { $result = Register-SetupResume -SetupPath $SetupPath }
             else { $result = New-StepResult -Code 'saved' -MessageKey 'setup.progress.saved' }

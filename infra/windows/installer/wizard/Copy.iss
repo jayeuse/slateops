@@ -396,7 +396,7 @@ u01_backups=Also delete the backups on %1
 u01_uninstall=&Uninstall
 u02_title=Delete all Slate Operations data?
 ; Copy gap (W9): the spec names the organization; Windows does not keep the name.
-u02_text=This deletes all records, files and settings of Slate Operations on this PC. It cannot be undone.
+u02_text=This deletes all your records, files and settings in Slate Operations on this PC. It cannot be undone.
 u02_backups_kept=The backups on %1 are kept.
 u02_backups_deleted=The backups on %1 are deleted too.
 u02_check=I understand that this cannot be undone
@@ -417,7 +417,7 @@ s07_use_kept=Use the kept data
 s07_start_new=Start new. Choose another folder.
 s07_kept_newer=This data is from Slate Operations version %1. Use setup version %1 or later.
 ; Copy gap (W9): an older kept version needs the update steps of W13b.
-s07_kept_older=This data is from Slate Operations version %1. This setup cannot update it yet. Use setup version %1.
+s07_kept_older=This data is from Slate Operations version %1. This setup cannot open it. Install with setup version %1 first, then run this setup to update.
 s07_kept_unreadable=Setup could not open the kept data. The kept data is not changed.
 
 ; ---- W9: Cancel at S08 to S11 (spec 4.5)
@@ -430,7 +430,7 @@ m01_needs_backup=Needs attention: plug in the backup drive (%1).
 m01_needs_support=Needs support. Select Save report and send the file to Slate Operations support.
 ; Copy gaps (W9): the engine reports no "not ready since" time and no running line.
 m01_not_ready=Not ready. Select Repair. If that does not help, select Save report.
-m01_runs_line=Slate Operations runs.
+m01_runs_line=Slate Operations is running.
 m01_checking=Checking Slate Operations… (about 1 minute)
 m01_open=Open Slate Operations
 m01_open_hint=In your browser on this PC.
@@ -448,26 +448,23 @@ m01_repair_hint=Sets up the Windows parts again. Your data does not change.
 m01_repairing=Setting up the Windows parts again… (about 1 minute)
 m01_repaired=Repair finished. Slate Operations starts again.
 m01_repair_failed=Repair did not finish. Select Save report and send the file to Slate Operations support.
-m01_not_installed=Slate Operations is not installed on this PC.
+m01_not_installed=Slate Operations is not installed on this PC. To install it, open the Slate Operations setup file.
 m02_title=Change email account
 m02_done=Slate Operations sends email from %1 now. Sign-ins stop for about a minute while it restarts.
 m02_failed=Slate Operations could not change the email account. Select Save report and send the file to Slate Operations support.
 m03_checking=Checking drive %1…
 m03_first=Your new backup drive has its own lock. The old recovery key does not open it.
 m03_done=Backups go to %1 from tonight at 2:00.
-m04_first=The old key stops working when you finish.
+m04_first=Your old recovery key no longer works. Save this new key now.
 btn_done=&Done
-; ---- W13b: M05 Update (spec M05, plan 7.4, 7.5, 10.3 F10). m05_title to m05_rolled_back and
-; f10 are the spec text. The engineer wrote m05_people without "About N minutes" (N is TBD in
-; the spec), the stage order (stage 1 runs first; the spec lists the backup first) and
-; m05_waiting, m05_not_changed, m05_space, m05_support, m05_unreachable, m05_finish_failed,
-; m05_slow_close (no spec text yet).
+; ---- W13b: M05 Update (spec M05, plan 7.4, 7.5, 10.3 F10), the spec text after the Product
+; Designer review (TASK-0095 D-P2-1, D-P2-2).
 m05_title=Update Slate Operations
 m05_subtitle=Version %1 is installed. This setup installs version %2.
-m05_backup=Setup makes a backup first. If the update fails, Slate Operations goes back to version %1 by itself.
-m05_people=People cannot use Slate Operations while it updates. Tell your people before you start.
+m05_backup=Setup makes a backup before it changes anything. If the update fails, Slate Operations goes back to version %1 by itself.
+m05_people=People cannot use Slate Operations while it updates. This can take up to 1 hour. Tell your people before you start.
 m05_next=Update &now
-m05_stage1=Download the parts
+m05_stage1=Prepare the update
 m05_stage2=Make a backup
 m05_stage3=Update
 m05_stage4=Check that it works
@@ -475,9 +472,17 @@ m05_waiting=Slate Operations is busy with a backup or another task. Setup waits 
 m05_done=Slate Operations is updated to version %1.
 m05_rolled_back=The update did not work. Slate Operations went back to version %1. Everybody must sign in again.
 m05_not_changed=The update did not work. Slate Operations still runs version %1. Nothing changed.
-m05_space=There is not enough free space for a safe update (needs %1 GB). Select Save report and send the file to Slate Operations support.
-m05_support=The update did not finish. Select Save report and send the file to Slate Operations support.
+m05_space=The server part of Slate Operations needs %1 GB of free space for a safe update. Nothing changed. Select Save report and send the file to Slate Operations support.
+m05_support=The update did not finish, and Slate Operations could not go back by itself. Select Save report and send the file to Slate Operations support.
 m05_unreachable=Setup cannot reach the server part of Slate Operations. Nothing changed.
 f10=The server part did not start again after a Windows update of one of its parts.
-m05_finish_failed=Slate Operations is updated to version %1, but setup could not finish its part on this PC. Select Try again.
-m05_slow_close=The update goes on by itself. You can close setup now. To see the result, run this setup again later.
+m05_finish_failed=Slate Operations is updated to version %1, but setup could not finish its part on this PC.
+m05_slow_close=The update goes on by itself. You can close setup now. Later, run this setup again and select Update now. Setup then finishes the update on this PC.
+; ---- W9 review (TASK-0096 round 2; spec 4.5, M01, M03, M04; design review copy)
+c29_uninstall_leftovers=This PC has leftovers of an earlier Slate Operations uninstall. Setup removes them before it continues.
+m01_needs_network=Needs attention: the network changed. Select Repair.
+report_start=Setup saves a report for Slate Operations support. This takes up to 3 minutes.
+m03_key_failed=Backups now go to %1, but setup could not make their recovery key. Select Make a new recovery key now.
+m04_confirm_title=Make a new recovery key?
+m04_confirm_text=Your current recovery key stops working. Have a printer or a USB drive ready to save the new key.
+m04_confirm_go=&Make a new key

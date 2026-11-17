@@ -227,6 +227,7 @@ var
   { W9 maintenance (Maintenance.iss). }
   MaintAction, MaintPhase, MaintStatus, MaintStatusOut, MaintTarget, MaintState, MaintBackup, MaintBackupFolder: String;
   MaintStatusAt: Cardinal;
+  MaintNetwork: Boolean;
   KeyFormOpen: Boolean;
   KeyFormStatus: TNewStaticText;
   KeyFormDone: TNewButton;
@@ -257,6 +258,8 @@ function MaintSkip(PageID: Integer): Boolean; forward;
 function AskCancelChoice: Integer; forward;
 procedure RemoveEverything; forward;
 function SettingsEntry: Boolean; forward;
+{ W9 review item 1: SaveContinueLater reads the kept mode. }
+function KeptMode: Boolean; forward;
 { W13b part 2, in Maintenance.iss. }
 procedure RenderUpdate; forward;
 procedure PollUpdate; forward;
@@ -1025,7 +1028,8 @@ var
 begin
   Discarded := RunPipeJobBlocking('smtp-test', '{"run_id":"' + RunId + '","mode":"discard"}', 120) = 'smtp_discarded';
   OutFile := NewOut('save');
-  if (InstallStep >= 2) or (EntryNext = 'S12') then
+  { W9 review item 6 (D2): the S09 resume of a started install keeps install_started too. }
+  if (InstallStep >= 2) or (EntryNext = 'S12') or (EntryNext = 'S09') then
   begin
     Extra := '-Stage install_started';
     if Discarded then
@@ -1037,6 +1041,8 @@ begin
     if BgDone then
       Extra := Extra + ' -BackgroundDone';
   end;
+  if KeptMode then
+    Extra := Extra + ' -KeptMark';
   RunHelper('save-progress', RunId, OutFile, Extra);
 end;
 
@@ -1468,6 +1474,9 @@ begin
   else if Id = 'C18' then SaveReport(nil)
   else if Id = 'C22' then begin LidChosen := not LidChosen; RenderPage(-1); end
   else if Id = 'C24' then OpenAsUser(ExpandConstant('{sys}\control.exe'), '/name Microsoft.BitLockerDriveEncryption')
+  { W9 review item 3: the leftovers of an earlier uninstall go with the uninstall's own step. }
+  else if (Id = 'C29') and (Items[Index].Code = 'uninstall_leftovers') then
+    StartFix('remove-windows', '')
   else if Id = 'C29' then RemoveKitParts;
 end;
 
@@ -1522,7 +1531,7 @@ begin
     AddText(CM('c22_chosen'), False)
   else
     AddText(ItemMessage(Items[Index]), False);
-  if FixRunning and ((FixAction = 'remove-kit') and (Items[Index].Id = 'C29')) then
+  if FixRunning and (((FixAction = 'remove-kit') or (FixAction = 'remove-windows')) and (Items[Index].Id = 'C29')) then
   begin
     AddText(CM('s02_removing'), False);
     AddMarquee;
@@ -2238,6 +2247,13 @@ begin
   StartBgStep;
 end;
 
+{ W9 review item 2: S11 of a kept reinstall shows a background failure when it arrives. }
+procedure RedrawKeptReady;
+begin
+  if KeptMode and (WizardForm.CurPageID = Pages[P_READY].ID) then
+    RenderPage(P_READY);
+end;
+
 procedure PollBackground;
 var
   Code, Name, OutFile: String;
@@ -2265,6 +2281,7 @@ begin
           NewOutRun('kept-return', '');
       end;
       UpdateBgStatus;
+      RedrawKeptReady;
       Exit;
     end;
     if Name = 'service' then
@@ -2286,6 +2303,7 @@ begin
       BgFailed := True;
       BgCode := JobCode;
       UpdateBgStatus;
+      RedrawKeptReady;
       Exit;
     end;
   end;
@@ -2724,6 +2742,8 @@ begin
   Later.AdjustHeight;
   Later.Top := Pages[P_EMAIL].SurfaceHeight - Later.Height;
   Later.OnLinkClick := @ContinueLaterClick;
+  { W9 review item 7 (design W9-B1): M02 has no "Continue later". }
+  Later.Visible := EntryScreen <> 'M01';
 end;
 
 function MailHost: String;
@@ -3143,7 +3163,8 @@ begin
   Link := AddLink(CM('s11_what'), 0);
   Link.OnLinkClick := @WhatChangesClick;
   { With kept data the install waits for the background steps (the F3 check among them). }
-  WizardForm.NextButton.Enabled := (not KeptMode) or BgDone;
+  { W9 review item 2: a background failure (F3 among them) opens with Next. }
+  WizardForm.NextButton.Enabled := (not KeptMode) or BgDone or BgFailed;
 end;
 
 { ------------------------------------------------------------------------------------------- }
@@ -3199,7 +3220,7 @@ end;
 
 procedure InstallNextStep;
 var
-  OutFile, Code, Answers, Lid: String;
+  OutFile, Code, Answers, Lid, Extra: String;
 begin
   InstallSlow := False;
   if InstallStep = 0 then
@@ -3213,7 +3234,10 @@ begin
   else if InstallStep = 1 then
   begin
     OutFile := NewOut('save');
-    RunHelper('save-progress', RunId, OutFile, '-Stage install_started');
+    Extra := '-Stage install_started';
+    if KeptMode then
+      Extra := Extra + ' -KeptMark';
+    RunHelper('save-progress', RunId, OutFile, Extra);
     if ResumedInstall or KeptMode then
       Answers := '{"run_id":"' + RunId + '","version":"' + SetupVersion + '"}'
     else
@@ -3992,6 +4016,13 @@ begin
     Cancel := UpdCanStop;
     Exit;
   end;
+  { D-A (spec 4.5): S06 before S14 has no Cancel, as S14; closing keeps the saved stage. }
+  if EntryNext = 'S14' then
+  begin
+    { Only S06 and S14 close; Inno's file copy on the way between them refuses. }
+    Cancel := (CurPageID = Pages[P_BACK].ID) or (CurPageID = Pages[P_KEY].ID);
+    Exit;
+  end;
   if ForceClose or StateUnsafe or (EntryScreen = 'M01') or ((Pages[P_CHECK] <> nil) and (CurPageID = Pages[P_CHECK].ID) and (CheckVerdict = 'not_suitable')) then
   begin
     Cancel := True;
@@ -4085,13 +4116,32 @@ begin
     Text := ReadText(ExpandConstant('{commonappdata}\SlateOps\state\install.json'));
     DataRoot := JsonValue(Text, 'data_root');
     DataPrepared := DataRoot <> '';
-    BgIndex := 7;
+    { W9 review item 1 (QA W9-B1): a resumed kept reinstall stays kept; S07 does not run again, so
+      the saved mark sets the mode. }
+    if Pos('"kept":true', StateText) > 0 then
+    begin
+      KeptState := 'kept';
+      KeptUse := True;
+      KeptFor := DataRoot;
+    end;
+    { Done background preparation: the count of this mode (8 kept steps, 7 otherwise). }
+    BgIndex := BgCount;
     { Correction 4: a "continue later" saved before the background preparation finished runs it
       again from the step after the account (the server part steps repeat safely). }
     if (EntryNext = 'S08') and (Pos('"background_done":true', StateText) = 0) then
     begin
-      BgIndex := 1;
       BgResume := True;
+      { W9 review item 1: no second restore; with the disk back in distro the kept steps go on
+        from import-kept. }
+      if KeptMode then
+      begin
+        if FileExists(AddBackslash(DataRoot) + 'kept\ext4.vhdx') then
+          BgIndex := 1
+        else
+          BgIndex := 3;
+      end
+      else
+        BgIndex := 1;
     end;
   end;
   if EntryNext = 'S07' then
@@ -4247,6 +4297,8 @@ begin
   end
   else if CurPageID = Pages[P_BACK].ID then
   begin
+    { D-A: no Cancel when S14 comes next. }
+    WizardForm.CancelButton.Visible := EntryNext <> 'S14';
     if EntryNext = 'S12' then
       WizardForm.PageDescriptionLabel.Caption := CM('s06_stopped')
     else
