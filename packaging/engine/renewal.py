@@ -38,9 +38,17 @@ def _file_leaf(ctx: Context) -> bytes:
 
 
 def _served(ctx: Context, host: str) -> bytes | None:
+    """The leaf that Caddy serves; ``b""`` when it fails verification against the root (for
+    example expired after the PC was off through its last 30 days: B-1), which counts as
+    another leaf and is reloaded; None only when Caddy does not answer."""
     root = ctx.paths.etc / "ca" / "current" / "root.crt"
     try:
         return ctx.deps.served_certificate(host, root, 10.0)
+    except ssl.SSLCertVerificationError as error:
+        ctx.log.line(
+            ctx.step(5, "reload"), "WARN", f"served certificate fails verification: {error}"
+        )
+        return b""
     except (OSError, ssl.SSLError):
         return None
 

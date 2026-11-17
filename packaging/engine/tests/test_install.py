@@ -13,6 +13,7 @@ import io
 import json
 import re
 import shutil
+import ssl
 import stat
 from collections.abc import Iterator
 from pathlib import Path
@@ -102,6 +103,8 @@ class World:
         self.check_fails = False
         self.renew_due = False
         self.served: bytes | None = None  # the leaf that Caddy serves (DER)
+        self.served_expired = False  # the served leaf fails verification (expired)
+        self.ca_hangs = False  # the CA container passes the runner's time limit
         self.reloads = 0
 
     # The runner -----------------------------------------------------------------------------
@@ -177,6 +180,8 @@ class World:
 
     def _ca(self, argv: list[str], ca: Path, tls: Path) -> Result:
         command = argv[argv.index("operations/local_ca.py") + 1]
+        if self.ca_hangs:
+            return Result(None, b"", b"")  # the runner's answer after the time limit
         # Root with every capability dropped cannot read a key owned by Caddy (UID 1000).
         readable = self.key_owner == 0 or "DAC_READ_SEARCH" in argv
         leaf = readable and all((tls / name).exists() for name in ("server.crt", "server.key"))
@@ -230,6 +235,7 @@ class World:
             assert tail[4:6] == ["reload", "--force"], tail
             self.reloads += 1
             self.served = self.file_leaf()
+            self.served_expired = False
             return Result(0, b"", b"")
         if tail[0] == "exec":
             if "api" not in self.started:
@@ -270,6 +276,8 @@ class World:
     def served_certificate(self, host: str, cafile: Path, timeout: float) -> bytes:
         if "caddy" not in self.started or self.served is None:
             raise ConnectionRefusedError("connection refused")
+        if self.served_expired:
+            raise ssl.SSLCertVerificationError("certificate verify failed: certificate has expired")
         return self.served
 
 
@@ -1174,3 +1182,57 @@ def test_ac_e6_renewal_does_not_need_caddy_to_answer(world: tuple[Paths, World])
 
     assert (code, result) == (0, {"code": "renewed", "reloaded": False})
     assert "Caddy does not answer" in log_text(paths)
+
+
+def test_b_1_an_expired_served_certificate_is_reloaded(world: tuple[Paths, World]) -> None:
+    # The PC was off through the certificate's last 30 days: Caddy still serves the old,
+    # now expired certificate, which fails verification against the root. That is a served
+    # certificate other than server.crt, not "Caddy does not answer".
+    paths, fake = world
+    run(paths, fake)
+    fake.renew_due = True
+    fake.served_expired = True
+
+    code, result = renew(paths, fake)
+
+    assert (code, result) == (0, {"code": "renewed", "reloaded": True})
+    assert fake.reloads == 1 and fake.served == fake.file_leaf()
+    assert "Caddy does not answer" not in log_text(paths)
+
+
+def _ca_names(fake: World) -> list[str]:
+    return [argv[argv.index("--name") + 1] for argv in _commands(fake, "operations/local_ca.py")]
+
+
+def _removed(fake: World) -> list[str]:
+    return [argv[3] for argv in fake.calls if argv[:3] == ["docker", "rm", "--force"]]
+
+
+def test_w89_2_a_certificate_job_past_its_time_limit_is_removed(
+    world: tuple[Paths, World],
+) -> None:
+    # The time limit stops only the docker client; the container would keep running.
+    paths, fake = world
+    fake.ca_hangs = True
+
+    code, result = run(paths, fake)
+
+    [name] = _ca_names(fake)
+    assert (code, result["code"]) == (3, "ca_failed")
+    assert name.startswith("slateops-ca-init-")
+    assert _removed(fake) == [name]
+
+
+def test_w89_2_a_failed_certificate_job_is_removed_and_a_passing_one_is_not(
+    world: tuple[Paths, World],
+) -> None:
+    paths, fake = world
+    run(paths, fake)
+    fake.check_fails = True
+
+    code, result = renew(paths, fake)
+
+    names = _ca_names(fake)
+    assert (code, result["code"]) == (3, "ca_check_failed")
+    assert len(set(names)) == len(names) == 4  # init, check, renew, check: one name each
+    assert _removed(fake) == [names[-1]]  # only the failed check; --rm removed the others

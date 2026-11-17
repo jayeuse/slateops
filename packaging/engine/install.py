@@ -35,6 +35,7 @@ import importlib.util
 import json
 import os
 import re
+import secrets
 import shutil
 import ssl
 from collections.abc import Callable
@@ -97,10 +98,26 @@ _LINE = re.compile(r"([A-Z_][A-Z0-9_]*)=(.*)\Z")
 # output must be owned by root inside root-only 0700 folders (`/etc/slateops/new`, `ca/`),
 # which a non-root user could not write and which the backup admission requires (owner
 # root). The other controls hold: no network, a read-only root file system, every capability
-# dropped except, for the CA jobs only, DAC_READ_SEARCH (read only: the server key belongs to
-# Caddy, UID 1000, and without it `local_ca.py` cannot read the key and issues a new
-# certificate on every run; TASK-0089), no-new-privileges, `--pull never` on the verified
+# dropped (the CA jobs add one, below), no-new-privileges, `--pull never` on the verified
 # server image, and only the one or two folders that the job writes mounted.
+#
+# N-1: the CA jobs add CAP_DAC_READ_SEARCH because the server key belongs to Caddy (UID 1000)
+# and, without it, `local_ca.py` cannot read the key and issues a new certificate on every
+# run (TASK-0089). What the capability allows, in full (capabilities(7)):
+# - read any file and search any folder that the container sees, whatever its permissions:
+#   the image, `ca/` and `tls/` (it gives no write right and no owner change);
+# - open_by_handle_at(2), which Docker's default seccomp profile allows once this
+#   capability is added: a process in the container that can guess file handles could open
+#   files elsewhere on the host file system that holds the bind-mounted folders (`/etc` of
+#   the distribution), outside the mounts;
+# - linkat(2) with AT_EMPTY_PATH (a link to an open file; the mounts it could write to are
+#   `ca/` and `tls/`).
+# W89-1: the job runs as UID 0, so code inside it could also open by handle any root-owned
+# file with the owner-write bit set and write it through the read-write `ca/` and `tls/`
+# mounts. The job's inputs come only from root-only `/etc/slateops` and the release's own
+# server image (verified by `receive`); `local_ca.py` runs there with fixed arguments, no
+# network and nothing from outside, so using the capability beyond reading the key needs
+# code execution inside that job.
 ONE_SHOT_ROOT = [
     "--user",
     "0:0",
@@ -401,13 +418,16 @@ def _render_caddyfile(ctx: Context, host: str) -> str:
     return text
 
 
-def ca_argv(ctx: Context, server_image: str, command: str, host: str) -> list[str]:
+def ca_argv(ctx: Context, server_image: str, command: str, host: str, name: str) -> list[str]:
     """``local_ca.py <command>`` in a one-shot container: no network, only ``ca/`` and
-    ``tls/`` mounted, root with only DAC_READ_SEARCH (see S86-3 above)."""
+    ``tls/`` mounted, UID 0 with only DAC_READ_SEARCH: every file read, open_by_handle_at
+    (as UID 0, also a write to a root-owned, owner-writable file through the read-write
+    mounts) and an AT_EMPTY_PATH link; inputs only from root-only ``/etc/slateops`` and the
+    release's server image (see S86-3, N-1 and W89-1 above)."""
     ca, tls = ctx.paths.etc / "ca", ctx.paths.etc / "tls"
     return [
-        "docker", "run", "--rm", "--pull", "never", "--network", "none", *ONE_SHOT_ROOT,
-        "--cap-add", "DAC_READ_SEARCH",
+        "docker", "run", "--rm", "--name", name, "--pull", "never", "--network", "none",
+        *ONE_SHOT_ROOT, "--cap-add", "DAC_READ_SEARCH",
         "--mount", f"type=bind,source={ca},target=/ca",
         "--mount", f"type=bind,source={tls},target=/tls",
         "--env", f"SLATEOPS_RUN_ID={ctx.run_id}",
@@ -419,7 +439,10 @@ def ca_argv(ctx: Context, server_image: str, command: str, host: str) -> list[st
 
 def run_ca(ctx: Context, step: str, server_image: str, command: str, host: str) -> str:
     """Run one ``local_ca.py`` command; return its ``result`` or raise its safe code."""
-    result = ctx.runner.run(step, ca_argv(ctx, server_image, command, host), timeout=120)
+    # W89-2: a fixed, unique name, so the engine can remove the container: the time limit
+    # stops only the docker client, and the container would keep running.
+    name = f"slateops-ca-{command}-{ctx.run_id}-{secrets.token_hex(3)}"
+    result = ctx.runner.run(step, ca_argv(ctx, server_image, command, host, name), timeout=120)
     output = _json_tail(result.text())
     wanted = {
         "init": ("created", "exists"),
@@ -427,6 +450,7 @@ def run_ca(ctx: Context, step: str, server_image: str, command: str, host: str) 
         "check": ("valid",),
     }[command]
     if not result.ok or output.get("result") not in wanted:
+        ctx.runner.run(step, ["docker", "rm", "--force", name], timeout=60)
         code = "ca_check_failed" if command == "check" else "ca_failed"
         raise failed(code, cause=_safe(output.get("code")))
     ctx.log.line(step, "INFO", f"local CA {command}: {output['result']}")
