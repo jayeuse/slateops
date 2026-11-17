@@ -350,7 +350,7 @@ make_due() {  # test only: the daily schedule falls due now (one statement, as t
     docker exec "$machine" docker exec "$db" psql -h 127.0.0.1 -U supabase_admin -d postgres \
         -v ON_ERROR_STOP=1 -q -c "update public.backup_policies set next_due_at = now() - interval '1 minute'"
 }
-tick() { printf '{"run_id":"backup-%s-proof%s"}' "$(date -u +%Y%m%dT%H%M%SZ)" "$1" | "${engine[@]}" tick || true; }
+tick() { printf '{"run_id":"backup-%s-pr%04d"}' "$(date -u +%Y%m%dT%H%M%SZ)" "$1" | "${engine[@]}" tick || true; }
 ready() { docker exec "$machine" curl --fail --silent --max-time 10 "${tls[@]}" -o /dev/null "https://$host/api/ready"; }
 backup_status() { status_json | python3 -c 'import json,sys; print(json.load(sys.stdin)["backup"])'; }
 
@@ -375,6 +375,11 @@ for attempt in 8 9 10; do
 done
 ready || fail "the services did not come back after the failed backup (plan 8.1)"
 docker exec "$machine" mv /srv/proof-drives/E-pulled /srv/proof-drives/E
-tick 11 >/dev/null
+ticked="$(tick 11)"; echo "$ticked"
 [ "$(backup_status)" = ok ] || fail "the target was not mounted again when it came back"
+log "the next scheduled backup succeeds with no person (the drive is back)"
+make_due
+ticked="$(tick 12)"; echo "$ticked"
+[ "$(field runner <<<"$ticked")" = succeeded ] || fail "the backup after the drive came back did not succeed: $ticked"
+ready || fail "the services are not ready after the backup"
 log "passed: receive, prefetch, install, HTTPS /api/ready, trust routes, WebSocket, invitation, rerun without change, resend, renewal, backups"
