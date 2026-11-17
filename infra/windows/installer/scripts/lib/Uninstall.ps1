@@ -12,6 +12,8 @@ $SlateOpsKept = @{
     BackupName  = 'SlateOps-backups'
     InstancePattern = '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
     HostPattern = '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.local$'
+    # A local account SID, as Get-RecordedServiceSid reads it.
+    SidPattern  = '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}$'
 }
 
 # ---------------------------------------------------------------------------
@@ -113,6 +115,8 @@ function Move-KeptDisk {
         # A Windows value (state\windows-changes.json), so a reinstall can give the new account
         # its rights on the backup folder.
         [string]$BackupFolder = '',
+        # W9 gap 1: the account that this uninstall removes, so a reinstall can drop its entries.
+        [string]$AccountSid = '',
         [switch]$Record
     )
     $paths = Get-KeptPaths -Layout $Layout
@@ -136,6 +140,7 @@ function Move-KeptDisk {
             business_name  = [string]$Info['business_name']
             public_host    = [string]$Info['public_host']
             backup_folder  = $(if ($BackupFolder -cmatch '^[A-Z]:\\SlateOps-backups$') { $BackupFolder } else { '' })
+            account_sid    = $(if ($AccountSid -cmatch $SlateOpsKept.SidPattern) { $AccountSid } else { '' })
             kept_at        = (Get-UtcStamp)
         }
         Write-JsonFile -Path $paths.Record -Value $kept
@@ -243,6 +248,36 @@ function Remove-DataFolder {
     Remove-PathNoFollow -Path $DataRoot
     Write-RunLog 'uninstall.data' 'INFO' ('data folder {0} removed' -f $DataRoot)
     return New-StepResult -Code 'removed' -MessageKey 'uninstall.data_removed'
+}
+
+function Remove-OldAccountAccess {
+    # W9 gap 1 (kept reinstall): the backup folder of the kept installation drops every explicit
+    # entry of the account that the uninstall removed (P2-3), and its items get Administrators as
+    # owner, so the folder passes the W9-S1 rule again. The new account's entry comes from
+    # Initialize-BackupFolder. Links are removed from the walk, never followed. Returns the number
+    # of items changed.
+    param([Parameter(Mandatory = $true)][string]$Folder, [AllowEmptyString()][string]$OldSid)
+    if ($OldSid -cnotmatch $SlateOpsKept.SidPattern) { return 0 }
+    $item = Get-Item -LiteralPath $Folder -Force -ErrorAction SilentlyContinue
+    if ((-not $item) -or ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { return 0 }
+    $sidType = [System.Security.Principal.SecurityIdentifier]
+    $old = New-Object System.Security.Principal.SecurityIdentifier($OldSid)
+    $admins = New-Object System.Security.Principal.SecurityIdentifier($SlateOps.SidAdministrators)
+    $count = 0
+    $stack = New-Object System.Collections.Generic.Stack[object]
+    $stack.Push($item)
+    while ($stack.Count -gt 0) {
+        $item = $stack.Pop()
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { continue }
+        $acl = Get-Acl -LiteralPath $item.FullName
+        $changed = $false
+        if ($acl.GetOwner($sidType).Value -eq $OldSid) { $acl.SetOwner($admins); $changed = $true }
+        if (@($acl.GetAccessRules($true, $false, $sidType) | Where-Object { $_.IdentityReference.Value -eq $OldSid }).Count -gt 0) { $acl.PurgeAccessRules($old); $changed = $true }
+        if ($changed) { Set-Acl -LiteralPath $item.FullName -AclObject $acl; $count++ }
+        if ($item.PSIsContainer) { foreach ($child in @(Get-ChildItem -LiteralPath $item.FullName -Force)) { $stack.Push($child) } }
+    }
+    Write-RunLog 'setup.kept' 'INFO' ('backup folder {0}: {1} items moved from the earlier account {2}' -f $Folder, $count, $OldSid)
+    return $count
 }
 
 function Get-BackupFolderProblem {

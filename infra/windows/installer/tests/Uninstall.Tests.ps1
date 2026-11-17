@@ -232,3 +232,41 @@ Test-Case 'W9 review item 10 S91-2 a backup folder that a standard user can chan
         } finally { Remove-PathNoFollow -Path $backups }
     }
 }
+
+Test-Case 'W9 gap 1 a kept reinstall moves the backup folder from the removed account to the new one' {
+    # The uninstall records the removed account in kept.json; the kept path drops its entries
+    # and gives its items Administrators as owner, so the new account's entry is the only one and
+    # the W9-S1 delete rule passes later.
+    $old = New-TestUser 'slateops-w9old'
+    $new = New-TestUser 'slateops-w9new'
+    $layout = New-UninstallLayout 'w9-gap1'
+    $null = Initialize-ProtectedTree -Tree $layout.DataTree
+    [System.IO.File]::WriteAllBytes((Join-Path $layout.Distro 'ext4.vhdx'), (New-Object byte[] 1024))
+    $info = @{ instance_id = 'abc123'; business_name = 'Riverside'; public_host = 'office-pc.local' }
+    Assert-Equal 'kept' (Move-KeptDisk -Layout $layout -Info $info -Version '0.2.0' -BackupFolder 'E:\SlateOps-backups' -AccountSid $old -Record).code
+    Assert-Equal $old ((Read-JsonFile -Path (Join-Path $layout.DataRoot 'kept\kept.json'))['account_sid'])
+    $root = New-AdminOnlyFolder 'SlateOpsW9Gap1'
+    try {
+        $folder = Join-Path $root 'SlateOps-backups'
+        $security = Get-ProtectedDirectorySecurity
+        foreach ($sid in @($old, $new)) {
+            $security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule((New-Object System.Security.Principal.SecurityIdentifier($sid)), 'Modify, Synchronize', 'ContainerInherit, ObjectInherit', 'None', 'Allow')))
+        }
+        [void][System.IO.Directory]::CreateDirectory($folder, $security)
+        [void][System.IO.Directory]::CreateDirectory((Join-Path $folder 'data'))
+        $pack = Join-Path $folder 'data\pack'
+        [System.IO.File]::WriteAllText($pack, 'x')
+        $null = & icacls.exe $pack /setowner ('*{0}' -f $old) 2>&1
+        Assert-True (@(Get-BackupFolderProblem -Folder $folder -ServiceSid $new).Count -gt 0) 'before: the removed account is a writer and an owner'
+        Assert-Equal 2 (Remove-OldAccountAccess -Folder $folder -OldSid $old)
+        $sidType = [System.Security.Principal.SecurityIdentifier]
+        foreach ($path in @($folder, (Join-Path $folder 'data'), $pack)) {
+            $acl = Get-Acl -LiteralPath $path
+            Assert-Equal 0 @($acl.GetAccessRules($true, $true, $sidType) | Where-Object { $_.IdentityReference.Value -eq $old }).Count ('old entry: ' + $path)
+            Assert-True (@($acl.GetAccessRules($true, $true, $sidType) | Where-Object { $_.IdentityReference.Value -eq $new }).Count -gt 0) ('new entry: ' + $path)
+        }
+        Assert-Equal $SlateOps.SidAdministrators ((Get-Acl -LiteralPath $pack).GetOwner($sidType).Value)
+        $found = @(Get-BackupFolderProblem -Folder $folder -ServiceSid $new)
+        Assert-Equal 0 $found.Count ($found -join '; ')
+    } finally { Remove-PathNoFollow -Path $root }
+}
