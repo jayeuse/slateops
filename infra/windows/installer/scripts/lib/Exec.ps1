@@ -738,7 +738,7 @@ function Invoke-PipedEngineJob {
             $Result.code = $engine.code
             $Result.message_key = $engine.message_key
         }
-        Write-RunLog $step 'INFO' ('  exit code {0}, {1} ms, pipe input {2} bytes, pipe output {3} bytes, stderr {4} bytes, recovery key shown {5}' -f $run.exit_code, $run.duration_ms, $bridge.InputBytes, $bridge.OutputBytes, $errBytes, [bool]$Result.recovery_key_shown)
+        Write-RunLog $step 'INFO' ('  exit code {0}, {1} ms, pipe input {2} bytes, pipe output {3} bytes, stderr {4} bytes, recovery key shown {5}' -f $run.exit_code, $run.duration_ms, $bridge.InputBytes, $bridge.OutputBytes, $errBytes, ($Result['recovery_key_shown'] -eq $true))
         return $Result
     } finally {
         [Array]::Clear($memory.GetBuffer(), 0, $memory.GetBuffer().Length)

@@ -170,9 +170,9 @@ try {
                 if ((Get-DictValue $job 'exit_code') -eq 0) { try { $info = Read-EngineOutput -Layout $layout -Result $job } catch { $info = $null } }
                 if (-not (Test-KeptInfo $info)) {
                     $result = New-StepResult -Code 'keep_failed' -MessageKey 'uninstall.keep_failed' -Values @{ reason = [string](Get-DictValue $job 'code') }
-                    # Nothing was removed: the server starts again.
-                    Enable-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.StartTaskName -ErrorAction SilentlyContinue | Out-Null
-                    Start-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.StartTaskName -ErrorAction SilentlyContinue
+                    # Nothing was removed: the server starts again (Docker comes back with the next
+                    # Linux start).
+                    Restore-ServerAfterKeepFailure -Layout $layout -RunId $RunId
                 }
                 else { Write-JsonFile -Path (Join-Path $layout.State 'kept-pending.json') -Value ([ordered]@{ instance_id = [string]$info['instance_id']; business_name = [string]$info['business_name']; public_host = [string]$info['public_host'] }) }
             }
@@ -199,10 +199,7 @@ try {
                         if ((Test-Path -LiteralPath $kept.Disk) -and -not (Test-Path -LiteralPath $kept.Live)) { [System.IO.File]::Move($kept.Disk, $kept.Live) }
                     } else { Clear-DataTreeForKeep -Layout $layout -ServiceSid $serviceSid }
                 }
-                if ($result.code -ne 'kept') {
-                    Enable-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.StartTaskName -ErrorAction SilentlyContinue | Out-Null
-                    Start-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.StartTaskName -ErrorAction SilentlyContinue
-                }
+                if ($result.code -ne 'kept') { Restore-ServerAfterKeepFailure -Layout $layout -RunId $RunId }
             } else {
                 $job = Invoke-ExecJobAndWait -Layout $layout -Job 'unregister-distro' -RunId $RunId -TimeoutSeconds 300
                 Write-RunLog 'uninstall.data' 'INFO' ('unregister: {0}' -f (Get-DictValue $job 'code'))

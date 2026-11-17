@@ -40,6 +40,18 @@ function Invoke-ExecJobAndWait {
     return @{ code = 'job_timeout'; exit_code = 3; job = $Job }
 }
 
+function Restore-ServerAfterKeepFailure {
+    # A failed keep path after prepare-uninstall (TASK-0096 engine carry): prepare-uninstall
+    # stops the runner timer and Docker but not the containers, and the start task alone does
+    # not bring them back. The distribution is terminated (as the account, through Exec), so the
+    # next Linux start runs Docker and the stack again; then the start task is on and started.
+    param([Parameter(Mandatory = $true)][hashtable]$Layout, [Parameter(Mandatory = $true)][string]$RunId)
+    $job = Invoke-ExecJobAndWait -Layout $Layout -Job 'terminate-distro' -RunId $RunId -TimeoutSeconds 120
+    Write-RunLog 'uninstall.keep' 'WARN' ('keep path failed; distribution terminated: {0}' -f (Get-DictValue $job 'code'))
+    Enable-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.StartTaskName -ErrorAction SilentlyContinue | Out-Null
+    Start-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.StartTaskName -ErrorAction SilentlyContinue
+}
+
 function Get-EngineStatus {
     # The engine status (plan 9.3): safe codes only. instance_id is shape-checked and used only
     # to compare with kept.json (F3); no value becomes a path or an argument.

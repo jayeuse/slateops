@@ -7,6 +7,9 @@
 function New-UninstallLayout {
     param([Parameter(Mandatory = $true)][string]$Name)
     $root = New-TestDirectory $Name
+    # The protected-tree call creates the tree root only; its parent must exist (as
+    # C:\ProgramData does on Windows).
+    foreach ($parent in @('ProgramData', 'Data')) { [void][System.IO.Directory]::CreateDirectory((Join-Path $root $parent)) }
     $layout = New-SlateOpsLayout -StateRoot (Join-Path $root 'ProgramData\SlateOps') -DataRoot (Join-Path $root 'Data\SlateOps')
     $null = Initialize-ProtectedTree -Tree $layout.StateTree
     return $layout
@@ -124,20 +127,43 @@ Test-Case 'W9-1 Delete everything keeps the S91-2 parent rule, removes a link in
 }
 
 Test-Case 'W9-2 W9-3 kept data is read after its checks, a newer version blocks, and the disk comes back owned by Administrators' {
-    $layout = New-UninstallLayout 'w9-reinstall'
-    $null = Initialize-ProtectedTree -Tree $layout.DataTree
-    [System.IO.File]::WriteAllBytes((Join-Path $layout.Distro 'ext4.vhdx'), (New-Object byte[] 2048))
-    $info = @{ instance_id = 'abc123'; business_name = 'Riverside Learning Center'; public_host = 'office-pc.local' }
-    Assert-Equal 'kept' (Move-KeptDisk -Layout $layout -Info $info -Version '0.2.1' -Record).code
-    $newer = Get-KeptData -DataRoot $layout.DataRoot -SetupVersion '0.2.0'
-    Assert-Equal 'kept_newer 0.2.1' ('{0} {1}' -f $newer.code, $newer.values.version)
-    Assert-Equal 'kept' (Get-KeptData -DataRoot $layout.DataRoot -SetupVersion '0.2.1').code
-    Assert-Equal 'kept_older' (Get-KeptData -DataRoot $layout.DataRoot -SetupVersion '0.3.0').code
-    Assert-Equal $false (Test-KeptInstance -Layout $layout -Status @{ values = @{} }) 'a missing instance ID is a stop'
-    Assert-Equal $false (Test-KeptInstance -Layout $layout -Status @{ values = @{ instance_id = 'other' } })
-    Assert-Equal $true (Test-KeptInstance -Layout $layout -Status @{ values = @{ instance_id = 'abc123' } })
-    Assert-Equal 'restored' (Restore-KeptDisk -Layout $layout).code
-    $owner = (Get-Acl -LiteralPath (Join-Path $layout.Distro 'ext4.vhdx')).GetOwner([System.Security.Principal.SecurityIdentifier]).Value
-    Assert-Equal 'S-1-5-32-544' $owner
-    Assert-Equal 'none' (Get-KeptData -DataRoot (Join-Path $script:TestRoot 'no-such\SlateOps') -SetupVersion '0.2.1').code
+    # Kept data is read only under folders that pass the S91-2 parent rule; the runner's temp
+    # folders do not, so the data folder lies in an administrator-only system-drive folder.
+    $root = New-AdminOnlyFolder 'SlateOpsW9Kept'
+    try {
+        $layout = New-SlateOpsLayout -StateRoot (Join-Path $root 'ProgramData\SlateOps') -DataRoot (Join-Path $root 'SlateOps')
+        $null = Initialize-ProtectedTree -Tree $layout.DataTree
+        [System.IO.File]::WriteAllBytes((Join-Path $layout.Distro 'ext4.vhdx'), (New-Object byte[] 2048))
+        $info = @{ instance_id = 'abc123'; business_name = 'Riverside Learning Center'; public_host = 'office-pc.local' }
+        Assert-Equal 'kept' (Move-KeptDisk -Layout $layout -Info $info -Version '0.2.1' -Record).code
+        $newer = Get-KeptData -DataRoot $layout.DataRoot -SetupVersion '0.2.0'
+        Assert-Equal 'kept_newer 0.2.1' ('{0} {1}' -f $newer.code, $newer.values.version)
+        Assert-Equal 'kept' (Get-KeptData -DataRoot $layout.DataRoot -SetupVersion '0.2.1').code
+        Assert-Equal 'kept_older' (Get-KeptData -DataRoot $layout.DataRoot -SetupVersion '0.3.0').code
+        Assert-Equal $false (Test-KeptInstance -Layout $layout -Status @{ values = @{} }) 'a missing instance ID is a stop'
+        Assert-Equal $false (Test-KeptInstance -Layout $layout -Status @{ values = @{ instance_id = 'other' } })
+        Assert-Equal $true (Test-KeptInstance -Layout $layout -Status @{ values = @{ instance_id = 'abc123' } })
+        Assert-Equal 'restored' (Restore-KeptDisk -Layout $layout).code
+        $owner = (Get-Acl -LiteralPath (Join-Path $layout.Distro 'ext4.vhdx')).GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+        Assert-Equal 'S-1-5-32-544' $owner
+        Assert-Equal 'none' (Get-KeptData -DataRoot (Join-Path $script:TestRoot 'no-such\SlateOps') -SetupVersion '0.2.1').code
+    } finally { Remove-PathNoFollow -Path $root }
+}
+
+Test-Case 'W9-1 engine carry a failed keep path terminates the distribution before the start task runs again' {
+    # prepare-uninstall stops Docker; only a new Linux start brings it back (TASK-0096 engine
+    # carry). The Exec call is recorded here instead of running the task.
+    $script:W9Jobs = New-Object System.Collections.Generic.List[string]
+    function Invoke-ExecJobAndWait {
+        param([hashtable]$Layout, [string]$Job, [string]$RunId, [string]$InputText = '', [int]$TimeoutSeconds = 600)
+        $script:W9Jobs.Add($Job)
+        return @{ code = 'terminated'; exit_code = 0; job = $Job }
+    }
+    $layout = New-UninstallLayout 'w9-keep-restore'
+    $logDir = New-TestDirectory 'w9-keep-restore-log'
+    Start-RunLog -RunId 'uninstall-20261117T060000Z-w9rest' -Directory $logDir -NoConsole
+    Restore-ServerAfterKeepFailure -Layout $layout -RunId 'uninstall-20261117T060000Z-w9rest'
+    Assert-Equal @('terminate-distro') @($script:W9Jobs)
+    $log = [System.IO.File]::ReadAllText((Join-Path $logDir 'uninstall-20261117T060000Z-w9rest.log'))
+    Assert-True ($log -match 'distribution terminated: terminated') $log
 }
