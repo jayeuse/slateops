@@ -124,6 +124,35 @@ def test_retention_failure_keeps_verification_and_reconciliation_truth(tmp_path:
     assert oldest["run"]["expired_at"] is None and "1" * 64 in commands.snapshots
 
 
+@pytest.mark.parametrize(
+    ("present", "outcome", "failure_code"),
+    [
+        # A new repository after a target change holds no earlier point.
+        ({SNAPSHOT}, "succeeded", None),
+        # A later night: the newest point is here, an older point stays in the old repository.
+        ({SNAPSHOT, "2" * 64}, "succeeded", None),
+        # The protected newest point vanished while an older one remains here.
+        ({SNAPSHOT, "1" * 64}, "failed", "retention_failed"),
+        # The new point is not in this repository either.
+        (set(), "failed", "retention_failed"),
+    ],
+)
+def test_retention_after_a_repository_change_expires_nothing(
+    tmp_path: Path, present: set[str], outcome: str, failure_code: str | None
+) -> None:
+    config, state = runner_config(tmp_path)
+    commands = SyntheticCommands(config)
+    oldest = candidate(config, state, commands, "1" * 64, 90)
+    newest = candidate(config, state, commands, "2" * 64, 60)
+    commands.snapshots = set(present)
+    result = execute(config, state, commands)
+    assert commands.claim and commands.claim["run"]["failure_code"] == failure_code
+    assert result["state"] == outcome
+    assert oldest["run"]["expired_at"] is None and newest["run"]["expired_at"] is None
+    assert not any(item["op"] == "expire" for item in commands.operations)
+    assert not any(args[1] in {"forget", "prune"} for args, _ in commands.calls)
+
+
 def test_missing_protected_marker_never_deletes_older_snapshots(tmp_path: Path) -> None:
     config, state = runner_config(tmp_path)
     commands = SyntheticCommands(config)

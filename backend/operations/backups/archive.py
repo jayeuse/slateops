@@ -229,6 +229,11 @@ def retention(
     try:
         candidate_marker(host, newest)
         present = snapshot_ids(host)
+        if facts["snapshot_id"] in present and not any(
+            value.run.snapshot_id in present for value in owned
+        ):
+            # A new repository (backup target change) holds no earlier point to expire.
+            return
         if facts["snapshot_id"] not in present or newest.run.snapshot_id not in present:
             raise RunnerError("retention_failed")
         keep = {facts["snapshot_id"], newest.run.snapshot_id}
