@@ -1,0 +1,58 @@
+name: Windows installer
+
+# docs/plans/windows-installer.md W7: compile the Inno Setup project and run the tests of the
+# Windows-side scripts in Windows PowerShell 5.1. GitHub's Windows runners have no nested
+# virtualization, so nothing here starts WSL; the owner's install (W14) proves those parts.
+
+on:
+  pull_request:
+    paths:
+      - "infra/windows/installer/**"
+      - ".github/workflows/windows-installer.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/windows/installer/**"
+      - ".github/workflows/windows-installer.yml"
+
+concurrency:
+  group: windows-installer-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Install the pinned Inno Setup and compile the setup project
+        shell: powershell
+        env:
+          INNO_URL: https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe
+          INNO_SHA256: a549929319f9120716677c685535ca4671e4b937b5fdc87e2585f32d8eb30e8c
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $installer = Join-Path $env:RUNNER_TEMP 'innosetup-6.7.4.exe'
+          Invoke-WebRequest -Uri $env:INNO_URL -OutFile $installer -UseBasicParsing
+          $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $env:INNO_SHA256) { throw "Inno Setup SHA-256 $hash does not match the pin." }
+          $dir = Join-Path $env:RUNNER_TEMP 'innosetup'
+          $process = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=`"$dir`"") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "The Inno Setup install ended with exit code $($process.ExitCode)." }
+          Set-Location infra\windows\installer
+          & (Join-Path $dir 'ISCC.exe') /Qp /DAppVersion=0.0.0 SlateOpsSetup.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem -LiteralPath output | Format-Table -AutoSize Name, Length
+      - name: Run the Windows-side script tests in Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $PSVersionTable.PSVersion.ToString()
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File infra\windows\installer\tests\run-tests.ps1
+          exit $LASTEXITCODE
