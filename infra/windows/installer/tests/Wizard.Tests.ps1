@@ -245,3 +245,49 @@ Test-Case 'W8-1 C16 and C17 (plan F1) decide from the mDNS facts; an unreadable 
     Assert-Equal 'policy' (Get-Check C17 @{ mdns = $multicast }).code
     Assert-Equal 'advice cannot_read' ('{0} {1}' -f (Get-Check C17 @{}).class, (Get-Check C17 @{}).code)
 }
+
+# --- W8 correction 1 (TASK-0094): one test per fix that a Windows runner can show ---
+
+Test-Case 'W8 correction 2 the smtp-test discard goes through the pipe and reaches the engine; an input file stays refused' {
+    $layout = New-ExecLayout 'w8c-discard'
+    $id = '7b3e4c1a-5d9f-4e82-a043-9c6d1e2f8a57'
+    $discard = '{"run_id":"' + $script:RunId + '","mode":"discard"}'
+    $server = [TestPipeServer]::Start(('SlateOps-{0}' -f $id), @('S-1-5-32-544', $script:SelfSid), $discard, $false)
+    Set-ExecRequest -Layout $layout -RequestText (Get-RequestText -Job 'smtp-test' -RequestId $id) -InputBytes $null
+    $result = Invoke-ExecRequest -Layout $layout -WslPath $script:StandIn
+    try { $null = $server.Wait(5000) } catch { $null = $_ }
+    $sha = New-Object System.Security.Cryptography.SHA256Managed
+    $expected = -join ($sha.ComputeHash([System.Text.Encoding]::ASCII.GetBytes($discard)) | ForEach-Object { $_.ToString('x2') })
+    Assert-Equal 'ok' $result.code
+    Assert-Equal ([long]$discard.Length) $result.pipe_input_bytes
+    $output = Read-EngineOutput -Layout $layout -Result $result
+    Assert-Equal $expected ([string]$output['sha256']) 'the engine read exactly the discard request'
+    Assert-Equal 'input_on_disk' (Test-ExecRequest -RequestText (Get-RequestText -Job 'smtp-test' -RequestId $id) -InputBytes ([System.Text.Encoding]::ASCII.GetBytes($discard))).code
+}
+
+Test-Case 'W8 correction 4 a resume after Continue later runs the background preparation again unless it finished' {
+    Assert-Equal $false (Get-SetupEntry -Progress @{ stage = 'continue_later' }).background_done
+    Assert-Equal $true (Get-SetupEntry -Progress @{ stage = 'continue_later'; background_done = $true }).background_done
+    Assert-Equal 'S08' (Get-SetupEntry -Progress @{ stage = 'continue_later' }).next
+}
+
+Test-Case 'W8 correction 5 a task that could not sign in the account is named by its last result' {
+    Assert-Equal $true (Test-TaskLogonFailure -LastResult 2147943727) '0x8007052F'
+    Assert-Equal $true (Test-TaskLogonFailure -LastResult 2147943785) '0x80070569'
+    Assert-Equal $true (Test-TaskLogonFailure -LastResult -2147023569) '0x8007052F as a signed value'
+    Assert-Equal $false (Test-TaskLogonFailure -LastResult 267011) 'SCHED_S_TASK_HAS_NOT_RUN'
+    Assert-Equal $false (Test-TaskLogonFailure -LastResult 0)
+}
+
+Test-Case 'W8 correction 7 Save report before S07 holds the helper logs and names a state folder that does not exist yet' {
+    $parent = New-TestDirectory 'w8c-early-report'
+    $layout = New-SlateOpsLayout -StateRoot (Join-Path $parent 'SlateOps')
+    $early = New-TestDirectory 'w8c-early-report-logs'
+    [System.IO.File]::WriteAllText((Join-Path $early 'install-20261117T032000Z-abc123.log'), 'check.c05 INFO stop too_small')
+    $staging = Join-Path $parent 'staging'
+    $null = New-ReportStaging -Layout $layout -StagingDir $staging -RunId 'report-20261117T040000Z-early1' -StateAbsent -HelperLogs $early -Facts @{ note = 'x' }
+    Assert-True (Test-Path -LiteralPath (Join-Path $staging 'setup-early__install-20261117T032000Z-abc123.log')) 'the early helper log is in the report'
+    $summary = [System.IO.File]::ReadAllText((Join-Path $staging 'report.txt'))
+    Assert-True ($summary.Contains('C:\ProgramData\SlateOps (not created yet)')) $summary
+    Assert-True (-not $summary.Contains('failed the safety check')) $summary
+}

@@ -26,7 +26,7 @@ word_stop=Not suitable
 word_fixed=Fixed
 word_removed=Removed
 report_saved=Report saved to your desktop: %1.
-report_saving=Saving the report… (about 1 minute)
+report_saving=Saving the report… (up to 3 minutes)
 
 ; ---- S01 Welcome
 s01_title=Set up Slate Operations on this PC
@@ -64,6 +64,7 @@ s03_what=What you can do:
 s03_home_todo=You can upgrade this PC to Windows 11 Pro in Settings → System → Activation. Microsoft charges for the upgrade. Or use another PC.
 s03_memory_todo=A PC supplier can add memory to many PCs. Or use another PC.
 s03_win10_todo=Check in Windows Update whether this PC can get Windows 11. Or use another PC.
+s03_edition_todo=Ask your PC supplier whether this PC can get Windows 11 Pro. Or use another PC.
 
 ; ---- Check items (spec 5.3); name, then the message by code
 c01_name=Windows version
@@ -72,10 +73,10 @@ c01_windows_10=This PC has Windows 10. Slate Operations needs Windows 11.
 c01_btn=Open Windows Update
 c02_name=Windows edition
 c02_home=This PC has Windows 11 Home. Slate Operations needs Windows 11 Pro, Enterprise or Education.
-c02_edition_not_supported=This PC's Windows edition is not supported. Slate Operations needs Windows 11 Pro, Enterprise or Education.
+c02_edition_not_supported=This PC has an edition of Windows that Slate Operations cannot use. Slate Operations needs Windows 11 Pro, Enterprise or Education.
 c03_name=Processor
 c03_arm=This PC has an Arm processor. Slate Operations needs an Intel or AMD processor.
-c03_not_supported=This PC's processor is not supported. Slate Operations needs an Intel or AMD processor.
+c03_not_supported=This PC has a processor that Slate Operations cannot use. Slate Operations needs a 64-bit Intel or AMD processor.
 c04_name=Virtualization
 c04_off=Virtualization is off. Turn it on in this PC's startup settings (BIOS). Your PC supplier can help.
 c04_no_slat=This PC's processor is too old for Slate Operations.
@@ -84,7 +85,8 @@ c04_btn_how=Show me how
 c04_btn_firmware=Restart to startup settings
 c04_how_title=Turn on virtualization
 c04_how_caution=Caution: have your BitLocker recovery key ready. A change in the startup settings can make Windows ask for it.
-c04_how_text=Virtualization is a processor setting that lets this PC run the server part.%n1. Restart this PC and open its startup settings (BIOS). The key to press shows on the screen when the PC starts, often F2, F10, F12 or Delete. On a %1 PC, your PC supplier can tell you the key.%n2. Find the setting for virtualization (it can be called Intel Virtualization Technology, VT-x, AMD-V or SVM) and turn it on.%n3. Save and exit. Setup opens again after the restart and checks again.
+c04_how_text=Virtualization is a processor setting that lets this PC run the server part.%n%n1. Save your work and close your other programs.%n2. Select Restart to startup settings, if setup shows it. Otherwise, restart this PC and press the startup settings key while the maker's logo shows. The key shows on the screen, often F2, F10, F12, Esc or Delete.%n3. Find the virtualization setting and turn it on. Its name can be Intel Virtualization Technology, Intel VT-x, AMD-V or SVM Mode.%n4. Save the settings and exit. Windows starts again.%n5. Sign in. If setup does not open by itself, open the setup file again.%n%nYour PC supplier can help.
+c04_restart_confirm=Save your work first. This PC restarts and opens its startup settings (BIOS). Turn on virtualization there, then save and exit. Setup opens again after you sign in.
 c05_name=Memory
 c05_too_small=This PC has %1 GB of memory. Slate Operations needs a PC with 16 GB.
 c05_reserved=Windows can use %2 GB of the %1 GB of memory in this PC. Slate Operations needs 12 GB that Windows can use.
@@ -113,8 +115,7 @@ c14_name=Web connection
 c14_in_use=Another program on this PC uses the web connection that Slate Operations needs: %1. Stop or uninstall it, then select Check again.
 c15_name=Address
 c15_invalid_name=This PC's name cannot be used as an address. Rename this PC with letters, numbers and hyphens only.
-; Copy gap (W7 code name_mismatch has no spec copy yet; Product Designer):
-c15_name_mismatch=This PC's name is longer than 15 characters, or differs from its Windows network name. Rename this PC with a short name of letters, numbers and hyphens.
+c15_name_mismatch=Some Windows screens show this PC under a different name than its address, %1. For one name everywhere, rename this PC with 15 or fewer letters, numbers and hyphens. Do it before setup, restart this PC, then run setup again.
 c15_btn=Open About settings
 c16_name=Address
 c16_name_in_use=Another device on this network already uses the address %1. Rename this PC, then select Check again.
@@ -152,7 +153,7 @@ c29_form_title=Remove the parts of the earlier test?
 c29_form_text=Setup removes the earlier test's server part and its data, its hidden account, its start tasks and its firewall rules. The test's log files stay. Your other programs and files do not change. If the normal removal does not work, setup stops the Windows feature that runs the server part for a moment, for every user of this PC.
 c30_name=Address
 c30_factory_name=The address of Slate Operations will be %1, from this PC's name. It cannot change after setup without every phone and PC trusting Slate Operations again. If you want a short address, rename this PC in Windows Settings before setup, restart it, then run setup again.
-cannot_read=Setup cannot read %1. It checks it again later.
+cannot_read=Setup cannot check this on this PC. You can continue. If setup stops later, select Save report.
 
 ; ---- S04 License agreement
 s04_subtitle=Read the license, then select I accept.
@@ -216,7 +217,7 @@ s08_err_name=Enter the name of your organization.
 s08_err_name_long=Use 100 characters or fewer.
 s08_err_email=Enter an email address, for example maria@example.com.
 s08_err_username=Use 3 to 100 letters, numbers, - or _.
-s08_err_slug=Use letters, numbers and hyphens.
+s08_err_slug=Use only lowercase letters, numbers and single hyphens, for example riverside-learning.
 
 ; ---- S09 Email for Slate Operations
 s09_title=Email for Slate Operations
@@ -263,7 +264,7 @@ s09_err_no_tls=This email server does not offer a secure connection. Slate Opera
 s09_err_certificate=The secure connection to %1 failed. Check the server name, and check this PC's date and time.
 s09_err_sender=The email provider does not let this account send as %1. Use the address of the account.
 s09_err_recipient=The email provider refused to send to %1. Check your email address on the previous page.
-s09_err_other=Setup could not send the test email. Check the values and try again.
+s09_err_other=Setup could not send the test email. Check each field, then select Send test email again.
 s09_err_fields=Fill in every field of the email account.
 
 ; ---- S10 Backups
@@ -322,10 +323,14 @@ s12_now_word=Now
 s12_slow=This step takes longer than expected.
 s12_wait=&Wait
 s12_not_ready=Slate Operations did not start.
-s12_disk_full=The data drive is full. Free some space on it, then select Try again.
+s12_disk_full=The server part of Slate Operations has no free space left. Select Save report and send the file to Slate Operations support.
 s12_backup_failed=Slate Operations cannot save backups to %1.
 s12_firewall=Setup could not set up Windows Firewall for Slate Operations.
 s12_https=Slate Operations is installed, but this PC cannot open it at %1.
+; Spec 7.5 (catalog rows "Antivirus or Smart App Control blocks a file" and "Service account cannot sign in").
+av_blocked=A security program on this PC blocked part of Slate Operations setup. Allow the folder C:\Program Files\Slate Operations in the security program, then select Try again.
+service_logon_failed=Windows did not let Slate Operations start. A security policy on this PC can cause this. Select Repair. If it happens again, ask the person who manages this PC.
+s12_choose_drive=Choose another drive
 
 ; ---- S13 Setup stopped (layout shown in place)
 s13_title=Setup stopped
@@ -352,9 +357,10 @@ s14_key_failed=Setup could not make the recovery key.
 ; ---- S15 Slate Operations is ready
 s15_title=Slate Operations is ready
 s15_step1=1. Set your password. Open the email from Slate Operations sent to %1 and select the link. It can take a few minutes; look in Spam too.%nNo email after 10 minutes? Open Slate Operations settings in the Start menu and select Send my invitation again.
+s15_step1_no_address=1. Set your password. Open the email from Slate Operations and select the link. It can take a few minutes; look in Spam too.%nNo email after 10 minutes? Open Slate Operations settings in the Start menu and select Send my invitation again.
 s15_step2=2. Open Slate Operations on this PC.
 s15_open=&Open Slate Operations
-s15_step3=3. Connect phones and other PCs. On the same Wi-Fi as this PC, open this address on the phone. It shows the one-time steps that let the phone open Slate Operations.
+s15_step3=3. Connect phones and other PCs. Connect the phone to the same Wi-Fi as this PC. In the phone's browser, type the address below exactly, with http://. The page shows the one-time steps that let the phone open Slate Operations.
 s15_security=Security code: %1. The phone page shows the same code.
 s15_desk=You use Desk, the free edition. To add a license later, open Manage → Updates & licensing in Slate Operations.
 s15_starts=Slate Operations starts by itself when this PC starts. For settings and help, open Slate Operations settings in the Start menu.
@@ -372,6 +378,7 @@ m01_title=Slate Operations on this PC
 m01_subtitle=Version %1 · %2
 m01_invite=Send my invitation again
 m01_invite_hint=Use this only before you set your password.
+m01_sending=Sending your invitation… (about 1 minute)
 m01_report_hint=A file for Slate Operations support.
 m01_sent=Slate Operations sent your invitation again. Look in your inbox and in Spam.
 m01_already_active=Your account is already set up. Sign in with your password. If you forgot it, reset it from the sign-in page.

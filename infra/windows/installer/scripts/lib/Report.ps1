@@ -135,6 +135,9 @@ function New-ReportStaging {
         [string]$LinuxBundle = '',
         [string]$SetupVersion = '',
         [switch]$StateTrusted,
+        # W8 correction 7: before S07 there is no state folder; the helper logs in its own folder.
+        [switch]$StateAbsent,
+        [string]$HelperLogs = '',
         [hashtable]$Facts = $null
     )
     [void][System.IO.Directory]::CreateDirectory($StagingDir)
@@ -152,8 +155,17 @@ function New-ReportStaging {
                 if (Add-ReportFile -Source $file.path -StagingDir $StagingDir -Name $name -LeftOut $leftOut -UserNames $users) { $added++ }
             }
         }
+    } elseif ($StateAbsent) {
+        $leftOut.Add('C:\ProgramData\SlateOps (not created yet)')
     } else {
         $leftOut.Add('C:\ProgramData\SlateOps (the folder failed the safety check; nothing was read from it)')
+    }
+    if ($HelperLogs -and (Test-Path -LiteralPath $HelperLogs)) {
+        foreach ($file in (Get-ReportFolderFiles -Root $HelperLogs)) {
+            $name = ConvertTo-ReportName -Root $HelperLogs -Path $file.path -Prefix 'setup-early'
+            if ($file.link) { $leftOut.Add(('{0} (a link)' -f $name)); continue }
+            if (Add-ReportFile -Source $file.path -StagingDir $StagingDir -Name $name -LeftOut $leftOut -UserNames $users) { $added++ }
+        }
     }
     if ($InnoLog -and (Test-Path -LiteralPath $InnoLog -PathType Leaf)) {
         if (Add-ReportFile -Source $InnoLog -StagingDir $StagingDir -Name 'setup-program.log' -LeftOut $leftOut -UserNames $users) { $added++ }

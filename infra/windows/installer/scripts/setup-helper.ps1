@@ -35,7 +35,8 @@ param(
     [switch]$Firmware,
     [switch]$Lid,
     [switch]$Cancel,
-    [switch]$EmailDiscarded
+    [switch]$EmailDiscarded,
+    [switch]$BackgroundDone
 )
 
 # S91-6: modules load only from Windows PowerShell's own folder, never from a folder in the
@@ -158,6 +159,7 @@ try {
             if ($ready.code -ne 'ready') { $result = $ready; break }
             $marks = @{}
             if ($EmailDiscarded) { $marks.email_discarded = $true }
+            if ($BackgroundDone) { $marks.background_done = $true }
             Save-SetupProgress -Layout $layout -Stage $Stage -RunId $RunId -Marks $marks
             if (@('check_restart', 'feature_restart') -contains $Stage) { $result = Register-SetupResume -SetupPath $SetupPath }
             else { $result = New-StepResult -Code 'saved' -MessageKey 'setup.progress.saved' }
@@ -207,7 +209,9 @@ try {
             $value = Get-ExecResult -Layout $layout -RequestId $RequestId
             if ($null -eq $value) {
                 $info = Get-ScheduledTaskInfo -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.ExecTaskName
-                $result = New-StepResult -Code 'waiting' -MessageKey 'exec.waiting' -Values @{ last_task_result = [long]$info.LastTaskResult }
+                # W8 correction 5: the wizard asks once, at its time limit; a sign-in failure of the
+                # account is named (spec 7.5).
+                $result = New-StepResult -Code 'waiting' -MessageKey 'exec.waiting' -Values @{ last_task_result = [long]$info.LastTaskResult; logon_failed = (Test-TaskLogonFailure -LastResult ([long]$info.LastTaskResult)) }
             } else {
                 $values = @{ exec = $value }
                 if (((Get-DictValue $value 'job') -eq 'log-bundle') -and ((Get-DictValue $value 'exit_code') -eq 0)) {
@@ -270,7 +274,8 @@ try {
             $trusted = ((Test-StateFolder -Layout $layout -ServiceSid $serviceSid).code -eq 'safe')
             $version = ''
             try { $version = (Read-HelperVersion).version } catch { $version = '' }
-            $made = New-ReportStaging -Layout $layout -StagingDir $staging -RunId $RunId -InnoLog $innoLog -LinuxBundle $bundle -SetupVersion $version -StateTrusted:$trusted
+            $absent = ((Test-StateFolder -Layout $layout -ServiceSid $serviceSid).code -eq 'absent')
+            $made = New-ReportStaging -Layout $layout -StagingDir $staging -RunId $RunId -InnoLog $innoLog -LinuxBundle $bundle -SetupVersion $version -StateTrusted:$trusted -StateAbsent:$absent -HelperLogs (Join-Path $helperRoot 'logs')
             $result = New-StepResult -Code 'collected' -MessageKey 'report.collected' -Values $made
         }
         'report-zip' {

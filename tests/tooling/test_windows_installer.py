@@ -242,6 +242,50 @@ class WizardCopyTest(unittest.TestCase):
                 self.assertNotRegex(line, r"MailPassword|KeyText|PipeFrame|PipeOutput|JobText")
 
 
+def routine(code: str, head: str) -> str:
+    """The text of one Pascal routine, from its heading to the next routine."""
+    start = code.index(head)
+    following = re.search(r"(?m)^(procedure|function) ", code[start + len(head) :])
+    return code[start : start + len(head) + (following.start() if following else len(code))]
+
+
+class WizardJobRunnerTest(unittest.TestCase):
+    """W8 correction 1 (TASK-0094): the secret channel and Save report in the job runner."""
+
+    def setUp(self) -> None:
+        self.code = WIZARD.read_text(encoding="ascii")
+
+    def test_b1_the_job_reads_its_pipe_output_by_a_flag_that_the_pipe_poller_never_clears(
+        self,
+    ) -> None:
+        # Code review B-1: PollPipe clears PipeExpectOutput when the service closes its end, so
+        # a job that keyed its result on it lost the install result and the recovery key.
+        poll_job = routine(self.code, "procedure PollJob;")
+        self.assertRegex(
+            poll_job,
+            r"if JobPipeOut then\s+begin\s+\{[^}]*\}\s+PollPipe;\s+JobText := PipeResult;",
+        )
+        self.assertNotIn("JobPipeOut :=", routine(self.code, "procedure PollPipe;"))
+
+    def test_f1_no_blocking_job_names_a_pipe_input_job(self) -> None:
+        # Security F-1: RunJobBlocking writes an input file, which Exec refuses for a pipe-input
+        # job (input_on_disk); the smtp-test discard must go through the pipe.
+        exec_source = (INSTALLER / "scripts/lib/Exec.ps1").read_text(encoding="ascii")
+        listed = re.search(r"PipeInputJobs\s*=\s*@\(([^)]*)\)", exec_source)
+        self.assertIsNotNone(listed)
+        pipe_input = set(re.findall(r"'([a-z-]+)'", listed.group(1)))
+        self.assertIn("smtp-test", pipe_input)
+        blocking = re.findall(r"RunJobBlocking\('([a-z-]+)'", self.code)
+        self.assertTrue(blocking)
+        self.assertEqual(sorted(set(blocking) & pipe_input), [])
+
+    def test_b3_save_report_works_while_a_job_runs(self) -> None:
+        # QA B1, code B-3: in the S12 slow state a job runs; Save report must still save.
+        save = routine(self.code, "procedure SaveReport(Sender: TObject);\nvar")
+        self.assertNotRegex(save, r"if JobRunning then\s+Exit;")
+        self.assertIn("not JobRunning then\n    RunJobBlocking('log-bundle'", save)
+
+
 class InstallerReleaseJobTest(unittest.TestCase):
     """W8-7 and the ISCC carry (TASK-0091): the release builds one setup file below 2 GiB."""
 

@@ -107,7 +107,8 @@ Test-Case 'AC-4 .wslconfig holds the kit values, mirrored networking and the dis
 
 Test-Case 'AC-4 the disk limit is 90 percent of the free space, between 16 and 1024 GB' {
     Assert-Equal 90 (Get-VhdSizeGB -FreeBytes ([long]100 * 1GB))
-    Assert-Equal 16 (Get-VhdSizeGB -FreeBytes ([long]10 * 1GB))
+    # Parent decision 7 (TASK-0094): the engine accepts data_vhd_max_gb from 25.
+    Assert-Equal 25 (Get-VhdSizeGB -FreeBytes ([long]10 * 1GB))
     Assert-Equal 1024 (Get-VhdSizeGB -FreeBytes ([long]4000 * 1GB))
 }
 

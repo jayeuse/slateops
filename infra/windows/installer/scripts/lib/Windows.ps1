@@ -35,10 +35,11 @@ function Initialize-StateFolder {
 
 function Get-VhdSizeGB {
     # .wslconfig defaultVhdSize from the free space of the data drive (plan 4.3): 90 percent of
-    # the free space, at least 16 GB and at most 1024 GB (the WSL default is 1 TB). Proposed.
+    # the free space, at least 25 GB (the engine's data_vhd_max_gb minimum; parent decision 7,
+    # TASK-0094) and at most 1024 GB (the WSL default is 1 TB). Proposed.
     param([Parameter(Mandatory = $true)][long]$FreeBytes)
     $size = [long][math]::Floor(([double]$FreeBytes * 0.9) / 1GB)
-    if ($size -lt 16) { return 16 }
+    if ($size -lt 25) { return 25 }
     if ($size -gt 1024) { return 1024 }
     return [int]$size
 }
@@ -220,7 +221,8 @@ function Get-SetupEntry {
     switch ([string](Get-DictValue $Progress 'stage')) {
         'check_restart'    { return @{ screen = 'S02'; next = ''; welcome_back = $true } }
         'feature_restart'  { return @{ screen = 'S06'; next = 'S07' } }
-        'continue_later'   { return @{ screen = 'S06'; next = 'S08' } }
+        # W8 correction 4: the background preparation runs again on resume unless it finished.
+        'continue_later'   { return @{ screen = 'S06'; next = 'S08'; background_done = ((Get-DictValue $Progress 'background_done') -eq $true) } }
         'install_started'  {
             if ((Get-DictValue $Progress 'email_discarded') -eq $true) { return @{ screen = 'S06'; next = 'S09' } }
             return @{ screen = 'S06'; next = 'S12' }

@@ -984,6 +984,15 @@ function Submit-ExecRequest {
     return $requestId
 }
 
+function Test-TaskLogonFailure {
+    # Plan 10.7 "The service account cannot sign in": the task's last result is 0x8007052F
+    # (logon failure: user name or password) or 0x80070569 (logon type not granted).
+    param([long]$LastResult)
+    # Decimal: PowerShell reads 0x8007052F as a negative Int32. The mask turns either form of
+    # the task result into the unsigned value.
+    return @([long]2147943727, [long]2147943785) -contains ($LastResult -band 4294967295L)
+}
+
 function Get-ExecResult {
     # Returns the result of the request, or $null while it has none. The service account writes
     # svc-out; this side reads it as data and never follows a link there.

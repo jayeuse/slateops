@@ -37,6 +37,12 @@ const
   PIPE_NOWAIT = 1;
   PIPE_REJECT_REMOTE_CLIENTS = 8;
   INVALID_HANDLE = $FFFFFFFF;
+  { W8 correction 5: every helper wait has a time limit; a helper that never answers is most
+    often a security program that blocked it (spec 7.5). }
+  HELPER_LIMIT_MS = 600000;
+  CHECK_LIMIT_MS = 300000;
+  DATA_LIMIT_MS = 1800000;
+  SUBMIT_LIMIT_MS = 120000;
   ERROR_BROKEN_PIPE = 109;
   ERROR_NO_DATA = 232;
   ERROR_PIPE_CONNECTED = 535;
@@ -172,6 +178,7 @@ var
   InstallStep: Integer;
   InstallStarted, InstallDone, InstallFailed, InstallSlow: Boolean;
   InstallFailText, InstallFailStage, InstallOut, PemText, SecurityCode: String;
+  InstallNoRetry, InstallBackupFailed: Boolean;
   InstallStartedAt: Cardinal;
 
   { S14 }
@@ -191,6 +198,12 @@ var
   PipeHandle: Longword;
   PipeFrame, PipeOutput: AnsiString;
   PipeConnected, PipeExpectOutput: Boolean;
+  { W8 correction 1: the job's own flag; PollPipe clears PipeExpectOutput when the service closes. }
+  JobPipeOut: Boolean;
+  FailureStatus: TNewStaticText;
+  CheckStartedAt, FixStartedAt, PrepStartedAt, BgStartedAt, InstallOutAt, DataStartedAt: Cardinal;
+  BgResume, MailShowReport: Boolean;
+  MailReportButton: TNewButton;
 
   { Save report }
   ReportLine, ReportPath: String;
@@ -198,6 +211,7 @@ var
 procedure RenderPage(Index: Integer); forward;
 procedure SaveReport(Sender: TObject); forward;
 procedure StartBackground; forward;
+function BgDone: Boolean; forward;
 
 { ------------------------------------------------------------------------------------------- }
 { W7 plumbing: run ID, host name, helper start and result read                                  }
@@ -320,6 +334,13 @@ function NewOut(Name: String): String;
 begin
   OutSeq := OutSeq + 1;
   Result := ExpandConstant('{tmp}\') + Name + '-' + IntToStr(OutSeq) + '.json';
+end;
+
+{ Runs a short helper action and waits; returns its result file. }
+function NewOutRun(Action, Extra: String): String;
+begin
+  Result := NewOut(Action);
+  RunHelper(Action, RunId, Result, Extra);
 end;
 
 function ReadText(FileName: String): String;
@@ -501,17 +522,26 @@ begin
   CurY := CurY + Result.Height + ScaleY(6);
 end;
 
-{ A sentence that takes focus when it appears (spec 9 item 2): a read-only, borderless edit. }
-function AddVerdict(S: String): TNewEdit;
+{ A sentence that takes focus when it appears (spec 9 item 2): a read-only, borderless memo that
+  wraps (design B6). Its height comes from a bold static text of the same width. }
+function AddVerdict(S: String): TNewMemo;
+var
+  Measure: TNewStaticText;
+  Height: Integer;
 begin
-  Result := TNewEdit.Create(WizardForm);
+  Measure := AddTextTo(Cur, CurY, S, True);
+  Height := Measure.Height + ScaleY(4);
+  Measure.Free;
+  Result := TNewMemo.Create(WizardForm);
   Result.Parent := Cur;
   Result.ReadOnly := True;
   Result.BorderStyle := bsNone;
+  Result.WordWrap := True;
+  Result.ScrollBars := ssNone;
   Result.ParentBackground := True;
   Result.Color := WizardForm.Color;
   Result.Font.Style := [fsBold];
-  Result.SetBounds(0, CurY, Cur.Width, ScaleY(18));
+  Result.SetBounds(0, CurY, Cur.Width, Height);
   Result.Text := S;
   CurY := CurY + Result.Height + ScaleY(6);
 end;
@@ -746,6 +776,7 @@ begin
   JobLimitMs := LimitMinutes * 60000;
   Extra := '-Job ' + Name + ' -RequestId ' + JobRequestId;
   PipeExpectOutput := PipeOut;
+  JobPipeOut := PipeOut;
   if PipeIn or PipeOut then
   begin
     if not OpenPipe(JobRequestId) then
@@ -776,6 +807,20 @@ begin
   end;
 end;
 
+{ The code of a job that gave no result in its time limit: the task's last result, read once;
+  a sign-in failure of the account is service_logon_failed (plan 10.7, spec 7.5). }
+function TaskTimeoutCode: String;
+var
+  OutFile: String;
+begin
+  OutFile := NewOut('job-result');
+  RunHelper('job-result', RunId, OutFile, '-RequestId ' + JobRequestId);
+  if Pos('"logon_failed":true', ReadText(OutFile)) > 0 then
+    Result := 'service_logon_failed'
+  else
+    Result := 'job_timeout';
+end;
+
 { One step of the runner, from the timer. Done when JobState = JOB_DONE. }
 procedure PollJob;
 var
@@ -787,6 +832,8 @@ begin
   if JobState = JOB_SUBMIT then
   begin
     Code := ReadResultCode(JobOut);
+    if (Code = '') and (Elapsed(JobStartedAt) > SUBMIT_LIMIT_MS) then
+      Code := 'helper_timeout';
     if Code = '' then
       Exit;
     if Code <> 'started' then
@@ -804,6 +851,14 @@ begin
     begin
       { Cheap check first: the result file names this request (it holds no secret). }
       Text := ReadText(ExecResultFile);
+      if (Pos('"request_id":"' + JobRequestId + '"', Text) = 0) and (JobPurpose <> 'install') and (Elapsed(JobStartedAt) > JobLimitMs) then
+      begin
+        { W8 correction 5: at the limit, the task's last result once (spec 7.5). }
+        JobCode := TaskTimeoutCode;
+        JobState := JOB_DONE;
+        ClosePipe;
+        Exit;
+      end;
       if Pos('"request_id":"' + JobRequestId + '"', Text) = 0 then
         Exit;
       JobResultOut := NewOut('job-result');
@@ -821,7 +876,7 @@ begin
     Text := ReadText(JobResultOut);
     JobCode := JsonValueFrom(Text, 'code', Pos('"exec":', Text));
     JobExit := StrToIntDef(JsonLiteral(Copy(Text, Pos('"exec":', Text), Length(Text)), 'exit_code'), -1);
-    if PipeExpectOutput then
+    if JobPipeOut then
     begin
       { The engine wrote its output frame before the result file. }
       PollPipe;
@@ -875,6 +930,63 @@ begin
   end;
 end;
 
+{ A pipe job waited for here (W8 correction 2): the smtp-test discard goes through the pipe like
+  every smtp-test, so Exec's input_on_disk refusal stays. Returns the job's code. }
+function RunPipeJobBlocking(Name, InputJson: String; LimitSeconds: Integer): String;
+var
+  Start: Cardinal;
+begin
+  Start := GetTickCount;
+  while JobRunning and (Elapsed(Start) < 120000) do
+  begin
+    Sleep(500);
+    PollJob;
+  end;
+  if JobRunning then
+  begin
+    Result := 'exec_busy';
+    Exit;
+  end;
+  StartJob(Name, InputJson, 'blocking', True, False, (LimitSeconds div 60) + 1);
+  Start := GetTickCount;
+  while JobRunning and (Elapsed(Start) < Cardinal(LimitSeconds * 1000)) do
+  begin
+    Sleep(500);
+    PollJob;
+  end;
+  if JobRunning then
+    Result := 'job_timeout'
+  else
+    Result := JobCode;
+  JobState := JOB_IDLE;
+  ClosePipe;
+end;
+
+{ "Keep it and continue later" (spec 4.5) and D2: the staged email settings go through the pipe
+  (smtp-test discard); the mark email_discarded is saved only when the engine confirms it. The
+  install_started stage is kept only once the install job ran (correction 6). }
+procedure SaveContinueLater;
+var
+  OutFile, Extra: String;
+  Discarded: Boolean;
+begin
+  Discarded := RunPipeJobBlocking('smtp-test', '{"run_id":"' + RunId + '","mode":"discard"}', 120) = 'smtp_discarded';
+  OutFile := NewOut('save');
+  if (InstallStep >= 2) or (EntryNext = 'S12') then
+  begin
+    Extra := '-Stage install_started';
+    if Discarded then
+      Extra := Extra + ' -EmailDiscarded';
+  end
+  else
+  begin
+    Extra := '-Stage continue_later';
+    if BgDone then
+      Extra := Extra + ' -BackgroundDone';
+  end;
+  RunHelper('save-progress', RunId, OutFile, Extra);
+end;
+
 { ------------------------------------------------------------------------------------------- }
 { Save report (plan 10.6; DEC-0033)                                                             }
 { ------------------------------------------------------------------------------------------- }
@@ -911,14 +1023,14 @@ procedure SaveReport(Sender: TObject);
 var
   ReportRun, OutFile, InnoCopy: String;
 begin
-  if JobRunning then
-    Exit;
+  { W8 correction 3: Save report works while a job runs; only the Linux part waits for Exec,
+    so it is left out then and report.txt says the Linux part was not reachable. }
   ReportRun := NewRunId('report');
   ReportLine := CM('report_saving');
   WizardForm.BeveledLabel.Caption := ' ' + ReportLine;
   WizardForm.Refresh;
   { The Linux part, when the server part answers (plan 10.6 item 1). }
-  if ServiceSid <> '' then
+  if (ServiceSid <> '') and not JobRunning then
     RunJobBlocking('log-bundle', '{"run_id":"' + ReportRun + '"}', ReportRun, 120);
   InnoCopy := ExpandConstant('{tmp}\setup-program.log');
   if ExpandConstant('{log}') <> '' then
@@ -934,6 +1046,9 @@ begin
   else
     ReportLine := '';
   WizardForm.BeveledLabel.Caption := '';
+  { Design B2: the result line also shows in the modal S13 form. }
+  if FailureStatus <> nil then
+    FailureStatus.Caption := ReportLine;
   RenderPage(-1);
 end;
 
@@ -969,7 +1084,7 @@ end;
 
 procedure AddFailure(Stage, WhatHappened: String; TryAgain: Boolean);
 var
-  Verdict: TNewEdit;
+  Verdict: TNewMemo;
 begin
   WizardForm.PageNameLabel.Caption := CM('s13_title');
   WizardForm.PageDescriptionLabel.Caption := Stage;
@@ -1011,6 +1126,10 @@ begin
       Text.Left := ScaleX(10);
       Text.Width := Form.ClientWidth - ScaleX(20);
     end;
+    { Design B2: SaveReport writes its result line here. }
+    FailureStatus := AddTextTo(Form, ScaleY(140), '', False);
+    FailureStatus.Left := ScaleX(10);
+    FailureStatus.Width := Form.ClientWidth - ScaleX(20);
     Again := TNewButton.Create(Form);
     Again.Parent := Form;
     Again.Caption := CM('btn_try_again');
@@ -1033,6 +1152,7 @@ begin
     Result := Form.ShowModal = mrRetry;
   finally
     ModalOpen := False;
+    FailureStatus := nil;
     Form.Free;
   end;
 end;
@@ -1097,7 +1217,7 @@ begin
   else if Item.Id = 'C07' then V := JsonLiteral(Item.Raw, 'free_gb')
   else if Item.Id = 'C13' then V := JsonLiteral(Item.Raw, 'offset_minutes')
   else if Item.Id = 'C14' then V := JsonFirstItem(Item.Raw, 'programs')
-  else if (Item.Id = 'C16') or (Item.Id = 'C30') then V := JsonValue(Item.Raw, 'address')
+  else if (Item.Id = 'C15') or (Item.Id = 'C16') or (Item.Id = 'C30') then V := JsonValue(Item.Raw, 'address')
   else if Item.Id = 'C20' then V := JsonFirstItem(Item.Raw, 'products')
   else if Item.Id = 'C24' then V := JsonValue(Item.Raw, 'letter');
   if Item.Id = 'C05' then
@@ -1122,7 +1242,20 @@ begin
   CheckRunning := True;
   CheckDone := False;
   CheckFor := ForPage;
+  CheckStartedAt := GetTickCount;
+  if CheckVerdict = 'helper_timeout' then
+    CheckVerdict := '';
   StartHelper(Action, RunId, CheckOut, '');
+end;
+
+{ Design B1: S06 and S11 run the recheck again, never the full check (the server part exists,
+  so the full check would stop on C29). }
+procedure CheckAgainFor;
+begin
+  if (CheckFor = 'S06') or (CheckFor = 'S11') then
+    StartCheck('recheck', CheckFor)
+  else
+    StartCheck('check', 'S02');
 end;
 
 function CountClass(Cls: String): Integer;
@@ -1139,7 +1272,7 @@ end;
 procedure FixDone;
 begin
   FixRunning := False;
-  StartCheck('check', 'S02');
+  CheckAgainFor;
 end;
 
 procedure StartFix(Action, Extra: String);
@@ -1147,6 +1280,7 @@ begin
   FixRunning := True;
   FixAction := Action;
   FixOut := NewOut('fix');
+  FixStartedAt := GetTickCount;
   StartHelper(Action, RunId, FixOut, Extra);
 end;
 
@@ -1161,18 +1295,38 @@ end;
 
 { C08 "Restart now" and C04 "Restart to startup settings": save the progress (with the resume
   entries), then restart (spec 5.3, F4a). }
-procedure CheckRestart(Firmware: Boolean);
+procedure CheckRestart(Firmware: Boolean; Index: Integer);
 var
-  OutFile, Code, Text, Extra: String;
+  OutFile, Code, Text, Extra, Title: String;
 begin
-  OutFile := NewOut('save');
-  RunHelper('save-progress', RunId, OutFile, '-Stage check_restart -SetupPath ' + AddQuotes(ExpandConstant('{srcexe}')));
-  Code := ReadResultCode(OutFile);
-  Text := CM('s02_restart_confirm');
+  Code := '';
+  if not DataPrepared then
+  begin
+    OutFile := NewOut('save');
+    RunHelper('save-progress', RunId, OutFile, '-Stage check_restart -SetupPath ' + AddQuotes(ExpandConstant('{srcexe}')));
+    Code := ReadResultCode(OutFile);
+  end;
+  { D1: the firmware restart has its own title, text and, when BitLocker can ask, the caution. }
+  if Firmware then
+  begin
+    Title := CM('c04_btn_firmware');
+    Text := CM('c04_restart_confirm');
+    if (Index >= 0) and (JsonLiteral(Items[Index].Raw, 'bitlocker_caution') = 'true') then
+      Text := CM('c04_how_caution') + #13#10#13#10 + Text;
+  end
+  else
+  begin
+    Title := CM('c08_btn');
+    Text := CM('s02_restart_confirm');
+  end;
   if RestartResumeText(Code, 's02_restart') <> '' then
     Text := Text + #13#10#13#10 + RestartResumeText(Code, 's02_restart');
-  if not ConfirmBox(CM('c08_btn'), Text, CM('c08_btn'), CM('btn_go_back')) then
+  if not ConfirmBox(Title, Text, Title, CM('btn_go_back')) then
     Exit;
+  { D2: after S07 the check-restart stage is never saved. A started install keeps its stage;
+    else the staged email settings go and "continue later" is saved (spec 4.1). }
+  if DataPrepared and (InstallStep < 2) and (EntryNext <> 'S12') and (EntryNext <> 'S14') then
+    SaveContinueLater;
   Extra := '';
   if Firmware then
     Extra := '-Firmware';
@@ -1242,9 +1396,9 @@ begin
   Id := Items[Index].Id;
   if Id = 'C01' then OpenAsUser('ms-settings:windowsupdate', '')
   else if (Id = 'C04') and (Action = 0) then ShowFirmwareHelp(Index)
-  else if (Id = 'C04') and (Action = 1) then CheckRestart(True)
+  else if (Id = 'C04') and (Action = 1) then CheckRestart(True, Index)
   else if Id = 'C07' then OpenAsUser('ms-settings:storagesense', '')
-  else if Id = 'C08' then CheckRestart(False)
+  else if Id = 'C08' then CheckRestart(False, Index)
   else if Id = 'C10' then
   begin
     if ConfirmBox(CM('c10_btn'), CM('c10_confirm'), CM('c10_btn'), CM('btn_go_back')) then
@@ -1317,6 +1471,9 @@ begin
   end
   else
     AddItemButtons(Index);
+  { Design B2: the C18 item's Save report shows its result line here. }
+  if (Items[Index].Id = 'C18') and (ReportLine <> '') then
+    AddText(ReportLine, False);
 end;
 
 procedure ShowAllChecks(Sender: TObject; const Link: String; LinkType: TSysLinkType);
@@ -1338,7 +1495,7 @@ end;
 
 procedure CheckAgainClick(Sender: TObject);
 begin
-  StartCheck('check', 'S02');
+  CheckAgainFor;
   RenderPage(-1);
 end;
 
@@ -1387,14 +1544,15 @@ end;
 function StopTodo(Item: TCheckItem): String;
 begin
   Result := '';
-  if Item.Id = 'C02' then Result := CM('s03_home_todo')
+  if (Item.Id = 'C02') and (Item.Code = 'home') then Result := CM('s03_home_todo')
+  else if (Item.Id = 'C02') and (Item.Code = 'edition_not_supported') then Result := CM('s03_edition_todo')
   else if Item.Id = 'C05' then Result := CM('s03_memory_todo')
   else if (Item.Id = 'C01') and (Item.Code = 'windows_10') then Result := CM('s03_win10_todo');
 end;
 
 procedure RenderCheck;
 var
-  Verdict: TNewEdit;
+  Verdict: TNewMemo;
   I: Integer;
 begin
   BeginBody(P_CHECK);
@@ -1412,6 +1570,12 @@ begin
     AddVerdict(CM('s01_state_unsafe'));
     AddReportControls;
     WizardForm.NextButton.Enabled := False;
+    Exit;
+  end;
+  if CheckVerdict = 'helper_timeout' then
+  begin
+    { Correction 5: the check helper never answered (spec 7.5 antivirus row). }
+    AddFailure(CM('s02_title'), CM('av_blocked'), True);
     Exit;
   end;
   if CheckRunning or not CheckDone then
@@ -1487,6 +1651,7 @@ begin
   end;
   PrepOut := NewOut('prepare-pc');
   PrepState := 'working';
+  PrepStartedAt := GetTickCount;
   StartHelper('prepare-pc', RunId, PrepOut, '');
 end;
 
@@ -1496,6 +1661,9 @@ var
   Link: TNewLinkLabel;
 begin
   BeginBody(P_RESTART);
+  { Design B8: the header comes back after a failure and Try again. }
+  WizardForm.PageNameLabel.Caption := CM('s05_title');
+  WizardForm.PageDescriptionLabel.Caption := CM('s05_subtitle');
   AddStageLine(1);
   WizardForm.NextButton.Caption := CM('btn_next');
   if ExtraButton <> nil then
@@ -1508,6 +1676,8 @@ begin
   end
   else if PrepState = 'failed' then
     AddFailure(CM('s05_title'), CM('s05_failed'), True)
+  else if PrepState = 'failed_av' then
+    AddFailure(CM('s05_title'), CM('av_blocked'), True)
   else if PrepState = 'restart' then
   begin
     AddVerdict(CM('s05_done'));
@@ -1550,6 +1720,11 @@ begin
     AddText(CM('s06_stopped'), True)
   else
     AddText(CM('s06_continue'), True);
+  if CheckVerdict = 'helper_timeout' then
+  begin
+    AddFailure(CM('s06_title'), CM('av_blocked'), True);
+    Exit;
+  end;
   if CheckRunning or not CheckDone then
   begin
     AddText(CM('s06_checking'), False);
@@ -1750,13 +1925,20 @@ begin
   else if DataError = 'too_small' then
     AddText(FM('s07_too_small', [DataErrorValue]), False)
   else if DataError = 'drive_not_fixed_ntfs' then
-    AddText(CM('s07_usb_note'), False);
+    AddText(CM('s07_usb_note'), True)
+  else if (DataError = 'start_failed') or (DataError = 'helper_timeout') then
+  begin
+    { In place, never from the timer as a dialog (spec 12 item 1). }
+    if DataError = 'helper_timeout' then AddText(CM('av_blocked'), True) else AddText(CM('s07_start_failed'), True);
+    AddReportControls;
+  end;
   if not DataStarted then
   begin
     Link := AddLink(CM('s07_change_folder'), 0);
     Link.OnLinkClick := @ChangeFolderClick;
   end;
-  AddText(CM('s07_usb_note'), False);
+  if DataError <> 'drive_not_fixed_ntfs' then
+    AddText(CM('s07_usb_note'), False);
   Link := AddLink(CM('s07_change_program'), 0);
   Link.OnLinkClick := @ChangeProgramClick;
   Link.Enabled := not DataStarted;
@@ -1784,6 +1966,13 @@ var
   FreeBytes: Int64;
   Ignored: Int64;
 begin
+  { Design B5: a folder on a USB or network drive gets the USB and network message. }
+  if GetDriveType(Copy(DataRoot, 1, 3)) <> DRIVE_FIXED then
+  begin
+    DataError := 'drive_not_fixed_ntfs';
+    RenderPage(P_DATA);
+    Exit;
+  end;
   if not DataDriveListed then
   begin
     DataError := 'too_small';
@@ -1805,6 +1994,7 @@ begin
     Log('The setup payload is not in this setup file.');
   end;
   BgOut := NewOut('prepare-data');
+  DataStartedAt := GetTickCount;
   StartHelper('prepare-data', RunId, BgOut, '-DataRoot ' + AddQuotes(DataRoot));
 end;
 
@@ -1859,6 +2049,7 @@ begin
   if (Name = 'service') or (Name = 'start-boot') then
   begin
     BgOut := NewOut(Name);
+    BgStartedAt := GetTickCount;
     StartHelper(Name, RunId, BgOut, '');
     Exit;
   end;
@@ -1888,6 +2079,8 @@ begin
   if (Name = 'service') or (Name = 'start-boot') then
   begin
     Code := ReadResultCode(BgOut);
+    if (Code = '') and (Elapsed(BgStartedAt) > HELPER_LIMIT_MS) then
+      Code := 'helper_timeout';
     if Code = '' then
       Exit;
     if ((Name = 'service') and (Code <> 'created')) or ((Name = 'start-boot') and (Code <> 'started')) then
@@ -1933,6 +2126,11 @@ begin
   if not BgFailed then
     Exit;
   Text := CM('s07_start_failed');
+  { Correction 5 (spec 7.5): a helper that never answered, or the account that cannot sign in. }
+  if BgCode = 'helper_timeout' then
+    Text := CM('av_blocked')
+  else if BgCode = 'service_logon_failed' then
+    Text := CM('service_logon_failed');
   if (BgCode = 'data_folder_parent_unsafe') or (BgCode = 'payload_part_missing') then
   begin
     { Parent decision: a folder above changed after the check; no Try again. }
@@ -2327,6 +2525,13 @@ begin
   MailSender := NewEditAt(Surface, 0); MailSender.MaxLength := 100; MailSender.OnChange := @MailChanged;
   MailError := AddTextTo(Surface, 0, '', True);
   MailStatus := AddTextTo(Surface, 0, '', False);
+  { QA B7: Save report for an unknown result and for the R7 stop. }
+  MailReportButton := TNewButton.Create(WizardForm);
+  MailReportButton.Parent := Surface;
+  MailReportButton.Caption := CM('btn_save_report');
+  MailReportButton.SetBounds(0, 0, WizardForm.CalculateButtonWidth([CM('btn_save_report')]), WizardForm.NextButton.Height);
+  MailReportButton.OnClick := @SaveReport;
+  MailReportButton.Visible := False;
   Later := TNewLinkLabel.Create(WizardForm);
   Later.Parent := Surface;
   Later.Caption := '<a href="later">' + CM('s09_continue_later') + '</a>';
@@ -2386,7 +2591,11 @@ begin
   else if (MailPhase = 'selftest') or (MailPhase = 'sending') then MailStatus.Caption := FM('s09_sending', [Trim(OrgEmail.Text)])
   else if MailPassed then MailStatus.Caption := FM('s09_passed', [Trim(OrgEmail.Text)])
   else MailStatus.Caption := '';
+  if MailShowReport and (ReportLine <> '') then
+    MailStatus.Caption := ReportLine;
   WizardForm.AdjustLabelHeight(MailStatus);
+  MailReportButton.Visible := MailShowReport and (MailPhase = '');
+  MailReportButton.Top := MailStatus.Top + MailStatus.Height + ScaleY(4);
   if MailPassed then
     WizardForm.NextButton.Caption := CM('btn_next')
   else
@@ -2401,6 +2610,7 @@ var
   Value, OutFile, Code: String;
 begin
   MailError.Caption := '';
+  MailShowReport := False;
   HideShow;
   if not BgDone then
   begin
@@ -2414,6 +2624,7 @@ begin
   if Code <> 'clear' then
   begin
     MailPhase := '';
+    MailShowReport := True;
     if Code = 'policy' then SetMailError(CM('c18_policy'), MailPassword)
     else SetMailError(CM('c18_unreadable'), MailPassword);
     RenderMailStatus;
@@ -2451,7 +2662,13 @@ begin
   else if Code = 'smtp_tls_certificate' then SetMailError(FM('s09_err_certificate', [MailHost]), MailServer)
   else if Code = 'smtp_sender_refused' then SetMailError(FM('s09_err_sender', [Trim(MailFrom.Text)]), MailFrom)
   else if Code = 'smtp_recipient_refused' then SetMailError(FM('s09_err_recipient', [Trim(OrgEmail.Text)]), MailFrom)
-  else SetMailError(CM('s09_err_other'), MailPassword);
+  else
+  begin
+    MailShowReport := True;
+    if Code = 'service_logon_failed' then SetMailError(CM('service_logon_failed'), MailPassword)
+    else if Code = 'helper_timeout' then SetMailError(CM('av_blocked'), MailPassword)
+    else SetMailError(CM('s09_err_other'), MailPassword);
+  end;
   if MailError.Visible and MailPassword.CanFocus then
     WizardForm.ActiveControl := MailPassword;
 end;
@@ -2757,6 +2974,8 @@ end;
 procedure InstallFail(Stage: Integer; Text: String);
 begin
   InstallFailed := True;
+  InstallNoRetry := False;
+  InstallBackupFailed := Stage = 7;
   if Stage > 0 then
   begin
     InstallFailStage := CM('s12_stage' + IntToStr(Stage));
@@ -2789,6 +3008,7 @@ begin
     { Plan 3.2 rule 4 and the engine's target rule (parent decision 3): <drive>:\SlateOps-backups. }
     if ResumedInstall then begin InstallStep := 1; InstallNextStep; Exit; end;
     InstallOut := NewOut('prepare-backup');
+    InstallOutAt := GetTickCount;
     StartHelper('prepare-backup', RunId, InstallOut, '-Drive ' + Uppercase(BackupDrive));
   end
   else if InstallStep = 1 then
@@ -2819,12 +3039,14 @@ begin
       Lid := ' -Lid';
     SaveStringToFile(ExpandConstant('{tmp}\ca.pem'), AnsiString(PemText), False);
     InstallOut := NewOut('windows-steps');
+    InstallOutAt := GetTickCount;
     StartHelper('windows-steps', RunId, InstallOut, '-PemFile ' + AddQuotes(ExpandConstant('{tmp}\ca.pem')) + Lid);
   end
   else if InstallStep = 4 then
   begin
     { Plan 10.3 F2 and W8-3: the HTTPS check from Windows runs before the finish. }
     InstallOut := NewOut('https-check');
+    InstallOutAt := GetTickCount;
     StartHelper('https-check', RunId, InstallOut, '');
   end;
   RenderPage(P_INSTALL);
@@ -2841,6 +3063,15 @@ begin
     if JobSlow and not InstallSlow then
     begin
       InstallSlow := True;
+      { Correction 5: at the limit, the task's last result once (spec 7.5). }
+      if TaskTimeoutCode = 'service_logon_failed' then
+      begin
+        RunHelper('job-stop', RunId, NewOut('job-stop'), '');
+        JobState := JOB_IDLE;
+        ClosePipe;
+        InstallFail(0, CM('service_logon_failed'));
+        Exit;
+      end;
       RenderPage(P_INSTALL);
     end;
     if (JobPurpose <> 'install') or (JobState <> JOB_DONE) then
@@ -2853,7 +3084,15 @@ begin
       Code := JobCode;
     if Code <> 'installed' then
     begin
-      if Code = 'insufficient_space' then InstallFail(0, CM('s12_disk_full'))
+      if Code = 'insufficient_space' then
+      begin
+        { D3: the server part's own disk; Try again does not help. }
+        InstallFail(0, CM('s12_disk_full'));
+        InstallNoRetry := True;
+        RenderPage(P_INSTALL);
+      end
+      else if Code = 'service_logon_failed' then InstallFail(0, CM('service_logon_failed'))
+      else if Code = 'helper_timeout' then InstallFail(0, CM('av_blocked'))
       else if StageOfCode(Code) = 7 then InstallFail(7, FM('s12_backup_failed', [BackupDrive]))
       else InstallFail(StageOfCode(Code), '');
       Exit;
@@ -2869,6 +3108,12 @@ begin
     Exit;
   end;
   Code := ReadResultCode(InstallOut);
+  if (Code = '') and (Elapsed(InstallOutAt) > HELPER_LIMIT_MS) then
+  begin
+    { Correction 5: a helper that never answered (spec 7.5 antivirus row). }
+    if InstallStep = 0 then InstallFail(7, CM('av_blocked')) else InstallFail(8, CM('av_blocked'));
+    Exit;
+  end;
   if Code = '' then
     Exit;
   if InstallStep = 0 then
@@ -2910,6 +3155,108 @@ begin
   InstallNextStep;
 end;
 
+{ Correction 3 (spec F4b): Try again in the slow state stops the running job and repeats the
+  install step; the engine's journal repeats only the step that did not finish. }
+procedure SlowTryAgainClick(Sender: TObject);
+begin
+  RunHelper('job-stop', RunId, NewOut('job-stop'), '');
+  JobState := JOB_IDLE;
+  ClosePipe;
+  InstallSlow := False;
+  InstallStep := 1;
+  InstallNextStep;
+end;
+
+{ Correction 6 (plan F5, design B10): "Choose another drive" after the backup step failed, with
+  the S10 drive list; then drive-check, prepare-backup, set-backup-target, and Try again. }
+procedure ChooseDriveClick(Sender: TObject);
+var
+  Form: TSetupForm;
+  Radios: array of TNewRadioButton;
+  Letters: array of String;
+  List, Item, Chosen, Code: String;
+  Count, I, Y: Integer;
+  Go, Stop: TNewButton;
+  Note: TNewStaticText;
+begin
+  List := OtherDrives;
+  Count := 0;
+  Form := CreateCustomForm(ScaleX(380), ScaleY(260), False, False);
+  try
+    Form.Caption := CM('s10_title');
+    Y := ScaleY(12);
+    while Pos(';', List) > 0 do
+    begin
+      Item := Copy(List, 1, 2);
+      List := Copy(List, Pos(';', List) + 1, Length(List));
+      if CompareText(Item, BackupDrive) <> 0 then
+      begin
+        SetArrayLength(Radios, Count + 1);
+        SetArrayLength(Letters, Count + 1);
+        Letters[Count] := Item;
+        Radios[Count] := TNewRadioButton.Create(Form);
+        Radios[Count].Parent := Form;
+        Radios[Count].Caption := Item;
+        Radios[Count].Checked := Count = 0;
+        Radios[Count].SetBounds(ScaleX(16), Y, Form.ClientWidth - ScaleX(32), ScaleY(18));
+        Y := Y + ScaleY(22);
+        Count := Count + 1;
+      end;
+    end;
+    if Count = 0 then
+    begin
+      Note := AddTextTo(Form, Y, CM('s10_plug'), False);
+      Note.Left := ScaleX(16);
+    end;
+    Go := TNewButton.Create(Form);
+    Go.Parent := Form;
+    Go.Caption := CM('btn_next');
+    Go.ModalResult := mrOk;
+    Go.Default := True;
+    Go.Enabled := Count > 0;
+    Go.SetBounds(Form.ClientWidth - ScaleX(210), Form.ClientHeight - ScaleY(36), ScaleX(95), ScaleY(26));
+    Stop := TNewButton.Create(Form);
+    Stop.Parent := Form;
+    Stop.Caption := CM('btn_cancel');
+    Stop.ModalResult := mrCancel;
+    Stop.Cancel := True;
+    Stop.SetBounds(Form.ClientWidth - ScaleX(105), Form.ClientHeight - ScaleY(36), ScaleX(95), ScaleY(26));
+    ModalOpen := True;
+    if Form.ShowModal <> mrOk then
+      Exit;
+    Chosen := '';
+    for I := 0 to Count - 1 do
+      if Radios[I].Checked then
+        Chosen := Letters[I];
+  finally
+    ModalOpen := False;
+    Form.Free;
+  end;
+  if Chosen = '' then
+    Exit;
+  Code := ReadResultCode(NewOutRun('drive-check', '-Drive ' + Uppercase(Chosen)));
+  if Code = 'ready' then
+    Code := ReadResultCode(NewOutRun('prepare-backup', '-Drive ' + Uppercase(Chosen)));
+  if (Code = 'ready') and (InstallStep >= 2) then
+  begin
+    { The engine keeps its target from step 12; set-backup-target changes it. }
+    if RunJobBlocking('set-backup-target', '{"run_id":"' + RunId + '","backup_target":' + JsonText(Uppercase(Chosen) + '\SlateOps-backups') + '}', RunId, 300) = 'backup_target_set' then
+      Code := 'ready'
+    else
+      Code := 'not_set';
+  end;
+  if Code <> 'ready' then
+  begin
+    MsgBox(FM('s10_not_writable', [Chosen]), mbError, MB_OK);
+    Exit;
+  end;
+  BackupDrive := Chosen;
+  InstallFailed := False;
+  if InstallStep >= 2 then
+    InstallStep := 1;
+  InstallNextStep;
+end;
+
 procedure WaitClick(Sender: TObject);
 begin
   JobStartedAt := GetTickCount;
@@ -2930,7 +3277,13 @@ begin
   AddStageLine(3);
   if InstallFailed then
   begin
-    AddFailure(InstallFailStage, InstallFailText, True);
+    AddFailure(InstallFailStage, InstallFailText, not InstallNoRetry);
+    if InstallBackupFailed then
+    begin
+      Button := AddButtonAt(CM('s12_choose_drive'), 0, 0);
+      Button.OnClick := @ChooseDriveClick;
+      CurY := CurY + Button.Height + ScaleY(6);
+    end;
     Exit;
   end;
   { Stages 1 to 7 run inside one engine job: the engine reports no step while it runs (TASK-0094
@@ -2956,6 +3309,8 @@ begin
     AddText(CM('s12_slow'), True);
     Button := AddButtonAt(CM('s12_wait'), 0, 0);
     Button.OnClick := @WaitClick;
+    Button := AddButtonAt(CM('btn_try_again'), Button.Width + ScaleX(8), 0);
+    Button.OnClick := @SlowTryAgainClick;
     CurY := CurY + Button.Height + ScaleY(6);
     AddReportControls;
   end;
@@ -3139,6 +3494,9 @@ var
   List, Item: String;
 begin
   BeginBody(P_KEY);
+  { Design B8: the header comes back after a failure and Try again. }
+  WizardForm.PageNameLabel.Caption := CM('s14_title');
+  WizardForm.PageDescriptionLabel.Caption := CM('s14_subtitle');
   WizardForm.NextButton.Caption := CM('btn_next');
   WizardForm.CancelButton.Visible := False;
   WizardForm.BackButton.Visible := False;
@@ -3231,6 +3589,10 @@ procedure InviteClick(Sender: TObject);
 var
   Code: String;
 begin
+  { Design B7: the wait says what happens. }
+  MaintLine := CM('m01_sending');
+  RenderPage(P_MAINT);
+  WizardForm.Refresh;
   Code := RunJobBlocking('resend-invitation', '{"run_id":"' + RunId + '"}', RunId, 120);
   if Code = 'sent' then MaintLine := CM('m01_sent')
   else if Code = 'already_active' then MaintLine := CM('m01_already_active')
@@ -3242,7 +3604,7 @@ end;
 procedure RenderMaint;
 var
   Button: TNewButton;
-  Line: TNewEdit;
+  Line: TNewMemo;
 begin
   BeginBody(P_MAINT);
   WizardForm.PageNameLabel.Caption := CM('m01_title');
@@ -3277,6 +3639,18 @@ procedure RenderPage(Index: Integer);
 var
   I: Integer;
 begin
+  { Design B2: the S01 Save report line. }
+  if (Index < 0) and (WizardForm.CurPageID = wpWelcome) and StateUnsafe then
+  begin
+    WizardForm.WelcomeLabel2.Caption := CM('s01_state_unsafe') + #13#10#13#10 + ReportLine;
+    Exit;
+  end;
+  { QA B7: the S09 Save report line. }
+  if (Index < 0) and (Pages[P_EMAIL] <> nil) and (WizardForm.CurPageID = Pages[P_EMAIL].ID) then
+  begin
+    RenderMailStatus;
+    Exit;
+  end;
   if Index < 0 then
   begin
     for I := 0 to P_COUNT - 1 do
@@ -3307,6 +3681,20 @@ begin
   Ticking := True;
   try
     PollJob;
+    { Correction 5: the helper waits have time limits (a security program can block a helper). }
+    if CheckRunning and (ReadResultCode(CheckOut) = '') and (Elapsed(CheckStartedAt) > CHECK_LIMIT_MS) then
+    begin
+      CheckRunning := False;
+      CheckDone := False;
+      CheckVerdict := 'helper_timeout';
+      RenderPage(-1);
+    end;
+    if FixRunning and (ReadResultCode(FixOut) = '') and (Elapsed(FixStartedAt) > HELPER_LIMIT_MS) then
+    begin
+      FixRunning := False;
+      CheckVerdict := 'helper_timeout';
+      RenderPage(-1);
+    end;
     if CheckRunning and (ReadResultCode(CheckOut) <> '') then
     begin
       CheckRunning := False;
@@ -3344,6 +3732,11 @@ begin
       begin
         PrepState := 'failed';
         RenderPage(P_RESTART);
+      end
+      else if Elapsed(PrepStartedAt) > DATA_LIMIT_MS then
+      begin
+        PrepState := 'failed_av';
+        RenderPage(P_RESTART);
       end;
     end;
     if DataStarted and not DataPrepared then
@@ -3356,15 +3749,14 @@ begin
         StartBackground;
         WizardForm.NextButton.OnClick(WizardForm.NextButton);
       end
-      else if Code <> '' then
+      else if (Code <> '') or (Elapsed(DataStartedAt) > DATA_LIMIT_MS) then
       begin
         DataStarted := False;
         DataError := Code;
-        if (Code <> 'data_folder_parent_unsafe') and (Code <> 'not_empty') and (Code <> 'drive_not_fixed_ntfs') then
-        begin
-          RenderPage(P_DATA);
-          FailureForm(CM('s07_title'), CM('s07_start_failed'), False);
-        end;
+        if Code = '' then
+          DataError := 'helper_timeout'
+        else if (Code <> 'data_folder_parent_unsafe') and (Code <> 'not_empty') and (Code <> 'drive_not_fixed_ntfs') then
+          DataError := 'start_failed';
         RenderPage(P_DATA);
       end;
     end;
@@ -3395,24 +3787,9 @@ end;
 { ------------------------------------------------------------------------------------------- }
 
 procedure KeepAndClose(EmailDiscarded: Boolean);
-var
-  OutFile, Extra: String;
-  Start: Cardinal;
 begin
-  { Wait for the running step to end (spec 4.5). }
-  Start := GetTickCount;
-  while JobRunning and (Elapsed(Start) < 120000) do
-  begin
-    Sleep(1000);
-    PollJob;
-  end;
-  { "Keep it and continue later": the staged email settings are deleted with smtp-test discard. }
-  RunJobBlocking('smtp-test', '{"run_id":"' + RunId + '","mode":"discard"}', RunId, 120);
-  OutFile := NewOut('save');
-  Extra := '-Stage continue_later';
-  if InstallStarted then
-    Extra := '-Stage install_started -EmailDiscarded';
-  RunHelper('save-progress', RunId, OutFile, Extra);
+  { Waits for the running step (spec 4.5), then the discard through the pipe and the stage. }
+  SaveContinueLater;
 end;
 
 procedure ContinueLaterClick(Sender: TObject; const Link: String; LinkType: TSysLinkType);
@@ -3464,7 +3841,7 @@ end;
 
 function InitializeSetup(): Boolean;
 var
-  OutFile, Text, VersionText: String;
+  OutFile, Text, VersionText, StateText: String;
 begin
   ExtractTemporaryFiles('{tmp}\scripts\*.ps1');
   ExtractTemporaryFiles('{tmp}\scripts\lib\*.ps1');
@@ -3492,6 +3869,7 @@ begin
   EntryScreen := JsonValue(Text, 'screen');
   EntryNext := JsonValue(Text, 'next');
   EntryWelcomeBack := Pos('"welcome_back":true', Text) > 0;
+  StateText := Text;
   if (EntryScreen = '') or StateUnsafe then
     EntryScreen := 'S01';
   { M05 (update) is W13b; until then an installed newer setup opens M01. }
@@ -3508,6 +3886,13 @@ begin
     DataRoot := JsonValue(Text, 'data_root');
     DataPrepared := DataRoot <> '';
     BgIndex := 7;
+    { Correction 4: a "continue later" saved before the background preparation finished runs it
+      again from the step after the account (the server part steps repeat safely). }
+    if (EntryNext = 'S08') and (Pos('"background_done":true', StateText) = 0) then
+    begin
+      BgIndex := 1;
+      BgResume := True;
+    end;
   end;
   if EntryNext = 'S07' then
     PrepState := 'done';
@@ -3560,6 +3945,8 @@ begin
   ExtraButton.Visible := False;
   ExtraButton.SetBounds(WizardForm.BackButton.Left - ScaleX(130), WizardForm.BackButton.Top, ScaleX(120), WizardForm.BackButton.Height);
   SetTimer(0, 0, 1000, CreateCallback(@TimerTick));
+  if BgResume then
+    StartBgStep;
 end;
 
 procedure OpenAppClick(Sender: TObject);
@@ -3596,7 +3983,7 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 var
-  OutFile: String;
+  OutFile, Text: String;
 begin
   WizardForm.BeveledLabel.Caption := '';
   if ExtraButton <> nil then
@@ -3710,10 +4097,15 @@ begin
   else if CurPageID = wpFinished then
   begin
     WizardForm.FinishedHeadingLabel.Caption := CM('s15_title');
-    WizardForm.FinishedLabel.Caption :=
-      FM('s15_step1', [Trim(OrgEmail.Text)]) + #13#10#13#10 + CM('s15_step2') + #13#10#13#10 +
-      CM('s15_step3') + #13#10 + 'http://' + HostName + '.local/trust' + #13#10 + FM('s15_security', [SecurityCode]) + #13#10#13#10 +
-      CM('s15_desk') + #13#10#13#10 + CM('s15_starts');
+    { Design B9: after a resume the email address and the security code can be unknown. }
+    if Trim(OrgEmail.Text) = '' then
+      Text := CM('s15_step1_no_address')
+    else
+      Text := FM('s15_step1', [Trim(OrgEmail.Text)]);
+    Text := Text + #13#10#13#10 + CM('s15_step2') + #13#10#13#10 + CM('s15_step3') + #13#10 + 'http://' + HostName + '.local/trust';
+    if SecurityCode <> '' then
+      Text := Text + #13#10 + FM('s15_security', [SecurityCode]);
+    WizardForm.FinishedLabel.Caption := Text + #13#10#13#10 + CM('s15_desk') + #13#10#13#10 + CM('s15_starts');
     WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);
     WizardForm.NextButton.Caption := CM('s15_finish');
     ExtraButton.Parent := WizardForm;
@@ -3765,6 +4157,12 @@ begin
     Result := CheckOrg and CheckBackground
   else if CurPageID = Pages[P_EMAIL].ID then
   begin
+    { Design B4: a background failure is reachable from S09 (the S13 form on Next). }
+    if BgFailed then
+    begin
+      Result := CheckBackground;
+      Exit;
+    end;
     Result := MailPassed;
     if not MailPassed then
     begin
