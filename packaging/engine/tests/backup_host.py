@@ -46,6 +46,8 @@ class BackupHost:
         self.image_label = "0.1.0-rc.9"
         self.image_id = "sha256:" + "a" * 64
         self.enabled: list[str] = []
+        # The bridge needs the database (B-1): the world says whether ``db`` runs.
+        self.db_running: Callable[[], bool] = lambda: True
         self.next_key = 0
         self.now = datetime(2026, 11, 17, 10, 15, tzinfo=UTC)
 
@@ -182,6 +184,8 @@ class BackupHost:
             self.enabled.append(" ".join(argv[1:]))
             return _ok()
         if argv[:2] == ["docker", "run"] and "operations/backup_state.py" in argv:
+            if not self.db_running():
+                return Result(3, b'{"code":"backup_state_unavailable"}\n', b"")
             self.policy_inputs.append(json.loads(stdin or b"{}"))
             return _ok('{"written":true,"policy":{"schedule":"daily","adopted":true}}\n')
         if argv[:2] == ["docker", "run"] and RUNNER in argv:

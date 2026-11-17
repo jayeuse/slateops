@@ -321,6 +321,10 @@ def setup(
         raise failed("backup_target_missing")
     drive.open_or_init(ctx, step)
     write_config(ctx, step, project)  # 12.3
+    # B-1: a kill during 12.5 leaves the stack stopped and a rerun starts here; the bridge
+    # needs the database. On a first run the providers already run, and this changes nothing.
+    compose.up(ctx, step, project, compose.PROVIDER_SERVICES, deps=True)
+    compose.wait_healthy(ctx, step, project, compose.PROVIDER_SERVICES)
     _policy_default(ctx, step, project, image)  # 12.4
     _first_backup(ctx, step, image, project, restart)  # 12.5
     ctx.outputs["recovery_key"] = drive.new_recovery_key(ctx, step)  # 12.6

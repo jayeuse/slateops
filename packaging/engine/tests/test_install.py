@@ -111,6 +111,7 @@ class World:
         # TASK-0093: the backup drive, Restic, the runner container, the bridge, systemd.
         self.host = BackupHost(paths)
         self.host.add_drive(ANSWERS["backup_target"], paths.state.parent / "drives/E/Backups")
+        self.host.db_running = lambda: "db" in self.started
 
     # The runner -----------------------------------------------------------------------------
 
@@ -778,7 +779,7 @@ def test_ac_k1_a_kill_at_any_command_then_a_rerun_completes_one_installation(
     tmp_path: Path, after: bool
 ) -> None:
     total = _complete_run_length(tmp_path)
-    assert total == 38  # every command of a full run is a kill point (step 12: TASK-0093)
+    assert total == 40  # every command of a full run is a kill point (step 12: TASK-0093)
     for kill_at in range(1, total + 1):
         paths, fake = _setup(tmp_path / f"kill-{kill_at}")
         fake.kill_at, fake.kill_after = kill_at, after
