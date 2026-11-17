@@ -205,6 +205,17 @@ def write_config(ctx: Context, step: str, instance: str) -> None:
     and only with no active runner journal (a changed config makes it ``journal_invalid``).
     The update (W13b) calls it again to point ``compose_root`` at the new bundle."""
     paths = ctx.paths
+    with runner_idle(ctx, step, instance):
+        if active_journal(paths, instance).exists():
+            raise refused("runner_busy")
+        write_private(config_path(paths), config_bytes(paths, instance, paths.bundle_root))
+    root = paths.bundle_root / "infra" / "supabase"
+    ctx.log.line(step, "INFO", f"backup config written; compose_root {root}")
+
+
+def config_bytes(paths: Paths, instance: str, bundle_root: Path) -> bytes:
+    """The version-3 config of ``instance`` with the Compose root of ``bundle_root``; the
+    update writes it while it holds the runner's lock itself (C-2)."""
     backup = drive.backup_root(paths)
     config = {
         "version": 3,
@@ -212,7 +223,7 @@ def write_config(ctx: Context, step: str, instance: str) -> None:
         "project_name": instance,
         "deployment": "production",
         "compose_layout": "installer",
-        "compose_root": str(paths.bundle_root / "infra" / "supabase"),
+        "compose_root": str(bundle_root / "infra" / "supabase"),
         "provider_env_file": str(paths.etc / "provider.env"),
         "app_env_file": str(paths.etc / "app.env"),
         "caddy_config_file": str(paths.etc / "Caddyfile"),
@@ -222,12 +233,7 @@ def write_config(ctx: Context, step: str, instance: str) -> None:
         "staging_directory": str(backup / "staging"),
         "completion_marker": str(backup / "markers" / "backup-complete.json"),
     }
-    with runner_idle(ctx, step, instance):
-        if active_journal(paths, instance).exists():
-            raise refused("runner_busy")
-        data = json.dumps(config, indent=2, sort_keys=True) + "\n"
-        write_private(config_path(paths), data.encode())
-    ctx.log.line(step, "INFO", f"backup config written; compose_root {config['compose_root']}")
+    return (json.dumps(config, indent=2, sort_keys=True) + "\n").encode()
 
 
 def _policy_default(ctx: Context, step: str, instance: str, image: str) -> None:

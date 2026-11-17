@@ -26,11 +26,13 @@ from engine.logs import RunLog
 
 PROGRAMS = frozenset(
     {
+        "apt-get",  # the package night (plan 7.4)
         "chronyc",
         "cosign",
         "docker",
         "ip",
         "journalctl",
+        "python3",  # the host restore of the update rollback (plan 7.5, TASK-0083 C-3)
         "restic",
         "ss",
         "systemctl",
@@ -45,9 +47,10 @@ ENVIRONMENT = {
     "HOME": "/root",
     "LANG": "C.UTF-8",
 }
-# Values a child may take from the engine's environment (TASK-0081 A-3: step 11 passes the
-# administrator email and user name to ``docker run -e NAME``).
-EXTRA_NAMES = frozenset({"ADMIN_EMAIL", "ADMIN_USERNAME"})
+# Values a call may add to the child's environment (TASK-0081 A-3: step 11 passes the
+# administrator email and user name to ``docker run -e NAME``; the host restore takes the run
+# ID, TASK-0083 C-7; apt-get of the package night runs with no questions).
+EXTRA_NAMES = frozenset({"ADMIN_EMAIL", "ADMIN_USERNAME", "SLATEOPS_RUN_ID", "DEBIAN_FRONTEND"})
 MISSING = 127
 
 

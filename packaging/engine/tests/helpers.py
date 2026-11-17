@@ -33,6 +33,8 @@ def make_paths(root: Path) -> Paths:
         passwd=root / "etc/passwd",
         docker_socket=root / "run/docker.sock",
         systemd=root / "etc/systemd/system",
+        docker_volumes=root / "var/lib/docker/volumes",
+        apt_sources=root / "etc/apt/sources.list.d",
     )
     (root / "proc").mkdir(parents=True)
     (root / "proc/locks").write_text("")

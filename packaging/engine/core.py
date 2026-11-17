@@ -69,6 +69,8 @@ class Paths:
     passwd: Path = Path("/etc/passwd")
     docker_socket: Path = Path("/run/docker.sock")
     systemd: Path = Path("/etc/systemd/system")  # where step 12 writes the runner units
+    docker_volumes: Path = Path("/var/lib/docker/volumes")  # the update's space check (7.3)
+    apt_sources: Path = Path("/etc/apt/sources.list.d")  # the package night reads these (7.4)
     extra: Mapping[str, Path] = field(default_factory=dict)
 
     @property

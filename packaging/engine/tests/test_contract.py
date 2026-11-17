@@ -26,7 +26,7 @@ LINE = re.compile(
 )
 
 
-@pytest.mark.parametrize("argv", [["rm"], ["update"], ["status", "extra"], [], ["STATUS"]])
+@pytest.mark.parametrize("argv", [["rm"], ["upgrade"], ["status", "extra"], [], ["STATUS"]])
 def test_ac_j1_only_allow_listed_jobs_run(tmp_path: Path, argv: list[str]) -> None:
     paths = make_paths(tmp_path)
 

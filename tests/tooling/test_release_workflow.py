@@ -664,6 +664,18 @@ class InstallProofTests(unittest.TestCase):
             "status does not report backup_target_missing",
             "the services did not come back after the failed backup",
             "/var/lib/slateops/backup/backup-exports 0:10001 750",
+            # TASK-0095 (W13b): the update, the rollback, the resume rule, the package night.
+            "a changed manifest was not refused",
+            "the failed update did not roll back",
+            "a network of the failed project remains (plan 7.5 step 1)",
+            "the failed project's volumes are gone",
+            "the rollback changed the origin or the name",
+            "the data is not intact after the rollback",
+            "the interrupted update was not closed by recover",
+            "engine_idle is true while an update is open",
+            "the api does not report $good",
+            "the first backup after the update did not succeed (C-2)",
+            "the package night did not finish",
         ):
             with self.subTest(promise=promise):
                 self.assertIn(promise.replace("slateops-engine receive", "receive"), script)

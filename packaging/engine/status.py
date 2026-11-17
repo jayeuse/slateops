@@ -16,7 +16,7 @@ import os
 import re
 from typing import Any
 
-from engine import backups, prefetch, release, report, tick
+from engine import backups, packages, prefetch, release, report, tick, update
 from engine.context import Context
 from engine.core import engine_version, is_run_id, is_version, lock_state
 
@@ -32,14 +32,16 @@ REQUIRED = frozenset(KEYS)
 
 def engine_idle(ctx: Context) -> bool:
     """No state-changing engine job, no pull and no backup runner runs (the runner's host
-    lock, TASK-0093 AC-8; W13b adds its own). A lock state that cannot be read counts as busy:
-    Windows waits rather than install WSL during a job."""
+    lock, TASK-0093 AC-8), and no update is open: one that a restart interrupted stays open
+    until the next tick closes it (W13b, plan section 12). A lock state that cannot be read
+    counts as busy: Windows waits rather than install WSL during a job."""
     paths = ctx.paths
     locks = [paths.engine_lock, paths.prefetch_lock]
     instance = backups.installed_instance(paths)
     if instance is not None:
         locks.append(backups.runner_lock(paths, instance))
-    return all(lock_state(lock, paths.proc) is False for lock in locks)
+    idle = all(lock_state(lock, paths.proc) is False for lock in locks)
+    return idle and not update.is_open(paths)
 
 
 def _backup(ctx: Context) -> str:
@@ -73,7 +75,7 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     )
     manifest = release.load(paths, engine_version(paths))
     known_bad = [item for item in release.known_bad_wsl(manifest) if WSL_VERSION.match(item)]
-    if wsl in known_bad:
+    if wsl in known_bad or packages.last_result(paths) == "needs_support":
         state = "needs_support"
     elif (paths.state / "installation.json").exists():
         state = "installed"

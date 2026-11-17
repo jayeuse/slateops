@@ -55,8 +55,22 @@ def check_config(ctx: Context, step: str, project: str) -> None:
         raise failed("compose_config_failed")
 
 
-def up(ctx: Context, step: str, project: str, services: tuple[str, ...], *, deps: bool) -> None:
-    tail = ["up", "--detach", "--pull", "never", *([] if deps else ["--no-deps"]), *services]
+def up(
+    ctx: Context,
+    step: str,
+    project: str,
+    services: tuple[str, ...],
+    *,
+    deps: bool,
+    recreate: bool = False,
+) -> None:
+    """``recreate`` (the update, TASK-0092 C-2): every container gets the labels of this
+    bundle's Compose files, also when its image did not change; with ``deps`` also the
+    containers that start only as a dependency (``provider-volume-init``)."""
+    tail = ["up", "--detach", "--pull", "never", *([] if deps else ["--no-deps"])]
+    if recreate:
+        tail += ["--force-recreate", *(["--always-recreate-deps"] if deps else [])]
+    tail += services
     if not ctx.runner.run(step, argv(ctx.paths, project, *tail), timeout=600).ok:
         raise failed("compose_up_failed")
 

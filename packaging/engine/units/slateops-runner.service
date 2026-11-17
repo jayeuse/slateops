@@ -3,7 +3,9 @@
 # systemd starts no second instance while one runs. The engine makes the run ID itself.
 [Unit]
 Description=Slate Operations backup runner tick
-Requires=docker.service
+# Wants, not Requires: a Docker Engine upgrade in the package night (plan 7.4) restarts
+# docker.service, and Requires= would restart this tick with apt and dpkg inside it.
+Wants=docker.service
 After=docker.service
 
 [Service]

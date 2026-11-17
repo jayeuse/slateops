@@ -541,10 +541,13 @@ def step_api(
 def step_caddy(
     ctx: Context, step: str, state: dict[str, Any], given: dict[str, Any], manifest: dict[str, Any]
 ) -> None:
-    project = _project(state)
-    compose.up(ctx, step, project, ("caddy",), deps=False)
+    compose.up(ctx, step, _project(state), ("caddy",), deps=False)
+    wait_https(ctx, step, given["public_host"])
+
+
+def wait_https(ctx: Context, step: str, host: str) -> None:
+    """``https://<host>/api/ready`` through loopback answers 200, trusting only the CA."""
     root = ctx.paths.etc / "ca" / "current" / "root.crt"
-    host = given["public_host"]
     started = ctx.deps.clock()
     seen = "no answer"
     while (ctx.deps.clock() - started).total_seconds() <= compose.HEALTH_SECONDS:

@@ -16,7 +16,11 @@
 6. runs the unchanged ``backup_runner.py run`` in the container, then removes the container
    and confirms that it is gone; after a time limit, exit 3 or ``admission_failed`` (a stale
    mount), it unmounts with a plain ``umount``, so the next tick mounts again;
-7. runs the daily certificate renewal when it is due and no runner journal is active.
+7. runs the daily certificate renewal when it is due and no runner journal is active;
+8. runs the package night when it is due (``engine.packages``, plan 7.4).
+
+Before all of this, an update that a restart interrupted is closed by the rule of plan section
+12 (``engine.update.resume``), and the tick does nothing else that minute.
 """
 
 from __future__ import annotations
@@ -30,7 +34,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from engine import answers, backups, drive, renewal, report
+from engine import answers, backups, drive, packages, renewal, report, update
 from engine.context import Context
 from engine.core import (
     JobError,
@@ -258,6 +262,9 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     instance = backups.installed_instance(paths)
     if instance is None:
         return {"code": "not_set_up"}
+    closed = update.resume(ctx)  # plan section 12: an interrupted update closes first
+    if closed is not None:
+        return {"code": "update_closed", "update": closed}
     started = record_start(ctx, ctx.step(2, "start"))
     created = backups.container_created(ctx, step)
     if created is not None:
@@ -272,12 +279,16 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     mounted = drive.mounted(paths)
     outcome = run_runner(ctx, step, image, ["run"])
     renewed = renew_if_due(ctx, instance)
+    night = packages.night_if_due(ctx, instance)  # plan 7.4, after the night's backup
     # A tick that did nothing (no claim, no mount, no renewal, no refusal) keeps no log.
     ctx.keep_log = (
-        started or not mounted or renewed is not None or outcome["runner"] != "idle"
-        or outcome["runner_exit"] != 0
+        started or not mounted or renewed is not None or night is not None
+        or outcome["runner"] != "idle" or outcome["runner_exit"] != 0
     )  # fmt: skip
-    return {"code": "ran", **outcome, "renewal": renewed or "not_due"}
+    return {
+        "code": "ran", **outcome, "renewal": renewed or "not_due",
+        "package_night": night or "not_due",
+    }  # fmt: skip
 
 
 def _support(ctx: Context, action: list[str]) -> dict[str, Any]:

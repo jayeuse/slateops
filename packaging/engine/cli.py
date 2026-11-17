@@ -26,6 +26,7 @@ from engine import (
     install,
     invitation,
     log_bundle,
+    packages,
     prefetch,
     prepare,
     receive,
@@ -34,6 +35,7 @@ from engine import (
     snapshot,
     status,
     tick,
+    update,
 )
 from engine.context import Context, Dependencies
 from engine.core import (
@@ -79,6 +81,10 @@ JOBS: dict[str, Job] = {
     "tick": Job(tick.handle, tick.KEYS, tick.REQUIRED),
     "runner-recover": Job(tick.recover, tick.KEYS, tick.REQUIRED),
     "runner-adopt": Job(tick.adopt, tick.KEYS, tick.REQUIRED),
+    # W13b (TASK-0095). On the Windows Exec allow-list: update (from the new setup program).
+    # Not on it: package-night (the tick runs it on Sunday; support runs it at once).
+    "update": Job(update.handle, update.KEYS, update.REQUIRED),
+    "package-night": Job(packages.handle, packages.KEYS, packages.REQUIRED),
 }
 
 

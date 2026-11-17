@@ -382,4 +382,175 @@ make_due
 ticked="$(tick 12)"; echo "$ticked"
 [ "$(field runner <<<"$ticked")" = succeeded ] || fail "the backup after the drive came back did not succeed: $ticked"
 ready || fail "the services are not ready after the backup"
-log "passed: receive, prefetch, install, HTTPS /api/ready, trust routes, WebSocket, invitation, rerun without change, resend, renewal, backups"
+# 6. Update, rollback and the package night (W13b, TASK-0095) -----------------------------
+# The plan proves W13b with two test builds. One build cannot sign a second version (the
+# cosign identity names the tag), so after a real `receive` refusal of a changed manifest the
+# proof makes the next two versions from this build, test only, and writes them where
+# `receive` keeps a verified release: the server image committed with a new version label
+# (and, for the first, the old SLATEOPS_VERSION, so step 10 fails after the migration ran),
+# the Caddy image tagged again, the engine bundle with a new engine/VERSION, and the manifest
+# with those digests and SHA-256 values. It proves the engine's steps, the rollback and the
+# resume rule on a real Docker daemon; it does not prove a second signed release, a schema
+# change between releases, or low space (unit tests: test_update.py).
+[[ "$version" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-rc\.([0-9]+)$ ]] || fail "the update proof needs an rc version"
+bad="${BASH_REMATCH[1]}-rc.$((BASH_REMATCH[2] + 1))"
+good="${BASH_REMATCH[1]}-rc.$((BASH_REMATCH[2] + 2))"
+now() { date -u +%Y%m%dT%H%M%SZ; }
+update_to() { printf '{"run_id":"%s","version":"%s"}' "$1" "$2" | "${engine[@]}" update; }
+installation() { docker exec "$machine" python3 -c 'import json,sys; print(json.load(open("/var/lib/slateops/installation.json"))[sys.argv[1]])' "$1"; }
+service_of() {
+    docker exec "$machine" docker ps --filter "label=com.docker.compose.project=$1" \
+        --filter "label=com.docker.compose.service=$2" --format '{{.Names}}'
+}
+admins() {
+    docker exec "$machine" docker exec "$(service_of "$1" db)" psql -h 127.0.0.1 -U supabase_admin \
+        -d postgres -tA -c "select count(*) from auth.users where email = '$admin'"
+}
+origin() {  # the origin and name lines (URLs, no secret) of the two env files, as one hash
+    docker exec "$machine" sh -c "grep -h -E '^(SITE_URL|API_EXTERNAL_URL|PUBLIC_ORIGIN|SUPABASE_AUTH_ISSUER)=' /etc/slateops/provider.env /etc/slateops/app.env | sha256sum"
+}
+journal_state() {
+    docker exec "$machine" python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["state"])' \
+        "/var/lib/slateops/update/$1.json"
+}
+make_release() {  # test only: version $1 from this build; its api reports version $2
+    docker exec -i "$machine" python3 -I - "$version" "$1" "$2" <<'PY'
+import gzip, hashlib, io, json, subprocess, sys, tarfile
+from pathlib import Path
+old, new, reported = sys.argv[1:4]
+kept = Path("/var/lib/slateops/release")
+manifest = json.loads((kept / old / "release-manifest.json").read_text())
+def run(*argv):
+    return subprocess.run(argv, check=True, capture_output=True, text=True).stdout.strip()
+def name(role):
+    return manifest["images"][role]["ref"].split("@")[0].rsplit(":", 1)[0]
+container = run("docker", "create", "--pull", "never", f"{name('server')}:{old}")
+try:
+    run("docker", "commit", "--change", f"ENV SLATEOPS_VERSION={reported}", "--change",
+        f"LABEL org.opencontainers.image.version={new}", container, f"{name('server')}:{new}")
+finally:
+    run("docker", "rm", container)
+run("docker", "tag", f"{name('caddy')}:{old}", f"{name('caddy')}:{new}")
+for role in ("server", "caddy"):
+    found = run("docker", "image", "inspect", "--format", "{{.Id}}", f"{name(role)}:{new}")
+    manifest["images"][role]["ref"] = f"{name(role)}:{new}@{found}"
+packed = io.BytesIO()
+with tarfile.open(kept / old / f"slateops-engine-{old}.tar.gz") as source, \
+        tarfile.open(fileobj=packed, mode="w", format=tarfile.PAX_FORMAT) as target:
+    for member in source.getmembers():
+        data = source.extractfile(member).read() if member.isfile() else None
+        if member.name == "engine/VERSION":
+            data = f"{new}\n".encode()
+            member.size = len(data)
+        target.addfile(member, None if data is None else io.BytesIO(data))
+bundle = gzip.compress(packed.getvalue(), mtime=0)
+folder = kept / new
+folder.mkdir(mode=0o700)
+archive = f"slateops-engine-{new}.tar.gz"
+(folder / archive).write_bytes(bundle)
+manifest["version"] = new
+manifest["engine_bundle"].update(archive=archive, sha256=hashlib.sha256(bundle).hexdigest(),
+                                 size=len(bundle))
+(folder / "release-manifest.json").write_text(json.dumps(manifest))
+print(f"test-only release {new}: server {manifest['images']['server']['ref']}")
+PY
+}
+
+log "a manifest changed after signing is refused by receive (W13b-6)"
+changed="$output/changed-payload"
+mkdir -p "$changed"
+for part in "${parts[@]}"; do ln -sf "$(cd "$payload" && pwd)/$part" "$changed/$part"; done
+rm "$changed/release-manifest.json"
+python3 - "$payload/release-manifest.json" "$changed/release-manifest.json" <<'PY'
+import json, sys
+manifest = json.load(open(sys.argv[1]))
+manifest["migration_notes"] = "changed after signing"
+json.dump(manifest, open(sys.argv[2], "w"))
+PY
+printf '{"run_id":"update-%s-proof6","setup_version":"%s"}' "$(now)" "$version" > "$changed/request.json"
+refused="$(tar --dereference --format=ustar -C "$changed" -cf - request.json "${parts[@]}" | "${engine[@]}" receive || true)"
+echo "$refused"
+[ "$(field code <<<"$refused")" = manifest_signature_invalid ] || fail "a changed manifest was not refused: $refused"
+
+log "an update whose api reports the old version rolls back by restore (W13b-2, W13b-9)"
+make_release "$bad" "$version"
+origin_before="$(origin)"
+[ "$(admins "$project")" = 1 ] || fail "the administrator is missing before the update"
+first="update-$(now)-proof7"
+rolled="$(update_to "$first" "$bad" || true)"; echo "$rolled"
+[ "$(field code <<<"$rolled")" = api_version_mismatch ] && [ "$(field update <<<"$rolled")" = rolled_back ] \
+    || fail "the failed update did not roll back: $rolled"
+restored="$(installation project)"
+[ "$restored" = "$project-r1" ] || fail "the rollback did not start $project-r1: $restored"
+[ "$(installation version)" = "$version" ] || fail "the rollback did not keep version $version"
+[ -z "$(docker exec "$machine" docker ps --all --quiet --filter "label=com.docker.compose.project=$project")" ] \
+    || fail "a container of the failed project remains"
+[ -z "$(docker exec "$machine" docker network ls --quiet --filter "label=com.docker.compose.project=$project")" ] \
+    || fail "a network of the failed project remains (plan 7.5 step 1)"
+[ -n "$(docker exec "$machine" docker volume ls --quiet --filter "label=com.docker.compose.project=$project")" ] \
+    || fail "the failed project's volumes are gone"
+ready || fail "the restored installation is not ready on the same name and CA"
+[ "$(origin)" = "$origin_before" ] || fail "the rollback changed the origin or the name"
+[ "$(admins "$restored")" = 1 ] || fail "the data is not intact after the rollback"
+[ "$(journal_state "$first")" = rolled_back ] || fail "the update journal is not closed as rolled_back"
+db="$(service_of "$restored" db)"
+make_due
+ticked="$(tick 13)"; echo "$ticked"
+[ "$(field code <<<"$ticked")" = ran ] || fail "a tick after the rollback did not run the runner: $ticked"
+[ "$(field runner <<<"$ticked")" = succeeded ] || fail "the adopted backup policy did not run: $ticked"
+
+log "a restart during the update's backup closes it with recover at the next tick (W13b-3, W13b-7)"
+make_release "$good" "$good"
+killed="update-$(now)-proof8"
+update_to "$killed" "$good" > "$output/killed-update.json" 2>&1 &
+updating=$!
+for _ in $(seq 1 300); do
+    [ -n "$(docker exec "$machine" docker ps --quiet --filter name=slateops-runner)" ] && break
+    sleep 1
+done
+[ -n "$(docker exec "$machine" docker ps --quiet --filter name=slateops-runner)" ] || fail "the update's backup did not start"
+docker exec "$machine" python3 -I -c '
+import os, signal
+for pid in filter(str.isdigit, os.listdir("/proc")):
+    try:
+        words = open(f"/proc/{pid}/cmdline", "rb").read().split(b"\0")
+    except OSError:
+        continue
+    if any(word.endswith(b"slateops-engine") for word in words) and b"update" in words:
+        os.kill(int(pid), signal.SIGKILL)
+        print("killed the update, process", pid)'
+wait "$updating" || true
+[ "$(status_json | field engine_idle)" = False ] || fail "engine_idle is true while an update is open"
+ticked="$(tick 14)"; echo "$ticked"
+[ "$(field code <<<"$ticked")" = update_closed ] && [ "$(field update <<<"$ticked")" = failed ] \
+    || fail "the interrupted update was not closed by recover: $ticked"
+[ "$(journal_state "$killed")" = failed ] || fail "the interrupted update's journal is not failed"
+ready || fail "the services are not ready after recover"
+[ "$(installation project)" = "$restored" ] || fail "recover changed the project (a restore ran)"
+[ "$(docker exec "$machine" docker exec "$(service_of "$restored" api)" printenv SLATEOPS_VERSION)" = "$version" ] \
+    || fail "after recover the api does not run version $version"
+
+log "the update to $good runs every step; the api reports $good and the data stays (W13b-1)"
+updated="$(update_to "update-$(now)-proof9" "$good")" || fail "update: $updated"
+echo "$updated"
+[ "$(field code <<<"$updated")" = updated ] || fail "update: $updated"
+[ "$(installation version)" = "$good" ] && [ "$(installation project)" = "$restored" ] \
+    || fail "installation.json does not name $good on $restored"
+[ "$(docker exec "$machine" docker exec "$(service_of "$restored" api)" printenv SLATEOPS_VERSION)" = "$good" ] \
+    || fail "the api does not report $good"
+[ "$(admins "$restored")" = 1 ] || fail "the data did not stay"
+ready || fail "the updated installation is not ready"
+[ "$(docker exec "$machine" readlink /usr/local/bin/slateops-engine)" = "/opt/slateops/engine/$good/slateops-engine" ] \
+    || fail "the engine command does not run the $good bundle"
+db="$(service_of "$restored" db)"
+make_due
+ticked="$(tick 15)"; echo "$ticked"
+[ "$(field runner <<<"$ticked")" = succeeded ] || fail "the first backup after the update did not succeed (C-2): $ticked"
+
+log "the package night upgrades from the security repository and leaves the services ready (W13b-8)"
+night="$(printf '{"run_id":"package-night-%s-proof0"}' "$(now)" | "${engine[@]}" package-night)" \
+    || fail "package-night: $night"
+echo "$night"
+[ "$(field result <<<"$night")" = ok ] || fail "the package night did not finish: $night"
+ready || fail "the services are not ready after the package night"
+log "passed: receive, prefetch, install, HTTPS /api/ready, trust routes, WebSocket, invitation, rerun without change, resend, renewal, backups, update refusal, rollback, recover after a restart, update, package night"
