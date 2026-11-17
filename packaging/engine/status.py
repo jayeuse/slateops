@@ -84,7 +84,11 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     )
     manifest = release.load(paths, engine_version(paths))
     known_bad = [item for item in release.known_bad_wsl(manifest) if WSL_VERSION.match(item)]
-    if wsl in known_bad or packages.last_result(paths) == "needs_support":
+    if (
+        wsl in known_bad
+        or packages.last_result(paths) == "needs_support"
+        or update.needs_support(paths)
+    ):
         state = "needs_support"
     elif (paths.state / "installation.json").exists():
         state = "installed"

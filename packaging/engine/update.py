@@ -143,6 +143,13 @@ def is_open(paths: Paths) -> bool:
     return any(record.get("state") in OPEN for record in journals(paths))
 
 
+def needs_support(paths: Paths) -> bool:
+    """An update closed ``needs_support`` (a rollback or recover that did not finish): the
+    install journal can still name the failed project, so nothing may start it again. No
+    self-service retry in v1; the person sends Save report to support (TASK-0095 S95-1)."""
+    return any(record.get("state") == "needs_support" for record in journals(paths))
+
+
 def started_since(paths: Paths, moment: datetime) -> bool:
     for record in journals(paths):
         try:
@@ -456,12 +463,48 @@ def _forward(ctx: Context, record: dict[str, Any], manifest: dict[str, Any]) -> 
 # Recover and rollback ----------------------------------------------------------------------
 
 
+def _remove_tool_children(ctx: Context, step: str, project: str) -> None:
+    """A step-5 backup cut by a restart or its time limit: the backup tool's volume export
+    (``docker run --rm ... tar``) outlives the tool, created or running, outside the Compose
+    project (test build rc.17: a "created" container). The runner admits no backup while a
+    container outside the project holds a project volume (``check_readers``,
+    ``child_unresolved``). Under the engine lock and the runner's lock no runner, export or
+    other job runs, so each such container is the update's own: remove it, then confirm."""
+    label = f"label=com.docker.compose.project={project}"
+    listing = ctx.runner.run(step, ["docker", "volume", "ls", "--quiet", "--filter", label],
+                             timeout=60)  # fmt: skip
+    if not listing.ok:
+        raise failed("docker_unavailable")
+    for attempt in (1, 2):
+        loose: set[str] = set()
+        for volume in listing.text().split():
+            found = ctx.runner.run(step, ["docker", "ps", "--all", "--no-trunc", "--filter",
+                                          f"volume={volume}", "--format",
+                                          '{{.ID}}\t{{.Label "com.docker.compose.project"}}'],
+                                   timeout=60)  # fmt: skip
+            if not found.ok:
+                raise failed("docker_unavailable")
+            for row in found.text().splitlines():
+                identity, _, owner = row.partition("\t")
+                if identity and not owner:
+                    loose.add(identity)
+        if not loose:
+            return
+        if attempt == 2:
+            raise failed("backup_child_unresolved")
+        ctx.log.line(step, "WARN", f"removing {len(loose)} export container(s) of the cut backup")
+        for identity in sorted(loose):
+            ctx.runner.run(step, ["docker", "rm", "--force", identity], timeout=60)
+
+
 def _recover(ctx: Context, record: dict[str, Any]) -> None:
     """Before step 7: the old image names again, then the services on the old images."""
     step = ctx.step(20, "recover")
     if not record.get("stopped"):
         ctx.log.line(step, "INFO", "nothing was stopped; nothing to recover")
         return
+    if not _done(record, 5):  # the backup did not finish: its children may remain
+        _remove_tool_children(ctx, step, record["project"])
     old = _images(release.require(ctx.paths, record["from_version"]), record["from_version"])
     write_env(ctx, step, old)
     start_all(ctx, step, record["project"])
@@ -645,6 +688,8 @@ def resume(ctx: Context) -> str | None:
 def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     paths, version = ctx.paths, request["version"]
     resume(ctx)
+    if needs_support(paths):
+        raise refused("update_needs_support")
     instance = backups.installed_instance(paths)
     if instance is None:
         raise refused("not_installed")

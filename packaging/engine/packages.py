@@ -66,6 +66,8 @@ def _due(ctx: Context, now: datetime) -> bool:
         last = None
     if last == local.date().isoformat():
         return False
+    if update.needs_support(ctx.paths):  # S95-1: never start a failed project again
+        return False
     return not update.started_since(ctx.paths, now - timedelta(hours=24))
 
 

@@ -58,6 +58,12 @@ class UpdateWorld(World):
         self.down_leaves_db = False
         self.apt_fails = False
         self.api_reports: str | None = None  # an image whose SLATEOPS_VERSION is another
+        # Containers outside every Compose project: id -> the volume it mounts. The backup
+        # tool's volume export (`docker run --rm ... tar`) stays "created" when the tool dies
+        # between create and start (test build rc.17, `keen_kilby`).
+        self.loose: dict[str, str] = {}
+        self.tool_dies_in_export = False
+        self.drive_gone_at_migration = False  # the rollback finds no backup drive
         self.apt: list[list[str]] = []
         self.sources_seen: dict[str, str] = {}
 
@@ -75,6 +81,23 @@ class UpdateWorld(World):
 
     def _do(self, argv: list[str], env: dict[str, str], stdin: bytes | None) -> Result:
         text = " ".join(argv)
+        if argv[:2] == ["docker", "run"] and "backup_runner.py" in text and self.loose:
+            # The runner's admission (`check_readers`): a reader of a project volume that is
+            # neither exited nor part of the project.
+            return Result(3, b'{"code": "child_unresolved"}\n', b"")
+        if argv[:3] == ["docker", "volume", "ls"]:
+            project = _label_project(argv)
+            return _ok("".join(f"{v}\n" for v in self.data if v.startswith(f"{project}_")))
+        if argv[:2] == ["docker", "ps"] and any(a.startswith("volume=") for a in argv):
+            volume = next(a for a in argv if a.startswith("volume=")).split("=", 1)[1]
+            project = volume.split("_", 1)[0]
+            rows = [f"{k}\t\n" for k, v in self.loose.items() if v == volume]
+            if volume.endswith("_supabase-db-data") and "db" in self.containers.get(project, {}):
+                rows.append(f"{project}-db-1\t{project}\n")
+            return _ok("".join(rows))
+        if argv[:3] == ["docker", "rm", "--force"] and argv[3] in self.loose:
+            del self.loose[argv[3]]
+            return _ok(argv[3] + "\n")
         if argv[0] == "python3":
             return self._restore_tool(argv)
         if argv[0] == "apt-get":
@@ -97,6 +120,9 @@ class UpdateWorld(World):
             project = argv[argv.index("--network") + 1].removesuffix("_provider")
             if self.migration_fails:
                 self.data[f"{project}_supabase-db-data"] = "half-migrated"
+                if self.drive_gone_at_migration:
+                    self.host.pull_drive()
+                    self.host._umount(["umount", str(self.host.mount_point)])
                 return Result(3, b'{"step":"migrate","code":"migration_failed"}\n', b"")
         return super()._do(argv, env, stdin)
 
@@ -188,6 +214,9 @@ class UpdateWorld(World):
             return Result(1, b"", b"Backup failed: completion marker already exists\n")
         if any(c["running"] for c in self.containers.get(project, {}).values()):
             return Result(1, b"", b"Backup failed: the project is running\n")
+        if self.tool_dies_in_export:  # the export container is created, then the engine dies
+            self.loose["keen_kilby"] = f"{project}_supabase-db-data"
+            raise Killed
         found = self.host.answer(argv, stdin)
         assert found is not None
         if found.ok:
@@ -638,6 +667,23 @@ def test_w13b_7_a_restart_during_an_update_resumes_by_the_section_12_rule(
     assert (code, result["code"], machine.journal()["state"]) == (0, "ran", state)
 
 
+def test_w13b_7_closing_an_update_cut_in_its_backup_leaves_the_runner_able_to_back_up(
+    machine: Installed,
+) -> None:
+    machine.stage()
+    machine.fake.tool_dies_in_export = True
+    with pytest.raises(Killed):
+        machine.update()
+    machine.fake.tool_dies_in_export = False
+
+    code, result = machine.tick()
+
+    assert (code, result["code"], result["update"]) == (0, "update_closed", "failed")
+    assert machine.fake.loose == {}
+    code, result = machine.tick()
+    assert (code, result["code"], result["runner"]) == (0, "ran", "idle")
+
+
 # W13b-8 --------------------------------------------------------------------------------------
 
 SUNDAY_NIGHT = datetime(2026, 11, 21, 19, 30, tzinfo=UTC)  # Sunday 03:30 in Asia/Manila
@@ -686,3 +732,26 @@ def test_a_failed_package_night_shows_needs_support(machine: Installed) -> None:
     status = {"run_id": SUPPORT, "windows_part_version": "0.1.0", "wsl_version": "2.6.1.0"}
     assert machine.job("status", status)[1]["state"] == "needs_support"
     assert machine.running(machine.project) == _on(VERSION)
+
+
+def test_s95_1_after_a_rollback_that_needs_support_nothing_starts_the_failed_project(
+    machine: Installed,
+) -> None:
+    machine.stage()
+    machine.fake.migration_fails = True
+    machine.fake.drive_gone_at_migration = True
+    code, result = machine.update()
+    assert (code, result["update"]) == (3, "needs_support")
+    assert machine.journal()["rollback_code"] == "backup_target_missing"
+    machine.clock = Clock(SUNDAY_NIGHT)  # a due package night, more than 24 h later
+    machine.fake.calls.clear()
+
+    code, result = machine.tick()
+
+    assert (code, result["package_night"]) == (0, "not_due")
+    assert not [a for a in machine.fake.calls if a[:2] == ["docker", "compose"] and "up" in a]
+    code, result = machine.job("update", {"run_id": UPDATE.replace("ab12cd", "cd34ef"),
+                                          "version": TARGET})  # fmt: skip
+    assert (code, result["code"]) == (2, "update_needs_support")
+    status = {"run_id": SUPPORT, "windows_part_version": "0.1.0", "wsl_version": "2.6.1.0"}
+    assert machine.job("status", status)[1]["state"] == "needs_support"
