@@ -993,29 +993,40 @@ function Initialize-BackupFolder {
     # account); an existing folder that is not a link gets the account's entry once. Other file
     # systems (a FAT USB drive) have no access lists; the engine mounts them with the account's
     # rights (plan 8.2). Runs before the install answers are sent.
-    param([Parameter(Mandatory = $true)][string]$Drive, [Parameter(Mandatory = $true)][string]$DataRoot, [string]$ServiceSid = '', [hashtable]$Layout = $null)
+    # F-2, W9-S3: an existing folder on a file system with access lists must pass the tree rule
+    # (Get-BackupFolderProblem; -OldSid is the account that a kept reinstall replaces) before its
+    # list changes; else it is refused (S10 "cannot write"). Only FAT, FAT32 and exFAT have no
+    # access lists; every other file system gets a protected new folder.
+    param([Parameter(Mandatory = $true)][string]$Drive, [Parameter(Mandatory = $true)][string]$DataRoot, [string]$ServiceSid = '', [hashtable]$Layout = $null, [string]$OldSid = '')
     $target = '{0}\{1}' -f $Drive, $SlateOpsWizard.BackupFolder
     $problem = Get-BackupTargetProblem -Target $target -DataRoot $DataRoot
     if ($problem) { return New-StepResult -Code $problem -MessageKey ('setup.backup.{0}' -f $problem) }
     if (-not $ServiceSid) { return New-StepResult -Code 'account_missing' -MessageKey 'setup.account.missing' }
     $check = Test-BackupDrive -Drive $Drive
     if ($check.code -ne 'ready') { return $check }
-    $disk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter ("DeviceID='{0}'" -f $Drive)
-    $ntfs = ([string]$disk.FileSystem -eq 'NTFS')
+    $format = Get-VolumeFormat -Path $target
+    $acls = -not (Test-AclFreeFileSystem -Format $format)
     $item = Get-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
     if ($item -and (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -or -not $item.PSIsContainer)) {
         return New-StepResult -Code 'backup_target_unsafe' -MessageKey 'setup.backup.backup_target_unsafe'
     }
     $sid = New-Object System.Security.Principal.SecurityIdentifier($ServiceSid)
     $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'Modify, Synchronize', 'ContainerInherit, ObjectInherit', 'None', 'Allow')
+    if ($item -and $acls) {
+        $problems = @(Get-BackupFolderProblem -Folder $target -ServiceSid $ServiceSid -OldSid $OldSid)
+        if ($problems.Count -gt 0) {
+            foreach ($problem in $problems) { Write-RunLog 'setup.backup' 'FAIL' $problem }
+            return New-StepResult -Code 'backup_target_unsafe' -MessageKey 'setup.backup.backup_target_unsafe'
+        }
+    }
     if (-not $item) {
-        if ($ntfs) {
+        if ($acls) {
             $security = Get-ProtectedDirectorySecurity
             $security.AddAccessRule($rule)
             [void][System.IO.Directory]::CreateDirectory($target, $security)
         } else { [void][System.IO.Directory]::CreateDirectory($target) }
-        Write-RunLog 'setup.backup' 'INFO' ('backup folder {0} created ({1})' -f $target, [string]$disk.FileSystem)
-    } elseif ($ntfs) {
+        Write-RunLog 'setup.backup' 'INFO' ('backup folder {0} created ({1})' -f $target, $format)
+    } elseif ($acls) {
         $acl = Get-Acl -LiteralPath $target
         $has = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -eq $ServiceSid }).Count -gt 0
         if (-not $has) { $acl.AddAccessRule($rule); Set-Acl -LiteralPath $target -AclObject $acl }

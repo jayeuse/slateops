@@ -233,11 +233,11 @@ try {
                 if ($old -notmatch $SlateOpsKept.SidPattern) { $old = '' }
                 $done = $false
                 if (($folder -cmatch '^[A-Z]:\\SlateOps-backups$') -and (Test-Path -LiteralPath $folder)) {
-                    $backup = Initialize-BackupFolder -Drive $folder.Substring(0, 2) -DataRoot $state.data_root -ServiceSid $serviceSid -Layout $layout
+                    $backup = Initialize-BackupFolder -Drive $folder.Substring(0, 2) -DataRoot $state.data_root -ServiceSid $serviceSid -Layout $layout -OldSid $old
                     Write-RunLog 'setup.kept' 'INFO' ('backup folder {0}: {1}' -f $folder, $backup.code)
                     # W9 gap 1: the removed account's entries and owned items go (P2-3).
                     if ($backup.code -eq 'ready') {
-                        if ($old -and ($old -ne $serviceSid)) { $null = Remove-OldAccountAccess -Folder $folder -OldSid $old }
+                        if ($old -and ($old -ne $serviceSid)) { $null = Remove-OldAccountAccess -Folder $folder -OldSid $old -ServiceSid $serviceSid }
                         $done = $true
                     }
                 }

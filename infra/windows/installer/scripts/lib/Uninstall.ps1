@@ -261,11 +261,19 @@ function Remove-OldAccountAccess {
     # entries that Windows does not mark as inherited, so each item can hold its own entry of the
     # old account. Returns one line per changed item: "<path below the folder>:<what changed>"
     # ("." is the folder itself; "owner", "entry").
-    param([Parameter(Mandatory = $true)][string]$Folder, [AllowEmptyString()][string]$OldSid)
+    param([Parameter(Mandatory = $true)][string]$Folder, [AllowEmptyString()][string]$OldSid, [string]$ServiceSid = '')
     $changes = New-Object System.Collections.Generic.List[string]
     if ($OldSid -cnotmatch $SlateOpsKept.SidPattern) { return $changes.ToArray() }
     $item = Get-Item -LiteralPath $Folder -Force -ErrorAction SilentlyContinue
     if ((-not $item) -or ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { return $changes.ToArray() }
+    # W9-S2: the walk reads and writes access lists by path, so it runs only on a folder that no
+    # standard user can change (the tree rule, with the old account accepted).
+    $problems = @(Get-BackupFolderProblem -Folder $Folder -ServiceSid $ServiceSid -OldSid $OldSid)
+    if ($problems.Count -gt 0) {
+        foreach ($problem in $problems) { Write-RunLog 'setup.kept' 'WARN' $problem }
+        Write-RunLog 'setup.kept' 'WARN' ('backup folder {0} fails the tree rule; old-account walk skipped' -f $Folder)
+        return $changes.ToArray()
+    }
     $base = $item.FullName.TrimEnd('\')
     $sidType = [System.Security.Principal.SecurityIdentifier]
     $old = New-Object System.Security.Principal.SecurityIdentifier($OldSid)
@@ -291,21 +299,34 @@ function Remove-OldAccountAccess {
     return $changes.ToArray()
 }
 
+function Test-AclFreeFileSystem {
+    # W9-S3: only FAT, FAT32 and exFAT have no access lists. Every other format, an unknown one
+    # and an unreadable one (empty) get the tree rule and a protected list.
+    param([AllowEmptyString()][string]$Format)
+    return (@('FAT', 'FAT32', 'exFAT') -contains $Format)
+}
+
+function Get-VolumeFormat {
+    # The file system of the volume that holds a path; '' when it cannot be read.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    try { return [string](New-Object System.IO.DriveInfo((Split-Path -Qualifier $Path))).DriveFormat } catch { return '' }
+}
+
 function Get-BackupFolderProblem {
-    # W9 review item 10 (Security W9-S1, S91-2 class): on NTFS the backup folder passes the tree
-    # rule before an elevated delete: the folder owned by Administrators, SYSTEM or this
-    # administrator, a protected list, and below it no link, no other owner than those and the
-    # service account, and no writer other than Administrators, SYSTEM and the service account.
-    # FAT and exFAT have no access lists and stay as before (shape and link checks).
-    param([Parameter(Mandatory = $true)][string]$Folder, [string]$ServiceSid = '')
+    # The backup folder tree rule (Security W9-S1, W9-S2, F-2, W9-S3; S91-2 class), before any
+    # elevated delete or access-list write: the folder owned by Administrators, SYSTEM or this
+    # administrator, a protected list, and below it no link, no other owner than those, the
+    # service account and the account that a kept reinstall replaces (-OldSid), and no writer
+    # other than Administrators, SYSTEM and those two accounts. Only FAT, FAT32 and exFAT (no
+    # access lists) skip it; they keep the shape and link checks.
+    param([Parameter(Mandatory = $true)][string]$Folder, [string]$ServiceSid = '', [string]$OldSid = '')
     $problems = New-Object System.Collections.Generic.List[string]
-    $format = ''
-    try { $format = (New-Object System.IO.DriveInfo((Split-Path -Qualifier $Folder))).DriveFormat } catch { $format = '' }
-    if ($format -ne 'NTFS') { return $problems.ToArray() }
+    if (Test-AclFreeFileSystem -Format (Get-VolumeFormat -Path $Folder)) { return $problems.ToArray() }
     $sidType = [System.Security.Principal.SecurityIdentifier]
     $trusted = @($SlateOps.SidAdministrators, $SlateOps.SidSystem, [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
     $writers = @($SlateOps.SidAdministrators, $SlateOps.SidSystem)
     if ($ServiceSid) { $writers += $ServiceSid }
+    if ($OldSid) { $writers += $OldSid }
     $root = Get-Acl -LiteralPath $Folder
     if ($trusted -notcontains $root.GetOwner($sidType).Value) { $problems.Add(('owner:{0}' -f $Folder)) }
     if (-not $root.AreAccessRulesProtected) { $problems.Add(('inherits:{0}' -f $Folder)) }
@@ -316,7 +337,7 @@ function Get-BackupFolderProblem {
         if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { $problems.Add(('reparse_point:{0}' -f $item.FullName)); continue }
         try { $acl = Get-Acl -LiteralPath $item.FullName } catch { $problems.Add(('acl_unreadable:{0}' -f $item.FullName)); continue }
         $owner = $acl.GetOwner($sidType).Value
-        if (($trusted -notcontains $owner) -and ($owner -ne $ServiceSid)) { $problems.Add(('owner:{0}:{1}' -f $item.FullName, $owner)) }
+        if (($trusted -notcontains $owner) -and ($writers -notcontains $owner)) { $problems.Add(('owner:{0}:{1}' -f $item.FullName, $owner)) }
         foreach ($rule in $acl.GetAccessRules($true, $true, $sidType)) {
             if ($rule.AccessControlType -ne 'Allow') { continue }
             if ($writers -contains $rule.IdentityReference.Value) { continue }
@@ -502,13 +523,14 @@ function Repair-BackupAccess {
         return New-StepResult -Code 'drive_missing' -MessageKey 'maintenance.backup.drive_missing'
     }
     if (-not $Layout.DataRoot) { Set-LayoutDataRoot -Layout $Layout -DataRoot (Read-InstallState -Layout $Layout).data_root }
-    $backup = Initialize-BackupFolder -Drive $drive -DataRoot $Layout.DataRoot -ServiceSid $ServiceSid -Layout $Layout
+    $old = [string](Get-DictValue (Read-WindowsChanges -Layout $Layout) 'kept_account_sid')
+    if ($old -cnotmatch $SlateOpsKept.SidPattern) { $old = '' }
+    $backup = Initialize-BackupFolder -Drive $drive -DataRoot $Layout.DataRoot -ServiceSid $ServiceSid -Layout $Layout -OldSid $old
     Write-RunLog $step 'INFO' ('backup folder {0}: {1}' -f $folder, $backup.code)
     if ($backup.code -ne 'ready') { return $backup }
     $record = Read-WindowsChanges -Layout $Layout
-    $old = [string](Get-DictValue $record 'kept_account_sid')
     if ($old) {
-        if ($old -ne $ServiceSid) { $null = Remove-OldAccountAccess -Folder $folder -OldSid $old }
+        if ($old -ne $ServiceSid) { $null = Remove-OldAccountAccess -Folder $folder -OldSid $old -ServiceSid $ServiceSid }
         $record.Remove('kept_account_sid')
         Save-WindowsChanges -Layout $Layout -Record $record
     }

@@ -262,7 +262,7 @@ Test-Case 'W9 gap 1 a kept reinstall moves the backup folder from the removed ac
         # old account (CI run 44086654344 counted 3, not 2), because a folder that .NET created with
         # a protected list gives its children copies that Windows does not mark as inherited; the
         # file also had the old account as owner.
-        $changes = @(Remove-OldAccountAccess -Folder $folder -OldSid $old)
+        $changes = @(Remove-OldAccountAccess -Folder $folder -OldSid $old -ServiceSid $new)
         Assert-Equal @('.', 'data', 'data\pack') @($changes | ForEach-Object { ($_ -split ':')[0] }) ($changes -join '; ')
         Assert-True ($changes[0] -match ':.*entry') ($changes -join '; ')
         Assert-True ($changes[2] -match ':.*owner') ($changes -join '; ')
@@ -307,4 +307,50 @@ Test-Case 'W9 option b Repair sets the backup folder rights when the drive is th
             Assert-Equal $false ((Read-WindowsChanges -Layout $layout).Contains('kept_account_sid')) 'done once'
         } finally { Remove-PathNoFollow -Path $backups; Remove-PathNoFollow -Path $data }
     }
+}
+
+Test-Case 'W9-S2 F-2 a backup folder that a standard user can change gets no access-list write' {
+    # Security re-check: the tree rule runs before Initialize-BackupFolder changes an existing
+    # folder and before the old-account walk; a folder that fails it is refused or skipped.
+    $old = New-TestUser 'slateops-w9s2o'
+    $new = New-TestUser 'slateops-w9s2n'
+    $logDir = New-TestDirectory 'w9-s2-log'
+    Start-RunLog -RunId 'install-20261117T170000Z-w9s2ab' -Directory $logDir -NoConsole
+    # The walk: a folder with the old account's entry and Authenticated Users Modify.
+    $open = New-TestDirectory 'w9-s2-walk'
+    [System.IO.File]::WriteAllText((Join-Path $open 'pack'), 'x')
+    $null = & icacls.exe $open /grant ('*{0}:(OI)(CI)M' -f $old) 2>&1
+    $null = & icacls.exe $open /grant '*S-1-5-11:(OI)(CI)M' 2>&1
+    Assert-Equal 0 @(Remove-OldAccountAccess -Folder $open -OldSid $old -ServiceSid $new).Count 'nothing changes'
+    $rules = @((Get-Acl -LiteralPath $open).GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value })
+    Assert-True ($rules -contains $old) 'the old entry stays: the walk did not run'
+    $log = [System.IO.File]::ReadAllText((Join-Path $logDir 'install-20261117T170000Z-w9s2ab.log'))
+    Assert-True ($log -match 'fails the tree rule; old-account walk skipped') $log
+    # Initialize-BackupFolder: a pre-made folder at the drive root with Authenticated Users Modify.
+    $backups = '{0}\SlateOps-backups' -f (Split-Path -Qualifier $script:TestRoot)
+    if (-not (Test-Path -LiteralPath $backups)) {
+        [void][System.IO.Directory]::CreateDirectory($backups)
+        $null = & icacls.exe $backups /grant '*S-1-5-11:(OI)(CI)M' 2>&1
+        $data = New-AdminOnlyFolder 'SlateOpsW9S2Data'
+        try {
+            $result = Initialize-BackupFolder -Drive (Split-Path -Qualifier $script:TestRoot) -DataRoot (Join-Path $data 'SlateOps') -ServiceSid $new
+            Assert-Equal 'backup_target_unsafe' $result.code
+            $rules = @((Get-Acl -LiteralPath $backups).GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value })
+            Assert-True ($rules -notcontains $new) 'no entry was added'
+        } finally { Remove-PathNoFollow -Path $backups; Remove-PathNoFollow -Path $data }
+    }
+}
+
+Test-Case 'W9-S3 only FAT, FAT32 and exFAT skip the backup folder rule; an unknown format does not' {
+    foreach ($format in @('FAT', 'FAT32', 'exFAT', 'fat32')) { Assert-Equal $true (Test-AclFreeFileSystem -Format $format) $format }
+    foreach ($format in @('NTFS', 'ReFS', 'CSVFS', 'UDF', '')) { Assert-Equal $false (Test-AclFreeFileSystem -Format $format) ('"{0}"' -f $format) }
+    $open = New-TestDirectory 'w9-s3-open'
+    $null = & icacls.exe $open /grant '*S-1-5-11:(OI)(CI)M' 2>&1
+    function Get-VolumeFormat { param([string]$Path) return $script:W9Format }
+    foreach ($format in @('ReFS', '')) {
+        $script:W9Format = $format
+        Assert-True (@(Get-BackupFolderProblem -Folder $open).Count -gt 0) ('format "{0}" gets the rule' -f $format)
+    }
+    $script:W9Format = 'exFAT'
+    Assert-Equal 0 @(Get-BackupFolderProblem -Folder $open).Count 'exFAT has no access lists'
 }
