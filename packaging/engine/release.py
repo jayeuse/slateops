@@ -21,8 +21,10 @@ MANIFEST = "release-manifest.json"
 SIGNATURE = "release-manifest.json.sigstore.json"
 SCHEMA_VERSION = 1
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+# One path component per "/" (the separators inside a component are only ".", "_" and
+# "-"), so "/" has one meaning and the pattern cannot backtrack exponentially.
 REFERENCE = re.compile(
-    r"(?P<name>[a-z0-9]+(?:[._/-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:[._/-][a-z0-9]+)*)*)"
+    r"(?P<name>[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*)"
     r"(?::(?P<tag>[A-Za-z0-9_][A-Za-z0-9._-]{0,127}))?@(?P<digest>sha256:[0-9a-f]{64})\Z"
 )
 
