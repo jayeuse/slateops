@@ -17,7 +17,9 @@ $SlateOpsExec = @{
     # Windows-side work that must run as slateops-svc, because WSL distributions and .wslconfig
     # belong to the account that runs wsl.exe (kit design notes). Their paths come from the
     # administrator-only state file, never from the request.
-    WindowsJobs = @('wslconfig', 'import-distro', 'wsl-facts', 'pipe-test')
+    # W9: terminate-distro, unregister-distro (uninstall) and import-kept (reinstall with kept
+    # data) also run as the account, because the distribution is registered for it.
+    WindowsJobs = @('wslconfig', 'import-distro', 'wsl-facts', 'pipe-test', 'terminate-distro', 'unregister-distro', 'import-kept')
     # Plan 3.2 rule 3 and 6.1 (W8): the wizard's pipe \\.\pipe\SlateOps-<request ID> carries
     # the values below; they are never written to a Windows disk. pipe-test is the channel
     # self-test (plan F4d).
@@ -917,6 +919,31 @@ function Invoke-WindowsJob {
                 Write-RunLog $step 'FAIL' ('secret channel: {0}' -f $Result.code)
             } finally { if ($bridge) { $bridge.Dispose() } }
         }
+        'terminate-distro' {
+            # Uninstall (plan 9.1): the distribution stops before its disk moves.
+            $run = Invoke-Logged -Step $step -FilePath $WslPath -ArgumentList @('--terminate', $SlateOps.DistroName) -NoThrow
+            if ($run.ExitCode -eq 0) { $Result.code = 'terminated' } else { $Result.code = 'terminate_failed'; $Result.exit_code = 3; $Result.message_key = 'exec.terminate_failed' }
+        }
+        'unregister-distro' {
+            # Uninstall (plan 9.1, F3): with "Keep my data" the disk is moved out of distro first.
+            $run = Invoke-Logged -Step $step -FilePath $WslPath -ArgumentList @('--unregister', $SlateOps.DistroName) -NoThrow
+            if ($run.ExitCode -eq 0) { $Result.code = 'unregistered' } else { $Result.code = 'unregister_failed'; $Result.exit_code = 3; $Result.message_key = 'exec.unregister_failed' }
+        }
+        'import-kept' {
+            # Reinstall with kept data (plan 9.2 step 3): register the kept disk where it is. The
+            # data tree is checked right before, as for import-distro.
+            $state = Read-InstallState -Layout $Layout
+            Set-LayoutDataRoot -Layout $Layout -DataRoot $state.data_root
+            $own = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+            $problems = @(Get-TreeProblem -Tree $Layout.DataTree -ServiceSid $own)
+            if ($problems.Count -gt 0) {
+                foreach ($problem in $problems) { Write-RunLog $step 'FAIL' $problem }
+                $Result.code = 'data_folder_parent_unsafe'; $Result.exit_code = 3; $Result.message_key = 'exec.data_folder_parent_unsafe'; return $Result
+            }
+            $disk = Join-Path $Layout.Distro 'ext4.vhdx'
+            $run = Invoke-Logged -Step $step -FilePath $WslPath -ArgumentList @('--import-in-place', $SlateOps.DistroName, $disk) -NoThrow
+            if ($run.ExitCode -eq 0) { $Result.code = 'imported' } else { $Result.code = 'import_failed'; $Result.exit_code = 3; $Result.message_key = 'exec.import_failed' }
+        }
         'wsl-facts' {
             foreach ($arguments in @(@('--version'), @('--status'), @('--list', '--verbose'))) {
                 $null = Invoke-Logged -Step $step -FilePath $WslPath -ArgumentList $arguments -NoThrow
@@ -929,7 +956,7 @@ function Invoke-WindowsJob {
         }
     }
     if (-not $Result.message_key -or ($Result.message_key -like 'exec.accepted')) { $Result.message_key = ('exec.{0}.{1}' -f $Check.job, $Result.code) }
-    if ($Result.exit_code -eq 2 -and ($Result.code -in @('written', 'already_imported', 'imported', 'recorded', 'pipe_ok'))) { $Result.exit_code = 0 }
+    if ($Result.exit_code -eq 2 -and ($Result.code -in @('written', 'already_imported', 'imported', 'recorded', 'pipe_ok', 'terminated', 'unregistered'))) { $Result.exit_code = 0 }
     return $Result
 }
 

@@ -741,8 +741,13 @@ jobs:
           if ($process.ExitCode -ne 0) { throw "The Inno Setup install ended with exit code $($process.ExitCode)." }
           $payload = (Resolve-Path 'payload').Path
           $dist = Join-Path (Get-Location) 'dist'
+          $settingsDir = Join-Path $env:RUNNER_TEMP 'settings'
           Set-Location infra\windows\installer
-          & (Join-Path $dir 'ISCC.exe') /Qp "/DAppVersion=$env:VERSION" "/DPayloadDir=$payload" "/O$dist" SlateOpsSetup.iss
+          # W9: the maintenance program, carried inside the setup file (not a release asset).
+          & (Join-Path $dir 'ISCC.exe') /Qp "/DAppVersion=$env:VERSION" /DSettingsBuild "/O$settingsDir" SlateOpsSetup.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $settings = Join-Path $settingsDir 'SlateOpsSettings.exe'
+          & (Join-Path $dir 'ISCC.exe') /Qp "/DAppVersion=$env:VERSION" "/DPayloadDir=$payload" "/DSettingsExe=$settings" "/O$dist" SlateOpsSetup.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # W8-7: one file below 2 GiB (the release job checks every asset again).
           $setup = Get-Item -LiteralPath (Join-Path $dist ('SlateOpsSetup-{0}.exe' -f $env:VERSION))

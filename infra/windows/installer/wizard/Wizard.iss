@@ -40,6 +40,18 @@ const
   { W8 correction 5: every helper wait has a time limit; a helper that never answers is most
     often a security program that blocked it (spec 7.5). }
   HELPER_LIMIT_MS = 600000;
+  { W9: the small settings program (/DSettingsBuild) and the main build that carries it. }
+#ifdef SettingsBuild
+  SETTINGS_BUILD = True;
+#else
+  SETTINGS_BUILD = False;
+#endif
+#ifdef SettingsExe
+  HAS_SETTINGS = True;
+#else
+  HAS_SETTINGS = False;
+#endif
+  UNINSTALL_KEY = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{8B0C1D7E-3F4A-4E52-9A61-5C2D7B9E0F13}_is1';
   CHECK_LIMIT_MS = 300000;
   DATA_LIMIT_MS = 1800000;
   SUBMIT_LIMIT_MS = 120000;
@@ -203,6 +215,17 @@ var
   FailureStatus: TNewStaticText;
   CheckStartedAt, FixStartedAt, PrepStartedAt, BgStartedAt, InstallOutAt, DataStartedAt: Cardinal;
   BgResume, MailShowReport: Boolean;
+  { W9: reinstall with kept data (spec S07 kept-data card, plan 9.2). }
+  KeptState, KeptVersion, KeptName, KeptOn, KeptFor: String;
+  KeptUse, WizardReady: Boolean;
+  { W9 maintenance (Maintenance.iss). }
+  MaintAction, MaintPhase, MaintStatus, MaintStatusOut, MaintTarget, MaintState, MaintBackup, MaintBackupFolder: String;
+  MaintStatusAt: Cardinal;
+  KeyFormOpen: Boolean;
+  KeyFormStatus: TNewStaticText;
+  KeyFormDone: TNewButton;
+  KeyFormCheck: TNewCheckBox;
+  KeyFormUsbSeen: String;
   MailReportButton: TNewButton;
 
   { Save report }
@@ -212,6 +235,17 @@ procedure RenderPage(Index: Integer); forward;
 procedure SaveReport(Sender: TObject); forward;
 procedure StartBackground; forward;
 function BgDone: Boolean; forward;
+{ W9, in Maintenance.iss. }
+procedure RefreshKeyState; forward;
+procedure FillKeyFormUsb; forward;
+procedure RenderMaint; forward;
+procedure StartMaintStatus; forward;
+procedure PollMaint; forward;
+function MaintNext(PageID: Integer): Boolean; forward;
+function MaintSkip(PageID: Integer): Boolean; forward;
+function AskCancelChoice: Integer; forward;
+procedure RemoveEverything; forward;
+function SettingsEntry: Boolean; forward;
 
 { ------------------------------------------------------------------------------------------- }
 { W7 plumbing: run ID, host name, helper start and result read                                  }
@@ -1027,8 +1061,11 @@ begin
     so it is left out then and report.txt says the Linux part was not reachable. }
   ReportRun := NewRunId('report');
   ReportLine := CM('report_saving');
-  WizardForm.BeveledLabel.Caption := ' ' + ReportLine;
-  WizardForm.Refresh;
+  if WizardReady then
+  begin
+    WizardForm.BeveledLabel.Caption := ' ' + ReportLine;
+    WizardForm.Refresh;
+  end;
   { The Linux part, when the server part answers (plan 10.6 item 1). }
   if (ServiceSid <> '') and not JobRunning then
     RunJobBlocking('log-bundle', '{"run_id":"' + ReportRun + '"}', ReportRun, 120);
@@ -1045,6 +1082,8 @@ begin
     ReportLine := FM('report_saved', [ExtractFileName(ReportPath)])
   else
     ReportLine := '';
+  if not WizardReady then
+    Exit;
   WizardForm.BeveledLabel.Caption := '';
   { Design B2: the result line also shows in the modal S13 form. }
   if FailureStatus <> nil then
@@ -1800,6 +1839,39 @@ begin
   Result := IntToStr(Integer(Bytes div 1073741824));
 end;
 
+{ W9: the S07 card uses the kept data (plan 9.2) when the folder holds it and the person keeps
+  the default "Use the kept data". }
+function KeptMode: Boolean;
+begin
+  Result := (KeptState = 'kept') and KeptUse;
+end;
+
+{ Reads kept.json through the helper, after its folder checks (never a Pascal read, which
+  would follow a link). }
+procedure RefreshKept;
+var
+  Text: String;
+begin
+  if KeptFor = DataRoot then
+    Exit;
+  KeptFor := DataRoot;
+  KeptState := '';
+  KeptUse := True;
+  if (DataRoot = '') or not DirExists(AddBackslash(DataRoot) + 'kept') then
+    Exit;
+  Text := ReadText(NewOutRun('kept-read', '-DataRoot ' + AddQuotes(DataRoot)));
+  KeptState := JsonValue(Text, 'code');
+  KeptVersion := JsonValue(Text, 'version');
+  KeptName := JsonValue(Text, 'business_name');
+  KeptOn := JsonValue(Text, 'kept_on');
+end;
+
+procedure KeptChoiceClick(Sender: TObject);
+begin
+  KeptUse := TNewRadioButton(Sender).Tag = 1;
+  RenderPage(P_DATA);
+end;
+
 procedure DriveRadioClick(Sender: TObject);
 begin
   DataRoot := DriveLetters[TNewRadioButton(Sender).Tag] + '\SlateOps';
@@ -1913,6 +1985,37 @@ begin
   end;
   CurY := CurY + ScaleY(6);
   AddText(FM('s07_folder', [DataRoot]), False);
+  RefreshKept;
+  if KeptState = 'kept' then
+  begin
+    { Spec S07 kept-data card. }
+    AddText(FM('s07_kept', [KeptName, KeptVersion, KeptOn]), True);
+    Radio := TNewRadioButton.Create(WizardForm);
+    Radio.Parent := Cur;
+    Radio.Caption := CM('s07_use_kept');
+    Radio.Tag := 1;
+    Radio.Checked := KeptUse;
+    Radio.OnClick := @KeptChoiceClick;
+    Radio.SetBounds(0, CurY, Cur.Width, ScaleY(18));
+    CurY := CurY + ScaleY(22);
+    Radio := TNewRadioButton.Create(WizardForm);
+    Radio.Parent := Cur;
+    Radio.Caption := CM('s07_start_new');
+    Radio.Tag := 0;
+    Radio.Checked := not KeptUse;
+    Radio.OnClick := @KeptChoiceClick;
+    Radio.SetBounds(0, CurY, Cur.Width, ScaleY(18));
+    CurY := CurY + ScaleY(24);
+  end
+  else if KeptState = 'kept_newer' then
+    AddText(FM('s07_kept_newer', [KeptVersion]), True)
+  else if KeptState = 'kept_older' then
+    AddText(FM('s07_kept_older', [KeptVersion]), True)
+  else if KeptState = 'kept_unreadable' then
+  begin
+    AddText(CM('s07_kept_unreadable'), True);
+    AddReportControls;
+  end;
   if DataError = 'data_folder_parent_unsafe' then
   begin
     AddText(FM('s07_parent_unsafe', [DataRoot, DefaultFolderFor(DataRoot)]), False);
@@ -1947,7 +2050,9 @@ begin
     AddText(FM('s07_preparing', ['0%']), False);
     AddMarquee;
   end;
-  WizardForm.NextButton.Enabled := (DataRoot <> '') and not DataStarted;
+  { W9-3: newer, older (W13b) or unreadable kept data, and "Start new" in a kept folder, keep
+    Next off until the folder changes. }
+  WizardForm.NextButton.Enabled := (DataRoot <> '') and not DataStarted and ((KeptState = '') or KeptMode);
 end;
 
 { The folder that the person picked must be on a listed drive (spec S07 "drive too small"). }
@@ -1995,13 +2100,57 @@ begin
   end;
   BgOut := NewOut('prepare-data');
   DataStartedAt := GetTickCount;
-  StartHelper('prepare-data', RunId, BgOut, '-DataRoot ' + AddQuotes(DataRoot));
+  if KeptMode then
+    StartHelper('prepare-data', RunId, BgOut, '-DataRoot ' + AddQuotes(DataRoot) + ' -UseKept')
+  else
+    StartHelper('prepare-data', RunId, BgOut, '-DataRoot ' + AddQuotes(DataRoot));
 end;
 
 { The background preparation after prepare-data (plan page 4a; spec 12 item 1): one step at a
   time, each an Exec job or a helper action. }
+{ W9: with kept data the disk comes back and is checked (F3) before receive; no image import
+  and no download (the images are inside the kept disk). }
+function KeptStepName(Index: Integer): String;
+begin
+  case Index of
+    0: Result := 'service';
+    1: Result := 'wslconfig';
+    2: Result := 'restore-kept';
+    3: Result := 'import-kept';
+    4: Result := 'start-boot';
+    5: Result := 'kept-status';
+    6: Result := 'receive';
+    7: Result := 'prepare';
+  else
+    Result := '';
+  end;
+end;
+
+function BgCount: Integer;
+begin
+  if KeptMode then Result := 8 else Result := 7;
+end;
+
+function IsHelperStep(Name: String): Boolean;
+begin
+  Result := (Name = 'service') or (Name = 'start-boot') or (Name = 'restore-kept') or (Name = 'kept-status');
+end;
+
+function HelperStepCode(Name: String): String;
+begin
+  if Name = 'service' then Result := 'created'
+  else if Name = 'start-boot' then Result := 'started'
+  else if Name = 'restore-kept' then Result := 'restored'
+  else Result := 'match';
+end;
+
 function BgStepName(Index: Integer): String;
 begin
+  if KeptMode then
+  begin
+    Result := KeptStepName(Index);
+    Exit;
+  end;
   case Index of
     0: Result := 'service';
     1: Result := 'wslconfig';
@@ -2017,14 +2166,15 @@ end;
 
 function BgDone: Boolean;
 begin
-  Result := DataPrepared and (BgIndex > 6) and not BgFailed;
+  Result := DataPrepared and (BgIndex >= BgCount) and not BgFailed;
 end;
 
 procedure UpdateBgStatus;
 begin
   if not DataPrepared then
     Exit;
-  if (WizardForm.CurPageID <> Pages[P_ORG].ID) and (WizardForm.CurPageID <> Pages[P_EMAIL].ID) and (WizardForm.CurPageID <> Pages[P_BACKUP].ID) then
+  if (WizardForm.CurPageID <> Pages[P_ORG].ID) and (WizardForm.CurPageID <> Pages[P_EMAIL].ID) and (WizardForm.CurPageID <> Pages[P_BACKUP].ID)
+    and not (KeptMode and (WizardForm.CurPageID = Pages[P_READY].ID)) then
   begin
     WizardForm.BeveledLabel.Caption := '';
     Exit;
@@ -2034,7 +2184,7 @@ begin
   else if BgDone then
     WizardForm.BeveledLabel.Caption := ' ' + CM('s07_prepared')
   else
-    WizardForm.BeveledLabel.Caption := ' ' + FM('s07_preparing', [IntToStr((BgIndex * 100) div 7) + '%']);
+    WizardForm.BeveledLabel.Caption := ' ' + FM('s07_preparing', [IntToStr((BgIndex * 100) div BgCount) + '%']);
   WizardForm.BeveledLabel.Visible := True;
 end;
 
@@ -2046,7 +2196,7 @@ begin
   if Name = '' then
     Exit;
   BgCode := '';
-  if (Name = 'service') or (Name = 'start-boot') then
+  if IsHelperStep(Name) then
   begin
     BgOut := NewOut(Name);
     BgStartedAt := GetTickCount;
@@ -2073,20 +2223,28 @@ procedure PollBackground;
 var
   Code, Name, OutFile: String;
 begin
-  if (not DataPrepared) or BgFailed or (BgIndex > 6) then
+  if (not DataPrepared) or BgFailed or (BgIndex >= BgCount) then
     Exit;
   Name := BgStepName(BgIndex);
-  if (Name = 'service') or (Name = 'start-boot') then
+  if IsHelperStep(Name) then
   begin
     Code := ReadResultCode(BgOut);
     if (Code = '') and (Elapsed(BgStartedAt) > HELPER_LIMIT_MS) then
       Code := 'helper_timeout';
     if Code = '' then
       Exit;
-    if ((Name = 'service') and (Code <> 'created')) or ((Name = 'start-boot') and (Code <> 'started')) then
+    if Code <> HelperStepCode(Name) then
     begin
       BgFailed := True;
       BgCode := Code;
+      { F3 at reinstall: a disk that is not the kept installation goes back to kept\ at once,
+        unchanged (advisor item 1). }
+      if (Name = 'kept-status') or (Name = 'restore-kept') then
+      begin
+        BgCode := 'kept_mismatch';
+        if Name = 'kept-status' then
+          NewOutRun('kept-return', '');
+      end;
       UpdateBgStatus;
       Exit;
     end;
@@ -2115,6 +2273,8 @@ begin
   BgIndex := BgIndex + 1;
   UpdateBgStatus;
   StartBgStep;
+  if KeptMode and (WizardForm.CurPageID = Pages[P_READY].ID) then
+    RenderPage(P_READY);
 end;
 
 { Next on S08 to S10 after a background failure: the modal S13 form (spec S08). }
@@ -2131,6 +2291,12 @@ begin
     Text := CM('av_blocked')
   else if BgCode = 'service_logon_failed' then
     Text := CM('service_logon_failed');
+  if BgCode = 'kept_mismatch' then
+  begin
+    FailureForm(CM('s07_title'), CM('s07_kept_unreadable'), False);
+    Result := False;
+    Exit;
+  end;
   if (BgCode = 'data_folder_parent_unsafe') or (BgCode = 'payload_part_missing') then
   begin
     { Parent decision: a folder above changed after the check; no Try again. }
@@ -2596,7 +2762,9 @@ begin
   WizardForm.AdjustLabelHeight(MailStatus);
   MailReportButton.Visible := MailShowReport and (MailPhase = '');
   MailReportButton.Top := MailStatus.Top + MailStatus.Height + ScaleY(4);
-  if MailPassed then
+  if MailPassed and (EntryScreen = 'M01') then
+    WizardForm.NextButton.Caption := CM('btn_done')
+  else if MailPassed then
     WizardForm.NextButton.Caption := CM('btn_next')
   else
     WizardForm.NextButton.Caption := CM('s09_next_test');
@@ -2930,21 +3098,33 @@ begin
     WizardForm.NextButton.Enabled := False;
     Exit;
   end;
-  AddRow(FM('s11_org', [Trim(OrgName.Text)]), P_ORG);
-  AddRow(FM('s11_admin', [Trim(OrgEmail.Text)]), P_ORG);
-  AddRow(FM('s11_mail', [Trim(MailFrom.Text), MailProviderName]), P_EMAIL);
-  AddRow(FM('s11_data', [DataRoot]), -1);
-  Backups := BackupDrive;
-  if GetDriveType(BackupDrive + '\') = DRIVE_REMOVABLE then
-    Backups := Backups + ' (' + CM('s10_usb_word') + ')';
-  AddRow(FM('s11_backups', [Backups]), P_BACKUP);
-  AddRow(FM('s11_address', [AddressUrl]), -1);
-  AddRow(CM('s11_edition'), -1);
+  if KeptMode then
+  begin
+    { Spec 4.3: the summary of the kept installation; the kept data holds the answers. }
+    AddRow(FM('s11_org', [KeptName]), -1);
+    AddRow(FM('s11_data', [DataRoot]), -1);
+    AddRow(FM('s11_address', [AddressUrl]), -1);
+    AddRow(CM('s11_edition'), -1);
+  end
+  else
+  begin
+    AddRow(FM('s11_org', [Trim(OrgName.Text)]), P_ORG);
+    AddRow(FM('s11_admin', [Trim(OrgEmail.Text)]), P_ORG);
+    AddRow(FM('s11_mail', [Trim(MailFrom.Text), MailProviderName]), P_EMAIL);
+    AddRow(FM('s11_data', [DataRoot]), -1);
+    Backups := BackupDrive;
+    if GetDriveType(BackupDrive + '\') = DRIVE_REMOVABLE then
+      Backups := Backups + ' (' + CM('s10_usb_word') + ')';
+    AddRow(FM('s11_backups', [Backups]), P_BACKUP);
+    AddRow(FM('s11_address', [AddressUrl]), -1);
+    AddRow(CM('s11_edition'), -1);
+  end;
   CurY := CurY + ScaleY(6);
   AddText(CM('s11_time'), False);
   Link := AddLink(CM('s11_what'), 0);
   Link.OnLinkClick := @WhatChangesClick;
-  WizardForm.NextButton.Enabled := True;
+  { With kept data the install waits for the background steps (the F3 check among them). }
+  WizardForm.NextButton.Enabled := (not KeptMode) or BgDone;
 end;
 
 { ------------------------------------------------------------------------------------------- }
@@ -3006,7 +3186,7 @@ begin
   if InstallStep = 0 then
   begin
     { Plan 3.2 rule 4 and the engine's target rule (parent decision 3): <drive>:\SlateOps-backups. }
-    if ResumedInstall then begin InstallStep := 1; InstallNextStep; Exit; end;
+    if ResumedInstall or KeptMode then begin InstallStep := 1; InstallNextStep; Exit; end;
     InstallOut := NewOut('prepare-backup');
     InstallOutAt := GetTickCount;
     StartHelper('prepare-backup', RunId, InstallOut, '-Drive ' + Uppercase(BackupDrive));
@@ -3015,7 +3195,7 @@ begin
   begin
     OutFile := NewOut('save');
     RunHelper('save-progress', RunId, OutFile, '-Stage install_started');
-    if ResumedInstall then
+    if ResumedInstall or KeptMode then
       Answers := '{"run_id":"' + RunId + '","version":"' + SetupVersion + '"}'
     else
     begin
@@ -3351,7 +3531,7 @@ begin
   if IsBackupDrive(Letter) then
   begin
     KeyStateText := CM('s14_backup_drive');
-    RenderPage(P_KEY);
+    RefreshKeyState;
     Exit;
   end;
   Path := Letter + '\SlateOps-recovery-key.txt';
@@ -3361,7 +3541,7 @@ begin
   { The person's own save (plan 3.2 check 7); never logged. }
   if SaveStringToFile(Path, AnsiString(CM('s14_title') + #13#10#13#10 + KeyText + #13#10), False) then
     KeyStateText := FM('s14_saved', [Path]);
-  RenderPage(P_KEY);
+  RefreshKeyState;
 end;
 
 { Prints the key in this process with Windows printing calls: no file, no helper, no
@@ -3471,7 +3651,7 @@ begin
     ModalOpen := False;
     Form.Free;
   end;
-  RenderPage(P_KEY);
+  RefreshKeyState;
 end;
 
 procedure KeyCheckClick(Sender: TObject);
@@ -3601,34 +3781,6 @@ begin
   RenderPage(P_MAINT);
 end;
 
-procedure RenderMaint;
-var
-  Button: TNewButton;
-  Line: TNewMemo;
-begin
-  BeginBody(P_MAINT);
-  WizardForm.PageNameLabel.Caption := CM('m01_title');
-  WizardForm.PageDescriptionLabel.Caption := FM('m01_subtitle', [SetupVersion, AddressUrl]);
-  WizardForm.NextButton.Visible := False;
-  WizardForm.BackButton.Visible := False;
-  WizardForm.CancelButton.Caption := CM('btn_close');
-  Button := AddButtonAt(CM('m01_invite'), 0, 0);
-  Button.Style := bsCommandLink;
-  Button.CommandLinkHint := CM('m01_invite_hint');
-  Button.Width := Cur.Width;
-  Button.AdjustHeightIfCommandLink;
-  Button.OnClick := @InviteClick;
-  CurY := CurY + Button.Height + ScaleY(6);
-  if MaintLine <> '' then
-  begin
-    Line := AddVerdict(MaintLine);
-    if Line.CanFocus then
-      WizardForm.ActiveControl := Line;
-  end;
-  AddReportControls;
-  AddText(CM('m01_report_hint'), False);
-  AddText(CM('m01_footer'), False);
-end;
 
 { ------------------------------------------------------------------------------------------- }
 { Rendering and the timer                                                                       }
@@ -3676,6 +3828,13 @@ procedure TimerTick(H, Msg, Id, Tick: Longword);
 var
   Code: String;
 begin
+  { W9: while the key form is open, only its USB list follows the plugged drives. }
+  if KeyFormOpen then
+  begin
+    if (KeyUsb <> nil) and (UsbDrives <> KeyFormUsbSeen) then
+      FillKeyFormUsb;
+    Exit;
+  end;
   if Ticking or ModalOpen then
     Exit;
   Ticking := True;
@@ -3765,6 +3924,7 @@ begin
     PollMail;
     PollInstall;
     PollKey;
+    PollMaint;
     if (Pages[P_EMAIL] <> nil) and (WizardForm.CurPageID = Pages[P_EMAIL].ID) and (MailChangedAt > 0) and (Elapsed(MailChangedAt) > 1500) then
     begin
       MailChangedAt := 0;
@@ -3811,10 +3971,19 @@ begin
   end;
   if DataPrepared or DataStarted or (EntryNext = 'S08') or (EntryNext = 'S09') or (EntryNext = 'S12') then
   begin
-    { Remove everything is W9; until then "Keep it and continue later" is the answer. }
-    Cancel := ConfirmBox(CM('cancel_server'), CM('cancel_keep') + #13#10#13#10 + CM('cancel_wait'), CM('btn_stop_setup'), CM('btn_go_back'));
-    if Cancel then
-      KeepAndClose(False);
+    { Spec 4.5 (W9): "Remove everything setup added" (default) or "Keep it and continue later". }
+    case AskCancelChoice of
+      1: begin
+           RemoveEverything;
+           Cancel := True;
+         end;
+      2: begin
+           KeepAndClose(False);
+           Cancel := True;
+         end;
+    else
+      Cancel := False;
+    end;
     Exit;
   end;
   if (PrepState <> '') or (EntryNext = 'S07') then
@@ -3896,7 +4065,8 @@ begin
   end;
   if EntryNext = 'S07' then
     PrepState := 'done';
-  Result := True;
+  { W9: the settings program opens only M01, or saves a report from the Start menu. }
+  Result := SettingsEntry;
 end;
 
 procedure NoticesClick(Sender: TObject; const Link: String; LinkType: TSysLinkType);
@@ -3944,6 +4114,7 @@ begin
   ExtraButton.Parent := WizardForm;
   ExtraButton.Visible := False;
   ExtraButton.SetBounds(WizardForm.BackButton.Left - ScaleX(130), WizardForm.BackButton.Top, ScaleX(120), WizardForm.BackButton.Height);
+  WizardReady := True;
   SetTimer(0, 0, 1000, CreateCallback(@TimerTick));
   if BgResume then
     StartBgStep;
@@ -3962,7 +4133,14 @@ begin
   Resumed := EntryScreen = 'S06';
   if EntryScreen = 'M01' then
   begin
-    Result := PageID <> Pages[P_MAINT].ID;
+    Result := MaintSkip(PageID);
+    Exit;
+  end;
+  { W9: with kept data the answers, the email account, the backup drive and the recovery key
+    come from the kept installation (spec 4.3: no S08 to S10, no S14). }
+  if KeptMode and ((PageID = Pages[P_ORG].ID) or (PageID = Pages[P_EMAIL].ID) or (PageID = Pages[P_BACKUP].ID) or (PageID = Pages[P_KEY].ID)) then
+  begin
+    Result := True;
     Exit;
   end;
   if PageID = Pages[P_MAINT].ID then Result := True
@@ -4053,6 +4231,12 @@ begin
   end
   else if CurPageID = Pages[P_EMAIL].ID then
   begin
+    { M02 is the S09 form with its own title (spec M02). }
+    if EntryScreen = 'M01' then
+    begin
+      WizardForm.PageNameLabel.Caption := CM('m02_title');
+      WizardForm.PageDescriptionLabel.Caption := CM('s09_subtitle');
+    end;
     if MailFrom.Text = '' then
       MailFrom.Text := Trim(OrgEmail.Text);
     HideShow;
@@ -4093,16 +4277,24 @@ begin
     RenderKey;
   end
   else if CurPageID = Pages[P_MAINT].ID then
-    RenderMaint
+  begin
+    if MaintPhase = '' then
+      StartMaintStatus;
+    RenderMaint;
+  end
   else if CurPageID = wpFinished then
   begin
     WizardForm.FinishedHeadingLabel.Caption := CM('s15_title');
     { Design B9: after a resume the email address and the security code can be unknown. }
-    if Trim(OrgEmail.Text) = '' then
+    if KeptMode then
+      Text := ''
+    else if Trim(OrgEmail.Text) = '' then
       Text := CM('s15_step1_no_address')
     else
       Text := FM('s15_step1', [Trim(OrgEmail.Text)]);
-    Text := Text + #13#10#13#10 + CM('s15_step2') + #13#10#13#10 + CM('s15_step3') + #13#10 + 'http://' + HostName + '.local/trust';
+    if Text <> '' then
+      Text := Text + #13#10#13#10;
+    Text := Text + CM('s15_step2') + #13#10#13#10 + CM('s15_step3') + #13#10 + 'http://' + HostName + '.local/trust';
     if SecurityCode <> '' then
       Text := Text + #13#10 + FM('s15_security', [SecurityCode]);
     WizardForm.FinishedLabel.Caption := Text + #13#10#13#10 + CM('s15_desk') + #13#10#13#10 + CM('s15_starts');
@@ -4121,6 +4313,18 @@ var
   OutFile: String;
 begin
   Result := True;
+  { W9: M02 and M03 run in maintenance; Inno never moves past them. }
+  if (EntryScreen = 'M01') and ((CurPageID = Pages[P_EMAIL].ID) or (CurPageID = Pages[P_BACKUP].ID)) then
+  begin
+    Result := MaintNext(CurPageID);
+    Exit;
+  end;
+  { W9: with kept data a background failure (the F3 check among them) shows on S11. }
+  if (CurPageID = Pages[P_READY].ID) and BgFailed then
+  begin
+    Result := CheckBackground;
+    Exit;
+  end;
   if CurPageID = wpWelcome then
     Result := not StateUnsafe
   else if CurPageID = Pages[P_CHECK].ID then
@@ -4233,6 +4437,20 @@ begin
   begin
     OutFile := NewOut('save');
     RunHelper('save-progress', RunId, OutFile, '-Stage install_finished');
+    { A kept installation needs no new key (spec 4.3): the key of the first install still opens
+      its backups; the kept folder goes once the disk runs again. }
+    if KeptMode then
+    begin
+      NewOutRun('kept-done', '');
+      RunHelper('save-progress', RunId, NewOut('save'), '-Stage key_saved');
+    end;
+    { W9-5 (plan 10.3 F4c): Modify in Settings, Apps opens the maintenance program. Inno writes
+      its uninstall key in the 64-bit view before ssPostInstall. }
+    if HAS_SETTINGS then
+    begin
+      RegWriteStringValue(HKLM64, UNINSTALL_KEY, 'ModifyPath', AddQuotes(ExpandConstant('{commonappdata}\SlateOps\settings\SlateOpsSettings.exe')));
+      RegWriteDWordValue(HKLM64, UNINSTALL_KEY, 'NoModify', 0);
+    end;
   end;
 end;
 

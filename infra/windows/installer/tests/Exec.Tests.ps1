@@ -106,7 +106,7 @@ Test-Case 'AC-2 the allow-list is the plan 6.2 list plus resend-invitation, and 
     # Ordinal order (code points): "-" (0x2D) sorts before letters.
     Assert-Equal @('export-trust', 'install', 'log-bundle', 'new-recovery-key', 'prefetch', 'prepare', 'prepare-uninstall', 'receive', 'resend-invitation',
         'restore', 'set-backup-target', 'set-email', 'smtp-test', 'status', 'update') (Get-OrdinalSorted $SlateOpsExec.EngineJobs)
-    Assert-Equal @('import-distro', 'pipe-test', 'wsl-facts', 'wslconfig') (Get-OrdinalSorted $SlateOpsExec.WindowsJobs)
+    Assert-Equal @('import-distro', 'import-kept', 'pipe-test', 'terminate-distro', 'unregister-distro', 'wsl-facts', 'wslconfig') (Get-OrdinalSorted $SlateOpsExec.WindowsJobs)
 }
 
 Test-Case 'AC-2 an engine job has one fixed command line with no shell' {

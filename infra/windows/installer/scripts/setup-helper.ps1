@@ -19,7 +19,9 @@ param(
     [ValidateSet('state-check', 'check', 'recheck', 'facts', 'time-zone', 'fix-network-private', 'remove-kit',
         'save-progress', 'clear-resume', 'restart', 'prepare-pc', 'prepare-data', 'service', 'job', 'job-result',
         'start-boot', 'windows-steps', 'account-sid', 'r7', 'provider-detect', 'drives', 'drive-check', 'prepare-backup',
-        'printers', 'https-check', 'job-stop', 'report-collect', 'report-zip', 'fix-mdns')]
+        'printers', 'https-check', 'job-stop', 'report-collect', 'report-zip', 'fix-mdns',
+        'uninstall-info', 'uninstall-stop', 'uninstall-data', 'remove-windows', 'kept-read', 'restore-kept', 'kept-status',
+        'kept-return', 'kept-done', 'engine-status', 'repair', 'security-code')]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$RunId,
     [Parameter(Mandatory = $true)][string]$OutFile,
@@ -36,13 +38,16 @@ param(
     [switch]$Lid,
     [switch]$Cancel,
     [switch]$EmailDiscarded,
-    [switch]$BackgroundDone
+    [switch]$BackgroundDone,
+    [switch]$Keep,
+    [switch]$DeleteBackups,
+    [switch]$UseKept
 )
 
 # S91-6: modules load only from Windows PowerShell's own folder, never from a folder in the
 # caller's module path.
 $env:PSModulePath = Join-Path $PSHOME 'Modules'
-foreach ($name in @('Common', 'Checks', 'Facts', 'Exec', 'Service', 'Windows', 'Report')) { . (Join-Path $PSScriptRoot ('lib\{0}.ps1' -f $name)) }
+foreach ($name in @('Common', 'Checks', 'Facts', 'Exec', 'Service', 'Windows', 'Report', 'Uninstall')) { . (Join-Path $PSScriptRoot ('lib\{0}.ps1' -f $name)) }
 
 $helperRoot = Split-Path -Parent $PSScriptRoot
 $layout = New-SlateOpsLayout
@@ -79,7 +84,10 @@ try {
     # helper's own folder (before S07 creates the state tree, plan 10.1 item 4).
     # P2-3: the SID from the administrator-only record, also after a partial service step.
     $serviceSid = Get-RecordedServiceSid -Layout $layout
-    $logDir = Open-LogDirectory -Layout $layout -Kind 'setup' -ServiceSid $serviceSid
+    # W9: uninstall and maintenance runs log in their own folders (plan 10.1 item 4).
+    $kind = 'setup'
+    if ($RunId -like 'uninstall-*') { $kind = 'uninstall' } elseif ($RunId -like 'maintenance-*') { $kind = 'maintenance' }
+    $logDir = Open-LogDirectory -Layout $layout -Kind $kind -ServiceSid $serviceSid
     if (-not $logDir) {
         $logDir = Join-Path $helperRoot 'logs'
         if (-not (Test-Path -LiteralPath $logDir)) { [void][System.IO.Directory]::CreateDirectory($logDir) }
@@ -141,6 +149,129 @@ try {
             }
         }
         'remove-kit' { $result = Remove-KitLeftovers }
+        'uninstall-info' {
+            # U01 and U02 values, from Windows records only (plan 3.2 rule 2).
+            $state = Read-InstallState -Layout $layout
+            Set-LayoutDataRoot -Layout $layout -DataRoot $state.data_root
+            $disk = Get-Item -LiteralPath (Join-Path $layout.Distro 'ext4.vhdx') -Force -ErrorAction SilentlyContinue
+            $backup = [string](Get-DictValue (Read-WindowsChanges -Layout $layout) 'backup_folder')
+            if ($backup -cnotmatch '^[A-Z]:\\SlateOps-backups$') { $backup = '' }
+            $result = New-StepResult -Code 'info' -MessageKey 'uninstall.info' -Values @{ data_root = $state.data_root; backup_folder = $backup; disk_gb = $(if ($disk) { [int][math]::Ceiling($disk.Length / 1GB) } else { 0 }) }
+        }
+        'uninstall-stop' {
+            # U03 stage 1: the start task off; with "Keep my data" the engine stops the services
+            # cleanly and gives the kept.json values (prepare-uninstall, plan 9.1).
+            Disable-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.StartTaskName -ErrorAction SilentlyContinue | Out-Null
+            Stop-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.StartTaskName -ErrorAction SilentlyContinue
+            $result = New-StepResult -Code 'stopped' -MessageKey 'uninstall.stopped'
+            if ($Keep) {
+                $job = Invoke-ExecJobAndWait -Layout $layout -Job 'prepare-uninstall' -RunId $RunId -InputText ('{{"run_id":"{0}"}}' -f $RunId) -TimeoutSeconds 600
+                $info = $null
+                if ((Get-DictValue $job 'exit_code') -eq 0) { try { $info = Read-EngineOutput -Layout $layout -Result $job } catch { $info = $null } }
+                if (-not (Test-KeptInfo $info)) {
+                    $result = New-StepResult -Code 'keep_failed' -MessageKey 'uninstall.keep_failed' -Values @{ reason = [string](Get-DictValue $job 'code') }
+                    # Nothing was removed: the server starts again.
+                    Enable-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.StartTaskName -ErrorAction SilentlyContinue | Out-Null
+                    Start-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.StartTaskName -ErrorAction SilentlyContinue
+                }
+                else { Write-JsonFile -Path (Join-Path $layout.State 'kept-pending.json') -Value ([ordered]@{ instance_id = [string]$info['instance_id']; business_name = [string]$info['business_name']; public_host = [string]$info['public_host'] }) }
+            }
+        }
+        'uninstall-data' {
+            # U03 stage 2. Keep: stop the distribution, move the disk, check (F3), unregister, check
+            # again. Delete: unregister, delete the data folder (S91-2 rule), the backups if chosen.
+            $state = Read-InstallState -Layout $layout
+            Set-LayoutDataRoot -Layout $layout -DataRoot $state.data_root
+            if ($Keep) {
+                $info = Read-JsonFile -Path (Join-Path $layout.State 'kept-pending.json')
+                $null = Invoke-ExecJobAndWait -Layout $layout -Job 'terminate-distro' -RunId $RunId -TimeoutSeconds 120
+                $version = ''
+                try { $version = (Read-SetupVersion -Path (Join-Path $layout.Scripts 'version.json')).version } catch { $version = '' }
+                $backupFolder = [string](Get-DictValue (Read-WindowsChanges -Layout $layout) 'backup_folder')
+                $result = Move-KeptDisk -Layout $layout -Info $info -Version $version -BackupFolder $backupFolder -Record
+                if ($result.code -eq 'kept') {
+                    $bytes = [long]$result.values.bytes
+                    $job = Invoke-ExecJobAndWait -Layout $layout -Job 'unregister-distro' -RunId $RunId -TimeoutSeconds 300
+                    if (((Get-DictValue $job 'exit_code') -ne 0) -or -not (Test-KeptAfterUnregister -Layout $layout -Bytes $bytes)) {
+                        $result = New-StepResult -Code 'keep_failed' -MessageKey 'uninstall.keep_failed' -Values @{ reason = 'unregister' }
+                        # Still registered: the disk goes back where the distribution expects it.
+                        $kept = Get-KeptPaths -Layout $layout
+                        if ((Test-Path -LiteralPath $kept.Disk) -and -not (Test-Path -LiteralPath $kept.Live)) { [System.IO.File]::Move($kept.Disk, $kept.Live) }
+                    } else { Clear-DataTreeForKeep -Layout $layout -ServiceSid $serviceSid }
+                }
+                if ($result.code -ne 'kept') {
+                    Enable-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.StartTaskName -ErrorAction SilentlyContinue | Out-Null
+                    Start-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.StartTaskName -ErrorAction SilentlyContinue
+                }
+            } else {
+                $job = Invoke-ExecJobAndWait -Layout $layout -Job 'unregister-distro' -RunId $RunId -TimeoutSeconds 300
+                Write-RunLog 'uninstall.data' 'INFO' ('unregister: {0}' -f (Get-DictValue $job 'code'))
+                $result = Remove-DataFolder -DataRoot $state.data_root
+                if (($result.code -eq 'removed') -and $DeleteBackups) {
+                    $backups = Remove-BackupFolder -Folder ([string](Get-DictValue (Read-WindowsChanges -Layout $layout) 'backup_folder'))
+                    if ($backups.code -ne 'removed') { $result = $backups }
+                }
+            }
+        }
+        'remove-windows' { $result = Remove-WindowsParts -Layout $layout }
+        'kept-read' {
+            $setupVersion = ''
+            try { $setupVersion = (Read-HelperVersion).version } catch { $setupVersion = '0.0.0' }
+            $result = Get-KeptData -DataRoot $DataRoot -SetupVersion $setupVersion
+        }
+        'restore-kept' {
+            $state = Read-InstallState -Layout $layout
+            Set-LayoutDataRoot -Layout $layout -DataRoot $state.data_root
+            $result = Restore-KeptDisk -Layout $layout
+            # The kept backup folder gets the new account's rights and goes back into the record.
+            if ($result.code -eq 'restored') {
+                $kept = Read-JsonFile -Path (Get-KeptPaths -Layout $layout).Record
+                $folder = [string](Get-DictValue $kept 'backup_folder')
+                if (($folder -cmatch '^[A-Z]:\\SlateOps-backups$') -and (Test-Path -LiteralPath $folder)) {
+                    $backup = Initialize-BackupFolder -Drive $folder.Substring(0, 2) -DataRoot $state.data_root -ServiceSid $serviceSid -Layout $layout
+                    Write-RunLog 'setup.kept' 'INFO' ('backup folder {0}: {1}' -f $folder, $backup.code)
+                }
+            }
+        }
+        'kept-status' {
+            # F3 at reinstall: the engine must report the instance ID of kept.json.
+            $state = Read-InstallState -Layout $layout
+            Set-LayoutDataRoot -Layout $layout -DataRoot $state.data_root
+            $version = '0.0.0'
+            try { $version = (Read-HelperVersion).version } catch { $version = '0.0.0' }
+            $status = Get-EngineStatus -Layout $layout -RunId $RunId -WindowsPartVersion $version
+            if (Test-KeptInstance -Layout $layout -Status $status) { $result = New-StepResult -Code 'match' -MessageKey 'setup.kept.match' }
+            else { $result = New-StepResult -Code 'mismatch' -MessageKey 'setup.kept.mismatch' }
+        }
+        'kept-return' {
+            # A failure after the kept disk moved back: the Keep path again, never a delete
+            # (advisor item 1).
+            $state = Read-InstallState -Layout $layout
+            Set-LayoutDataRoot -Layout $layout -DataRoot $state.data_root
+            $null = Invoke-ExecJobAndWait -Layout $layout -Job 'terminate-distro' -RunId $RunId -TimeoutSeconds 120
+            $result = Move-KeptDisk -Layout $layout
+            if ($result.code -eq 'kept') {
+                $job = Invoke-ExecJobAndWait -Layout $layout -Job 'unregister-distro' -RunId $RunId -TimeoutSeconds 300
+                if (((Get-DictValue $job 'exit_code') -ne 0) -or -not (Test-KeptAfterUnregister -Layout $layout -Bytes ([long]$result.values.bytes))) {
+                    $result = New-StepResult -Code 'keep_failed' -MessageKey 'uninstall.keep_failed' -Values @{ reason = 'unregister' }
+                } else { $result = New-StepResult -Code 'returned' -MessageKey 'setup.kept.returned' }
+            }
+        }
+        'kept-done' {
+            $state = Read-InstallState -Layout $layout
+            Set-LayoutDataRoot -Layout $layout -DataRoot $state.data_root
+            $kept = Get-KeptPaths -Layout $layout
+            if ((Test-Path -LiteralPath $kept.Folder) -and -not (Test-Path -LiteralPath $kept.Disk)) { Remove-PathNoFollow -Path $kept.Folder }
+            $result = New-StepResult -Code 'done' -MessageKey 'setup.kept.done'
+        }
+        'engine-status' {
+            $version = '0.0.0'
+            try { $version = (Read-HelperVersion).version } catch { $version = '0.0.0' }
+            $result = Get-EngineStatus -Layout $layout -RunId $RunId -WindowsPartVersion $version
+            if ($result.code -eq 'ok') { $result.values.backup_folder = [string](Get-DictValue (Read-WindowsChanges -Layout $layout) 'backup_folder') }
+        }
+        'repair' { $result = Invoke-Repair -Layout $layout }
+        'security-code' { $result = Get-SecurityCodeFromStore -Layout $layout }
         'fix-mdns' {
             # C17 "Fix it for me": turns on the existing built-in rule for Private networks only;
             # never creates a rule; the old state goes to the log (spec 5.3, 12 item 4).
@@ -184,7 +315,7 @@ try {
             $version = Read-HelperVersion
             $ready = Initialize-StateFolder -Layout $layout -ServiceSid $serviceSid
             if ($ready.code -ne 'ready') { $result = $ready; break }
-            $data = Initialize-DataFolder -Layout $layout -DataRoot $DataRoot -ServiceSid $serviceSid
+            $data = Initialize-DataFolder -Layout $layout -DataRoot $DataRoot -ServiceSid $serviceSid -AllowKept:$UseKept
             if ($data.code -ne 'ready') { $result = $data; break }
             $copy = Install-ScriptsCopy -Layout $layout -SourceDir $PSScriptRoot
             if ($copy.code -ne 'copied') { $result = $copy; break }
@@ -258,7 +389,7 @@ try {
         'drive-check' { $result = Test-BackupDrive -Drive $Drive }
         'prepare-backup' {
             $state = Read-InstallState -Layout $layout
-            $result = Initialize-BackupFolder -Drive $Drive -DataRoot $state.data_root -ServiceSid $serviceSid
+            $result = Initialize-BackupFolder -Drive $Drive -DataRoot $state.data_root -ServiceSid $serviceSid -Layout $layout
         }
         'printers' { $result = New-StepResult -Code 'listed' -MessageKey 'setup.printers.listed' -Values @{ printers = @(Get-PrinterFact) } }
         'https-check' { $result = Test-HttpsFromWindows }

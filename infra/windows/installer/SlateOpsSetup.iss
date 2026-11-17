@@ -5,7 +5,10 @@
 ; (wizard\Copy.iss), the secret pipe channel, Save report and the payload. Uninstall and
 ; maintenance beyond "Send my invitation again" are W9.
 ;
-; Build: ISCC.exe /DAppVersion=<version> [/DPayloadDir=<folder>] SlateOpsSetup.iss
+; Build: ISCC.exe /DAppVersion=<version> [/DPayloadDir=<folder>] [/DSettingsExe=<file>] SlateOpsSetup.iss
+; W9: the same project with /DSettingsBuild gives the small maintenance program
+; SlateOpsSettings.exe (no payload, installs nothing); the main build carries it with
+; /DSettingsExe and starts it from Settings, Apps, Modify and the Start menu.
 ; The release build (release.yml, installer job) passes PayloadDir: version.json, the pinned
 ; WSL MSI, the Linux image, the five receive parts (plan 5.2), THIRD-PARTY-NOTICES.txt and
 ; SOURCE-OFFER.txt. Without it the file compiles with no payload (the windows-installer job).
@@ -37,7 +40,15 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 LicenseFile=..\..\..\LICENSE
 OutputDir=output
+#ifdef SettingsBuild
+OutputBaseFilename=SlateOpsSettings
+; The maintenance program installs nothing and never registers itself (W9).
+Uninstallable=no
+CreateUninstallRegKey=no
+CreateAppDir=no
+#else
 OutputBaseFilename=SlateOpsSetup-{#AppVersion}
+#endif
 SetupLogging=yes
 Compression=lzma2
 ; The payload parts are compressed archives already; the setup extracts each one on demand
@@ -72,14 +83,37 @@ Source: "{#PayloadDir}\SOURCE-OFFER.txt"; DestDir: "{app}"; Flags: ignoreversion
 ; administrator-only when setup runs elevated).
 Source: "scripts\*.ps1"; DestDir: "{tmp}\scripts"; Flags: dontcopy
 Source: "scripts\lib\*.ps1"; DestDir: "{tmp}\scripts\lib"; Flags: dontcopy
+#ifndef SettingsBuild
 ; The small Windows part kept for maintenance mode (W9).
 Source: "scripts\*.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "scripts\lib\*.ps1"; DestDir: "{app}\scripts\lib"; Flags: ignoreversion
+#endif
+#ifdef SettingsExe
+; W9: the maintenance program, in the administrator-only state folder (TASK-0091 carry: never
+; run maintenance from a program folder that standard users may write).
+Source: "{#SettingsExe}"; DestDir: "{commonappdata}\SlateOps\settings"; DestName: "SlateOpsSettings.exe"; Flags: ignoreversion
+#endif
 
+#ifndef SettingsBuild
 [Icons]
 ; An Internet Shortcut (.url) with the address (spec 12 item 13). Uninstall removes it. The
 ; address is the DNS host name in lower case (P3-9), the name that Windows answers mDNS for.
 Name: "{autodesktop}\Slate Operations"; Filename: "https://{code:DnsHostName}.local"
+#ifdef SettingsExe
+; W9 (plan 9.3, DEC-0033): "Slate Operations settings" and the Save report entry. A file name
+; cannot hold ":", so the entry reads "Slate Operations - Save report".
+Name: "{autoprograms}\Slate Operations settings"; Filename: "{commonappdata}\SlateOps\settings\SlateOpsSettings.exe"
+Name: "{autoprograms}\Slate Operations - Save report"; Filename: "{commonappdata}\SlateOps\settings\SlateOpsSettings.exe"; Parameters: "/SAVEREPORT=1"
+#endif
+#endif
+
+[Messages]
+; W9 (spec U01 to U04): U01 asks the real question first; Inno's own boxes stay neutral.
+ConfirmUninstall=Remove %1 from this PC now?
+UninstalledAll=%1 is removed from this PC.
+UninstalledMost=Uninstall finished. Some items could not be removed. Setup removes them the next time it runs.
 
 #include "wizard\Copy.iss"
 #include "wizard\Wizard.iss"
+#include "wizard\Maintenance.iss"
+#include "wizard\Uninstall.iss"

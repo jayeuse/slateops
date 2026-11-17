@@ -51,7 +51,9 @@ function Initialize-DataFolder {
     param(
         [Parameter(Mandatory = $true)][hashtable]$Layout,
         [Parameter(Mandatory = $true)][string]$DataRoot,
-        [string]$ServiceSid = ''
+        [string]$ServiceSid = '',
+        # W9: a reinstall that uses the kept data allows the kept folder (plan 9.2).
+        [switch]$AllowKept
     )
     if (-not (Test-DataRootPath $DataRoot)) { return New-StepResult -Code 'path_invalid' -MessageKey 'setup.data.path_invalid' }
     # S91-2: every folder above the data folder must keep it in place (W8 writes the copy).
@@ -64,7 +66,9 @@ function Initialize-DataFolder {
     $disk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter ("DeviceID='{0}'" -f $drive)
     if ((-not $disk) -or ([int]$disk.DriveType -ne 3) -or ([string]$disk.FileSystem -ne 'NTFS')) { return New-StepResult -Code 'drive_not_fixed_ntfs' -MessageKey 'setup.data.drive_not_fixed_ntfs' }
     if ((Test-Path -LiteralPath $DataRoot) -and (@(Get-ChildItem -LiteralPath $DataRoot -Force).Count -gt 0)) {
-        $owned = @(Get-ChildItem -LiteralPath $DataRoot -Force | Where-Object { @('distro', 'payload') -notcontains $_.Name })
+        $allowed = @('distro', 'payload')
+        if ($AllowKept) { $allowed += 'kept' }
+        $owned = @(Get-ChildItem -LiteralPath $DataRoot -Force | Where-Object { $allowed -notcontains $_.Name })
         if ($owned.Count -gt 0) { return New-StepResult -Code 'not_empty' -MessageKey 'setup.data.not_empty' }
     }
     Set-LayoutDataRoot -Layout $Layout -DataRoot $DataRoot
@@ -876,7 +880,7 @@ function Initialize-BackupFolder {
     # account); an existing folder that is not a link gets the account's entry once. Other file
     # systems (a FAT USB drive) have no access lists; the engine mounts them with the account's
     # rights (plan 8.2). Runs before the install answers are sent.
-    param([Parameter(Mandatory = $true)][string]$Drive, [Parameter(Mandatory = $true)][string]$DataRoot, [string]$ServiceSid = '')
+    param([Parameter(Mandatory = $true)][string]$Drive, [Parameter(Mandatory = $true)][string]$DataRoot, [string]$ServiceSid = '', [hashtable]$Layout = $null)
     $target = '{0}\{1}' -f $Drive, $SlateOpsWizard.BackupFolder
     $problem = Get-BackupTargetProblem -Target $target -DataRoot $DataRoot
     if ($problem) { return New-StepResult -Code $problem -MessageKey ('setup.backup.{0}' -f $problem) }
@@ -903,6 +907,13 @@ function Initialize-BackupFolder {
         $has = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -eq $ServiceSid }).Count -gt 0
         if (-not $has) { $acl.AddAccessRule($rule); Set-Acl -LiteralPath $target -AclObject $acl }
         Write-RunLog 'setup.backup' 'INFO' ('backup folder {0} kept; the account entry is present' -f $target)
+    }
+    # W9: the record names the backup folder, so uninstall can offer to delete it and M01 can
+    # name its drive with no Linux value becoming a path (plan 3.2 rule 2).
+    if ($Layout) {
+        $record = Read-WindowsChanges -Layout $Layout
+        $record['backup_folder'] = $target
+        Save-WindowsChanges -Layout $Layout -Record $record
     }
     return New-StepResult -Code 'ready' -MessageKey 'setup.backup.ready' -Values @{ target = $target }
 }

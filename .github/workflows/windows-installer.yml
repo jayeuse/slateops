@@ -57,7 +57,12 @@ jobs:
           $process = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=`"$dir`"") -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "The Inno Setup install ended with exit code $($process.ExitCode)." }
           Set-Location infra\windows\installer
-          & (Join-Path $dir 'ISCC.exe') /Qp /DAppVersion=0.0.0 SlateOpsSetup.iss
+          # W9: the small maintenance program first, then the setup program that carries it, so
+          # every [Code] branch but the payload compiles here.
+          & (Join-Path $dir 'ISCC.exe') /Qp /DAppVersion=0.0.0 /DSettingsBuild SlateOpsSetup.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $settings = (Resolve-Path 'output\SlateOpsSettings.exe').Path
+          & (Join-Path $dir 'ISCC.exe') /Qp /DAppVersion=0.0.0 "/DSettingsExe=$settings" SlateOpsSetup.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-ChildItem -LiteralPath output | Format-Table -AutoSize Name, Length
       - name: Run the Windows-side script tests in Windows PowerShell 5.1

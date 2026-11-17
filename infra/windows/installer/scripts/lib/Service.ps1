@@ -338,22 +338,29 @@ function Install-ServiceAccountAndTasks {
             return New-StepResult -Code 'folder_unsafe' -MessageKey 'setup.folder_unsafe'
         }
 
-        $qualified = '{0}\{1}' -f [Environment]::MachineName, $definition.Name
-        foreach ($taskDefinition in @((Get-ExecTaskDefinition -ScriptsDir $Layout.Scripts), (Get-StartTaskDefinition -ScriptsDir $Layout.Scripts))) {
-            $objects = New-TaskSettingsFromDefinition -Definition $taskDefinition
-            $parameters = @{
-                TaskPath = $SlateOps.TaskPath; TaskName = $taskDefinition.TaskName; Action = $objects.Action; Settings = $objects.Settings
-                User = $qualified; Password = $password; RunLevel = $taskDefinition.RunLevel; Force = $true; Description = $taskDefinition.Description
-            }
-            if ($objects.Trigger) { $parameters.Trigger = $objects.Trigger }
-            Write-RunLog $step 'INFO' ('register the task {0}{1} as {2}' -f $SlateOps.TaskPath, $taskDefinition.TaskName, $definition.Name)
-            Register-ScheduledTask @parameters | Out-Null
-        }
+        Register-ServiceTasks -Layout $Layout -AccountName $definition.Name -Password $password
     } finally {
         $password = $null
         $secure = $null
     }
     return New-StepResult -Code 'created' -MessageKey 'setup.service.created' -Values @{ account_sid = $sid }
+}
+
+function Register-ServiceTasks {
+    # Registers \SlateOps\Exec and \SlateOps\Start as the account (the service step, and Repair
+    # in W9). The password reaches only Register-ScheduledTask.
+    param([Parameter(Mandatory = $true)][hashtable]$Layout, [Parameter(Mandatory = $true)][string]$AccountName, [Parameter(Mandatory = $true)][string]$Password)
+    $qualified = '{0}\{1}' -f [Environment]::MachineName, $AccountName
+    foreach ($taskDefinition in @((Get-ExecTaskDefinition -ScriptsDir $Layout.Scripts), (Get-StartTaskDefinition -ScriptsDir $Layout.Scripts))) {
+        $objects = New-TaskSettingsFromDefinition -Definition $taskDefinition
+        $parameters = @{
+            TaskPath = $SlateOps.TaskPath; TaskName = $taskDefinition.TaskName; Action = $objects.Action; Settings = $objects.Settings
+            User = $qualified; Password = $Password; RunLevel = $taskDefinition.RunLevel; Force = $true; Description = $taskDefinition.Description
+        }
+        if ($objects.Trigger) { $parameters.Trigger = $objects.Trigger }
+        Write-RunLog 'setup.service' 'INFO' ('register the task {0}{1} as {2}' -f $SlateOps.TaskPath, $taskDefinition.TaskName, $AccountName)
+        Register-ScheduledTask @parameters | Out-Null
+    }
 }
 
 # ---------------------------------------------------------------------------

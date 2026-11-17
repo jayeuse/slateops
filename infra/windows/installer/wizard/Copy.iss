@@ -385,3 +385,75 @@ m01_already_active=Your account is already set up. Sign in with your password. I
 m01_rate_limited=Slate Operations sent several emails a short time ago. Wait a few minutes, then try again.
 m01_failed=Slate Operations could not send the invitation. Check the email account with Change email account, then try again.
 m01_footer=To uninstall, open Settings → Apps.
+
+; ---- W9: uninstall (spec U01 to U04, plan 9.1, F3, F4c)
+u01_title=Uninstall Slate Operations
+u01_keep=Keep my data (recommended)
+u01_keep_text=Slate Operations is removed. Your records, files and settings stay in %1 (%2 GB). Install Slate Operations again to continue where you stopped.
+u01_delete=Delete everything
+u01_delete_text=Removes all records, files and settings from this PC.
+u01_backups=Also delete the backups on %1
+u01_uninstall=&Uninstall
+u02_title=Delete all Slate Operations data?
+; Copy gap (W9): the spec names the organization; Windows does not keep the name.
+u02_text=This deletes all records, files and settings of Slate Operations on this PC. It cannot be undone.
+u02_backups_kept=The backups on %1 are kept.
+u02_backups_deleted=The backups on %1 are deleted too.
+u02_check=I understand that this cannot be undone
+u02_delete=&Delete everything
+u03_stop=Stop Slate Operations
+u03_moving=Moving your data to %1…
+u03_remove=Remove the program and its Windows settings
+u04_kept=Slate Operations is removed. Your data is kept in %1.
+u04_deleted=Slate Operations and its data are removed.
+u04_feature=The Windows feature that Slate Operations used stays on, because other programs can use it.
+u04_leftovers=Uninstall finished. Some items could not be removed. Setup removes them the next time it runs.
+u04_keep_failed=Setup could not keep your data safely. Nothing was removed.
+f4c_stopped=Uninstall stopped. Nothing was removed.
+
+; ---- W9: reinstall with kept data (spec S07 kept-data card, 4.3, plan 9.2)
+s07_kept=This folder holds data from an earlier installation: %1, version %2, kept on %3.
+s07_use_kept=Use the kept data
+s07_start_new=Start new. Choose another folder.
+s07_kept_newer=This data is from Slate Operations version %1. Use setup version %1 or later.
+; Copy gap (W9): an older kept version needs the update steps of W13b.
+s07_kept_older=This data is from Slate Operations version %1. This setup cannot update it yet. Use setup version %1.
+s07_kept_unreadable=Setup could not open the kept data. The kept data is not changed.
+
+; ---- W9: Cancel at S08 to S11 (spec 4.5)
+cancel_remove=Remove everything setup added
+cancel_keep_option=Keep it and continue later
+
+; ---- W9: maintenance (spec M01 to M04, plan 9.3)
+m01_running=Running.
+m01_needs_backup=Needs attention: plug in the backup drive (%1).
+m01_needs_support=Needs support. Select Save report and send the file to Slate Operations support.
+; Copy gaps (W9): the engine reports no "not ready since" time and no running line.
+m01_not_ready=Not ready. Select Repair. If that does not help, select Save report.
+m01_runs_line=Slate Operations runs.
+m01_checking=Checking Slate Operations… (about 1 minute)
+m01_open=Open Slate Operations
+m01_open_hint=In your browser on this PC.
+m01_code=Show the phone code
+m01_code_hint=Connect a phone or another PC.
+m01_email=Change email account
+m01_email_hint=When the email password or provider changes.
+m01_backup=Change backup drive
+m01_backup_hint=Backups go there from the next night.
+m01_key=Make a new recovery key
+m01_key_hint=The old key stops working.
+m01_repair=Repair
+m01_repair_hint=Sets up the Windows parts again. Your data does not change.
+; Copy gaps (W9): the spec gives no Repair result line.
+m01_repairing=Setting up the Windows parts again… (about 1 minute)
+m01_repaired=Repair finished. Slate Operations starts again.
+m01_repair_failed=Repair did not finish. Select Save report and send the file to Slate Operations support.
+m01_not_installed=Slate Operations is not installed on this PC.
+m02_title=Change email account
+m02_done=Slate Operations sends email from %1 now. Sign-ins stop for about a minute while it restarts.
+m02_failed=Slate Operations could not change the email account. Select Save report and send the file to Slate Operations support.
+m03_checking=Checking drive %1…
+m03_first=Your new backup drive has its own lock. The old recovery key does not open it.
+m03_done=Backups go to %1 from tonight at 2:00.
+m04_first=The old key stops working when you finish.
+btn_done=&Done

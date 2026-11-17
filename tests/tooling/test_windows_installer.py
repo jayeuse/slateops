@@ -19,6 +19,52 @@ INSTALLER = ROOT / "infra/windows/installer"
 WORKFLOW = ROOT / ".github/workflows/windows-installer.yml"
 ISS = INSTALLER / "SlateOpsSetup.iss"
 WIZARD = INSTALLER / "wizard/Wizard.iss"
+# W9: included after Wizard.iss, in this order (SlateOpsSetup.iss).
+MAINTENANCE = INSTALLER / "wizard/Maintenance.iss"
+UNINSTALL = INSTALLER / "wizard/Uninstall.iss"
+CODE_FILES = (WIZARD, MAINTENANCE, UNINSTALL)
+
+
+def pascal_code() -> str:
+    """The [Code] text in include order, as the compiler reads it."""
+    return "\n".join(path.read_text(encoding="ascii") for path in CODE_FILES)
+
+
+def code_only(text: str) -> str:
+    """Pascal text with { } comments, // comments and string contents removed; newlines stay,
+    so line numbers hold. A brace inside a string is not a comment."""
+    out: list[str] = []
+    state = "code"
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if state == "code":
+            if char == "'":
+                state = "string"
+                out.append("''")
+            elif char == "{":
+                state = "brace"
+            elif text.startswith("//", index):
+                state = "line"
+            else:
+                out.append(char)
+        elif state == "string":
+            if char == "'":
+                state = "code"
+            elif char == "\n":
+                out.append(char)
+        elif state == "brace":
+            if char == "}":
+                state = "code"
+            elif char == "\n":
+                out.append(char)
+        elif char == "\n":
+            state = "code"
+            out.append(char)
+        index += 1
+    return "".join(out)
+
+
 COPY = INSTALLER / "wizard/Copy.iss"
 RELEASE = ROOT / ".github/workflows/release.yml"
 # The newest stable WSL at the W8 build (gh api repos/microsoft/WSL/releases, 2026-11-17:
@@ -131,7 +177,7 @@ class WindowsInstallerSourcesTest(unittest.TestCase):
     def test_every_script_and_the_inno_project_are_ascii(self) -> None:
         # Copy.iss is UTF-8 (the spec's copy has "…", "·" and "→"; Inno Setup 6.3 and later
         # read UTF-8 scripts without a byte order mark).
-        files = sorted(INSTALLER.rglob("*.ps1")) + [ISS, WIZARD]
+        files = sorted(INSTALLER.rglob("*.ps1")) + [ISS, *CODE_FILES]
         self.assertGreater(len(files), 10)
         for path in files:
             with self.subTest(path=path.relative_to(ROOT)):
@@ -157,23 +203,28 @@ class WindowsInstallerSourcesTest(unittest.TestCase):
         directive = re.compile(
             r"\s*#(include|define|if|ifdef|ifndef|else|elif|endif|expr|emit|error|pragma|undef)\b"
         )
-        for path in (ISS, WIZARD, COPY):
+        for path in (ISS, *CODE_FILES, COPY):
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 if line.lstrip().startswith("#"):
                     self.assertRegex(line, directive, f"{path.name}:{number}")
 
+    def test_no_semicolon_comment_line_inside_code(self) -> None:
+        # W9: Maintenance.iss and Uninstall.iss lie inside [Code], where ";" is not a comment.
+        after_code = pascal_code().split("\n[Code]\n", 1)[1]
+        for number, line in enumerate(after_code.splitlines(), 1):
+            self.assertFalse(line.lstrip().startswith(";"), f"[Code] line {number}: {line}")
+
     def test_no_wizard_procedure_is_used_before_its_declaration(self) -> None:
         # Inno's Pascal Script resolves names in file order: a procedure used above its
         # declaration (with no forward declaration) stops the compile.
-        lines = WIZARD.read_text(encoding="utf-8").splitlines()
+        lines = pascal_code().splitlines()
         head = re.compile(r"\s*(procedure|function)\s+(\w+)", re.IGNORECASE)
         declared: dict[str, int] = {}
         for number, line in enumerate(lines, 1):
             match = head.match(line)  # a forward declaration counts as a declaration
             if match:
                 declared.setdefault(match.group(2).lower(), number)
-        for number, line in enumerate(lines, 1):
-            code = re.sub(r"\{[^}]*\}", "", re.sub(r"'[^']*'", "''", line)).split("//")[0]
+        for number, code in enumerate(code_only(pascal_code()).splitlines(), 1):
             for name in re.findall(r"\b\w+\b", code):
                 first = declared.get(name.lower())
                 self.assertFalse(
@@ -225,7 +276,7 @@ class WizardCopyTest(unittest.TestCase):
                 self.assertNotRegex(value, r"\b(80|443|465|587|5353)\b")
 
     def test_wz11_text_is_never_a_tlabel_and_every_key_the_code_uses_exists(self) -> None:
-        code = WIZARD.read_text(encoding="ascii")
+        code = pascal_code()
         self.assertNotRegex(code, r"\bTLabel\b")
         used = set(re.findall(r"\b(?:CM|FM)\('([a-z0-9_]+)'", code))
         prefixed = {"s12_stage", "s12_fail", "stage_"}
@@ -284,6 +335,65 @@ class WizardJobRunnerTest(unittest.TestCase):
         save = routine(self.code, "procedure SaveReport(Sender: TObject);\nvar")
         self.assertNotRegex(save, r"if JobRunning then\s+Exit;")
         self.assertIn("not JobRunning then\n    RunJobBlocking('log-bundle'", save)
+
+
+class UninstallAndMaintenanceTest(unittest.TestCase):
+    """W9 (TASK-0096): what a static read can show of the uninstaller and the settings program."""
+
+    def test_f4c_the_uninstaller_uses_no_setup_only_call(self) -> None:
+        # Inno Setup help: at uninstall there is no WizardForm, no ExtractTemporaryFiles and no
+        # *AsOriginalUser call; the wizard's helpers that use them or {tmp} stay out too.
+        # Code only: ";" comment lines and { } comments are left out.
+        text = UNINSTALL.read_text(encoding="ascii")
+        code = re.sub(
+            r"\{[^}]*\}",
+            "",
+            "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(";")),
+        )
+        forbidden = (
+            "WizardForm",
+            "{tmp}",
+            "ExtractTemporaryFile",
+            "AsOriginalUser",
+            "NewOut",
+            "RunHelper",
+            "StartHelper",
+            "AddTextTo",
+            "InfoForm",
+            "FailureForm",
+            "SaveReport(",
+            "OpenAsUser",
+        )
+        for name in forbidden:
+            with self.subTest(name=name):
+                self.assertNotIn(name, code)
+        self.assertIn("function InitializeUninstall(): Boolean;", code)
+        # Plan F4c: U01 removes nothing; the work runs at usUninstall, where an exception stops
+        # the uninstall before Inno removes a file.
+        initialize = routine(code, "function InitializeUninstall(): Boolean;")
+        self.assertNotRegex(initialize, r"uninstall-(stop|data)|remove-windows")
+        self.assertIn("usUninstall", code)
+
+    def test_w9_5_modify_opens_the_settings_program_which_cannot_install(self) -> None:
+        iss = ISS.read_text(encoding="ascii")
+        settings = iss.split("#ifdef SettingsBuild", 1)[1].split("#else", 1)[0]
+        for line in ("Uninstallable=no", "CreateUninstallRegKey=no", "CreateAppDir=no"):
+            with self.subTest(line=line):
+                self.assertIn(f"\n{line}\n", settings)
+        self.assertIn(
+            'DestDir: "{commonappdata}\\SlateOps\\settings"; DestName: "SlateOpsSettings.exe"', iss
+        )
+        post = routine(pascal_code(), "procedure CurStepChanged(CurStep: TSetupStep);")
+        self.assertIn("'ModifyPath'", post)
+        self.assertIn("'NoModify', 0", post)
+        self.assertIn("HKLM64", post)
+        self.assertIn("SETTINGS_BUILD", routine(pascal_code(), "function PrepareToInstall("))
+        for workflow in (WORKFLOW, RELEASE):
+            with self.subTest(workflow=workflow.name):
+                text = workflow.read_text(encoding="utf-8")
+                self.assertLess(
+                    text.index("/DSettingsBuild"), text.index('"/DSettingsExe=$settings"')
+                )
 
 
 class InstallerReleaseJobTest(unittest.TestCase):
