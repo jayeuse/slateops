@@ -27,10 +27,17 @@ from engine.runner import Runner
 RESPONSE_LIMIT = 64 * 1024
 
 
+def tls_client_context(cafile: Path | None = None) -> ssl.SSLContext:
+    """A verifying client context that refuses TLS older than 1.2."""
+    context = ssl.create_default_context(cafile=None if cafile is None else str(cafile))
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
+
+
 def https_get(host: str, path: str, cafile: Path, timeout: float) -> tuple[int, bytes]:
     """GET ``https://<host><path>`` through 127.0.0.1:443 with ``host`` as the TLS server
     name and the Host header, trusting only ``cafile`` (plan 6.2 step 10, F2)."""
-    context = ssl.create_default_context(cafile=str(cafile))
+    context = tls_client_context(cafile)
     raw = socket.create_connection(("127.0.0.1", 443), timeout=timeout)
     try:
         wrapped = context.wrap_socket(raw, server_hostname=host)
@@ -53,7 +60,7 @@ class Dependencies:
     make_runner: Callable[[RunLog], Runner] = Runner
     clock: Callable[[], datetime] = utc_now
     sleep: Callable[[float], None] = time.sleep
-    tls_context: Callable[[], ssl.SSLContext] = ssl.create_default_context
+    tls_context: Callable[[], ssl.SSLContext] = tls_client_context
     docker_api: Callable[[Path], DockerApi] = DockerApi
     disk_free: Callable[[Path], int] = lambda path: shutil.disk_usage(path).free
     chown: Callable[[Path, int, int], None] = os.chown

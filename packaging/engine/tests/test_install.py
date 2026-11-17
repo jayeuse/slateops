@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import shutil
 import stat
 from collections.abc import Iterator
@@ -145,14 +146,14 @@ class World:
 
     def _generate(self, folder: Path) -> Result:
         self.generations += 1
-        output, password = folder / "generated.env", folder / "restic-password"
-        if output.exists() or password.exists():
+        output, second = folder / "generated.env", folder / "restic-password"
+        if output.exists() or second.exists():
             return Result(1, b"Refusing to overwrite existing installation keys.\n", b"")
         n = self.generations
         lines = [f"{name}=g{n}-{name.lower()}-0123456789abcdef" for name in SECRET_NAMES]
         lines.append(f"SLATEOPS_INSTANCE_ID=slateops-{n:010x}")
         output.write_text("\n".join(lines) + "\n")
-        password.write_text(f"restic-g{n}-secret-value")
+        second.write_text(f"restic-g{n}-dummy-value")
         return Result(0, b"Created installation keys; no secret values were printed.\n", b"")
 
     def _ca(self, ca: Path, tls: Path) -> Result:
@@ -385,7 +386,7 @@ def test_ac_i6_env_files_are_private_and_the_generator_output_is_gone(
     assert f"SLATEOPS_SERVER_IMAGE=ghcr.io/jayeuse/slateops-server:{VERSION}" in provider
     app = (paths.etc / "app.env").read_text()
     assert "PUBLIC_ORIGIN=https://frontdesk-pc.local" in app
-    assert (paths.etc / "restic-password").read_text() == "restic-g1-secret-value"
+    assert (paths.etc / "restic-password").read_text() == "restic-g1-dummy-value"
 
 
 def test_ac_i5_ac_i7_one_shot_jobs_have_no_network_and_only_their_folders(
@@ -428,7 +429,7 @@ def test_ac_i8_ac_i7_owners_and_modes_follow_the_installation_rules(
     }  # fmt: skip
     assert {path: _mode(path) for path in expected} == expected
     caddyfile = (paths.etc / "Caddyfile").read_text()
-    assert "https://frontdesk-pc.local:443" in caddyfile
+    assert re.search(r"^https://frontdesk-pc\.local:443[ {]", caddyfile, re.M)
     assert 'tls "/run/caddy-tls/server.crt" "/run/caddy-tls/server.key"' in caddyfile
     assert "reverse_proxy api:8000" in caddyfile
 
@@ -627,7 +628,7 @@ def _assert_one_installation(paths: Paths, fake: World) -> None:
     assert app["SUPABASE_SECRET_KEY"].startswith(generation + "-")
     assert provision["MIGRATION_DATABASE_URL"].count(generation + "-") == 1
     assert app["SLATEOPS_INSTANCE_ID"] == provider["SLATEOPS_INSTANCE_ID"]
-    assert (paths.etc / "restic-password").read_text() == f"restic-{generation}-secret-value"
+    assert (paths.etc / "restic-password").read_text() == f"restic-{generation}-dummy-value"
     assert fake.ca_created == 1
     project = provider["SLATEOPS_INSTANCE_ID"]
     assert sorted(fake.volume_creations) == [
