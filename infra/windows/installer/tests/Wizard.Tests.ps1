@@ -61,7 +61,7 @@ $script:PipeRequestId = '5f1c2a9e-3b7d-4c60-8e21-7a4b9d0c6e35'
 # Known values that must never reach a file (plan 10.6 item 6).
 $script:SeedPassword = 'W8-seeded-Pa55word-7c1d'
 # Generated per run, so no secret-shaped literal sits in the repository (secret scan).
-$script:SeedAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+$script:SeedAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'  # base32, the engine's key format
 $script:SeedKey = (1..8 | ForEach-Object { -join (1..4 | ForEach-Object { $script:SeedAlphabet[(Get-Random -Maximum $script:SeedAlphabet.Length)] }) }) -join '-'
 $script:SeedPemBody = 'MIIE' + (-join (1..28 | ForEach-Object { 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[(Get-Random -Maximum 62)] }))
 $script:PemKind = 'PRIVATE' + ' KEY'

@@ -196,10 +196,10 @@ Test-Case 'AC-1 the recheck runs exactly the spec 5.2 checks' {
     Assert-Equal @('C08', 'C09', 'C10', 'C12', 'C13', 'C14', 'C21') $ids
 }
 
-Test-Case 'AC-1 the check reads this PC without changing it and returns every W7 check' {
+Test-Case 'AC-1 the check reads this PC without changing it and returns every check (W7 plus C16 and C17 from W8)' {
     $facts = Get-PcCheckFacts
     $results = @(Invoke-PcCheck -Facts $facts -PinnedWsl ([version]'3.0.3.0'))
-    Assert-Equal 28 $results.Count
+    Assert-Equal 30 $results.Count
     foreach ($result in $results) {
         Assert-True ($result.message_key -match '^check\.c[0-9]{2}\.[a-z_]+$') $result.message_key
         Assert-True (@('pass', 'stop', 'fix', 'advice', 'auto', 'log') -contains $result.class) $result.id
