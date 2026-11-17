@@ -152,7 +152,7 @@ PYTHONPATH=packaging python3 -m backup.restore_installation \
   --execute --confirm 'EXACT_TEXT_FROM_INSPECTION'
 ```
 
-The confirmation binds the source, snapshot, target project, target instance ID, and target directory. Execution imports volumes, then writes `restore-pending.json` and owner-only copies under `restored-source-private/`. If it fails after a volume is created, keep ingress closed and investigate the partial target; do not retry with the occupied project as though it were fresh.
+The confirmation binds the source, snapshot, target project, target instance ID, and target directory. Only the installer engine's update rollback executes without a terminal, by adding `--engine-binding` with an owner-only file that names the same snapshot, target project, and target directory; do not use that option for a manual restore. Execution imports volumes, then writes `restore-pending.json` and owner-only copies under `restored-source-private/`. If it fails after a volume is created, keep ingress closed and investigate the partial target; do not retry with the occupied project as though it were fresh.
 
 ## Rebind while ingress is closed
 

@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -15,6 +17,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
+from typing import TextIO
 
 from .backup_installation import (
     _IDENTITY,
@@ -36,6 +39,11 @@ from .backup_installation import (
 )
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
+# The engine's run ID (plan 10.1), printed only when it is a safe token: the same pattern as
+# backend/operations/install/joblog.py.
+_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:+-]{0,95}")
+_BINDING_FIELDS = {"format_version", "snapshot_id", "target_project", "target_directory"}
+_BINDING_LIMIT = 4096
 _FINALIZE_SQL = (
     "BEGIN; "
     "UPDATE public.identity_sessions SET "
@@ -105,6 +113,60 @@ def confirmation_text(
         json.dumps(target, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()[:20]
     return f"RESTORE {snapshot_id} FROM {config.project_name} INTO {target_project} TARGET {digest}"
+
+
+def _admit_engine_binding(
+    binding: Path, snapshot_id: str, target_project: str, target_directory: Path
+) -> None:
+    """Admit the engine's own restore values (plan 7.5, W13a, decision H12).
+
+    The engine writes a private file that names the snapshot, the target project and the
+    target directory of its rollback. Execution without a terminal needs that file, and every
+    value must equal it exactly. Any process that can write the file as its owner can also
+    run the restore, so this binds an unattended run to exact values; it is not authentication.
+    """
+    if not binding.is_absolute():
+        raise BackupError("engine restore binding must be an absolute path")
+    _private(binding, "engine restore binding", directory=False)
+    # Check the opened file itself, so a swap after the path check is refused: no symlink,
+    # and no blocking open or read of a FIFO.
+    try:
+        descriptor = os.open(binding, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as error:
+        raise BackupError("engine restore binding is unavailable") from error
+    try:
+        details = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(details.st_mode)
+            or details.st_uid not in {0, os.geteuid()}
+            or details.st_mode & 0o077
+            or details.st_size > _BINDING_LIMIT
+        ):
+            raise BackupError("engine restore binding is unsafe or invalid")
+        data = os.read(descriptor, _BINDING_LIMIT)
+    finally:
+        os.close(descriptor)
+    try:
+        document = json.loads(data)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise BackupError("engine restore binding is invalid") from error
+    if (
+        not isinstance(document, dict)
+        or set(document) != _BINDING_FIELDS
+        or type(document["format_version"]) is not int
+        or document["format_version"] != 1
+        or not all(
+            isinstance(document[key], str)
+            for key in ("snapshot_id", "target_project", "target_directory")
+        )
+    ):
+        raise BackupError("engine restore binding is invalid")
+    if (
+        document["snapshot_id"],
+        document["target_project"],
+        Path(document["target_directory"]),
+    ) != (snapshot_id, target_project, target_directory):
+        raise BackupError("engine restore binding does not match the restore target")
 
 
 def _target_preflight(
@@ -375,6 +437,7 @@ def run_restore(
     execute: bool = False,
     confirmation: str | None = None,
     tty: bool | None = None,
+    engine_binding: Path | None = None,
     command_runner: Callable[..., subprocess.CompletedProcess[bytes]] = _command,
 ) -> RestoreResult:
     config = parse_config(config_path)
@@ -384,7 +447,9 @@ def run_restore(
         raise BackupError("restore target must be distinct from the source project")
     _target_instance_id(config, target_instance_id)
     if execute:
-        if not (sys.stdin.isatty() if tty is None else tty):
+        if engine_binding is not None:
+            _admit_engine_binding(engine_binding, snapshot_id, target_project, target_directory)
+        elif not (sys.stdin.isatty() if tty is None else tty):
             raise BackupError("restore execution requires an interactive terminal")
         if confirmation != confirmation_text(
             config_path, snapshot_id, target_project, target_directory, target_instance_id
@@ -652,6 +717,13 @@ def run_finalize(
     )
 
 
+def _say(text: str, stream: TextIO | None = None) -> None:
+    """Print one output line; with a safe ``SLATEOPS_RUN_ID``, the line starts with it."""
+    run_id = os.environ.get("SLATEOPS_RUN_ID", "")
+    prefix = f"{run_id} " if _RUN_ID.fullmatch(run_id) else ""
+    print(f"{prefix}{text}", file=stream or sys.stdout)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path)
@@ -663,7 +735,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     action.add_argument("--execute", action="store_true")
     action.add_argument("--finalize", action="store_true")
     parser.add_argument("--confirm")
+    parser.add_argument("--engine-binding", type=Path)
     args = parser.parse_args(argv)
+    if args.engine_binding is not None and not args.execute:
+        _say("Restore failed: --engine-binding requires --execute", sys.stderr)
+        return 2
     try:
         if args.finalize:
             run_finalize(
@@ -673,7 +749,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.target_directory,
                 args.target_instance_id,
             )
-            print(
+            _say(
                 "Restore finalization complete; ingress remains closed until operator "
                 "rebind and admission."
             )
@@ -686,11 +762,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.target_instance_id,
                 execute=args.execute,
                 confirmation=args.confirm,
+                engine_binding=args.engine_binding,
             )
             if result.executed:
-                print("Restore staged offline; application sessions still require finalization.")
+                _say("Restore staged offline; application sessions still require finalization.")
             else:
-                print("Restore inspection passed; no target data was changed.")
+                _say("Restore inspection passed; no target data was changed.")
                 confirmation = confirmation_text(
                     args.config,
                     args.snapshot,
@@ -698,15 +775,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.target_directory,
                     args.target_instance_id,
                 )
-                print(f"To execute, provide --execute --confirm '{confirmation}'")
+                _say(f"To execute, provide --execute --confirm '{confirmation}'")
     except (BackupError, OSError) as error:
         detail = (
             error if isinstance(error, BackupError) else "protected filesystem operation failed"
         )
-        print(
-            f"Restore failed: {detail}",
-            file=sys.stderr,
-        )
+        _say(f"Restore failed: {detail}", sys.stderr)
         return 1
     return 0
 

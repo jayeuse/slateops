@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -740,3 +741,279 @@ def test_finalize_verified_target_writes_identity_marker(tmp_path: Path) -> None
         for args in commands.calls
         if args[:2] == ["docker", "exec"]
     )
+
+
+def _engine_binding(tmp_path: Path, target: Path, **changes: object) -> Path:
+    binding = tmp_path / "engine-binding.json"
+    document: dict[str, object] = {
+        "format_version": 1,
+        "snapshot_id": SNAPSHOT,
+        "target_project": "client-b",
+        "target_directory": str(target),
+    }
+    document.update(changes)
+    binding.write_text(json.dumps(document), encoding="utf-8")
+    binding.chmod(0o600)
+    return binding
+
+
+def _engine_execute(
+    config: Path,
+    commands: RestoreCommands,
+    target: Path,
+    binding: Path,
+    *,
+    confirmation: str | None = None,
+) -> object:
+    return run_restore(
+        config,
+        SNAPSHOT,
+        "client-b",
+        target,
+        TARGET_INSTANCE,
+        execute=True,
+        confirmation=confirmation
+        or confirmation_text(config, SNAPSHOT, "client-b", target, TARGET_INSTANCE),
+        tty=False,
+        engine_binding=binding,
+        command_runner=commands,
+    )
+
+
+def test_engine_binding_executes_without_a_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    target = tmp_path / "engine-target"
+    commands = RestoreCommands(_bundle_fixture(tmp_path, config))
+    from backup import restore_installation
+
+    monkeypatch.setattr(restore_installation, "_import_volume", lambda *_: None)
+
+    result = _engine_execute(config, commands, target, _engine_binding(tmp_path, target))
+
+    marker = json.loads((target / "restore-pending.json").read_text(encoding="utf-8"))
+    assert getattr(result, "executed", None) is True
+    assert (marker["snapshot_id"], marker["target_project"]) == (SNAPSHOT, "client-b")
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "other-snapshot",
+        "other-project",
+        "other-directory",
+        "missing",
+        "readable-by-others",
+        "symlink",
+        "oversized",
+        "not-json",
+        "missing-field",
+        "extra-field",
+        "format-version",
+        "boolean-format-version",
+        "project-not-text",
+        "directory-not-text",
+        "not-an-object",
+        "relative-path",
+    ],
+)
+def test_engine_binding_refuses_any_other_value_before_commands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    config = _config(tmp_path)
+    target = tmp_path / "engine-target"
+    commands = RestoreCommands(_bundle_fixture(tmp_path, config))
+    from backup import restore_installation
+
+    monkeypatch.setattr(restore_installation, "_import_volume", lambda *_: None)
+    changes: dict[str, dict[str, object]] = {
+        "other-snapshot": {"snapshot_id": "e" * 64},
+        "other-project": {"target_project": "client-c"},
+        "other-directory": {"target_directory": str(tmp_path / "other-target")},
+        "extra-field": {"target_instance_id": TARGET_INSTANCE},
+        "format-version": {"format_version": 2},
+        "boolean-format-version": {"format_version": True},
+        "project-not-text": {"target_project": ["client-b"]},
+        "directory-not-text": {"target_directory": 5},
+        "oversized": {"padding": "x" * 5000},
+    }
+    binding = _engine_binding(tmp_path, target, **changes.get(case, {}))
+    if case == "missing":
+        binding.unlink()
+    elif case == "readable-by-others":
+        binding.chmod(0o644)
+    elif case == "symlink":
+        link = tmp_path / "engine-binding-link.json"
+        link.symlink_to(binding)
+        binding = link
+    elif case == "not-json":
+        binding.write_text("{not json", encoding="utf-8")
+    elif case == "not-an-object":
+        binding.write_text("5", encoding="utf-8")
+    elif case == "relative-path":
+        monkeypatch.chdir(tmp_path)
+        binding = Path(binding.name)
+    elif case == "missing-field":
+        document = json.loads(binding.read_text(encoding="utf-8"))
+        del document["target_directory"]
+        binding.write_text(json.dumps(document), encoding="utf-8")
+    elif case == "oversized":
+        document = json.loads(binding.read_text(encoding="utf-8"))
+        del document["padding"]
+        binding.write_text(json.dumps(document) + " " * 5000, encoding="utf-8")
+
+    with pytest.raises(BackupError, match="engine restore binding"):
+        _engine_execute(config, commands, target, binding)
+
+    assert commands.calls == []
+    assert not target.exists()
+
+
+def test_engine_binding_still_requires_the_exact_confirmation(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    target = tmp_path / "engine-target"
+    commands = RestoreCommands(_bundle_fixture(tmp_path, config))
+
+    with pytest.raises(BackupError, match="exact snapshot and target confirmation"):
+        _engine_execute(
+            config, commands, target, _engine_binding(tmp_path, target), confirmation="wrong"
+        )
+
+    assert commands.calls == []
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("swap", ["symlink", "readable-by-others", "fifo", "directory"])
+def test_engine_binding_swapped_after_the_path_check_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, swap: str
+) -> None:
+    config = _config(tmp_path)
+    target = tmp_path / "engine-target"
+    commands = RestoreCommands(_bundle_fixture(tmp_path, config))
+    binding = _engine_binding(tmp_path, target)
+    replacement = tmp_path / "replacement.json"
+    replacement.write_bytes(binding.read_bytes())
+    replacement.chmod(0o600)
+    from backup import restore_installation
+
+    checked = restore_installation._private
+    monkeypatch.setattr(restore_installation, "_import_volume", lambda *_: None)
+
+    def check_then_swap(path: Path, label: str, *, directory: bool) -> Path:
+        admitted = checked(path, label, directory=directory)
+        if path == binding:
+            binding.unlink()
+            if swap == "symlink":
+                binding.symlink_to(replacement)
+            elif swap == "readable-by-others":
+                binding.write_bytes(replacement.read_bytes())
+                binding.chmod(0o644)
+            elif swap == "fifo":
+                os.mkfifo(binding, 0o600)
+            else:
+                binding.mkdir(mode=0o700)
+        return admitted
+
+    monkeypatch.setattr(restore_installation, "_private", check_then_swap)
+
+    with pytest.raises(BackupError, match="engine restore binding"):
+        _engine_execute(config, commands, target, binding)
+
+    assert commands.calls == []
+    assert not target.exists()
+
+
+def _main_arguments(config: Path, target: Path) -> list[str]:
+    return [
+        "--config", str(config), "--snapshot", SNAPSHOT, "--target-project", "client-b",
+        "--target-instance-id", TARGET_INSTANCE, "--target-directory", str(target),
+    ]
+
+
+@pytest.mark.parametrize("action", [[], ["--finalize"]], ids=["inspection", "finalize"])
+def test_engine_binding_is_refused_without_execute(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    action: list[str],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = _config(tmp_path)
+    target = tmp_path / "engine-target"
+    binding = _engine_binding(tmp_path, target)
+    monkeypatch.setenv("SLATEOPS_RUN_ID", "update-20261117T020000Z-a1b2c3")
+    from backup.restore_installation import main
+
+    code = main([*_main_arguments(config, target), *action, "--engine-binding", str(binding)])
+
+    assert code == 2
+    assert capsys.readouterr().err == (
+        "update-20261117T020000Z-a1b2c3 Restore failed: --engine-binding requires --execute\n"
+    )
+    assert not target.exists()
+
+
+def test_main_admits_the_engine_binding_in_place_of_the_terminal(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = _config(tmp_path)
+    target = tmp_path / "engine-target"
+    binding = _engine_binding(tmp_path, target, target_project="client-c")
+    confirmation = confirmation_text(config, SNAPSHOT, "client-b", target, TARGET_INSTANCE)
+    from backup.restore_installation import main
+
+    code = main(
+        [
+            *_main_arguments(config, target), "--execute", "--confirm", confirmation,
+            "--engine-binding", str(binding),
+        ]
+    )
+
+    assert code == 1
+    assert capsys.readouterr().err == (
+        "Restore failed: engine restore binding does not match the restore target\n"
+    )
+    assert not target.exists()
+
+
+@pytest.mark.parametrize(
+    ("run_id", "prefix"),
+    [
+        (None, ""),
+        ("update-20261117T020000Z-a1b2c3", "update-20261117T020000Z-a1b2c3 "),
+        ("bad id\nforged line", ""),
+    ],
+    ids=["absent", "valid", "invalid"],
+)
+def test_main_output_lines_carry_a_valid_run_id_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    run_id: str | None,
+    prefix: str,
+) -> None:
+    config = _config(tmp_path)
+    target = tmp_path / "engine-target"
+    from backup import restore_installation
+    from backup.restore_installation import RestoreResult, main
+
+    if run_id is None:
+        monkeypatch.delenv("SLATEOPS_RUN_ID", raising=False)
+    else:
+        monkeypatch.setenv("SLATEOPS_RUN_ID", run_id)
+    assert main(_main_arguments(tmp_path / "missing.json", target)) == 1
+    monkeypatch.setattr(
+        restore_installation,
+        "run_restore",
+        lambda *_, **__: RestoreResult(SNAPSHOT, "a" * 32, "client-b", TARGET_INSTANCE, False),
+    )
+    confirmation = confirmation_text(config, SNAPSHOT, "client-b", target, TARGET_INSTANCE)
+
+    assert main(_main_arguments(config, target)) == 0
+
+    output = capsys.readouterr()
+    assert output.out == (
+        f"{prefix}Restore inspection passed; no target data was changed.\n"
+        f"{prefix}To execute, provide --execute --confirm '{confirmation}'\n"
+    )
+    assert output.err == f"{prefix}Restore failed: cannot read backup configuration\n"
