@@ -240,19 +240,29 @@ class CommsWorld:
                                    .bindparams(bindparam("orgs", expanding=True)), owned)
             connection.execute(text("DELETE FROM public.organizations WHERE id IN :orgs")
                                .bindparams(bindparam("orgs", expanding=True)), owned)
+            users = {
+                "users": [
+                    self.first.author,
+                    self.first.peer,
+                    self.second.author,
+                    self.second.peer,
+                    *self.additional_users,
+                ]
+            }
+            # A `users` audit row has no organization, so the org_id delete above leaves it;
+            # every later reader of all `users` entries (the audit plan tests) would pay for it.
+            connection.execute(
+                text(
+                    "DELETE FROM public.audit_logs "
+                    "WHERE entity_type = 'users' AND entity_id IN :users"
+                ).bindparams(bindparam("users", expanding=True)),
+                users,
+            )
             connection.execute(
                 text("DELETE FROM public.users WHERE id IN :users").bindparams(
                     bindparam("users", expanding=True)
                 ),
-                {
-                    "users": [
-                        self.first.author,
-                        self.first.peer,
-                        self.second.author,
-                        self.second.peer,
-                        *self.additional_users,
-                    ]
-                },
+                users,
             )
 
 
