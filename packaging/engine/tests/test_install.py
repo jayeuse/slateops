@@ -47,7 +47,7 @@ ANSWERS: dict[str, Any] = {
     "data_vhd_max_gb": 256,
     "time_zone": "Asia/Manila",
 }
-SECRET_NAMES = (
+GENERATED_KEY_NAMES = (
     "POSTGRES_PASSWORD JWT_SECRET JWT_KEYS JWT_JWKS ANON_KEY SERVICE_ROLE_KEY ANON_KEY_ASYMMETRIC "
     "SERVICE_ROLE_KEY_ASYMMETRIC SUPABASE_PUBLISHABLE_KEY SUPABASE_SECRET_KEY "
     "SUPABASE_SESSION_ENCRYPTION_KEY PUBLICATION_SIGNING_KEY PG_META_CRYPTO_KEY DASHBOARD_PASSWORD "
@@ -150,7 +150,7 @@ class World:
         if output.exists() or second.exists():
             return Result(1, b"Refusing to overwrite existing installation keys.\n", b"")
         n = self.generations
-        lines = [f"{name}=g{n}-{name.lower()}-0123456789abcdef" for name in SECRET_NAMES]
+        lines = [f"{name}=g{n}-{name.lower()}-0123456789abcdef" for name in GENERATED_KEY_NAMES]
         lines.append(f"SLATEOPS_INSTANCE_ID=slateops-{n:010x}")
         output.write_text("\n".join(lines) + "\n")
         second.write_text(f"restic-g{n}-dummy-value")
