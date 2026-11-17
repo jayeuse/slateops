@@ -21,7 +21,11 @@ WHOLE_MATCHES = (
     re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:" + _KEY_END + r"|\Z)", re.S),
     # The kept window can start inside a key: mask up to an END line with no BEGIN before it.
     re.compile(r"\A(?:(?!-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----).)*?" + _KEY_END, re.S),
-    re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*"),
+    # A token starts only where no token character precedes it, and each part is bounded,
+    # so the scan stays linear on a long run ("eyJ-eyJ-..." started a scan at every "e").
+    re.compile(
+        r"(?<![\w-])eyJ[A-Za-z0-9_-]{1,16384}\.[A-Za-z0-9_-]{1,16384}\.[A-Za-z0-9_-]{0,16384}"
+    ),
     re.compile(r"\bsb_(?:secret|publishable)_[A-Za-z0-9_-]+"),
     re.compile(r"\b[Bb]earer\s+[A-Za-z0-9._~+/=-]+"),
 )
@@ -32,7 +36,9 @@ VALUE_MATCHES = (
         r"(?<![a-zA-Z0-9+.-])([a-zA-Z][a-zA-Z0-9+.-]{0,31}://[^\s/:@]{0,256}:)\S{1,256}(?=@)"
     ),
     re.compile(r"(\b[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]\s*=\s*)('[^']*'|\S+)"),
-    re.compile(r"(\b[A-Z0-9_]*(?:PASS|SECRET|TOKEN|KEY)[A-Z0-9_]*=)\S+"),
+    # (?<!\w) is the word start of the former \b; bounded name parts keep one long word
+    # with many secret words and no "=" from being scanned again from every split.
+    re.compile(r"((?<!\w)[A-Z0-9_]{0,64}(?:PASS|SECRET|TOKEN|KEY)[A-Z0-9_]{0,64}=)\S+"),
     # JSON ("password": "...") and YAML (api_key: ...): a field name that ends in a secret
     # word. "KeyError: ..." ends in another word and stays readable.
     re.compile(

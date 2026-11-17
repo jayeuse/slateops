@@ -7,6 +7,7 @@ import os
 import secrets
 import subprocess
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -220,6 +221,23 @@ def test_redaction_of_one_1_mib_line_finishes_in_one_pass(unit: str, count: int)
     )
 
     assert int(result.stdout) > 0
+
+
+@pytest.mark.parametrize("unit", [
+    pytest.param("eyJ-", id="token-starts-after-hyphens"),
+    pytest.param("KEY", id="secret-word-repeated-without-equals"),
+    pytest.param("PASS_", id="secret-word-with-underscores"),
+])
+def test_s85_1_a_64_kib_line_is_redacted_in_linear_time(unit: str) -> None:
+    # Requested timing check (S85-1): these lines took 1.1 to 1.9 s at 64 KiB when the token
+    # and KEY=value rules scanned again from every start; a linear pass takes milliseconds.
+    line = unit * (64 * 1024 // len(unit))
+    redact = provisioning.redactor(HELD)
+
+    started = time.perf_counter()
+    redact(line)
+
+    assert time.perf_counter() - started < 0.5
 
 
 def test_d7_child_output_is_logged_redacted_and_capped_after_the_step_line(

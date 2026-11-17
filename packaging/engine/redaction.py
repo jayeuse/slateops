@@ -37,7 +37,9 @@ _KEY_END = r"-----END [A-Z0-9 ]*PRIVATE KEY-----"
 W5A_WHOLE_MATCHES = (
     re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:" + _KEY_END + r"|\Z)", re.S),
     re.compile(r"\A(?:(?!-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----).)*?" + _KEY_END, re.S),
-    re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*"),
+    re.compile(
+        r"(?<![\w-])eyJ[A-Za-z0-9_-]{1,16384}\.[A-Za-z0-9_-]{1,16384}\.[A-Za-z0-9_-]{0,16384}"
+    ),
     re.compile(r"\bsb_(?:secret|publishable)_[A-Za-z0-9_-]+"),
     re.compile(r"\b[Bb]earer\s+[A-Za-z0-9._~+/=-]+"),
 )
@@ -48,7 +50,7 @@ W5A_VALUE_MATCHES = (
         r"(?<![a-zA-Z0-9+.-])([a-zA-Z][a-zA-Z0-9+.-]{0,31}://[^\s/:@]{0,256}:)\S{1,256}(?=@)"
     ),
     re.compile(r"(\b[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]\s*=\s*)('[^']*'|\S+)"),
-    re.compile(r"(\b[A-Z0-9_]*(?:PASS|SECRET|TOKEN|KEY)[A-Z0-9_]*=)\S+"),
+    re.compile(r"((?<!\w)[A-Z0-9_]{0,64}(?:PASS|SECRET|TOKEN|KEY)[A-Z0-9_]{0,64}=)\S+"),
     re.compile(
         r"""((?:"|'|\b)[A-Za-z0-9_.-]{0,64}(?:pass(?:word|wd)?|secret|token|key)s?(?:"|')?"""
         r"""\s*:\s*)("(?:[^"\\]|\\.)*"|'[^']*'|[^\s,}\]]+)""",
