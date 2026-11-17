@@ -17,6 +17,10 @@ from tests.operations.backups.backup_runner_fixtures import (
     private_file,
     runner_config,
 )
+from tests.operations.backups.test_backup_runner_installer_layout import (
+    INSTALLER_SERVICES,
+    _installer,
+)
 from tests.operations.backups.test_backup_runner_recovery import active_journal
 
 
@@ -125,23 +129,28 @@ def test_retention_failure_keeps_verification_and_reconciliation_truth(tmp_path:
 
 
 @pytest.mark.parametrize(
-    ("present", "outcome", "failure_code"),
+    ("installer", "present", "outcome", "failure_code"),
     [
-        # A new repository after a target change holds no earlier point.
-        ({SNAPSHOT}, "succeeded", None),
+        # A new repository after an installer target change holds no earlier point.
+        (True, {SNAPSHOT}, "succeeded", None),
         # A later night: the newest point is here, an older point stays in the old repository.
-        ({SNAPSHOT, "2" * 64}, "succeeded", None),
+        (True, {SNAPSHOT, "2" * 64}, "succeeded", None),
         # The protected newest point vanished while an older one remains here.
-        ({SNAPSHOT, "1" * 64}, "failed", "retention_failed"),
+        (True, {SNAPSHOT, "1" * 64}, "failed", "retention_failed"),
         # The new point is not in this repository either.
-        (set(), "failed", "retention_failed"),
+        (True, set(), "failed", "retention_failed"),
+        # A Linux layout has no target change: every earlier point lost still alerts.
+        (False, {SNAPSHOT}, "failed", "retention_failed"),
     ],
 )
 def test_retention_after_a_repository_change_expires_nothing(
-    tmp_path: Path, present: set[str], outcome: str, failure_code: str | None
+    tmp_path: Path, installer: bool, present: set[str], outcome: str, failure_code: str | None
 ) -> None:
-    config, state = runner_config(tmp_path)
-    commands = SyntheticCommands(config)
+    if installer:
+        config, state, commands = _installer(tmp_path, services=INSTALLER_SERVICES)
+    else:
+        config, state = runner_config(tmp_path)
+        commands = SyntheticCommands(config)
     oldest = candidate(config, state, commands, "1" * 64, 90)
     newest = candidate(config, state, commands, "2" * 64, 60)
     commands.snapshots = set(present)
