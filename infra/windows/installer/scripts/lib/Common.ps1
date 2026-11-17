@@ -600,12 +600,14 @@ function Get-OrdinalSorted {
 
 function ConvertTo-PlainValue {
     # Turns a value into what JavaScriptSerializer can write without walking PowerShell's
-    # wrappers: strings, booleans, numbers, dictionaries with string keys, and arrays. Cmdlet
-    # output arrives wrapped in a PSObject (Split-Path, Get-Item ...); the serializer of Windows
-    # PowerShell 5.1 then walks the wrapper and stops on a circular reference. A wrapped value
-    # is unwrapped, a PSCustomObject becomes a dictionary of its note properties, a date
-    # becomes a UTC stamp, a version, GUID, time span or enum value becomes its text. Anything
-    # else is refused (json_unsupported_type), so no object graph reaches a result file.
+    # wrappers: strings, booleans, numbers, dictionaries with string keys, and arrays. In Windows
+    # PowerShell 5.1 every value that a command or function returns can arrive wrapped in a
+    # PSObject, and the serializer then walks the wrapper and stops on a circular reference. So
+    # each value is unwrapped, and each child is unwrapped again where it is stored (a function's
+    # return value is wrapped once more on its way back). A PSCustomObject becomes a dictionary
+    # of its note properties, a CIM instance a dictionary of its properties, a date a UTC stamp,
+    # a version, GUID, time span or enum value its text. Anything else is refused
+    # (json_unsupported_type), so no object graph reaches a result file.
     param([AllowNull()]$Value, [int]$Depth = 0)
     if ($Depth -gt 16) { throw 'json_too_deep' }
     if ($null -eq $Value) { return $null }
@@ -617,24 +619,35 @@ function ConvertTo-PlainValue {
     }
     if ($base -is [datetime]) { return (Get-UtcStamp -Time $base) }
     if (($base -is [version]) -or ($base -is [guid]) -or ($base -is [timespan]) -or ($base -is [System.Enum])) { return $base.ToString() }
+    # Each child comes back through a function return, which wraps it in a PSObject again; it is
+    # unwrapped here, in the scope that stores it (.PSObject.BaseObject is a property read, not
+    # a function return, so it stays unwrapped).
+    $children = New-Object System.Collections.Generic.List[object]
+    $names = New-Object System.Collections.Generic.List[string]
     if ($base -is [System.Collections.IDictionary]) {
-        $out = New-Object 'System.Collections.Generic.Dictionary[string,object]'
-        foreach ($key in @($base.Keys)) { $out[[string]$key] = (ConvertTo-PlainValue -Value $base[$key] -Depth ($Depth + 1)) }
-        return , $out
-    }
-    if ($base -is [System.Management.Automation.PSCustomObject]) {
-        $out = New-Object 'System.Collections.Generic.Dictionary[string,object]'
-        foreach ($property in @($Value.PSObject.Properties | Where-Object { $_.MemberType -eq 'NoteProperty' })) {
-            $out[[string]$property.Name] = (ConvertTo-PlainValue -Value $property.Value -Depth ($Depth + 1))
-        }
-        return , $out
-    }
-    if ($base -is [System.Collections.IEnumerable]) {
+        foreach ($key in @($base.Keys)) { $names.Add([string]$key); $children.Add($base[$key]) }
+    } elseif ($base -is [System.Management.Automation.PSCustomObject]) {
+        foreach ($property in @($Value.PSObject.Properties | Where-Object { $_.MemberType -eq 'NoteProperty' })) { $names.Add([string]$property.Name); $children.Add($property.Value) }
+    } elseif ($base.GetType().FullName -eq 'Microsoft.Management.Infrastructure.CimInstance') {
+        foreach ($property in @($base.CimInstanceProperties)) { $names.Add([string]$property.Name); $children.Add($property.Value) }
+    } elseif ($base -is [System.Collections.IEnumerable]) {
         $list = New-Object System.Collections.Generic.List[object]
-        foreach ($item in $base) { $list.Add((ConvertTo-PlainValue -Value $item -Depth ($Depth + 1))) }
+        foreach ($item in $base) {
+            $child = ConvertTo-PlainValue -Value $item -Depth ($Depth + 1)
+            if ($null -ne $child) { $child = $child.PSObject.BaseObject }
+            $list.Add($child)
+        }
         return , $list.ToArray()
+    } else {
+        throw 'json_unsupported_type'
     }
-    throw 'json_unsupported_type'
+    $out = New-Object 'System.Collections.Generic.Dictionary[string,object]'
+    for ($i = 0; $i -lt $names.Count; $i++) {
+        $child = ConvertTo-PlainValue -Value $children[$i] -Depth ($Depth + 1)
+        if ($null -ne $child) { $child = $child.PSObject.BaseObject }
+        $out[$names[$i]] = $child
+    }
+    return , $out
 }
 
 function ConvertTo-JsonText {
@@ -642,7 +655,9 @@ function ConvertTo-JsonText {
     Add-Type -AssemblyName System.Web.Extensions
     $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
     $serializer.MaxJsonLength = [int]::MaxValue
-    return $serializer.Serialize((ConvertTo-PlainValue -Value $Value))
+    $plain = ConvertTo-PlainValue -Value $Value
+    if ($null -ne $plain) { $plain = $plain.PSObject.BaseObject }
+    return $serializer.Serialize($plain)
 }
 
 function Write-JsonFile {

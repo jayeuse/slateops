@@ -116,7 +116,9 @@ Test-Case 'AC-2 the receive stream holds request.json and the five fixed parts, 
     $names = @(Get-ReceivePartNames -Version '0.2.0')
     for ($i = 0; $i -lt 5; $i++) { [System.IO.File]::WriteAllBytes((Join-Path $payload $names[$i]), (New-Object byte[] $sizes[$i])) }
     $memory = New-Object System.IO.MemoryStream
-    Write-ReceiveStream -Stream $memory -RequestBytes ([System.Text.Encoding]::ASCII.GetBytes('hello')) -Version '0.2.0' -PayloadDir $payload
+    $sink = @{ Stream = $memory; Process = $null; Written = [long]0 }
+    Write-ReceiveStream -Sink $sink -RequestBytes ([System.Text.Encoding]::ASCII.GetBytes('hello')) -Version '0.2.0' -PayloadDir $payload
+    Assert-Equal 7168 $sink.Written
     $bytes = $memory.ToArray()
     Assert-Equal 7168 $bytes.Length
     $ascii = [System.Text.Encoding]::ASCII

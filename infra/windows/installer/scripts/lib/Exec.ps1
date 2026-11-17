@@ -138,18 +138,39 @@ function New-TarHeader {
     return , $header
 }
 
+function Write-InputBytes {
+    # Writes bytes to the sink's stream in chunks of at most 1 MiB. .NET Framework (Windows
+    # PowerShell 5.1) ignores ERROR_NO_DATA when the reader of a pipe is gone, so a write after
+    # the process ended does not fail by itself: the sink checks the process before each chunk
+    # and reports the early close as an IOException "input_closed" (a refusing receive closes
+    # its input early; TASK-0083 carry). A sink without a process (tests) writes plainly.
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Sink,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][byte[]]$Buffer,
+        [int]$Count = -1
+    )
+    if ($Count -lt 0) { $Count = $Buffer.Length }
+    $position = 0
+    while ($position -lt $Count) {
+        if ($Sink.Process -and $Sink.Process.HasExited) { throw (New-Object System.IO.IOException('input_closed')) }
+        $size = [int][math]::Min(1MB, $Count - $position)
+        $Sink.Stream.Write($Buffer, $position, $size)
+        $position += $size
+    }
+    $Sink.Written = [long]$Sink.Written + $Count
+}
+
 function Write-TarMember {
     param(
-        [Parameter(Mandatory = $true)][System.IO.Stream]$Stream,
+        [Parameter(Mandatory = $true)][hashtable]$Sink,
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][long]$Size,
         [Parameter(Mandatory = $true)][scriptblock]$WriteBody
     )
-    $header = New-TarHeader -Name $Name -Size $Size
-    $Stream.Write($header, 0, 512)
-    & $WriteBody $Stream
+    Write-InputBytes -Sink $Sink -Buffer (New-TarHeader -Name $Name -Size $Size)
+    & $WriteBody $Sink
     $pad = (512 - ($Size % 512)) % 512
-    if ($pad -gt 0) { $Stream.Write((New-Object byte[] $pad), 0, [int]$pad) }
+    if ($pad -gt 0) { Write-InputBytes -Sink $Sink -Buffer (New-Object byte[] $pad) }
 }
 
 function Write-ReceiveStream {
@@ -157,7 +178,7 @@ function Write-ReceiveStream {
     # the two end blocks. Part names are fixed; a part that is missing, not a regular file or a
     # reparse point stops the job before any byte is written.
     param(
-        [Parameter(Mandatory = $true)][System.IO.Stream]$Stream,
+        [Parameter(Mandatory = $true)][hashtable]$Sink,
         [Parameter(Mandatory = $true)][byte[]]$RequestBytes,
         [Parameter(Mandatory = $true)][string]$Version,
         [Parameter(Mandatory = $true)][string]$PayloadDir
@@ -171,28 +192,56 @@ function Write-ReceiveStream {
         }
         $parts += @{ name = $name; path = $path; size = [long]$item.Length }
     }
-    Write-TarMember -Stream $Stream -Name 'request.json' -Size $RequestBytes.Length -WriteBody { param($s) $s.Write($RequestBytes, 0, $RequestBytes.Length) }
+    Write-TarMember -Sink $Sink -Name 'request.json' -Size $RequestBytes.Length -WriteBody { param($target) Write-InputBytes -Sink $target -Buffer $RequestBytes }
     foreach ($part in $parts) {
-        Write-TarMember -Stream $Stream -Name $part.name -Size $part.size -WriteBody {
-            param($s)
+        Write-TarMember -Sink $Sink -Name $part.name -Size $part.size -WriteBody {
+            param($target)
             $file = [System.IO.File]::Open($part.path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
             try {
                 if ($file.Length -ne $part.size) { throw 'A payload part changed while it was sent.' }
-                $file.CopyTo($s, 1MB)
+                $buffer = New-Object byte[] (1MB)
+                while (($read = $file.Read($buffer, 0, $buffer.Length)) -gt 0) { Write-InputBytes -Sink $target -Buffer $buffer -Count $read }
             } finally { $file.Dispose() }
         }
     }
-    $Stream.Write((New-Object byte[] 1024), 0, 1024)
+    Write-InputBytes -Sink $Sink -Buffer (New-Object byte[] 1024)
 }
 
 # ---------------------------------------------------------------------------
 # Running a process with data on its raw standard input
 # ---------------------------------------------------------------------------
 
+function Start-ProcessWithoutPreamble {
+    # .NET Framework's Process.Start wraps the redirected input in a StreamWriter with
+    # Console.InputEncoding and sets AutoFlush, which writes that encoding's preamble at once.
+    # With console code page 65001 that is a UTF-8 byte order mark (3 bytes) before the first
+    # JSON byte, and the engine refuses the request (second Windows CI run). For the start only,
+    # the console input encoding is UTF-8 without a preamble; setup refuses to start the process
+    # when a preamble would still be written.
+    param([Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process)
+    $previous = $null
+    try {
+        $current = [Console]::InputEncoding
+        if ($current.GetPreamble().Length -gt 0) {
+            $previous = $current
+            [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
+        }
+    } catch { $previous = $null }
+    try {
+        $encoding = $null
+        try { $encoding = [Console]::InputEncoding } catch { $encoding = $null }
+        if (($null -ne $encoding) -and ($encoding.GetPreamble().Length -gt 0)) { throw 'input_encoding_preamble' }
+        [void]$Process.Start()
+    } finally {
+        if ($null -ne $previous) { try { [Console]::InputEncoding = $previous } catch { $null = $_ } }
+    }
+}
+
 function Invoke-ProcessWithInput {
     # Starts FilePath with fixed arguments, drains standard output and standard error into files
-    # on thread-pool tasks (so a large input cannot deadlock on a full output pipe), writes the
-    # input with WriteInput to the raw input stream (never through the PowerShell pipeline), and
+    # on thread-pool tasks (so a large input cannot deadlock on a full output pipe), gives
+    # WriteInput a sink (@{ Stream; Process; Written }) for the raw input stream (never the
+    # PowerShell pipeline; Write-InputBytes writes to it), and
     # waits. A write that fails because the process closed its input is reported as pipe_closed
     # (a receive refusal closes standard input early; TASK-0083 carry).
     param(
@@ -220,12 +269,13 @@ function Invoke-ProcessWithInput {
     $pipeClosed = $false
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     try {
-        [void]$process.Start()
+        Start-ProcessWithoutPreamble -Process $process
         $outTask = $process.StandardOutput.BaseStream.CopyToAsync($outFile)
         $errTask = $process.StandardError.BaseStream.CopyToAsync($errFile)
         $inStream = $process.StandardInput.BaseStream
+        $sink = @{ Stream = $inStream; Process = $process; Written = [long]0 }
         try {
-            & $WriteInput $inStream
+            & $WriteInput $sink
             $inStream.Flush()
         } catch {
             $inner = $_.Exception
@@ -367,9 +417,9 @@ function Invoke-EngineJob {
     $inputBytes = $Check.input
     $payload = $Layout.Payload
     if ($job -eq 'receive') {
-        $writer = { param($stream) Write-ReceiveStream -Stream $stream -RequestBytes $inputBytes -Version $version -PayloadDir $payload }
+        $writer = { param($sink) Write-ReceiveStream -Sink $sink -RequestBytes $inputBytes -Version $version -PayloadDir $payload }
     } else {
-        $writer = { param($stream) $stream.Write($inputBytes, 0, $inputBytes.Length) }
+        $writer = { param($sink) Write-InputBytes -Sink $sink -Buffer $inputBytes }
     }
     $env:WSL_UTF8 = '1'
     $run = Invoke-ProcessWithInput -FilePath $WslPath -ArgumentList $arguments -WriteInput $writer -StdoutPath $stdout -StderrPath $stderr

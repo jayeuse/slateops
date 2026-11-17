@@ -91,8 +91,19 @@ Test-Case 'AC-3 a new data tree gives the service account modify on distro and r
     $layout = New-TestStateLayout 'tree-data'
     $problems = @(Initialize-ProtectedTree -Tree $layout.DataTree -ServiceSid $script:ServiceSid)
     Assert-Equal 0 $problems.Count ($problems -join '; ')
-    Assert-Equal @('S-1-5-18', $script:ServiceSid, 'S-1-5-32-544') (Get-ExplicitAllowSids -Path $layout.Distro) 'sorted: SYSTEM, the service account (S-1-5-21-...), Administrators'
-    Assert-Equal 'ReadAndExecute, Synchronize' ((@((Get-Acl -LiteralPath $layout.Payload).GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -eq $script:ServiceSid }) | ForEach-Object { [string]$_.FileSystemRights }) -join ';')
+    # The kit's design: the root is protected and holds Administrators and SYSTEM; an entry
+    # folder inherits those two from the root only and adds the service account explicitly.
+    $sidType = [System.Security.Principal.SecurityIdentifier]
+    $distro = Get-Acl -LiteralPath $layout.Distro
+    $effective = Get-OrdinalSorted @($distro.GetAccessRules($true, $true, $sidType) | Where-Object { $_.AccessControlType -eq 'Allow' } | ForEach-Object { $_.IdentityReference.Value } | Select-Object -Unique)
+    Assert-Equal (Get-OrdinalSorted @('S-1-5-18', $script:ServiceSid, 'S-1-5-32-544')) $effective
+    $inherited = Get-OrdinalSorted @($distro.GetAccessRules($false, $true, $sidType) | ForEach-Object { $_.IdentityReference.Value } | Select-Object -Unique)
+    Assert-Equal @('S-1-5-18', 'S-1-5-32-544') $inherited 'inherited from the protected root only'
+    Assert-Equal @($script:ServiceSid) (Get-ExplicitAllowSids -Path $layout.Distro)
+    Assert-Equal 'Modify, Synchronize' ((@($distro.GetAccessRules($true, $false, $sidType) | Where-Object { $_.IdentityReference.Value -eq $script:ServiceSid }) | ForEach-Object { [string]$_.FileSystemRights }) -join ';')
+    Assert-Equal 'ReadAndExecute, Synchronize' ((@((Get-Acl -LiteralPath $layout.Payload).GetAccessRules($true, $false, $sidType) | Where-Object { $_.IdentityReference.Value -eq $script:ServiceSid }) | ForEach-Object { [string]$_.FileSystemRights }) -join ';')
+    Assert-Equal (Get-OrdinalSorted @('S-1-5-18', $script:ServiceSid, 'S-1-5-32-544')) (Get-ExplicitAllowSids -Path $layout.DataRoot) 'the root: Administrators, SYSTEM and the service account (read, this folder only)'
+    Assert-Equal $true (Get-Acl -LiteralPath $layout.DataRoot).AreAccessRulesProtected
 }
 
 Test-Case 'AC-3 the data folder path is an absolute folder on a drive letter with no relative parts' {

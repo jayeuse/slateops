@@ -54,7 +54,7 @@ while ($true) {
         if ($statusInput) {
             $stdout = Join-Path $runDir ('status-{0}.json' -f $attach)
             $stderr = Join-Path $runDir ('status-{0}.err.txt' -f $attach)
-            $writer = { param($stream) $stream.Write($statusInput, 0, $statusInput.Length) }
+            $writer = { param($sink) Write-InputBytes -Sink $sink -Buffer $statusInput }
             $run = Invoke-ProcessWithInput -FilePath $wslExe -ArgumentList (Get-EngineArguments -Job 'status') -WriteInput $writer -StdoutPath $stdout -StderrPath $stderr
             $null = Limit-ErrorFile -Path $stderr
             $engine = Get-EngineCode -Path $stdout
