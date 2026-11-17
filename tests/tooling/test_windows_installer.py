@@ -151,6 +151,17 @@ class WindowsInstallerSourcesTest(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertIn(f"\n{line}\n", f"\n{setup}\n")
 
+    def test_no_inno_line_starts_with_a_hash_that_is_not_a_directive(self) -> None:
+        # The Inno preprocessor reads a line that starts with "#" as a directive, so a Pascal
+        # line that starts with a character constant such as #13#10 stops the compile.
+        directive = re.compile(
+            r"\s*#(include|define|if|ifdef|ifndef|else|elif|endif|expr|emit|error|pragma|undef)\b"
+        )
+        for path in (ISS, WIZARD, COPY):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    self.assertRegex(line, directive, f"{path.name}:{number}")
+
     def test_bitlocker_is_never_read_beyond_its_status_p2_4(self) -> None:
         # P2-4, S91-10: the BitLocker module loads every key protector, so no script calls it.
         for path in sorted((INSTALLER / "scripts").rglob("*.ps1")):

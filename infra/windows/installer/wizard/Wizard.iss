@@ -3712,8 +3712,8 @@ begin
     WizardForm.FinishedHeadingLabel.Caption := CM('s15_title');
     WizardForm.FinishedLabel.Caption :=
       FM('s15_step1', [Trim(OrgEmail.Text)]) + #13#10#13#10 + CM('s15_step2') + #13#10#13#10 +
-      CM('s15_step3') + #13#10 + 'http://' + HostName + '.local/trust' + #13#10 + FM('s15_security', [SecurityCode]) +
-      #13#10#13#10 + CM('s15_desk') + #13#10#13#10 + CM('s15_starts');
+      CM('s15_step3') + #13#10 + 'http://' + HostName + '.local/trust' + #13#10 + FM('s15_security', [SecurityCode]) + #13#10#13#10 +
+      CM('s15_desk') + #13#10#13#10 + CM('s15_starts');
     WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);
     WizardForm.NextButton.Caption := CM('s15_finish');
     ExtraButton.Parent := WizardForm;
