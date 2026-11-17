@@ -83,7 +83,7 @@ Each technical term is replaced on default screens. Where a person must meet the
 | Edition, Desk | "Desk, the free edition" | None |
 | Run ID, log bundle | "report" | None |
 
-Words that never show on a default screen: WSL, Linux, Docker, engine, distribution, VHD, SMTP, TLS, STARTTLS, port numbers, mDNS, CA, root certificate, Hyper-V, PowerShell, registry, exit code. Exceptions, each because the person must match a word that they see elsewhere: the "Other" email form (server, port, SSL/TLS, STARTTLS, as email providers write them); "Authenticated SMTP" (row above); the name of a program that the person installed (for example "Docker Desktop", C25); a value that the person typed (for example a server name). "Details" and Save report are not default screens.
+Words that never show on a default screen: WSL, Linux, Docker, engine, distribution, VHD, SMTP, TLS, STARTTLS, port numbers, mDNS, CA, root certificate, Hyper-V, PowerShell, registry, exit code. Exceptions, each because the person must match a word that they see elsewhere: the "Other" email form (server, port, SSL/TLS, STARTTLS, as email providers write them); "Authenticated SMTP" (row above); the name of a program that the person installed (for example "Docker Desktop", C25); "CA certificate" in the Android steps of T01, because the person types it into the Android Settings search; a value that the person typed (for example a server name). "Details" and Save report are not default screens.
 
 ## 4. Flow (AC-1)
 
@@ -554,16 +554,47 @@ Each screen below lists: purpose, content and copy, controls, states and message
 
 ### T01 Trust page on a phone (web page, built in W6b; not a wizard screen)
 
-The QR code on S15 and "Show the phone code" in M01 open this page. It is a static page that Slate Operations serves on the office network (plan 6.3).
+The QR code on S15 and "Show the phone code" in M01 open this page. It is a static page that Slate Operations serves on the office network (plan 6.3). Revised after the W6b screen review (TASK-0088).
 
-- **Title.** "Let this phone open Slate Operations"
-- **Status line, first.** "This phone trusts Slate Operations: Not yet" or "Yes" (the page checks `https://<name>.local/trust/ok`; plan 10.7). With "Yes", the only action is "Open Slate Operations".
-- **Steps,** selected by the device type, with a "Other device" switch:
-  - iPhone or iPad: 1. "Download the profile." 2. "Open Settings → Profile Downloaded → Install." 3. "Open Settings → General → About → Certificate Trust Settings, and turn on Slate Operations." 4. "Come back to this page."
-  - Android: 1. "Use Chrome." 2. "Download the certificate." 3. "Open it and follow the steps on the phone." 4. "Come back to this page."
-  - Windows PC and Mac: the same pattern with their steps.
-- **"The page does not open?"** "Connect the phone to the same Wi-Fi as the server PC. A guest Wi-Fi often blocks this. Turn off a VPN on the phone."
+- **The device word.** iPhone and Android: "phone". iPad: "iPad". Windows and Mac: "computer". An unknown device, and the static page without JavaScript: "device". The word fills the title, the status label and "The page does not open?".
+- **Title.** "Let this phone open Slate Operations" (with the device word). The static default in the page: "Let this device open Slate Operations".
+- **Status line, first.** "This phone trusts Slate Operations:" (with the device word), then "Checking…", "Yes" or "Not yet" (the page checks `https://<name>.local/trust/ok`; plan 10.7). With "Yes", the only action is "Open Slate Operations".
+- **Without JavaScript,** in place of the status line: "This page cannot check this device by itself. When you have done the steps, change http:// to https:// at the start of this page's address. If the browser shows a warning, stop and do the steps again. With no warning, this device trusts Slate Operations."
+- **Steps,** for the detected device, with links to the other devices ("Other device:"). Without JavaScript, or for an unknown device, all four sets show. Button captions have no final period.
+  - iPhone or iPad:
+    1. "Use Safari. Other browsers cannot install the profile."
+    2. Button "Download the profile", with the line "When asked, select Allow." under it.
+    3. "Open Settings → Profile Downloaded → Install."
+    4. "Open Settings → General → About → Certificate Trust Settings, and turn on Slate Operations."
+    5. "Come back to this page."
+  - Android (Android 11 and later install a CA certificate only from Settings, not from the browser):
+    1. "Use Chrome."
+    2. Button "Download the certificate".
+    3. "Open Settings, search for CA certificate, and select it. Choose the file you downloaded."
+    4. "If the phone asks for a screen lock, set one. If it warns you, choose to install anyway."
+    5. "Come back to this page."
+    
+    The steps use the Settings search, not a menu path, because the menu names differ by maker (Assumption; the owner's W14 pass shows it).
+  - Windows PC:
+    1. Button "Download the certificate".
+    2. "Open the downloaded file, then select Install Certificate."
+    3. "Select Current User, then Next."
+    4. "Select Place all certificates in the following store, then Browse → Trusted Root Certification Authorities → OK → Next."
+    5. "Select Finish, then Yes."
+    6. "Close the browser, open it again, and come back to this page."
+    
+    Line after the steps: "If Firefox still shows a warning, use Edge or Chrome."
+  - Mac:
+    1. Button "Download the certificate".
+    2. "Open the downloaded file. Keychain Access opens and adds it."
+    3. "In Keychain Access, open the Slate Operations certificate."
+    4. "Open Trust, and set When using this certificate to Always Trust."
+    5. "Close the window, enter your Mac password, and come back to this page."
+    
+    Line after the steps: "If Firefox still shows a warning, use Safari or Chrome." (Assumption: Firefox can keep its own certificate list.)
+- **"The page does not open?"** "Connect the phone to the same Wi-Fi as the server PC. A guest Wi-Fi often blocks this. Turn off a VPN on the phone." (with the device word). "Another subnet" (plan 10.7) is not named: "subnet" is a banned term (section 3), and "the same Wi-Fi" says what to do.
 - **"Check the code"** (Details): the security code (the certificate fingerprint), with "It must match the security code on the finish page or in Slate Operations settings on the server PC."
+- **Type.** The system font stack, with 16 px body text. The page loads nothing from another host (W6b-2), so it has no product font files; it is outside the app, so DESIGN.md does not change.
 
 ## 7. Messages by plan ID (final copy)
 
@@ -648,7 +679,7 @@ Each message shows under the field it is about.
 | Ports in use | C14 | S02 |
 | Firewall rule fails | "Setup could not set up Windows Firewall for Slate Operations." | S13; Repair in M01 |
 | Public network or domain | C10, C11 | S02, S03 |
-| Address does not open on a phone | S15 step 3 and T01 "The page does not open?" | T01 |
+| Address does not open on a phone or a computer | S15 step 3 and T01 "The page does not open?" (with the device word) | T01 |
 | Certificate not trusted | Server PC: F2 message. Phone: T01 status "Not yet". | S13; T01 |
 | Email errors | Section 7.3; later M01: "Needs attention: email sign-in fails. Select Change email account." | S09; M01 |
 | Database, migration, readiness | "Setup could not set up the database." / "Slate Operations did not start." | S13 |
@@ -733,7 +764,7 @@ No accessibility conformance is claimed (`PRODUCT.md`: no certification target).
 | 18 | Page 12 four lines of text and a QR code | S15: three numbered steps in order (password first), the QR code, Desk line, how to come back | The owner does the steps in the right order. | — |
 | 19 | Cancel after page 4a | Cancel rules per point (section 4.5), from S07 | Clear answers at every point. | — |
 | 20 | Section 9 uninstall and maintenance | U01 to U04, M01 to M05 with status first | The owner sees the state before the actions. | — |
-| 21 | Trust page "steps for iOS, Android, Windows and macOS" | T01: the trust status first, steps for the device, causes when the page does not open | The phone shows "Yes" when it is done. | — |
+| 21 | Trust page "steps for iOS, Android, Windows and macOS" | T01: the trust status first; steps for the detected device that work on current versions (Safari on iPhone and iPad, the Settings path on Android 11 and later); causes when the page does not open; a no-JavaScript line that says to stop at a warning | The device shows "Yes" when it is done, and no step leads to a dead end. | — |
 | 22 | Plan 10.7 row "Parts of the boot-test kit are on the PC" (page 3) | C29 on S02 with "Remove them", the C29 form, Continue and Cancel | Removal happens only after a select, with a clear list of what goes | The earlier test's data is deleted (as the plan) |
 | 23 | Page 12 and maintenance: no way to get a lost invitation | S15 hint line and "Send my invitation again" on M01 (engine job `resend-invitation`) | The administrator can always get in | A new allow-listed job (Security Engineer review) |
 | 24 | — | S09 note for Outlook.com addresses before the password | The person learns before a failed test that Outlook.com cannot work | — |
