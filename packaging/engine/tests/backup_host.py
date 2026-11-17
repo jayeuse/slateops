@@ -22,6 +22,10 @@ from engine.runner import Result
 RUNNER = "slateops-runner"
 
 
+# Restic's config holds a secret chunker polynomial; it must never reach a log.
+CHUNKER_SECRET = "3dea92648f6e83"
+
+
 def _ok(text: str = "") -> Result:
     return Result(0, text.encode(), b"")
 
@@ -125,7 +129,7 @@ class BackupHost:
         if not exists or password not in keys.values():
             return Result(1, b"", b"Fatal: wrong password or no key found\n")
         if tail == ["cat", "config"]:
-            return _ok('{"version":2}\n')
+            return _ok(json.dumps({"version": 2, "chunker_polynomial": CHUNKER_SECRET}) + "\n")
         if tail == ["key", "list", "--json"]:
             rows = [{"id": key, "current": value == password} for key, value in keys.items()]
             return _ok(json.dumps(rows))

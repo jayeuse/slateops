@@ -15,6 +15,7 @@ import pytest
 from engine.core import Paths
 from engine.runner import Result
 
+from .backup_host import CHUNKER_SECRET
 from .helpers import RUN_ID, log_text
 from .test_install import ANSWERS, World, _commands, _mode, _setup, run
 
@@ -243,6 +244,7 @@ def test_ac5_the_recovery_key_opens_the_repository_and_reaches_no_file_or_log(
 
     assert len(keys) == 2 and key in keys.values()
     assert key not in log_text(paths)
+    assert CHUNKER_SECRET not in log_text(paths)
     for path in (*paths.state.rglob("*"), *paths.etc.rglob("*"), *paths.run.rglob("*")):
         if path.is_file() and path.parent != fake.host.mount_point:
             assert key.encode() not in path.read_bytes(), path
@@ -260,6 +262,7 @@ def test_ac5_new_recovery_key_adds_a_key_and_removes_the_old_one(
     assert sorted(fake.host.keys().values()) == sorted([working, result["recovery_key"]])
     assert result["recovery_key"] != first["recovery_key"]
     assert result["recovery_key"] not in log_text(paths)
+    assert CHUNKER_SECRET not in log_text(paths)
 
 
 # AC-8: no change while the runner runs ----------------------------------------------------------

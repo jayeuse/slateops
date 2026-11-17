@@ -170,7 +170,10 @@ def open_or_init(ctx: Context, step: str) -> str:
         if not ctx.runner.run(step, restic(paths, "init"), timeout=RESTIC_SECONDS).ok:
             raise failed("restic_init_failed")
         return "created"
-    if not ctx.runner.run(step, restic(paths, "cat", "config"), timeout=RESTIC_SECONDS).ok:
+    # The config holds Restic's secret chunker polynomial: never log its output.
+    if not ctx.runner.run(
+        step, restic(paths, "cat", "config"), timeout=RESTIC_SECONDS, log_output=False
+    ).ok:
         raise refused("backup_target_refused")
     return "opened"
 
@@ -220,7 +223,10 @@ def new_recovery_key(ctx: Context, step: str) -> str:
             raise failed("recovery_key_failed")
         added = {row["id"] for row in _keys(ctx, step)} - {row["id"] for row in before}
         check = restic(paths, "cat", "config", password_file=staged)
-        if len(added) != 1 or not ctx.runner.run(step, check, timeout=RESTIC_SECONDS).ok:
+        if (
+            len(added) != 1
+            or not ctx.runner.run(step, check, timeout=RESTIC_SECONDS, log_output=False).ok
+        ):
             raise failed("recovery_key_failed")
     finally:
         staged.unlink(missing_ok=True)
