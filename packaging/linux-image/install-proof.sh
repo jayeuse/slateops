@@ -348,7 +348,7 @@ db="$(docker exec "$machine" docker ps --filter "label=com.docker.compose.projec
     --filter label=com.docker.compose.service=db --format '{{.Names}}')"
 make_due() {  # test only: the daily schedule falls due now (one statement, as the superuser)
     docker exec "$machine" docker exec "$db" psql -h 127.0.0.1 -U supabase_admin -d postgres \
-        -v ON_ERROR_STOP=1 -q -c "update slateops.backup_policies set next_due_at = now() - interval '1 minute'"
+        -v ON_ERROR_STOP=1 -q -c "update public.backup_policies set next_due_at = now() - interval '1 minute'"
 }
 tick() { printf '{"run_id":"backup-%s-proof%s"}' "$(date -u +%Y%m%dT%H%M%SZ)" "$1" | "${engine[@]}" tick || true; }
 ready() { docker exec "$machine" curl --fail --silent --max-time 10 "${tls[@]}" -o /dev/null "https://$host/api/ready"; }
