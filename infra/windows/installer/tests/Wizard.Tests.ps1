@@ -108,7 +108,9 @@ Test-Case 'W8-2 3.2 check 2 Exec refuses a pipe whose access list allows another
     $server = [TestPipeServer]::Start(('SlateOps-{0}' -f $id), @('S-1-5-32-544', $script:SelfSid, 'S-1-1-0'), $null, $false)
     Set-ExecRequest -Layout $layout -RequestText (Get-RequestText -Job 'smtp-test' -RequestId $id) -InputBytes $null
     $result = Invoke-ExecRequest -Layout $layout -WslPath $script:StandIn
-    $null = $server.Wait(5000)
+    # Exec closes an untrusted pipe without reading it, so the server's write may fail with a
+    # broken pipe; only Exec's answer matters here.
+    try { $null = $server.Wait(5000) } catch { $null = $_ }
     Assert-Equal 'pipe_untrusted' $result.code
     Assert-Equal 0 @(Get-ChildItem -LiteralPath $layout.SvcOut -Filter '*.stdout.json').Count 'the engine never ran'
     Assert-Equal 'input_on_disk' (Test-ExecRequest -RequestText (Get-RequestText -Job 'smtp-test' -RequestId $id) -InputBytes ([System.Text.Encoding]::ASCII.GetBytes('{}'))).code
