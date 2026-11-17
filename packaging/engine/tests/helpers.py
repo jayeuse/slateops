@@ -32,6 +32,7 @@ def make_paths(root: Path) -> Paths:
         proc=root / "proc",
         passwd=root / "etc/passwd",
         docker_socket=root / "run/docker.sock",
+        systemd=root / "etc/systemd/system",
     )
     (root / "proc").mkdir(parents=True)
     (root / "proc/locks").write_text("")
@@ -73,7 +74,13 @@ class Script:
         script = self
 
         class ScriptedRunner(Runner):
-            def _execute(self, argv: list[str], timeout: float, env: dict[str, str]) -> Result:
+            def _execute(
+                self,
+                argv: list[str],
+                timeout: float,
+                env: dict[str, str],
+                stdin: bytes | None = None,
+            ) -> Result:
                 return script.answer(argv, env)
 
         return ScriptedRunner(log)

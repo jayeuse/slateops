@@ -22,6 +22,11 @@
 # 3. receive, prefetch (status until done), install; an independent HTTPS /api/ready with
 #    the installation's CA; the invitation in Mailpit; install again (nothing changes, no
 #    mail); resend-invitation after Auth's 60 s send interval (one more mail).
+# 4. Backups (W10b, TASK-0093 AC-13): a test-only /sbin/mount.drvfs stands in for WSL's drvfs
+#    and bind-mounts a stand-in drive folder. Install step 12 takes the first backup; the
+#    timer runs a tick; then the proof stops the timer and runs ticks by hand: one scheduled
+#    backup with the folder present, and one with it missing (backup_failed, the services
+#    come back, status backup_target_missing). The drvfs mount itself is proved in W14.
 # On a failure it saves the engine's redacted log bundle, the systemd console and the
 # journal tail in the output folder.
 set -euo pipefail
@@ -105,12 +110,25 @@ ExecStart=
 ExecStart=!/usr/sbin/chronyd -x $DAEMON_OPTS
 EOF
 grep '^nameserver' /run/systemd/resolve/resolv.conf > "$output/resolv.conf"
+# Test only: the drvfs stand-in. mount -t drvfs runs /sbin/mount.drvfs <source> <dir> -o ...
+cat > "$output/mount.drvfs" <<'EOF'
+#!/bin/sh
+set -eu
+case "$1" in
+    'E:\SlateOps\Backups') drive=/srv/proof-drives/E/SlateOps/Backups ;;
+    *) echo "mount.drvfs stand-in: no drive for $1" >&2; exit 32 ;;
+esac
+[ -d "$drive" ] || { echo "mount.drvfs stand-in: drive missing" >&2; exit 32; }
+exec mount --bind "$drive" "$2"
+EOF
+chmod 0755 "$output/mount.drvfs"
 docker run --detach --name "$machine" --hostname "$machine" --privileged --cgroupns=private \
     --network slateops-proof --ip 10.250.0.20 \
     --tmpfs /run --tmpfs /run/lock --tmpfs /tmp \
     --volume slateops-proof-var:/var --volume /lib/modules:/lib/modules:ro \
     --volume "$output/chrony-proof.conf:/etc/systemd/system/chrony.service.d/proof.conf:ro" \
     --volume "$output/resolv.conf:/etc/resolv.conf:ro" \
+    --volume "$output/mount.drvfs:/usr/sbin/mount.drvfs:ro" \
     --env container=docker --stop-signal SIGRTMIN+3 \
     slateops-linux:proof /lib/systemd/systemd >/dev/null
 state="$(docker exec "$machine" timeout 240 systemctl is-system-running --wait 2>&1 || true)"
@@ -162,14 +180,28 @@ values = {"SMTP_HOST": sys.argv[2], "SMTP_PORT": "1025", "SMTP_ADMIN_EMAIL": "no
 write_private(paths.staged_smtp, smtp_env.render(values).encode())
 print("staged the email settings for the proof's Mailpit")
 PY
+docker exec "$machine" install -d -m 0700 /srv/proof-drives/E/SlateOps/Backups
 answers="$(printf '{"business_name":"Proof Clinic","slug":"proof-clinic","admin_email":"%s","admin_username":"proofadmin","public_host":"%s","backup_target":"E:\\\\SlateOps\\\\Backups","data_vhd_max_gb":64,"time_zone":"Asia/Manila"}' "$admin" "$host")"
 log "install"
 started=$SECONDS
 result="$(printf '{"run_id":"%s","version":"%s","answers":%s}' "$run_id" "$version" "$answers" | "${engine[@]}" install)" \
     || fail "install: $result"
 log "install took $((SECONDS - started)) s"
-python3 -c 'import json,sys; r=json.loads(sys.argv[1]); r.pop("ca_certificate_pem"); print(r)' "$result"
+python3 -c 'import json,sys; r=json.loads(sys.argv[1]); r.pop("ca_certificate_pem"); r.pop("recovery_key", None); print(r)' "$result"
 [ "$(field code <<<"$result")" = installed ] || fail "install: $result"
+[ "$(field backup_setup <<<"$result")" = ready ] || fail "install step 12 did not set up the backup"
+
+log "the runner timer is on and has run a tick (W10b-1); then it stops, and ticks run by hand"
+[ "$(docker exec "$machine" systemctl is-enabled slateops-runner.timer)" = enabled ] \
+    || fail "slateops-runner.timer is not enabled"
+for _ in $(seq 1 75); do docker exec "$machine" test -f /var/lib/slateops/runner-tick.json && break; sleep 2; done
+docker exec "$machine" test -f /var/lib/slateops/runner-tick.json || fail "the timer ran no tick"
+docker exec "$machine" systemctl stop slateops-runner.timer
+for _ in $(seq 1 300); do
+    case "$(docker exec "$machine" systemctl is-active slateops-runner.service || true)" in
+        active|activating) sleep 2 ;; *) break ;;
+    esac
+done
 
 # 4. Checks ---------------------------------------------------------------------------------
 log "HTTPS /api/ready through loopback, trusting only the installation's CA (W5b-1)"
@@ -181,7 +213,7 @@ owners="$(docker exec "$machine" stat -c '%n %u:%g %a' /etc/slateops/Caddyfile \
     /etc/slateops/provision.env /etc/slateops/restic-password /etc/slateops /etc/slateops/ca \
     /etc/slateops/tls /etc/slateops/trust /etc/slateops/trust/slateops-ca.sha256 \
     /etc/slateops/trust/slateops-ca.crt /etc/slateops/trust/slateops.mobileconfig \
-    /var/log/slateops/app /var/lib/slateops/backup-exports /var/lib/slateops/installation.json)"
+    /var/log/slateops/app /var/lib/slateops/backup/backup-exports /var/lib/slateops/installation.json)"
 echo "$owners"
 expected="/etc/slateops/Caddyfile 1000:1000 600
 /etc/slateops/tls/server.key 1000:1000 600
@@ -197,7 +229,7 @@ expected="/etc/slateops/Caddyfile 1000:1000 600
 /etc/slateops/trust/slateops-ca.crt 0:0 644
 /etc/slateops/trust/slateops.mobileconfig 0:0 644
 /var/log/slateops/app 10001:10001 700
-/var/lib/slateops/backup-exports 0:10001 750
+/var/lib/slateops/backup/backup-exports 0:10001 750
 /var/lib/slateops/installation.json 0:0 600"
 [ "$owners" = "$expected" ] || fail "owners and modes differ from the installation rules (AC-I7, AC-I8)"
 
@@ -310,4 +342,39 @@ again="$(printf '{"run_id":"renewal-%s-proof5"}' "$(date -u +%Y%m%dT%H%M%SZ)" | 
 [ "$again" = '{"code":"not_due","reloaded":false}' ] || fail "second renew-certificate: $again"
 docker exec "$machine" stat -c '%n %u:%g %a' /etc/slateops/tls/server.key | grep -q ' 1000:1000 600$' \
     || fail "the renewed key is not Caddy's"
-log "passed: receive, prefetch, install, HTTPS /api/ready, trust routes, WebSocket, invitation, rerun without change, resend, renewal"
+# 5. Backups by the runner (W10b-1, W10b-2) -------------------------------------------------
+project="$(docker exec "$machine" python3 -c 'import json; print(json.load(open("/var/lib/slateops/installation.json"))["project"])')"
+db="$(docker exec "$machine" docker ps --filter "label=com.docker.compose.project=$project" \
+    --filter label=com.docker.compose.service=db --format '{{.Names}}')"
+make_due() {  # test only: the daily schedule falls due now (one statement, as the superuser)
+    docker exec "$machine" docker exec "$db" psql -h 127.0.0.1 -U supabase_admin -d postgres \
+        -v ON_ERROR_STOP=1 -q -c "update slateops.backup_policies set next_due_at = now() - interval '1 minute'"
+}
+tick() { printf '{"run_id":"backup-%s-proof%s"}' "$(date -u +%Y%m%dT%H%M%SZ)" "$1" | "${engine[@]}" tick || true; }
+ready() { docker exec "$machine" curl --fail --silent --max-time 10 "${tls[@]}" -o /dev/null "https://$host/api/ready"; }
+backup_status() { status_json | python3 -c 'import json,sys; print(json.load(sys.stdin)["backup"])'; }
+
+log "a scheduled backup with the target folder present"
+make_due
+ticked="$(tick 6)"; echo "$ticked"
+[ "$(field runner <<<"$ticked")" = succeeded ] || fail "the scheduled backup did not succeed: $ticked"
+[ "$(backup_status)" = ok ] || fail "status does not report the backup target as ok"
+ready || fail "the services are not ready after the scheduled backup"
+
+log "a scheduled backup with the target folder missing (the drive is pulled)"
+docker exec "$machine" umount /var/lib/slateops/backup/repository
+docker exec "$machine" mv /srv/proof-drives/E /srv/proof-drives/E-pulled
+make_due
+ticked="$(tick 7)"; echo "$ticked"
+[ "$(field runner <<<"$ticked")" = backup_failed ] || fail "a missing target did not give backup_failed: $ticked"
+[ "$(backup_status)" = backup_target_missing ] || fail "status does not report backup_target_missing"
+for attempt in 8 9 10; do
+    ready && break
+    sleep 60
+    tick "$attempt"
+done
+ready || fail "the services did not come back after the failed backup (plan 8.1)"
+docker exec "$machine" mv /srv/proof-drives/E-pulled /srv/proof-drives/E
+tick 11 >/dev/null
+[ "$(backup_status)" = ok ] || fail "the target was not mounted again when it came back"
+log "passed: receive, prefetch, install, HTTPS /api/ready, trust routes, WebSocket, invitation, rerun without change, resend, renewal, backups"

@@ -9,7 +9,9 @@ Every command goes through ``Runner.run``:
   (personal values that ``docker run -e NAME`` takes from the caller, so they never become
   an argument); their names are logged, never their values;
 - its arguments, exit code and duration on the run log; its output captured in memory,
-  cut to 1 MiB per stream, redacted, then written.
+  cut to 1 MiB per stream, redacted, then written;
+- standard input from nothing, or from ``input`` bytes that are never logged (the bridge
+  command of install step 12, TASK-0093).
 """
 
 from __future__ import annotations
@@ -29,10 +31,12 @@ PROGRAMS = frozenset(
         "docker",
         "ip",
         "journalctl",
+        "restic",
         "ss",
         "systemctl",
         "systemd-run",
         "timedatectl",
+        "umount",
         "wslinfo",
     }
 )
@@ -83,6 +87,7 @@ class Runner:
         timeout: float,
         log_output: bool = True,
         extra_env: Mapping[str, str] | None = None,
+        input: bytes | None = None,
     ) -> Result:
         program = argv[0] if argv else ""
         if program not in self.programs:
@@ -94,7 +99,12 @@ class Runner:
         self.log.line(step, "INFO", f"run: {shlex.join(argv)}{added}")
         started = self.clock()
         try:
-            result = self._execute(list(argv), timeout, {**ENVIRONMENT, **extras})
+            environment = {**ENVIRONMENT, **extras}
+            result = (
+                self._execute(list(argv), timeout, environment)
+                if input is None
+                else self._execute(list(argv), timeout, environment, input)
+            )
         except subprocess.TimeoutExpired as expired:
             result = Result(None, _bytes(expired.stdout), _bytes(expired.stderr))
         except FileNotFoundError:
@@ -109,15 +119,22 @@ class Runner:
                     self.log.line(step, "INFO", f"{stream}: {self.log.output(step, stream, data)}")
         return result
 
-    def _execute(self, argv: list[str], timeout: float, env: dict[str, str]) -> Result:
-        completed = subprocess.run(
-            argv,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            timeout=timeout,
-            check=False,
-        )
+    def _execute(
+        self, argv: list[str], timeout: float, env: dict[str, str], stdin: bytes | None = None
+    ) -> Result:
+        if stdin is None:
+            completed = subprocess.run(
+                argv,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+            )
+        else:
+            completed = subprocess.run(
+                argv, env=env, input=stdin, capture_output=True, timeout=timeout, check=False
+            )
         return Result(completed.returncode, completed.stdout, completed.stderr)
 
 

@@ -87,6 +87,10 @@ class Context:
     redactor: Redactor
     started: datetime
     stdin: BinaryIO | None = None
+    # Values for this run's result only, never written to a file (the recovery key, 8.3).
+    outputs: dict[str, str] = field(default_factory=dict)
+    # False when the job did nothing worth a log (an idle tick): its run folder is removed.
+    keep_log: bool = True
 
     @property
     def paths(self) -> Paths:

@@ -27,6 +27,7 @@ from engine.docker_api import DockerError
 from engine.logs import RunLog
 from engine.runner import ENVIRONMENT, Result, Runner
 
+from .backup_host import BackupHost
 from .helpers import RUN_ID, VERSION, deps, log_text, make_paths
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -106,6 +107,10 @@ class World:
         self.served_expired = False  # the served leaf fails verification (expired)
         self.ca_hangs = False  # the CA container passes the runner's time limit
         self.reloads = 0
+        self.stops = 0
+        # TASK-0093: the backup drive, Restic, the runner container, the bridge, systemd.
+        self.host = BackupHost(paths)
+        self.host.add_drive(ANSWERS["backup_target"], paths.state.parent / "drives/E/Backups")
 
     # The runner -----------------------------------------------------------------------------
 
@@ -113,25 +118,34 @@ class World:
         world = self
 
         class WorldRunner(Runner):
-            def _execute(self, argv: list[str], timeout: float, env: dict[str, str]) -> Result:
-                return world.answer(argv, env)
+            def _execute(
+                self,
+                argv: list[str],
+                timeout: float,
+                env: dict[str, str],
+                stdin: bytes | None = None,
+            ) -> Result:
+                return world.answer(argv, env, stdin)
 
         return WorldRunner(log)
 
-    def answer(self, argv: list[str], env: dict[str, str]) -> Result:
+    def answer(self, argv: list[str], env: dict[str, str], stdin: bytes | None = None) -> Result:
         self.count += 1
         self.calls.append(argv)
         self.environments.append(env)
         kill = self.kill_at == self.count
         if kill and not self.kill_after:
             raise Killed
-        result = self._do(argv, env)
+        result = self._do(argv, env, stdin)
         if kill:
             raise Killed
         return result
 
-    def _do(self, argv: list[str], env: dict[str, str]) -> Result:
+    def _do(self, argv: list[str], env: dict[str, str], stdin: bytes | None) -> Result:
         text = " ".join(argv)
+        found = self.host.answer(argv, stdin)
+        if found is not None:
+            return found
         if argv[0] == "ip":
             if self.ip_fails:
                 return Result(1, b"", b"")
@@ -224,6 +238,10 @@ class World:
                         self.volumes.add(name)
                         self.volume_creations.append(name)
             return Result(0, b"", b"")
+        if tail[0] == "stop":
+            self.started.clear()
+            self.stops += 1
+            return Result(0, b"", b"")
         if tail[0] == "ps":
             rows = [
                 {"Service": name, "State": "running", "Health": "healthy" if self.healthy else
@@ -314,6 +332,8 @@ def _stage_smtp(paths: Paths) -> None:
 def _setup(root: Path) -> tuple[Paths, World]:
     paths = make_paths(root)
     shutil.copytree(ROOT / "packaging/engine/templates", paths.engine_home / "templates")
+    shutil.copytree(ROOT / "packaging/engine/units", paths.engine_home / "units")
+    (paths.engine_home / "VERSION").write_text(VERSION + "\n")
     supabase = paths.bundle_root / "infra/supabase"
     supabase.mkdir(parents=True)
     for name in ("compose.yaml", "compose.production.yaml", "compose.installer.yaml"):
@@ -406,7 +426,7 @@ def test_ac_i13_the_result_is_safe_and_names_the_ca_and_the_invitation(
 
     assert set(result) == {
         "code", "version", "invitation", "backup_setup", "ca_root_sha256", "ca_certificate_pem",
-        "ca_security_code",
+        "ca_security_code", "recovery_key",  # TASK-0093: the key, from the run that made it
     }  # fmt: skip
     assert result["code"] == "installed"
     assert result["invitation"] == "sent"
@@ -418,15 +438,14 @@ def test_ac_i13_the_result_is_safe_and_names_the_ca_and_the_invitation(
     assert EMAIL not in json.dumps(result) and USERNAME not in json.dumps(result)
 
 
-def test_ac_i12_the_backup_step_is_a_w10b_hook_that_reports_not_built(
-    world: tuple[Paths, World],
-) -> None:
+def test_ac_i12_the_backup_step_sets_up_the_backup(world: tuple[Paths, World]) -> None:
+    # TASK-0093 AC-6: step 12 is built (the W10b hook reported "not_built" before).
     paths, fake = world
 
     _, result = run(paths, fake)
 
-    assert result["backup_setup"] == "not_built"
-    assert "backup setup not built in this release (W10b)" in log_text(paths)
+    assert result["backup_setup"] == "ready"
+    assert "not built" not in log_text(paths)
 
 
 def test_ac_i6_env_files_are_private_and_the_generator_output_is_gone(
@@ -486,7 +505,7 @@ def test_ac_i8_ac_i7_owners_and_modes_follow_the_installation_rules(
     assert ("server.key", 1000, 1000) in fake.chowns
     expected = {
         paths.etc: 0o700, paths.new: 0o700, paths.etc / "ca": 0o700, paths.etc / "tls": 0o755,
-        paths.logs / "app": 0o700, paths.state / "backup-exports": 0o750,
+        paths.logs / "app": 0o700, paths.state / "backup" / "backup-exports": 0o750,
         paths.etc / "Caddyfile": 0o600, paths.etc / "tls" / "server.key": 0o600,
     }  # fmt: skip
     assert {path: _mode(path) for path in expected} == expected
@@ -759,7 +778,7 @@ def test_ac_k1_a_kill_at_any_command_then_a_rerun_completes_one_installation(
     tmp_path: Path, after: bool
 ) -> None:
     total = _complete_run_length(tmp_path)
-    assert total == 16  # every command of a full run is a kill point
+    assert total == 38  # every command of a full run is a kill point (step 12: TASK-0093)
     for kill_at in range(1, total + 1):
         paths, fake = _setup(tmp_path / f"kill-{kill_at}")
         fake.kill_at, fake.kill_after = kill_at, after
@@ -798,7 +817,8 @@ def test_ac_k1_a_rerun_after_completion_changes_nothing_and_sends_nothing(
     world: tuple[Paths, World],
 ) -> None:
     paths, fake = world
-    first = run(paths, fake)
+    code, result = run(paths, fake)
+    first = (code, {key: value for key, value in result.items() if key != "recovery_key"})
     calls, sent = len(fake.calls), fake.sent
     before = {path: path.read_bytes() for path in paths.etc.rglob("*") if path.is_file()}
     state = {path: path.read_bytes() for path in (paths.journal, paths.answers, paths.installation)}
@@ -1151,7 +1171,8 @@ def test_ac_e6_a_kill_inside_a_renewal_is_finished_by_the_next_run(
     run(paths, fake)
     fake.renew_due = True
     if stop == "after-renew":
-        fake.kill_at, fake.kill_after = fake.count + 1, True  # the renew command
+        # The renew command, after the runner check (docker ps, TASK-0093 AC-8).
+        fake.kill_at, fake.kill_after = fake.count + 2, True
     else:
         real_chown = fake.chown
 
@@ -1205,7 +1226,11 @@ def _ca_names(fake: World) -> list[str]:
 
 
 def _removed(fake: World) -> list[str]:
-    return [argv[3] for argv in fake.calls if argv[:3] == ["docker", "rm", "--force"]]
+    return [
+        argv[3]
+        for argv in fake.calls
+        if argv[:3] == ["docker", "rm", "--force"] and argv[3].startswith("slateops-ca-")
+    ]
 
 
 def test_w89_2_a_certificate_job_past_its_time_limit_is_removed(

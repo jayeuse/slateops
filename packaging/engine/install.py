@@ -19,7 +19,8 @@ Steps (step IDs ``install.NN.<name>``; each is journaled before the next starts)
 9. ``api``: start ``api``; wait for the internal ``/api/ready``.
 10. ``caddy``: start ``caddy``; ``https://<public_host>/api/ready`` through loopback.
 11. ``admin``: the first administrator and the invitation (W5a bootstrap).
-12. ``backup``: W10b (not built in this slice).
+12. ``backup``: the backup drive, the repository, the config, the default policy, the first
+    backup, the recovery key and the runner timer (W10b, ``engine.backups``).
 13. ``finish``: ``installation.json`` and the safe result.
 
 Rules (plan 6.1): a step never overwrites a secret, the CA, a volume or the Caddyfile: a file
@@ -42,7 +43,17 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from engine import answers, compose, invitation, journal, prefetch, release, subnet, trust
+from engine import (
+    answers,
+    backups,
+    compose,
+    invitation,
+    journal,
+    prefetch,
+    release,
+    subnet,
+    trust,
+)
 from engine.context import Context
 from engine.core import (
     INSTANCE_ID,
@@ -87,7 +98,7 @@ CADDYFILE = "Caddyfile"
 TRUST_MOUNT = "/srv/slateops-trust"  # the Caddy template root (generate_config --trust-root)
 API_UID = 10001  # the server image's appuser (infra/docker/backend.Dockerfile)
 CADDY_UID = 1000  # the Caddy image's user (infra/docker/caddy.Dockerfile)
-EXPORT_ROOT = "backup-exports"  # W10b moves it next to the Restic repository (TASK-0081 O-2)
+EXPORT_ROOT = "backup/backup-exports"  # next to the Restic repository (TASK-0081 O-2, W10b)
 SPACE_BYTES = 2 * 1024**3  # planning value: free space before each writing step (10.7)
 PREFETCH_WAIT_SECONDS = 3600
 PROVISION_SECONDS = 4 * 900 + 120  # the W5a job's four step limits, plus start-up
@@ -253,7 +264,7 @@ def step_folders(
     private_dir(paths.logs)
     _folder(ctx, paths.logs / "app", 0o700, (API_UID, API_UID))  # SLATEOPS_LOG_ROOT
     private_dir(paths.state)
-    _folder(ctx, paths.state / EXPORT_ROOT, 0o750, (0, API_UID))  # README export root rule
+    backups.make_export_root(ctx)  # README export root rule; 0750, group API_UID
     ctx.log.line(step, "INFO", "folders ready")
 
 
@@ -565,11 +576,14 @@ def step_admin(
 def step_backup(
     ctx: Context, step: str, state: dict[str, Any], given: dict[str, Any], manifest: dict[str, Any]
 ) -> None:
-    # W10b hook (plan 6.2 step 12). Order rule for W10b (W5a D-3): call backup_state.py
-    # policy_default before slateops-runner.timer starts and before the first backup,
-    # because a runner tick creates a disabled policy row when none exists.
-    state["backup_setup"] = "not_built"
-    ctx.log.line(step, "WARN", "backup setup not built in this release (W10b)")
+    def restart() -> None:  # after the first backup: providers, then api, then caddy last
+        project = _project(state)
+        compose.up(ctx, step, project, compose.PROVIDER_SERVICES, deps=True)
+        compose.wait_healthy(ctx, step, project, compose.PROVIDER_SERVICES)
+        step_api(ctx, step, state, given, manifest)
+        step_caddy(ctx, step, state, given, manifest)
+
+    backups.setup(ctx, step, state, given, restart)
 
 
 def _root_certificate(ctx: Context) -> tuple[str, str]:
@@ -632,6 +646,7 @@ def check_state(ctx: Context, state: dict[str, Any] | None) -> None:
         5: [etc / name for name in (*ENV_FILES, RESTIC)],
         6: [etc / "ca" / "current" / "root.crt", etc / "tls" / "server.crt",
             etc / "tls" / "server.key", etc / CADDYFILE],
+        12: [backups.config_path(paths)],
         13: [paths.installation],
     }  # fmt: skip
     if journal.done(steps, 4) and not journal.done(steps, 5):
@@ -689,7 +704,11 @@ def _start(ctx: Context, request: dict[str, Any]) -> tuple[dict[str, Any], dict[
 
 def _result(ctx: Context, state: dict[str, Any]) -> dict[str, Any]:
     pem, fingerprint = _root_certificate(ctx)
+    # 8.3: the recovery key only from the run that made it (never stored, shown once); W8
+    # bridges this output to the secret pipe. A later run's result has no key.
+    shown = {"recovery_key": ctx.outputs["recovery_key"]} if "recovery_key" in ctx.outputs else {}
     return {
+        **shown,
         "code": "installed",
         "version": state["version"],
         "invitation": state.get("invitation", "unknown"),

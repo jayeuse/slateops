@@ -1,7 +1,13 @@
 """``renew-certificate``: keep the server certificate and the trust files current (plan 6.3,
-W6a-4; TASK-0089). W10b's ``slateops-runner.timer`` runs it once a day (run kind ``renewal``).
+W6a-4; TASK-0089). The ``tick`` of ``slateops-runner.timer`` runs it once a day after the
+runner (TASK-0093); support can also run it. It never overlaps the backup runner: it refuses
+with ``runner_busy`` while the runner's host lock is held, a ``slateops-runner`` container
+exists or a runner journal is active (the runner owns Caddy's state until it resolves).
 
 Steps, each safe to repeat after a kill:
+
+0. Remove the staged leaf files that a killed renewal left in ``tls/`` (the backup refuses
+   them, TASK-0092 N-4); ``local_ca.py`` writes them anew.
 
 1. ``local_ca.py renew``: a new leaf only 30 days or less before the old one ends (W2), or
    when the leaf pair is missing.
@@ -21,12 +27,13 @@ from __future__ import annotations
 import ssl
 from typing import Any
 
-from engine import answers, compose, install, journal, trust
+from engine import answers, backups, compose, install, journal, trust
 from engine.context import Context
 from engine.core import failed, is_run_id, refused
 
 KEYS = {"run_id": is_run_id}
 REQUIRED = frozenset(KEYS)
+STAGED = (".server.key.new", ".server.crt.new")  # local_ca.py install_leaf
 RELOAD = ["caddy", "reload", "--force", "--config", "/etc/caddy/Caddyfile", "--adapter",
           "caddyfile"]  # fmt: skip
 
@@ -84,6 +91,13 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     given = answers.load(ctx.paths)
     if state is None or given is None or not journal.done(state, 6):
         raise refused("not_installed")
+    instance = str(state["project"])
+    if backups.busy(ctx, ctx.step(0, "runner"), instance) or (
+        backups.active_journal(ctx.paths, instance).exists()
+    ):
+        raise refused("runner_busy")
+    for name in STAGED:
+        (ctx.paths.etc / "tls" / name).unlink(missing_ok=True)
     host, image = given["public_host"], str(state["server_image"])
     result = install.run_ca(ctx, ctx.step(1, "renew"), image, "renew", host)
     install.run_ca(ctx, ctx.step(2, "check"), image, "check", host)

@@ -1,14 +1,19 @@
 """``slateops-engine <job>``: the allow-listed jobs (plan 3.2 rule 1, 6.1, section 10).
 
 Input: one JSON object on standard input (at most 64 KiB, known keys only), except
-``receive``, which reads a tar stream. Output: exactly one JSON object on standard output
-with a safe ``code`` (and ``message_key`` on a refusal or failure). Exit codes: 0 done,
-2 refused, 3 failed. A failed job saves the failure snapshot in its run folder.
+``receive``, which reads a tar stream, and ``--timer tick``, the form that
+``slateops-runner.service`` runs: the engine makes the tick's ``backup`` run ID itself (the
+Windows ``Exec`` runs exactly one job name, so it cannot reach this form). Output: exactly
+one JSON object on standard output with a safe ``code`` (and ``message_key`` on a refusal or
+failure). Exit codes: 0 done, 2 refused, 3 failed. A failed job saves the failure snapshot
+in its run folder.
 """
 
 from __future__ import annotations
 
+import io
 import json
+import shutil
 import sys
 import traceback
 from collections.abc import Callable, Mapping, Sequence
@@ -17,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any, BinaryIO, TextIO
 
 from engine import (
+    backups,
     install,
     invitation,
     log_bundle,
@@ -27,6 +33,7 @@ from engine import (
     smtp,
     snapshot,
     status,
+    tick,
 )
 from engine.context import Context, Dependencies
 from engine.core import (
@@ -63,8 +70,15 @@ JOBS: dict[str, Job] = {
     "log-bundle": Job(log_bundle.handle, log_bundle.KEYS, log_bundle.REQUIRED, locked=False),
     "install": Job(install.handle, install.KEYS, install.REQUIRED),
     "resend-invitation": Job(invitation.handle, invitation.KEYS, invitation.REQUIRED),
-    # Run by W10b's slateops-runner.timer once a day (plan 6.3); not a Windows Exec job.
+    # Run by the tick once a day (plan 6.3) and by support; not a Windows Exec job.
     "renew-certificate": Job(renewal.handle, renewal.KEYS, renewal.REQUIRED),
+    # W10b (TASK-0093). On the Windows Exec allow-list: set-backup-target, new-recovery-key.
+    # Not on it: tick (the timer), runner-recover and runner-adopt (support, W13b).
+    "set-backup-target": Job(backups.set_target, backups.TARGET_KEYS, backups.TARGET_REQUIRED),
+    "new-recovery-key": Job(backups.new_key, backups.KEYS, backups.REQUIRED),
+    "tick": Job(tick.handle, tick.KEYS, tick.REQUIRED),
+    "runner-recover": Job(tick.recover, tick.KEYS, tick.REQUIRED),
+    "runner-adopt": Job(tick.adopt, tick.KEYS, tick.REQUIRED),
 }
 
 
@@ -86,6 +100,8 @@ def main(
     deps = deps or Dependencies()
     if len(args) == 3 and args[0] == prefetch.WORKER:
         return prefetch.worker(deps, args[1], args[2])
+    if args == [tick.TIMER, "tick"]:
+        args, source = ["tick"], io.BytesIO(tick.timer_request(deps.clock()))
     name = args[0] if len(args) == 1 else ""
     job = JOBS.get(name)
     if job is None:
@@ -119,6 +135,8 @@ def main(
                 if name == "receive":
                     receive.discard_staging(deps.paths, ctx)
         log.line(ctx.step(0, "result"), "INFO", f"result {result['code']}")
+        if not ctx.keep_log:  # an idle tick: 20 runs are kept, the night's log must stay
+            shutil.rmtree(log.folder, ignore_errors=True)
         _emit(out, result)
         return 0
     except JobError as error:

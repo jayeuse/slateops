@@ -65,6 +65,8 @@ def test_ac_s1_status_returns_only_safe_codes_booleans_and_whole_numbers(tmp_pat
             "bytes_total": 3_400_000_000,
             "retry_in_seconds": 0,
         },
+        "backup": "not_set_up",  # TASK-0093: added fields, safe codes or None only
+        "linux_start": None,
     }
     assert not paths.logs.exists()
 

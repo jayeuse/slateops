@@ -654,6 +654,15 @@ class InstallProofTests(unittest.TestCase):
             '[ "$upgrade" = 101 ]',
             "Caddy still serves the old certificate",
             "the renewal outage was longer than a reload",
+            # TASK-0093 (W10b): the drvfs stand-in, the timer, a present and a missing target.
+            "/usr/sbin/mount.drvfs:ro",
+            "exec mount --bind",
+            "slateops-runner.timer is not enabled",
+            "the scheduled backup did not succeed",
+            "a missing target did not give backup_failed",
+            "status does not report backup_target_missing",
+            "the services did not come back after the failed backup",
+            "/var/lib/slateops/backup/backup-exports 0:10001 750",
         ):
             with self.subTest(promise=promise):
                 self.assertIn(promise.replace("slateops-engine receive", "receive"), script)

@@ -68,6 +68,7 @@ class Paths:
     proc: Path = Path("/proc")
     passwd: Path = Path("/etc/passwd")
     docker_socket: Path = Path("/run/docker.sock")
+    systemd: Path = Path("/etc/systemd/system")  # where step 12 writes the runner units
     extra: Mapping[str, Path] = field(default_factory=dict)
 
     @property

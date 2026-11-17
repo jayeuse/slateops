@@ -22,6 +22,7 @@ import zoneinfo
 from typing import Any
 
 from engine.core import Paths, private_dir, write_private
+from engine.drive import valid_target
 
 KEYS = (
     "business_name",
@@ -40,8 +41,6 @@ _USERNAME = re.compile(r"[a-zA-Z0-9_-]{3,100}\Z")
 # A shape check only; Auth and bootstrap validate the address.
 _EMAIL = re.compile(r"[^@\s]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9.-]{0,253})\Z")
 _TIME_ZONE = re.compile(r"[A-Za-z][A-Za-z0-9_+-]{0,30}(?:/[A-Za-z0-9_+-]{1,30}){0,2}\Z")
-# A Windows folder on a drive letter; W10b decides how it is reached (drvfs, plan 8.2).
-_BACKUP_TARGET = re.compile(r"[A-Za-z]:\\[^\x00-\x1f\x7f<>:\"/|?*]{1,240}\Z")
 # Planning values (Proposed): at least the plan 10.2 free-space minimum (25 GB), at most the
 # VHDX limit (64 TiB). The Windows side sizes the disk; the engine only records the value.
 VHD_MIN_GB, VHD_MAX_GB = 25, 65536
@@ -103,8 +102,7 @@ def parse(given: Any) -> dict[str, Any] | None:
         _text(given["admin_email"]) and _EMAIL.match(given["admin_email"]) is not None,
         isinstance(given["admin_username"], str)
         and _USERNAME.match(given["admin_username"]) is not None,
-        isinstance(given["backup_target"], str)
-        and _BACKUP_TARGET.match(given["backup_target"]) is not None,
+        valid_target(given["backup_target"]),  # the set-backup-target rule (TASK-0093)
         isinstance(size, int) and not isinstance(size, bool) and VHD_MIN_GB <= size <= VHD_MAX_GB,
         _time_zone(given["time_zone"]),
     )

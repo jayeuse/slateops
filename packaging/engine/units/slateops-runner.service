@@ -1,0 +1,12 @@
+# Slate Operations: one engine tick (TASK-0093). The engine runs the unchanged backup runner
+# in a one-shot server-image container, then the daily certificate renewal when it is due.
+# systemd starts no second instance while one runs. The engine makes the run ID itself.
+[Unit]
+Description=Slate Operations backup runner tick
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/slateops-engine --timer tick

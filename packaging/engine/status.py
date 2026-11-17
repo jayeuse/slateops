@@ -2,17 +2,21 @@
 
 Input: the run ID, the Windows-part version and the installed WSL version. Output:
 ``engine_idle`` (the only value Windows acts on: it waits before the WSL install), a state
-code, the prefetch code and whole-number progress for display. It keeps no run log
-(the setup program polls it); it records version changes in ``report.json``.
+code, the prefetch code and whole-number progress for display, and (W10b, TASK-0093) the
+backup state of the last tick (``backup``: ``not_set_up``, ``ok``, ``backup_target_missing``
+or ``runner_layout_stale``) and the last Linux start with its ready time (``linux_start``,
+W7-6). It keeps no run log (the setup program polls it); it records version changes in
+``report.json``.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from typing import Any
 
-from engine import prefetch, release, report
+from engine import backups, prefetch, release, report, tick
 from engine.context import Context
 from engine.core import engine_version, is_run_id, is_version, lock_state
 
@@ -27,13 +31,32 @@ REQUIRED = frozenset(KEYS)
 
 
 def engine_idle(ctx: Context) -> bool:
-    """No state-changing engine job and no pull runs (W10b and W13b add their locks).
-    A lock state that cannot be read counts as busy: Windows waits rather than install WSL
-    during a job."""
+    """No state-changing engine job, no pull and no backup runner runs (the runner's host
+    lock, TASK-0093 AC-8; W13b adds its own). A lock state that cannot be read counts as busy:
+    Windows waits rather than install WSL during a job."""
     paths = ctx.paths
-    return all(
-        lock_state(lock, paths.proc) is False for lock in (paths.engine_lock, paths.prefetch_lock)
-    )
+    locks = [paths.engine_lock, paths.prefetch_lock]
+    instance = backups.installed_instance(paths)
+    if instance is not None:
+        locks.append(backups.runner_lock(paths, instance))
+    return all(lock_state(lock, paths.proc) is False for lock in locks)
+
+
+def _backup(ctx: Context) -> str:
+    try:
+        found = json.loads(tick.tick_state(ctx.paths).read_text()).get("backup")
+    except (OSError, ValueError, AttributeError):
+        return "not_set_up"
+    known = ("ok", "backup_target_missing", "runner_layout_stale")
+    return found if found in known else "not_set_up"
+
+
+def _linux_start(ctx: Context) -> dict[str, Any] | None:
+    starts = report.load(ctx.paths).get("starts")
+    last = starts[-1] if isinstance(starts, list) and starts else None
+    if not isinstance(last, dict):
+        return None
+    return {"started_at": last.get("started_at"), "ready_at": last.get("ready_at")}
 
 
 def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
@@ -63,4 +86,6 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
         "state": state,
         "prefetch": progress.pop("code"),
         "progress": progress,
+        "backup": _backup(ctx),
+        "linux_start": _linux_start(ctx),
     }

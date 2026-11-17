@@ -274,7 +274,13 @@ def test_w84_1_a_timed_out_child_leaves_no_unfinished_last_line(tmp_path: Path) 
     half = W84_SECRET[:16]
 
     class StoppedRunner(Runner):
-        def _execute(self, argv: list[str], timeout: float, env: dict[str, str]) -> Result:
+        def _execute(
+            self,
+            argv: list[str],
+            timeout: float,
+            env: dict[str, str],
+            stdin: bytes | None = None,
+        ) -> Result:
             raise subprocess.TimeoutExpired(
                 argv,
                 timeout,

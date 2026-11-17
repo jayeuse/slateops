@@ -74,6 +74,34 @@ class EngineBundleTests(unittest.TestCase):
             )
             self.assertEqual(member.mtime, 0)
 
+    def test_ac12_the_bundle_carries_the_runner_source_and_the_two_units(self):
+        # TASK-0093 AC-12 (TASK-0092 (a*) step 4): the tick container runs the runner of
+        # this bundle, so the runner, its backend imports and the backup tool ship with it.
+        self.assertEqual(build(self.root), 0)
+        with tarfile.open(self.archive()) as tar:
+            members = {member.name: member for member in tar.getmembers() if member.isfile()}
+        names = set(members)
+        for name in (
+            "backend/operations/__init__.py",
+            "backend/operations/backup_runner.py",
+            "backend/operations/backups/host.py",
+            "backend/operations/backups/exports.py",
+            "backend/app/__init__.py",
+            "backend/app/systems/manage/backups/schemas.py",
+            "packaging/backup/__init__.py",
+            "packaging/backup/backup_installation.py",
+            "engine/units/slateops-runner.service",
+            "engine/units/slateops-runner.timer",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, names)
+                self.assertEqual(members[name].mode, 0o644)
+        runner = [name for name in names if name.startswith(("backend/", "packaging/"))]
+        self.assertTrue(all(name.endswith(".py") for name in runner), runner)
+        self.assertFalse([name for name in runner if "tests" in Path(name).parts])
+        self.assertNotIn("backend/operations/backup_state.py", names)  # the bridge: image only
+        self.assertNotIn("backend/operations/local_ca.py", names)
+
     def test_two_builds_are_identical_and_the_entry_names_the_hash(self):
         build(self.root)
         first = self.archive().read_bytes()
