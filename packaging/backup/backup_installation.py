@@ -58,6 +58,14 @@ _BASE_SERVICES = {
     "provider-volume-init",
 }
 _PRODUCTION_SERVICES = {"api", "caddy"}
+# The installer layout (plan W10b-4, D-2): `compose.installer.yaml` puts studio, meta and
+# imgproxy in a profile that is never enabled, so exactly these services exist.
+_INSTALLER_SERVICES = frozenset(
+    {"db", "auth", "storage", "realtime", "api-gw", "provider-volume-init", "api", "caddy"}
+)
+# Caddy runs as UID 1000 (`infra/docker/caddy.Dockerfile`, `compose.production.yaml`
+# `user: "1000:1000"`), so the installer makes the two files it reads owned by UID 1000.
+_CADDY_UID = 1000
 
 
 class BackupError(RuntimeError):
@@ -78,17 +86,46 @@ class BackupConfig:
     restic_password_file: Path
     staging_directory: Path
     completion_marker: Path
+    compose_layout: str | None = None
 
     @property
     def volume_names(self) -> tuple[str, ...]:
         return (*_BASE_VOLUMES, *(("caddy-data",) if self.deployment == "production" else ()))
 
     @property
-    def compose_files(self) -> tuple[Path, Path]:
+    def compose_files(self) -> tuple[Path, ...]:
         overlay = (
             "compose.production.yaml" if self.deployment == "production" else "compose.dev.yaml"
         )
-        return self.compose_root / "compose.yaml", self.compose_root / overlay
+        installer = ("compose.installer.yaml",) if self.compose_layout == "installer" else ()
+        return tuple(self.compose_root / name for name in ("compose.yaml", overlay, *installer))
+
+    @property
+    def compose_directories(self) -> tuple[str, ...]:
+        """The Compose root folders in the bundle; the engine bundle has no ``templates/``."""
+        return ("upstream",) if self.compose_layout == "installer" else ("upstream", "templates")
+
+    @property
+    def services(self) -> frozenset[str]:
+        if self.compose_layout == "installer":
+            return _INSTALLER_SERVICES
+        extra = _PRODUCTION_SERVICES if self.deployment == "production" else {"mailpit"}
+        return frozenset(_BASE_SERVICES | extra)
+
+    @property
+    def caddy_inputs(self) -> frozenset[Path]:
+        """The two files that Caddy reads: the only inputs that UID 1000 may own (D-1)."""
+        if self.caddy_config_file is None or self.tls_directory is None:
+            return frozenset()
+        return frozenset({self.caddy_config_file, self.tls_directory / "server.key"})
+
+    @property
+    def public_inputs(self) -> frozenset[Path]:
+        """``tls/server.crt``, the public chain that Caddy reads: the only input that may be
+        readable by others (parent decision D-2, TASK-0092)."""
+        if self.tls_directory is None:
+            return frozenset()
+        return frozenset({self.tls_directory / "server.crt"})
 
 
 @dataclass(frozen=True)
@@ -116,7 +153,7 @@ def parse_config(path: Path) -> BackupConfig:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise BackupError("cannot read backup configuration") from error
-    if not isinstance(raw, dict) or set(raw) != _FIELDS:
+    if not isinstance(raw, dict) or set(raw) - {"compose_layout"} != _FIELDS:
         raise BackupError("backup configuration must contain exactly the version 3 fields")
     if type(raw["version"]) is not int or raw["version"] != 3:
         raise BackupError("only Supabase backup configuration version 3 is supported")
@@ -129,6 +166,9 @@ def parse_config(path: Path) -> BackupConfig:
         raise BackupError("project_name is invalid")
     if deployment not in {"development", "production"}:
         raise BackupError("deployment must be development or production")
+    layout = raw.get("compose_layout")
+    if "compose_layout" in raw and (layout != "installer" or deployment != "production"):
+        raise BackupError("compose_layout must be installer, for production only")
     config = BackupConfig(
         installation_id=identity,
         project_name=project,
@@ -142,6 +182,7 @@ def parse_config(path: Path) -> BackupConfig:
         restic_password_file=_absolute(raw["restic_password_file"], "restic_password_file"),
         staging_directory=_absolute(raw["staging_directory"], "staging_directory"),
         completion_marker=_absolute(raw["completion_marker"], "completion_marker"),
+        compose_layout=layout,
     )
     if deployment == "production" and not all(
         (config.app_env_file, config.caddy_config_file, config.tls_directory)
@@ -185,6 +226,51 @@ def _private(path: Path, label: str, *, directory: bool) -> Path:
     return path.resolve(strict=True)
 
 
+def _private_input(
+    path: Path,
+    label: str,
+    caddy_inputs: frozenset[Path],
+    public_inputs: frozenset[Path] = frozenset(),
+) -> Path:
+    """``_private`` for a file input, with exceptions for exactly three named files.
+
+    The Caddyfile and ``tls/server.key`` may be owned by the Caddy UID when it is neither
+    root nor the caller (D-1). They must still be regular files with no symlink in their
+    path, no group or other permission bits, and a parent folder that passes ``_private``
+    (so UID 1000 cannot replace the entry). ``tls/server.crt``, a public chain, may be
+    readable by others when it is a regular file with no symlink in its path, owned by root
+    or the caller, with no group or other write bit (D-2). Every other path, owner and mode
+    takes the unchanged rule.
+    """
+    if path in public_inputs:
+        _assert_no_symlink(path, label)
+        try:
+            details = path.stat()
+        except OSError:
+            details = None
+        if (
+            details is not None
+            and stat.S_ISREG(details.st_mode)
+            and details.st_uid in {0, os.geteuid()}
+            and not details.st_mode & 0o022
+        ):
+            return path.resolve(strict=True)
+    if path in caddy_inputs and _CADDY_UID not in {0, os.geteuid()}:
+        _assert_no_symlink(path, label)
+        try:
+            details = path.stat()
+        except OSError:
+            details = None
+        if details is not None and details.st_uid == _CADDY_UID:
+            _private(path.parent, f"{label} folder", directory=True)
+            if not stat.S_ISREG(details.st_mode):
+                raise BackupError(f"{label} has the wrong filesystem type")
+            if details.st_mode & 0o077:
+                raise BackupError(f"{label} is not owner-controlled")
+            return path.resolve(strict=True)
+    return _private(path, label, directory=False)
+
+
 def _separate(config: BackupConfig, config_path: Path) -> None:
     sources = [config.provider_env_file, config.restic_password_file, config_path]
     sources.extend(path for path in (config.app_env_file, config.caddy_config_file) if path)
@@ -192,7 +278,7 @@ def _separate(config: BackupConfig, config_path: Path) -> None:
     if config.tls_directory:
         directories.append(config.tls_directory)
     for source in sources:
-        _private(source, source.name, directory=False)
+        _private_input(source, source.name, config.caddy_inputs)
     for directory in directories:
         _private(directory, directory.name, directory=True)
     _private(config.completion_marker.parent, "completion marker parent", directory=True)
@@ -323,9 +409,7 @@ def _project_inventory(
 ) -> dict[str, object]:
     containers = _docker_inventory(runner, "container", config.project_name)
     volumes = _docker_inventory(runner, "volume", config.project_name)
-    expected_services = _BASE_SERVICES | (
-        _PRODUCTION_SERVICES if config.deployment == "production" else {"mailpit"}
-    )
+    expected_services = config.services
     services: dict[str, dict[str, str]] = {}
     for item in containers:
         labels = _labels(item, container=True)
@@ -375,7 +459,6 @@ def _project_inventory(
 def _compose_images(
     config: BackupConfig, runner: Callable[..., subprocess.CompletedProcess[bytes]]
 ) -> dict[str, str]:
-    base, overlay = config.compose_files
     data = _json_output(
         _run(
             runner,
@@ -386,10 +469,7 @@ def _compose_images(
                 config.project_name,
                 "--env-file",
                 str(config.provider_env_file),
-                "-f",
-                str(base),
-                "-f",
-                str(overlay),
+                *(argument for path in config.compose_files for argument in ("-f", str(path))),
                 "config",
                 "--format",
                 "json",
@@ -420,9 +500,16 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _copy_file(source: Path, target: Path, *, private: bool) -> None:
+def _copy_file(
+    source: Path,
+    target: Path,
+    *,
+    private: bool,
+    caddy_inputs: frozenset[Path] = frozenset(),
+    public_inputs: frozenset[Path] = frozenset(),
+) -> None:
     if private:
-        _private(source, source.name, directory=False)
+        _private_input(source, source.name, caddy_inputs, public_inputs)
     elif not source.is_file() or source.is_symlink():
         raise BackupError("Compose asset is not a regular file")
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -431,7 +518,14 @@ def _copy_file(source: Path, target: Path, *, private: bool) -> None:
     target.chmod(0o600)
 
 
-def _copy_directory(source: Path, target: Path, *, private: bool) -> None:
+def _copy_directory(
+    source: Path,
+    target: Path,
+    *,
+    private: bool,
+    caddy_inputs: frozenset[Path] = frozenset(),
+    public_inputs: frozenset[Path] = frozenset(),
+) -> None:
     if private:
         _private(source, source.name, directory=True)
     elif not source.is_dir() or source.is_symlink():
@@ -443,7 +537,13 @@ def _copy_directory(source: Path, target: Path, *, private: bool) -> None:
         if item.is_dir():
             destination.mkdir(mode=0o700, parents=True, exist_ok=True)
         elif item.is_file():
-            _copy_file(item, destination, private=private)
+            _copy_file(
+                item,
+                destination,
+                private=private,
+                caddy_inputs=caddy_inputs,
+                public_inputs=public_inputs,
+            )
         else:
             raise BackupError("private directory contains unsupported entries")
 
@@ -560,7 +660,7 @@ def run_backup(
         if not isinstance(details, dict) or images[service] != details["ref"]:
             raise BackupError("stopped container image differs from pinned Compose configuration")
     # Do not allow mutable tags for the provider and DB recovery boundary.
-    for service in _BASE_SERVICES - {"provider-volume-init"}:
+    for service in (config.services & _BASE_SERVICES) - {"provider-volume-init"}:
         if "@sha256:" not in images[service]:
             raise BackupError("provider image is not digest-pinned")
     run_dir = Path(
@@ -581,12 +681,23 @@ def run_backup(
         if config.app_env_file:
             _copy_file(config.app_env_file, bundle / "private" / "app.env", private=True)
         if config.caddy_config_file:
-            _copy_file(config.caddy_config_file, bundle / "private" / "Caddyfile", private=True)
+            _copy_file(
+                config.caddy_config_file,
+                bundle / "private" / "Caddyfile",
+                private=True,
+                caddy_inputs=config.caddy_inputs,
+            )
         if config.tls_directory:
-            _copy_directory(config.tls_directory, bundle / "private" / "tls", private=True)
+            _copy_directory(
+                config.tls_directory,
+                bundle / "private" / "tls",
+                private=True,
+                caddy_inputs=config.caddy_inputs,
+                public_inputs=config.public_inputs,
+            )
         for source in config.compose_files:
             _copy_file(source, bundle / "compose" / source.name, private=False)
-        for name in ("upstream", "templates"):
+        for name in config.compose_directories:
             _copy_directory(config.compose_root / name, bundle / "compose" / name, private=False)
         # The host runner writes the audit chain heads beside this claim's config before the
         # database stops. A manual run has none. Restore accepts any listed file.

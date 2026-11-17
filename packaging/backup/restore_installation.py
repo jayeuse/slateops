@@ -299,9 +299,8 @@ def _validated_bundle(bundle: Path, config: BackupConfig) -> dict[str, object]:
         if path.is_file() and path != manifest_path:
             actual.add(path.relative_to(bundle).as_posix())
     expected = {f"volumes/{name}.tar" for name in config.volume_names}
-    expected.update(
-        {"private/provider.env", "compose/compose.yaml", f"compose/{config.compose_files[1].name}"}
-    )
+    expected.update({"private/provider.env"})
+    expected.update(f"compose/{path.name}" for path in config.compose_files)
     if config.deployment == "production":
         expected.update({"private/app.env", "private/Caddyfile"})
     if not expected <= actual or set(files) != actual:

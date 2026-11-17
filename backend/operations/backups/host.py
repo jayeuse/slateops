@@ -179,7 +179,7 @@ class Host:
             self.config.caddy_config_file,
             self.config.restic_password_file,
         ):
-            physical._private(path, "backup input", directory=False)
+            physical._private_input(path, "backup input", self.config.caddy_inputs)
         for path in (
             self.config.compose_root,
             self.config.tls_directory,
@@ -429,10 +429,7 @@ class Host:
                 self.config.project_name,
                 "--env-file",
                 str(self.config.provider_env_file),
-                "-f",
-                str(self.config.compose_files[0]),
-                "-f",
-                str(self.config.compose_files[1]),
+                *(argument for path in self.config.compose_files for argument in ("-f", str(path))),
                 *tail,
             ],
             failure=failure,
