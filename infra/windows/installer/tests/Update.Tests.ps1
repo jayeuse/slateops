@@ -119,6 +119,11 @@ Test-Case 'W13b after an update only the receive parts of other versions leave t
             'slateops-linux-0.2.0-amd64.tar.gz', 'notes.txt')
         foreach ($name in $names) { [System.IO.File]::WriteAllText((Join-Path $layout.Payload $name), 'part') }
         $null = New-Item -ItemType SymbolicLink -Path (Join-Path $layout.Payload 'slateops-engine-0.1.0.tar.gz') -Target $outside
+        # Preconditions: the test folders pass the same checks as Copy-PayloadPart.
+        $parentProblems = @(Get-FolderParentProblem -Path $layout.DataRoot)
+        Assert-Equal 0 $parentProblems.Count ('parent: ' + ($parentProblems -join '; '))
+        $treeProblems = @(Get-TreeProblem -Tree $layout.DataTree -ServiceSid '')
+        Assert-Equal 0 $treeProblems.Count ('tree: ' + ($treeProblems -join '; '))
         $result = Remove-OldPayloadParts -Layout $layout -Version '0.2.1'
         Assert-Equal 'removed 4' ('{0} {1}' -f $result.code, $result.values.count)
         $left = @(Get-ChildItem -LiteralPath $layout.Payload -Force | ForEach-Object { $_.Name } | Sort-Object)
