@@ -3514,6 +3514,19 @@ begin
   Result := True;
 end;
 
+procedure NoticesClick(Sender: TObject; const Link: String; LinkType: TSysLinkType);
+var
+  Text: String;
+begin
+  try
+    ExtractTemporaryFiles('{tmp}\THIRD-PARTY-NOTICES.txt');
+  except
+    Log('The third-party notices are not in this setup file.');
+  end;
+  Text := ReadText(ExpandConstant('{tmp}\THIRD-PARTY-NOTICES.txt'));
+  InfoForm(CM('s04_notices'), Text);
+end;
+
 procedure InitializeWizard;
 begin
   SetArrayLength(Pages, P_COUNT);
@@ -3552,19 +3565,6 @@ end;
 procedure OpenAppClick(Sender: TObject);
 begin
   OpenAsUser(AddressUrl, '');
-end;
-
-procedure NoticesClick(Sender: TObject; const Link: String; LinkType: TSysLinkType);
-var
-  Text: String;
-begin
-  try
-    ExtractTemporaryFiles('{tmp}\THIRD-PARTY-NOTICES.txt');
-  except
-    Log('The third-party notices are not in this setup file.');
-  end;
-  Text := ReadText(ExpandConstant('{tmp}\THIRD-PARTY-NOTICES.txt'));
-  InfoForm(CM('s04_notices'), Text);
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;

@@ -162,6 +162,25 @@ class WindowsInstallerSourcesTest(unittest.TestCase):
                 if line.lstrip().startswith("#"):
                     self.assertRegex(line, directive, f"{path.name}:{number}")
 
+    def test_no_wizard_procedure_is_used_before_its_declaration(self) -> None:
+        # Inno's Pascal Script resolves names in file order: a procedure used above its
+        # declaration (with no forward declaration) stops the compile.
+        lines = WIZARD.read_text(encoding="utf-8").splitlines()
+        head = re.compile(r"\s*(procedure|function)\s+(\w+)", re.IGNORECASE)
+        declared: dict[str, int] = {}
+        for number, line in enumerate(lines, 1):
+            match = head.match(line)  # a forward declaration counts as a declaration
+            if match:
+                declared.setdefault(match.group(2).lower(), number)
+        for number, line in enumerate(lines, 1):
+            code = re.sub(r"\{[^}]*\}", "", re.sub(r"'[^']*'", "''", line)).split("//")[0]
+            for name in re.findall(r"\b\w+\b", code):
+                first = declared.get(name.lower())
+                self.assertFalse(
+                    first is not None and first > number,
+                    f"Wizard.iss:{number} uses {name} (declared at {first})",
+                )
+
     def test_bitlocker_is_never_read_beyond_its_status_p2_4(self) -> None:
         # P2-4, S91-10: the BitLocker module loads every key protector, so no script calls it.
         for path in sorted((INSTALLER / "scripts").rglob("*.ps1")):
