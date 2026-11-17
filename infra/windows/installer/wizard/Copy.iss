@@ -426,7 +426,7 @@ cancel_keep_option=Keep it and continue later
 
 ; ---- W9: maintenance (spec M01 to M04, plan 9.3)
 m01_running=Running.
-m01_needs_backup_repair=Needs attention: plug in the backup drive (%1). If backups still fail when it is back, select Repair.
+m01_needs_backup_repair=Needs attention: plug in the backup drive (%1). If you see this again after you plug it in, select Repair.
 m01_needs_support=Needs support. Select Save report and send the file to Slate Operations support.
 ; Copy gaps (W9): the engine reports no "not ready since" time and no running line.
 m01_not_ready=Not ready. Select Repair. If that does not help, select Save report.
