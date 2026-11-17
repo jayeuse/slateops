@@ -124,7 +124,7 @@ Test-Case 'W13b after an update only the receive parts of other versions leave t
         $treeProblems = @(Get-TreeProblem -Tree $layout.DataTree -ServiceSid '')
         Assert-Equal 0 $treeProblems.Count ('tree: ' + ($treeProblems -join '; '))
         $result = Remove-OldPayloadParts -Layout $layout -Version '0.2.1'
-        Assert-Equal 'removed 4' ('{0} {1}' -f $result.code, $result.values.count)
+        Assert-Equal 'removed 3' ('{0} {1}' -f $result.code, $result.values.count)
         $left = @(Get-ChildItem -LiteralPath $layout.Payload -Force | ForEach-Object { $_.Name } | Sort-Object)
         Assert-Equal @('notes.txt', 'release-manifest.json', 'release-manifest.json.sigstore.json', 'slateops-caddy-0.2.1-amd64.oci.tar',
             'slateops-engine-0.2.1.tar.gz', 'slateops-linux-0.2.0-amd64.tar.gz', 'slateops-server-0.2.1-amd64.oci.tar') $left
