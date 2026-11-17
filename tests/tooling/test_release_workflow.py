@@ -645,3 +645,21 @@ class InstallProofTests(unittest.TestCase):
         ):
             with self.subTest(promise=promise):
                 self.assertIn(promise.replace("slateops-engine receive", "receive"), script)
+
+
+class ScriptModeTests(unittest.TestCase):
+    def test_every_script_the_release_runs_by_path_is_executable_in_git(self) -> None:
+        # A script committed without its executable bit fails the job with exit 126
+        # (test build v0.1.0-rc.10, install-proof.sh).
+        pattern = r"(?<![\w./-])(packaging/[\w./-]+\.sh)\b"
+        paths = sorted(set(re.findall(pattern, WORKFLOW.read_text())))
+        self.assertTrue(paths)
+        listing = subprocess.run(
+            ["git", "ls-files", "-s", "--", *paths],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        modes = {line.split("\t", 1)[1]: line.split()[0] for line in listing}
+        self.assertEqual({path: modes.get(path) for path in paths}, dict.fromkeys(paths, "100755"))
