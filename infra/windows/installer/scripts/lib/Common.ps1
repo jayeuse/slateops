@@ -201,9 +201,9 @@ function Protect-LogText {
     # IgnoreCase with CultureInvariant (P3-9): a culture such as tr-TR folds "i" differently.
     $options = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
     $out = [regex]::Replace($out, '(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,31}://[^\s:/@]{1,256}:)[^\s@/]{1,256}@', '$1[secret]@', $options)
-    # KEY=value or "key": "value" lines of secret names.
-    $out = [regex]::Replace($out, '(?<![A-Z0-9_])([A-Z0-9_]{0,64}(PASSWORD|PASSWD|SECRET|TOKEN|PRIVATE_KEY|API_KEY|_KEY)[A-Z0-9_]{0,64})(\s*[=:]\s*)("[^"]*"|''[^'']*''|\S+)', '$1$3[secret]', $options)
-    $out = [regex]::Replace($out, '("[a-z0-9_]{0,64}(password|passwd|secret|token|key)[a-z0-9_]{0,64}"\s*:\s*)"[^"]*"', '$1"[secret]"', $options)
+    # KEY=value or "key": "value" lines of secret names (W8: PASS, as in the engine's SMTP_PASS).
+    $out = [regex]::Replace($out, '(?<![A-Z0-9_])([A-Z0-9_]{0,64}(PASSWORD|PASSWD|PASS|SECRET|TOKEN|PRIVATE_KEY|API_KEY|_KEY)[A-Z0-9_]{0,64})(\s*[=:]\s*)("[^"]*"|''[^'']*''|\S+)', '$1$3[secret]', $options)
+    $out = [regex]::Replace($out, '("[a-z0-9_]{0,64}(password|passwd|pass|secret|token|key)[a-z0-9_]{0,64}"\s*:\s*)"[^"]*"', '$1"[secret]"', $options)
     # Bearer tokens.
     $out = [regex]::Replace($out, '\b(bearer\s+)[a-z0-9._~+/=-]{8,}', '$1[secret]', $options)
     # BitLocker recovery password: eight groups of six digits.

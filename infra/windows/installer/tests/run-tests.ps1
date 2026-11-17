@@ -14,7 +14,7 @@ Exit code 0 when every test passes, 1 otherwise (also when no test ran).
 param([string]$Filter = '')
 
 $libDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\lib'
-foreach ($name in @('Common', 'Checks', 'Facts', 'Exec', 'Service', 'Windows')) { . (Join-Path $libDir ('{0}.ps1' -f $name)) }
+foreach ($name in @('Common', 'Checks', 'Facts', 'Exec', 'Service', 'Windows', 'Report')) { . (Join-Path $libDir ('{0}.ps1' -f $name)) }
 $script:Log.Console = $false
 
 $script:TestResults = New-Object System.Collections.Generic.List[object]

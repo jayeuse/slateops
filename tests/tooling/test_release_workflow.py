@@ -26,6 +26,7 @@ JOBS = (
     "notices",
     "source-packages",
     "install-proof",
+    "installer",
     "release",
 )
 
@@ -530,7 +531,7 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertRegex(
             release,
             r"(?m)^    needs: \[check, images, linux-image, manifest, notices, source-packages,"
-            r" install-proof\]$",
+            r" install-proof, installer\]$",
         )
         step = release.split("      - name: Refuse an asset of 2 GiB or more", 1)[1]
         body = textwrap.dedent(step.split("        run: |\n", 1)[1].split("\n      - ", 1)[0])

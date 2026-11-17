@@ -18,7 +18,8 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('state-check', 'check', 'recheck', 'facts', 'time-zone', 'fix-network-private', 'remove-kit',
         'save-progress', 'clear-resume', 'restart', 'prepare-pc', 'prepare-data', 'service', 'job', 'job-result',
-        'start-boot', 'windows-steps')]
+        'start-boot', 'windows-steps', 'account-sid', 'r7', 'provider-detect', 'drives', 'drive-check', 'prepare-backup',
+        'printers', 'https-check', 'job-stop', 'report-collect', 'report-zip', 'fix-mdns')]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$RunId,
     [Parameter(Mandatory = $true)][string]$OutFile,
@@ -29,15 +30,18 @@ param(
     [string]$InputFile = '',
     [string]$RequestId = '',
     [string]$PemFile = '',
+    [ValidatePattern('^$|^[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63}){1,8}$')][string]$Domain = '',
+    [ValidatePattern('^$|^[A-Z]:$')][string]$Drive = '',
     [switch]$Firmware,
     [switch]$Lid,
-    [switch]$Cancel
+    [switch]$Cancel,
+    [switch]$EmailDiscarded
 )
 
 # S91-6: modules load only from Windows PowerShell's own folder, never from a folder in the
 # caller's module path.
 $env:PSModulePath = Join-Path $PSHOME 'Modules'
-foreach ($name in @('Common', 'Checks', 'Facts', 'Exec', 'Service', 'Windows')) { . (Join-Path $PSScriptRoot ('lib\{0}.ps1' -f $name)) }
+foreach ($name in @('Common', 'Checks', 'Facts', 'Exec', 'Service', 'Windows', 'Report')) { . (Join-Path $PSScriptRoot ('lib\{0}.ps1' -f $name)) }
 
 $helperRoot = Split-Path -Parent $PSScriptRoot
 $layout = New-SlateOpsLayout
@@ -88,7 +92,12 @@ try {
             $step = Test-StateFolder -Layout $layout -ServiceSid $serviceSid
             if ($step.code -eq 'safe') { $null = Invoke-LogRotation -Directory (Join-Path $layout.Logs 'setup') }
             $result = $step
-            if ($step.code -eq 'safe') { $result.values = @{ entry = (Get-SetupEntry -Progress (Read-SetupProgress -Layout $layout)) } }
+            # W8: the installed version decides M01 or M05 (spec 4.1).
+            $setupVersion = ''
+            try { $setupVersion = (Read-HelperVersion).version } catch { $setupVersion = '' }
+            $installed = Get-InstalledVersion
+            if ($step.code -eq 'safe') { $result.values = @{ entry = (Get-SetupEntry -Progress (Read-SetupProgress -Layout $layout) -Installed $installed -SetupVersion $setupVersion) } }
+            elseif ($step.code -eq 'absent') { $result.values = @{ entry = (Get-SetupEntry -Progress $null -Installed $installed -SetupVersion $setupVersion) } }
         }
         { $_ -in @('check', 'recheck') } {
             $pinned = [version]'0.0.0.0'
@@ -100,7 +109,10 @@ try {
             foreach ($item in $items) { Write-RunLog ('check.{0}' -f $item.id.ToLowerInvariant()) 'INFO' ('{0} {1}' -f $item.class, $item.code) }
             $verdict = Get-PcVerdict -Results $items
             Write-RunLog 'check.verdict' 'INFO' $verdict.verdict
-            $result = @{ code = $verdict.verdict; message_key = $verdict.message_key; values = @{ verdict = $verdict; items = $items } }
+            # W8: each row is ordered (id, class, code, values), so the setup program finds the
+            # rows by their first key.
+            $rows = @($items | ForEach-Object { [ordered]@{ id = $_.id; class = $_.class; code = $_.code; values = $_.values } })
+            $result = @{ code = $verdict.verdict; message_key = $verdict.message_key; values = @{ verdict = $verdict; rows = $rows } }
         }
         'facts' {
             $setupVersion = ''
@@ -128,11 +140,25 @@ try {
             }
         }
         'remove-kit' { $result = Remove-KitLeftovers }
+        'fix-mdns' {
+            # C17 "Fix it for me": turns on the existing built-in rule for Private networks only;
+            # never creates a rule; the old state goes to the log (spec 5.3, 12 item 4).
+            $mdns = Get-MdnsFact
+            if ((-not $mdns.private_rule) -or $mdns.rule_from_policy) { $result = New-StepResult -Code 'policy' -MessageKey 'check.c17.policy' }
+            else {
+                $rule = Get-NetFirewallRule -Name $mdns.private_rule
+                Write-RunLog 'check.c17.fix' 'INFO' ('rule {0} was enabled {1}, profile {2}' -f $rule.Name, $rule.Enabled, $rule.Profile)
+                Enable-NetFirewallRule -Name $mdns.private_rule
+                $result = New-StepResult -Code 'fixed' -MessageKey 'check.c17.fixed'
+            }
+        }
         'save-progress' {
             if (-not $Stage) { throw 'stage_missing' }
             $ready = Initialize-StateFolder -Layout $layout -ServiceSid $serviceSid
             if ($ready.code -ne 'ready') { $result = $ready; break }
-            Save-SetupProgress -Layout $layout -Stage $Stage -RunId $RunId
+            $marks = @{}
+            if ($EmailDiscarded) { $marks.email_discarded = $true }
+            Save-SetupProgress -Layout $layout -Stage $Stage -RunId $RunId -Marks $marks
             if (@('check_restart', 'feature_restart') -contains $Stage) { $result = Register-SetupResume -SetupPath $SetupPath }
             else { $result = New-StepResult -Code 'saved' -MessageKey 'setup.progress.saved' }
         }
@@ -174,7 +200,7 @@ try {
             $bytes = New-Object byte[] 0
             if ($InputFile) { $bytes = [System.IO.File]::ReadAllBytes((Assert-InsideRoot $InputFile)) }
             Assert-TreeWritable -Tree $layout.StateTree -Directory $layout.Requests -ServiceSid $serviceSid
-            $id = Submit-ExecRequest -Layout $layout -Job $Job -RunId $RunId -InputBytes $bytes
+            $id = Submit-ExecRequest -Layout $layout -Job $Job -RunId $RunId -InputBytes $bytes -RequestId $RequestId
             $result = New-StepResult -Code 'started' -MessageKey 'exec.started' -Values @{ request_id = $id }
         }
         'job-result' {
@@ -212,6 +238,46 @@ try {
             $failed = @($steps | Where-Object { @('added', 'set') -notcontains $_.code })
             if ($failed.Count -gt 0) { $result = $failed[0] }
             else { $result = New-StepResult -Code 'done' -MessageKey 'install.windows.done' -Values @{ security_code = $ca.values.security_code } }
+        }
+        'account-sid' {
+            # The SID for the pipe's access list (plan 3.2 check 1).
+            if ($serviceSid) { $result = New-StepResult -Code 'found' -MessageKey 'setup.account.found' -Values @{ sid = $serviceSid } }
+            else { $result = New-StepResult -Code 'missing' -MessageKey 'setup.account.missing' }
+        }
+        'r7' { $result = Get-PasswordPolicyState }
+        'provider-detect' { $result = Get-MailProvider -Domain $Domain }
+        'drives' {
+            # Ordered rows, "letter" first, so the setup program finds each row by it.
+            $rows = @(Get-DriveFact | ForEach-Object { [ordered]@{ letter = $_.letter; drive_type = $_.drive_type; file_system = $_.file_system; free_bytes = $_.free_bytes; compressed = $_.compressed; encrypted = $_.encrypted } })
+            $result = New-StepResult -Code 'listed' -MessageKey 'setup.drives.listed' -Values @{ drives = $rows }
+        }
+        'drive-check' { $result = Test-BackupDrive -Drive $Drive }
+        'prepare-backup' {
+            $state = Read-InstallState -Layout $layout
+            $result = Initialize-BackupFolder -Drive $Drive -DataRoot $state.data_root -ServiceSid $serviceSid
+        }
+        'printers' { $result = New-StepResult -Code 'listed' -MessageKey 'setup.printers.listed' -Values @{ printers = @(Get-PrinterFact) } }
+        'https-check' { $result = Test-HttpsFromWindows }
+        'job-stop' {
+            Stop-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.ExecTaskName -ErrorAction SilentlyContinue
+            $result = New-StepResult -Code 'stopped' -MessageKey 'exec.stopped'
+        }
+        'report-collect' {
+            $innoLog = ''
+            if ($InputFile) { $innoLog = Assert-InsideRoot $InputFile }
+            $bundle = Join-Path $helperRoot ('linux-{0}.tar.gz' -f $RunId)
+            $staging = Join-Path $helperRoot ('report-{0}' -f $RunId)
+            $trusted = ((Test-StateFolder -Layout $layout -ServiceSid $serviceSid).code -eq 'safe')
+            $version = ''
+            try { $version = (Read-HelperVersion).version } catch { $version = '' }
+            $made = New-ReportStaging -Layout $layout -StagingDir $staging -RunId $RunId -InnoLog $innoLog -LinuxBundle $bundle -SetupVersion $version -StateTrusted:$trusted
+            $result = New-StepResult -Code 'collected' -MessageKey 'report.collected' -Values $made
+        }
+        'report-zip' {
+            $staging = Join-Path $helperRoot ('report-{0}' -f $RunId)
+            $path = Complete-Report -StagingDir $staging -RunId $RunId
+            Remove-PathNoFollow -Path $staging
+            $result = New-StepResult -Code 'saved' -MessageKey 'report.saved' -Values @{ path = $path }
         }
     }
     Write-RunLog ('helper.{0}' -f $Action) 'INFO' ('result {0}' -f $result.code)

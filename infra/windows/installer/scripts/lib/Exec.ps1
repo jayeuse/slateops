@@ -17,7 +17,17 @@ $SlateOpsExec = @{
     # Windows-side work that must run as slateops-svc, because WSL distributions and .wslconfig
     # belong to the account that runs wsl.exe (kit design notes). Their paths come from the
     # administrator-only state file, never from the request.
-    WindowsJobs = @('wslconfig', 'import-distro', 'wsl-facts')
+    WindowsJobs = @('wslconfig', 'import-distro', 'wsl-facts', 'pipe-test')
+    # Plan 3.2 rule 3 and 6.1 (W8): the wizard's pipe \\.\pipe\SlateOps-<request ID> carries
+    # the values below; they are never written to a Windows disk. pipe-test is the channel
+    # self-test (plan F4d).
+    # Input through the pipe: the SMTP password (smtp-test, set-email) and the answers (install,
+    # plan 6.1). Output through the pipe: exactly the two jobs whose result holds the recovery
+    # key (install, new-recovery-key; parent decision, TASK-0093 field recovery_key).
+    PipeInputJobs  = @('smtp-test', 'set-email', 'install', 'pipe-test')
+    PipeOutputJobs = @('install', 'new-recovery-key', 'pipe-test')
+    PipeOutputCap = 1MB         # the install result with the CA certificate is about 4 KB
+    PipeTimeoutMs = 60000
     InputLimit  = 64KB          # engine core.py INPUT_LIMIT
     ReceiveRequestLimit = 4KB   # engine receive.py REQUEST_LIMIT
     StdoutCap   = 64MB          # above the 45 MiB log-bundle result (TASK-0083 carry)
@@ -61,7 +71,10 @@ function Test-ExecRequest {
     $bytes = $InputBytes
     if ($null -eq $bytes) { $bytes = New-Object byte[] 0 }
     if ($bytes.Length -gt $SlateOpsExec.InputLimit) { return (Get-ExecRefusal 'input_too_large') + @{ request_id = $requestId; job = $job } }
-    if (($class -eq 'engine') -and ($bytes.Length -eq 0)) { return (Get-ExecRefusal 'input_missing') + @{ request_id = $requestId; job = $job } }
+    # A pipe job's input never lies on a disk (W8-2): an input file for one is refused.
+    $piped = $SlateOpsExec.PipeInputJobs -ccontains $job
+    if ($piped -and ($bytes.Length -gt 0)) { return (Get-ExecRefusal 'input_on_disk') + @{ request_id = $requestId; job = $job } }
+    if (($class -eq 'engine') -and (-not $piped) -and ($bytes.Length -eq 0)) { return (Get-ExecRefusal 'input_missing') + @{ request_id = $requestId; job = $job } }
     return @{ ok = $true; code = 'accepted'; message_key = 'exec.accepted'; request_id = $requestId; job = $job; run_id = [string]$request['run_id']; job_class = $class; input = $bytes }
 }
 
@@ -273,6 +286,165 @@ namespace SlateOpsSetup
     Add-Type -TypeDefinition $source -Language CSharp
 }
 
+function Initialize-PipeBridgeType {
+    # The service side of the secret channel (plan 3.2 rule 3, checks 1 to 3; 11.1 W8 cell).
+    # Secret bytes move only inside this type, through .NET stream calls: never through the
+    # PowerShell pipeline, script text, output or a file. Frame: 8 ASCII digits with the length,
+    # then the bytes; one frame each way.
+    if ('SlateOpsSetup.PipeBridge' -as [type]) { return }
+    $source = @'
+using System;
+using System.IO;
+using System.IO.Pipes;
+using System.Security.AccessControl;
+using System.Security.Cryptography;
+using System.Security.Principal;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+namespace SlateOpsSetup
+{
+    public sealed class PipeBridge : IDisposable
+    {
+        const string Administrators = "S-1-5-32-544";
+        NamedPipeClientStream pipe;
+        int timeoutMs;
+        public long InputBytes;
+        public long OutputBytes;
+
+        // Check 2, through the handle: the owner is Administrators, and every entry allows only
+        // Administrators or this account. Returns null, or the reason (for the log).
+        public static string TrustProblem(PipeSecurity security, string selfSid)
+        {
+            IdentityReference owner = security.GetOwner(typeof(SecurityIdentifier));
+            if (owner == null || owner.Value != Administrators) { return "owner"; }
+            AuthorizationRuleCollection rules = security.GetAccessRules(true, true, typeof(SecurityIdentifier));
+            if (rules.Count == 0) { return "no_entries"; }
+            foreach (PipeAccessRule rule in rules)
+            {
+                string sid = rule.IdentityReference.Value;
+                if (rule.AccessControlType != AccessControlType.Allow) { return "deny_entry"; }
+                if (sid != Administrators && sid != selfSid) { return "other_principal"; }
+            }
+            return null;
+        }
+
+        public static PipeBridge Open(string requestId, int timeoutMs)
+        {
+            Guid parsed;
+            if (!Guid.TryParseExact(requestId, "D", out parsed)) { throw new IOException("pipe_name_invalid"); }
+            // Only the rights the transfer needs: read, write, read the access list. (InOut would
+            // ask for GENERIC_WRITE, which includes the right to create a pipe instance.)
+            PipeAccessRights rights = PipeAccessRights.ReadData | PipeAccessRights.WriteData | PipeAccessRights.ReadPermissions | PipeAccessRights.Synchronize;
+            NamedPipeClientStream client = new NamedPipeClientStream(".", "SlateOps-" + parsed.ToString("D"), rights, PipeOptions.Asynchronous, TokenImpersonationLevel.Identification, HandleInheritability.None);
+            try { client.Connect(timeoutMs); }
+            catch (TimeoutException) { client.Dispose(); throw new IOException("pipe_unavailable"); }
+            string self = WindowsIdentity.GetCurrent().User.Value;
+            if (TrustProblem(client.GetAccessControl(), self) != null) { client.Dispose(); throw new IOException("pipe_untrusted"); }
+            PipeBridge bridge = new PipeBridge();
+            bridge.pipe = client;
+            bridge.timeoutMs = timeoutMs;
+            return bridge;
+        }
+
+        void ReadExactly(byte[] buffer, int count)
+        {
+            int done = 0;
+            while (done < count)
+            {
+                Task<int> read = pipe.ReadAsync(buffer, done, count - done);
+                if (!read.Wait(timeoutMs)) { throw new IOException("pipe_timeout"); }
+                if (read.Result == 0) { throw new IOException("pipe_closed"); }
+                done += read.Result;
+            }
+        }
+
+        byte[] ReadFrame(int limit)
+        {
+            byte[] header = new byte[8];
+            ReadExactly(header, 8);
+            int length = 0;
+            foreach (byte b in header)
+            {
+                if (b < (byte)'0' || b > (byte)'9') { throw new IOException("pipe_frame_invalid"); }
+                length = length * 10 + (b - (byte)'0');
+            }
+            if (length < 1 || length > limit) { throw new IOException("pipe_frame_invalid"); }
+            byte[] data = new byte[length];
+            ReadExactly(data, length);
+            return data;
+        }
+
+        void WriteFrame(byte[] data, int count)
+        {
+            byte[] header = Encoding.ASCII.GetBytes(count.ToString("D8"));
+            pipe.Write(header, 0, header.Length);
+            pipe.Write(data, 0, count);
+            pipe.Flush();
+            pipe.WaitForPipeDrain();
+            OutputBytes = count;
+        }
+
+        // The wizard's one input frame into the process's raw standard input.
+        public long CopyInputTo(Stream target, int limit)
+        {
+            byte[] data = ReadFrame(limit);
+            try { target.Write(data, 0, data.Length); target.Flush(); InputBytes = data.Length; }
+            finally { Array.Clear(data, 0, data.Length); }
+            return InputBytes;
+        }
+
+        // The process's whole standard output as the one output frame; the buffer is cleared.
+        public long SendOutput(MemoryStream output)
+        {
+            byte[] data = output.GetBuffer();
+            try { WriteFrame(data, (int)output.Length); }
+            finally { Array.Clear(data, 0, data.Length); }
+            return OutputBytes;
+        }
+
+        // pipe-test (plan F4d): the SHA-256 of the wizard's random value goes back.
+        public string AnswerHash(int limit)
+        {
+            byte[] data = ReadFrame(limit);
+            InputBytes = data.Length;
+            string hex;
+            using (SHA256 sha = SHA256.Create()) { hex = BitConverter.ToString(sha.ComputeHash(data)).Replace("-", "").ToLowerInvariant(); }
+            Array.Clear(data, 0, data.Length);
+            byte[] answer = Encoding.ASCII.GetBytes("{\"code\":\"pipe_ok\",\"sha256\":\"" + hex + "\"}");
+            WriteFrame(answer, answer.Length);
+            return hex;
+        }
+
+        // The safe code of the engine output, and whether it holds a recovery key; the value of
+        // the key is never read out of the buffer.
+        public static string SafeCode(MemoryStream output)
+        {
+            string text = Encoding.ASCII.GetString(output.GetBuffer(), 0, (int)Math.Min(output.Length, 65536L));
+            Match match = Regex.Match(text, "\"code\":\"([a-z0-9_]{1,64})\"");
+            return match.Success ? match.Groups[1].Value : "output_invalid";
+        }
+
+        public static bool HasRecoveryKey(MemoryStream output)
+        {
+            byte[] needle = Encoding.ASCII.GetBytes("\"recovery_key\":\"");
+            byte[] data = output.GetBuffer();
+            for (long i = 0; i + needle.Length <= output.Length; i++)
+            {
+                int j = 0;
+                while (j < needle.Length && data[i + j] == needle[j]) { j++; }
+                if (j == needle.Length) { return true; }
+            }
+            return false;
+        }
+
+        public void Dispose() { if (pipe != null) { pipe.Dispose(); pipe = null; } }
+    }
+}
+'@
+    Add-Type -TypeDefinition $source -Language CSharp -ReferencedAssemblies @('System.Core')
+}
+
 function Invoke-ProcessWithInput {
     # Starts FilePath with fixed arguments, copies standard output and standard error into files
     # on thread-pool tasks with their caps applied while reading (so a large input cannot
@@ -285,10 +457,12 @@ function Invoke-ProcessWithInput {
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][string[]]$ArgumentList,
         [Parameter(Mandatory = $true)][scriptblock]$WriteInput,
-        [Parameter(Mandatory = $true)][string]$StdoutPath,
+        [string]$StdoutPath = '',
         [Parameter(Mandatory = $true)][string]$StderrPath,
         [long]$StdoutCap = $SlateOpsExec.StdoutCap,
-        [long]$StderrCap = $SlateOpsExec.StderrCap
+        [long]$StderrCap = $SlateOpsExec.StderrCap,
+        # A pipe job's output stays in memory (W8-5); StdoutPath is then not created.
+        [System.IO.Stream]$StdoutStream = $null
     )
     foreach ($argument in $ArgumentList) {
         if ($argument -notmatch '^[A-Za-z0-9/._-]+$') { throw 'An argument holds a character that needs quoting.' }
@@ -304,7 +478,8 @@ function Invoke-ProcessWithInput {
     $info.RedirectStandardError = $true
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $info
-    $outFile = [System.IO.File]::Open($StdoutPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+    if ($StdoutStream) { $outFile = $StdoutStream }
+    else { $outFile = [System.IO.File]::Open($StdoutPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write) }
     $errFile = [System.IO.File]::Open($StderrPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
     $pipeClosed = $false
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -331,7 +506,7 @@ function Invoke-ProcessWithInput {
         $exitCode = $process.ExitCode
     } finally {
         $watch.Stop()
-        $outFile.Dispose()
+        if (-not $StdoutStream) { $outFile.Dispose() }
         $errFile.Dispose()
         $process.Dispose()
     }
@@ -450,6 +625,7 @@ function Invoke-EngineJob {
             }
         }
     }
+    if (($SlateOpsExec.PipeInputJobs -ccontains $job) -or ($SlateOpsExec.PipeOutputJobs -ccontains $job)) { return Invoke-PipedEngineJob -Layout $Layout -Check $Check -WslPath $WslPath -Result $Result }
     $stdout = Join-Path $Layout.SvcOut ('{0}.stdout.json' -f $Check.request_id)
     $stderr = Join-Path $Layout.SvcOut ('{0}.stderr.txt' -f $Check.request_id)
     $arguments = Get-EngineArguments -Job $job
@@ -484,6 +660,100 @@ function Invoke-EngineJob {
         $Result.code = 'input_not_read'; $Result.message_key = 'exec.input_not_read'; $Result.exit_code = 3
     }
     return $Result
+}
+
+function Invoke-PipedEngineJob {
+    # A job with a pipe side (W8-2, W8-5). Input: the wizard's one frame goes to the engine's
+    # standard input (PipeInputJobs), else the request's input file. Output: the engine's
+    # standard output stays in memory and goes back as the one output frame (PipeOutputJobs);
+    # the step log and the result hold only byte counts, the safe code and recovery_key_shown
+    # (plan 10.1 item 3). Other output goes to its svc-out file as for every job.
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Layout,
+        [Parameter(Mandatory = $true)][hashtable]$Check,
+        [Parameter(Mandatory = $true)][string]$WslPath,
+        [Parameter(Mandatory = $true)][hashtable]$Result
+    )
+    $job = $Check.job
+    $step = 'exec.{0}' -f $job
+    $pipeIn = $SlateOpsExec.PipeInputJobs -ccontains $job
+    $pipeOut = $SlateOpsExec.PipeOutputJobs -ccontains $job
+    Initialize-PipeBridgeType
+    try { $bridge = [SlateOpsSetup.PipeBridge]::Open($Check.request_id, $SlateOpsExec.PipeTimeoutMs) }
+    catch {
+        $code = Get-PipeErrorCode $_.Exception
+        Write-RunLog $step 'FAIL' ('secret channel: {0}' -f $code)
+        $Result.code = $code; $Result.message_key = ('exec.{0}' -f $code); $Result.exit_code = 3
+        return $Result
+    }
+    $memory = New-Object System.IO.MemoryStream
+    try {
+        $stdout = Join-Path $Layout.SvcOut ('{0}.stdout.json' -f $Check.request_id)
+        $stderr = Join-Path $Layout.SvcOut ('{0}.stderr.txt' -f $Check.request_id)
+        $arguments = Get-EngineArguments -Job $job
+        Write-RunLog $step 'INFO' ('> {0} {1} (secret channel: input {2}, output {3})' -f (Split-Path -Leaf $WslPath), ($arguments -join ' '), $pipeIn, $pipeOut)
+        $limit = [int]$SlateOpsExec.InputLimit
+        $inputBytes = $Check.input
+        if ($pipeIn) { $writer = { param($sink) [void]$bridge.CopyInputTo($sink.Stream, $limit) } }
+        else { $writer = { param($sink) Write-InputBytes -Sink $sink -Buffer $inputBytes } }
+        $streams = @{ StdoutPath = $stdout }
+        if ($pipeOut) { $streams = @{ StdoutStream = $memory; StdoutCap = $SlateOpsExec.PipeOutputCap } }
+        $env:WSL_UTF8 = '1'
+        try {
+            $run = Invoke-ProcessWithInput -FilePath $WslPath -ArgumentList $arguments -WriteInput $writer -StderrPath $stderr @streams
+        } catch {
+            $code = Get-PipeErrorCode $_.Exception
+            Write-RunLog $step 'FAIL' ('secret channel: {0}' -f $code)
+            $Result.code = $code; $Result.message_key = ('exec.{0}' -f $code); $Result.exit_code = 3
+            return $Result
+        }
+        $errBytes = Limit-ErrorFile -Path $stderr
+        $Result.exit_code = $run.exit_code
+        $Result.pipe_closed = [bool]$run.pipe_closed
+        $Result.pipe_input_bytes = [long]$bridge.InputBytes
+        if ($pipeOut) {
+            if ($run.stdout_total -gt $SlateOpsExec.PipeOutputCap) {
+                $Result.code = 'output_too_large'; $Result.message_key = 'exec.output_too_large'; $Result.exit_code = 3
+                return $Result
+            }
+            $Result.code = [SlateOpsSetup.PipeBridge]::SafeCode($memory)
+            $Result.message_key = ('{0}.{1}' -f $job, $Result.code)
+            $Result.recovery_key_shown = [SlateOpsSetup.PipeBridge]::HasRecoveryKey($memory)
+            try { [void]$bridge.SendOutput($memory) }
+            catch { Write-RunLog $step 'WARN' ('secret channel: output not delivered ({0})' -f (Get-PipeErrorCode $_.Exception)) }
+            $Result.pipe_output_bytes = [long]$bridge.OutputBytes
+        } else {
+            $outItem = Get-Item -LiteralPath $stdout -Force
+            if ($outItem.Length -gt $SlateOpsExec.StdoutCap) {
+                Remove-PathNoFollow -Path $stdout
+                $Result.code = 'output_too_large'; $Result.message_key = 'exec.output_too_large'; $Result.exit_code = 3
+                return $Result
+            }
+            $Result.stdout_file = Split-Path -Leaf $stdout
+            $Result.stdout_bytes = [long]$outItem.Length
+            $Result.stdout_sha256 = Get-FileSha256 -Path $stdout
+            $engine = Get-EngineCode -Path $stdout
+            $Result.code = $engine.code
+            $Result.message_key = $engine.message_key
+        }
+        Write-RunLog $step 'INFO' ('  exit code {0}, {1} ms, pipe input {2} bytes, pipe output {3} bytes, stderr {4} bytes, recovery key shown {5}' -f $run.exit_code, $run.duration_ms, $bridge.InputBytes, $bridge.OutputBytes, $errBytes, [bool]$Result.recovery_key_shown)
+        return $Result
+    } finally {
+        [Array]::Clear($memory.GetBuffer(), 0, $memory.GetBuffer().Length)
+        $memory.Dispose()
+        $bridge.Dispose()
+    }
+}
+
+function Get-PipeErrorCode {
+    # The safe code of a secret-channel error (the innermost IOException message of the bridge).
+    param([Parameter(Mandatory = $true)][System.Exception]$Exception)
+    $inner = $Exception
+    while ($inner) {
+        if (($inner -is [System.IO.IOException]) -and ($inner.Message -match '^pipe_[a-z_]{1,32}$')) { return $inner.Message }
+        $inner = $inner.InnerException
+    }
+    return 'pipe_failed'
 }
 
 function Write-ExecResult {
@@ -596,9 +866,12 @@ function Invoke-WindowsJob {
             $state = Read-InstallState -Layout $Layout
             Set-LayoutDataRoot -Layout $Layout -DataRoot $state.data_root
             $setup = Read-SetupVersion -Path (Join-Path $Layout.Scripts 'version.json')
-            # S91-2: the folders above the data folder and the data tree, right before the read.
+            # S91-2: the data tree right before the read. N-2: this account cannot read the access
+            # list of an administrator-only folder above the data folder, so the folders above are
+            # checked on the administrator side (at selection and right before the copy); only
+            # their trusted owners can change them after that.
             $own = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-            $problems = @(Get-FolderParentProblem -Path $Layout.DataRoot) + @(Get-TreeProblem -Tree $Layout.DataTree -ServiceSid $own)
+            $problems = @(Get-TreeProblem -Tree $Layout.DataTree -ServiceSid $own)
             if ($problems.Count -gt 0) {
                 foreach ($problem in $problems) { Write-RunLog $step 'FAIL' $problem }
                 $Result.code = 'data_folder_parent_unsafe'; $Result.exit_code = 3; $Result.message_key = 'exec.data_folder_parent_unsafe'; return $Result
@@ -629,6 +902,21 @@ function Invoke-WindowsJob {
                 $Result.code = 'imported'
             }
         }
+        'pipe-test' {
+            # Plan F4d: the channel self-test before the first secret. The random value's
+            # SHA-256 goes back; the value is never logged.
+            Initialize-PipeBridgeType
+            $bridge = $null
+            try {
+                $bridge = [SlateOpsSetup.PipeBridge]::Open($Check.request_id, $SlateOpsExec.PipeTimeoutMs)
+                [void]$bridge.AnswerHash(4096)
+                Write-RunLog $step 'INFO' ('  secret channel: input {0} bytes, output {1} bytes' -f $bridge.InputBytes, $bridge.OutputBytes)
+                $Result.code = 'pipe_ok'
+            } catch {
+                $Result.code = Get-PipeErrorCode $_.Exception; $Result.exit_code = 3; $Result.message_key = ('exec.{0}' -f $Result.code)
+                Write-RunLog $step 'FAIL' ('secret channel: {0}' -f $Result.code)
+            } finally { if ($bridge) { $bridge.Dispose() } }
+        }
         'wsl-facts' {
             foreach ($arguments in @(@('--version'), @('--status'), @('--list', '--verbose'))) {
                 $null = Invoke-Logged -Step $step -FilePath $WslPath -ArgumentList $arguments -NoThrow
@@ -641,7 +929,7 @@ function Invoke-WindowsJob {
         }
     }
     if (-not $Result.message_key -or ($Result.message_key -like 'exec.accepted')) { $Result.message_key = ('exec.{0}.{1}' -f $Check.job, $Result.code) }
-    if ($Result.exit_code -eq 2 -and ($Result.code -in @('written', 'already_imported', 'imported', 'recorded'))) { $Result.exit_code = 0 }
+    if ($Result.exit_code -eq 2 -and ($Result.code -in @('written', 'already_imported', 'imported', 'recorded', 'pipe_ok'))) { $Result.exit_code = 0 }
     return $Result
 }
 
@@ -671,6 +959,9 @@ function Submit-ExecRequest {
         [Parameter(Mandatory = $true)][string]$Job,
         [Parameter(Mandatory = $true)][string]$RunId,
         [byte[]]$InputBytes = (New-Object byte[] 0),
+        # W8: the wizard makes the request ID of a pipe job, because it creates the pipe
+        # \\.\pipe\SlateOps-<request ID> before the job starts (plan 3.2 check 1).
+        [string]$RequestId = '',
         [switch]$NoStart
     )
     if (($SlateOpsExec.EngineJobs -cnotcontains $Job) -and ($SlateOpsExec.WindowsJobs -cnotcontains $Job)) { throw 'Not an allow-listed job.' }
@@ -680,6 +971,11 @@ function Submit-ExecRequest {
         if ($task.State -eq 'Running') { throw 'exec_busy' }
     }
     $requestId = [guid]::NewGuid().ToString('D')
+    if ($RequestId) {
+        $parsed = [guid]::Empty
+        if (-not [guid]::TryParseExact($RequestId, 'D', [ref]$parsed)) { throw 'request_id_invalid' }
+        $requestId = $parsed.ToString('D')
+    }
     foreach ($path in @($Layout.RequestFile, $Layout.InputFile)) { if (Test-Path -LiteralPath $path) { Remove-PathNoFollow -Path $path } }
     [System.IO.File]::WriteAllBytes($Layout.InputFile, $InputBytes)
     Write-JsonFile -Path $Layout.RequestFile -Value ([ordered]@{ request_id = $requestId; job = $Job; run_id = $RunId })

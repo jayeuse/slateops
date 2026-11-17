@@ -25,7 +25,11 @@ $SlateOpsCheck = @{
     # The checks that run again on S06 and on Install in S11 (spec 5.2).
     RecheckIds           = @('C08', 'C09', 'C10', 'C12', 'C13', 'C14', 'C21')
     # Plan R-checks whose unreadable value is Advice "cannot read" (spec 5.2; C18 is Fix).
-    RequirementIds       = @('C01', 'C02', 'C04', 'C05', 'C07', 'C10', 'C11', 'C12', 'C15', 'C21')
+    RequirementIds       = @('C01', 'C02', 'C04', 'C05', 'C07', 'C10', 'C11', 'C12', 'C15', 'C16', 'C17', 'C21')
+    # C17 (plan F1; W8): the built-in inbound mDNS rules. The names are an Assumption from
+    # Windows 11's built-in rule set ("MDNS-In-UDP-<profile>-Active"); W14 shows them.
+    MdnsRulePattern      = 'MDNS-In-UDP*'
+    DnsClientPolicyKey   = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient'
     # Uninstall key of the installed program (Inno AppId, see SlateOpsSetup.iss).
     UninstallKey         = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{8B0C1D7E-3F4A-4E52-9A61-5C2D7B9E0F13}_is1'
     Kit = @{
@@ -269,6 +273,80 @@ function Test-C15 {
     return New-CheckResult 'C15' 'pass' 'ok' $values
 }
 
+function Test-C16 {
+    # Plan F1: no other device on this network answers to <name>.local (an mDNS probe).
+    param([hashtable]$Facts)
+    if (-not $Facts.ContainsKey('mdns_other')) { return New-UnreadableResult 'C16' }
+    $other = Get-FactValue $Facts 'mdns_other'
+    if ($null -eq $other) { return New-UnreadableResult 'C16' }
+    $name = Get-FactValue $Facts 'dns_host_name'
+    if ($other -eq $true) { return New-CheckResult 'C16' 'fix' 'name_in_use' @{ address = ('{0}.local' -f $name) } }
+    return New-CheckResult 'C16' 'pass' 'ok'
+}
+
+function Test-C17 {
+    # Plan F1: the DNS Client service runs, no policy turns multicast name resolution off, and a
+    # built-in mDNS rule allows the Private profile. A rule that a policy sets is not fixable
+    # here ("Ask the person who manages this PC").
+    param([hashtable]$Facts)
+    $mdns = Get-FactValue $Facts 'mdns'
+    if ($null -eq $mdns) { return New-UnreadableResult 'C17' }
+    if ((-not $mdns.dns_client_running) -or $mdns.multicast_off) { return New-CheckResult 'C17' 'fix' 'policy' }
+    if ($mdns.private_rule_enabled) { return New-CheckResult 'C17' 'pass' 'ok' }
+    if ($mdns.rule_from_policy -or (-not $mdns.private_rule)) { return New-CheckResult 'C17' 'fix' 'policy' }
+    return New-CheckResult 'C17' 'fix' 'rule_off' @{ rule = [string]$mdns.private_rule }
+}
+
+function Get-MdnsFact {
+    # C17 facts: read-only.
+    $service = Get-Service -Name 'Dnscache' -ErrorAction Stop
+    $policy = Get-ItemProperty -LiteralPath $SlateOpsCheck.DnsClientPolicyKey -ErrorAction SilentlyContinue
+    $off = [bool]($policy -and $policy.PSObject.Properties['EnableMulticast'] -and ([int]$policy.EnableMulticast -eq 0))
+    $rules = @(Get-NetFirewallRule -Name $SlateOpsCheck.MdnsRulePattern -ErrorAction SilentlyContinue | Where-Object { [string]$_.Direction -eq 'Inbound' })
+    $private = @($rules | Where-Object { ([string]$_.Profile -match 'Private') -or ([string]$_.Profile -eq 'Any') })
+    $enabled = @($private | Where-Object { [string]$_.Enabled -eq 'True' })
+    $fromPolicy = @($private | Where-Object { [string]$_.PolicyStoreSourceType -eq 'GroupPolicy' }).Count -gt 0
+    return @{
+        dns_client_running   = ([string]$service.Status -eq 'Running')
+        multicast_off        = $off
+        private_rule         = $(if ($private.Count -gt 0) { [string]$private[0].Name } else { '' })
+        private_rule_enabled = ($enabled.Count -gt 0)
+        rule_from_policy     = $fromPolicy
+    }
+}
+
+function Test-MdnsNameInUse {
+    # C16: one mDNS query for <name>.local (A record, unicast response asked) on every IPv4
+    # address of this PC. An answer from an address that is not this PC's means another device
+    # uses the name. $null when the probe cannot run.
+    param([Parameter(Mandatory = $true)][string]$Name, [int]$WaitMs = 1500)
+    $own = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | ForEach-Object { [string]$_.IPAddress })
+    $query = New-Object System.Collections.Generic.List[byte]
+    $query.AddRange([byte[]](0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+    foreach ($label in @($Name, 'local')) {
+        $bytes = [System.Text.Encoding]::ASCII.GetBytes($label)
+        $query.Add([byte]$bytes.Length); $query.AddRange($bytes)
+    }
+    # QTYPE A, QCLASS IN with the unicast-response bit.
+    $query.AddRange([byte[]](0, 0, 1, 128, 1))
+    $client = New-Object System.Net.Sockets.UdpClient(0)
+    try {
+        $client.Client.ReceiveTimeout = $WaitMs
+        $packet = $query.ToArray()
+        [void]$client.Send($packet, $packet.Length, (New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Parse('224.0.0.251'), 5353)))
+        $deadline = [DateTime]::UtcNow.AddMilliseconds($WaitMs)
+        while ([DateTime]::UtcNow -lt $deadline) {
+            $from = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
+            try { $answer = $client.Receive([ref]$from) } catch [System.Net.Sockets.SocketException] { break }
+            # A response (QR bit) with at least one answer record, from another address.
+            if (($answer.Length -ge 12) -and (($answer[2] -band 0x80) -ne 0) -and ((($answer[6] * 256) + $answer[7]) -gt 0)) {
+                if ($own -notcontains $from.Address.ToString()) { return $true }
+            }
+        }
+        return $false
+    } finally { $client.Dispose() }
+}
+
 function Test-C18 {
     # W80-8: a policy that records the password module, or a policy that cannot be read, is Fix.
     param([hashtable]$Facts)
@@ -413,7 +491,7 @@ function Invoke-PcCheck {
         [string[]]$Only = @()
     )
     $ids = @('C01', 'C02', 'C03', 'C04', 'C05', 'C06', 'C07', 'C08', 'C09', 'C10', 'C11', 'C12', 'C13', 'C14', 'C15',
-        'C18', 'C19', 'C20', 'C21', 'C22', 'C23', 'C24', 'C25', 'C26', 'C27', 'C28', 'C29', 'C30')
+        'C16', 'C17', 'C18', 'C19', 'C20', 'C21', 'C22', 'C23', 'C24', 'C25', 'C26', 'C27', 'C28', 'C29', 'C30')
     if ($Only.Count -gt 0) { $ids = @($ids | Where-Object { $Only -contains $_ }) }
     $results = @()
     foreach ($id in $ids) {
@@ -524,6 +602,7 @@ function Get-DriveFact {
         try { $encrypted = [bool]((Get-Item -LiteralPath $root -Force).Attributes -band [System.IO.FileAttributes]::Encrypted) } catch { $encrypted = $false }
         $out += @{
             letter      = [string]$disk.DeviceID
+            label       = [string]$disk.VolumeName
             drive_type  = $type
             file_system = [string]$disk.FileSystem
             free_bytes  = [long]$disk.FreeSpace
@@ -654,11 +733,16 @@ function Get-KitTree {
 }
 
 function Get-KitTreeProblem {
-    # The kit's own safety check, with the kit account's SID when the account exists.
-    param([Parameter(Mandatory = $true)][hashtable]$Kit)
+    # The kit's own safety check, with the kit account's SID when the account exists. N-1: after
+    # the C29 removal has deleted the account, the caller passes the SID that it saved, because
+    # the kit folder still holds the account's entries.
+    param([Parameter(Mandatory = $true)][hashtable]$Kit, [string]$AccountSid = '')
     if (-not (Test-Path -LiteralPath $Kit.Root)) { return @() }
-    $account = Get-LocalUser -Name $Kit.AccountName -ErrorAction SilentlyContinue
-    $sid = $(if ($account) { $account.SID.Value } else { '' })
+    $sid = $AccountSid
+    if (-not $sid) {
+        $account = Get-LocalUser -Name $Kit.AccountName -ErrorAction SilentlyContinue
+        $sid = $(if ($account) { $account.SID.Value } else { '' })
+    }
     return @(Get-TreeProblem -Tree (Get-KitTree -Kit $Kit) -ServiceSid $sid)
 }
 
@@ -740,6 +824,8 @@ function Get-PcCheckFacts {
     if ($internet) { $facts.internet = $internet.internet; $facts.clock_offset_seconds = $internet.clock_offset_seconds }
     $facts.listeners = Invoke-Reader 'listeners' { , @(Get-ListenerFact) }
     $facts.logging_policy = Invoke-Reader 'logging_policy' { Get-PowerShellLoggingPolicy }
+    $facts.mdns = Invoke-Reader 'mdns' { Get-MdnsFact }
+    if ($facts.dns_host_name) { $facts.mdns_other = Invoke-Reader 'mdns_other' { Test-MdnsNameInUse -Name $facts.dns_host_name } }
     $facts.smart_app_control = Invoke-Reader 'smart_app_control' {
         # Registry value name is an Assumption (plan 10.4); 0 off, 1 on, 2 evaluation.
         [int](Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' -Name 'VerifiedAndReputablePolicyState' -ErrorAction Stop).VerifiedAndReputablePolicyState

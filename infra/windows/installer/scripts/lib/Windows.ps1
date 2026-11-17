@@ -182,10 +182,40 @@ function Read-SetupProgress {
     return $value
 }
 
+function Compare-ReleaseVersion {
+    # SemVer precedence of two release versions (plan page 1): X.Y.Z-rc.N is older than
+    # X.Y.Z-rc.N+1, and both are older than X.Y.Z. Returns -1, 0 or 1.
+    param([Parameter(Mandatory = $true)][string]$Left, [Parameter(Mandatory = $true)][string]$Right)
+    $parts = foreach ($value in @($Left, $Right)) {
+        if (-not (Test-ReleaseVersion $value)) { throw 'Not a release version.' }
+        $core, $rc = $value -split '-rc\.'
+        $numbers = @($core -split '\.' | ForEach-Object { [int]$_ })
+        # A release without -rc sorts after every rc of the same X.Y.Z.
+        , ($numbers + @($(if ($rc) { [int]$rc } else { [int]::MaxValue })))
+    }
+    for ($i = 0; $i -lt 4; $i++) {
+        if ($parts[0][$i] -lt $parts[1][$i]) { return -1 }
+        if ($parts[0][$i] -gt $parts[1][$i]) { return 1 }
+    }
+    return 0
+}
+
+function Get-InstalledVersion {
+    # The installed program's version (its version.json in the folder that this setup's
+    # uninstall key names), or '' when none is installed (spec 4.1).
+    if (-not (Test-InstalledProgram)) { return '' }
+    $key = Get-ItemProperty -LiteralPath $SlateOpsCheck.UninstallKey -ErrorAction SilentlyContinue
+    try { return (Read-SetupVersion -Path (Join-Path ([string]$key.InstallLocation) 'version.json')).version } catch { return '' }
+}
+
 function Get-SetupEntry {
-    # Spec 4.1: the first screen from Windows-side records only. Installed versions are W8's
-    # (M01, M05); this covers the saved progress.
-    param([AllowNull()][System.Collections.IDictionary]$Progress)
+    # Spec 4.1: the first screen from Windows-side records only: the saved progress, then the
+    # installed version (W8): this setup newer gives M05 (W13b), the same or older gives M01.
+    param([AllowNull()][System.Collections.IDictionary]$Progress, [string]$Installed = '', [string]$SetupVersion = '')
+    if ($Installed -and $SetupVersion -and (($null -eq $Progress) -or ([string](Get-DictValue $Progress 'stage') -eq 'key_saved'))) {
+        if ((Compare-ReleaseVersion -Left $SetupVersion -Right $Installed) -gt 0) { return @{ screen = 'M05'; next = ''; installed = $Installed } }
+        return @{ screen = 'M01'; next = ''; installed = $Installed }
+    }
     if ($null -eq $Progress) { return @{ screen = 'S01'; next = '' } }
     switch ([string](Get-DictValue $Progress 'stage')) {
         'check_restart'    { return @{ screen = 'S02'; next = ''; welcome_back = $true } }
@@ -724,7 +754,7 @@ function Remove-KitLeftovers {
     }
     if (Test-Path -LiteralPath $Kit.Root) {
         # Checked again right before the delete: the folder may have changed since the start.
-        $again = @(Get-KitTreeProblem -Kit $Kit)
+        $again = @(Get-KitTreeProblem -Kit $Kit -AccountSid $sid)
         if ($again.Count -gt 0) {
             foreach ($problem in $again) { Write-RunLog $step 'FAIL' $problem }
             return New-StepResult -Code 'kit_folder_unsafe' -MessageKey 'check.c29.unknown_parts'
@@ -742,4 +772,178 @@ function Remove-KitLeftovers {
     $remaining = @($check | Where-Object { $left[$_] })
     if ($remaining.Count -gt 0) { return New-StepResult -Code 'incomplete' -MessageKey 'check.c29.incomplete' -Values @{ remaining = $remaining } }
     return New-StepResult -Code 'removed' -MessageKey 'check.c29.removed'
+}
+
+# ---------------------------------------------------------------------------
+# W8: wizard page support (spec S07, S09, S10, S14, S15; plan 3.2, 10.3 F2)
+# ---------------------------------------------------------------------------
+
+$SlateOpsWizard = @{
+    BackupFolder   = 'SlateOps-backups'
+    # Proposed planning value: the free space a backup drive needs on S10 (spec "E: has 2 GB
+    # free. Choose a drive with more space."); the first backup at install proves the real need.
+    BackupMinBytes = [long]5 * 1GB
+    # Spec S09 and section 12 item 7 (W80-7): the MX answer only selects a provider, by the mail
+    # host. Google's hosts are a fixed list; Microsoft 365 gives every tenant its own host under
+    # one fixed suffix.
+    GoogleMxHosts  = @('smtp.google.com', 'aspmx.l.google.com', 'alt1.aspmx.l.google.com', 'alt2.aspmx.l.google.com',
+        'alt3.aspmx.l.google.com', 'alt4.aspmx.l.google.com', 'aspmx2.googlemail.com', 'aspmx3.googlemail.com',
+        'aspmx4.googlemail.com', 'aspmx5.googlemail.com')
+    MicrosoftMxSuffix = '.mail.protection.outlook.com'
+    # W80-3: printers that write a file instead of paper.
+    FilePorts      = @('FILE:', 'PORTPROMPT:', 'NUL:')
+    FileDrivers    = '(?i)(PDF|XPS|OneNote|Fax)'
+}
+
+function Get-PasswordPolicyState {
+    # R7 again right before each password use (spec 5.2, W80-8): clear, policy or unreadable.
+    try { $covered = @(Get-PasswordModuleLogged) } catch { return New-StepResult -Code 'unreadable' -MessageKey 'check.c18.unreadable' }
+    if ($covered.Count -gt 0) { return New-StepResult -Code 'policy' -MessageKey 'check.c18.policy' }
+    return New-StepResult -Code 'clear' -MessageKey 'check.c18.clear'
+}
+
+function Get-MailProvider {
+    # gmail, m365 or none, from the MX records of the domain. The answer fills no field and sets
+    # no server name (W80-7); Windows side only.
+    param([Parameter(Mandatory = $true)][string]$Domain)
+    try { $records = @(Resolve-DnsName -Name $Domain -Type MX -DnsOnly -QuickTimeout -ErrorAction Stop | Where-Object { $_.Type -eq 'MX' }) }
+    catch { return New-StepResult -Code 'none' -MessageKey 'setup.email.provider_none' }
+    foreach ($record in $records) {
+        $mailHost = ([string]$record.NameExchange).TrimEnd('.').ToLowerInvariant()
+        if ($SlateOpsWizard.GoogleMxHosts -contains $mailHost) { return New-StepResult -Code 'gmail' -MessageKey 'setup.email.provider_gmail' }
+        if ($mailHost.EndsWith($SlateOpsWizard.MicrosoftMxSuffix) -and ($mailHost.Length -gt $SlateOpsWizard.MicrosoftMxSuffix.Length)) { return New-StepResult -Code 'm365' -MessageKey 'setup.email.provider_m365' }
+    }
+    return New-StepResult -Code 'none' -MessageKey 'setup.email.provider_none'
+}
+
+function Test-BackupTarget {
+    # The engine's backup target rule (parent decision, TASK-0093): a drive letter, then 1 to 8
+    # folder names of [A-Za-z0-9 ._-], no "." or "..", no name ending in a dot or a space, no
+    # device name, at most 200 characters. Never a drive root.
+    param([AllowNull()][string]$Target)
+    if ((-not $Target) -or ($Target.Length -gt 200) -or ($Target -cnotmatch '^[A-Z]:\\(.+)$')) { return $false }
+    $names = $Matches[1] -split '\\'
+    if ($names.Count -gt 8) { return $false }
+    $devices = @('CON', 'PRN', 'AUX', 'NUL') + @(0..9 | ForEach-Object { 'COM{0}' -f $_; 'LPT{0}' -f $_ })
+    foreach ($name in $names) {
+        if ($name -cnotmatch '^[A-Za-z0-9 ._-]{1,200}$') { return $false }
+        if (($name -eq '.') -or ($name -eq '..') -or $name.EndsWith('.') -or $name.EndsWith(' ')) { return $false }
+        if ($devices -contains ($name.Split('.')[0].TrimEnd(' ').ToUpperInvariant())) { return $false }
+    }
+    return $true
+}
+
+function Get-BackupTargetProblem {
+    # SC-9: the backup target is never the data folder, a folder that contains it, or a folder
+    # inside it. Returns '' or the code.
+    param([Parameter(Mandatory = $true)][string]$Target, [string]$DataRoot = '')
+    if (-not (Test-BackupTarget $Target)) { return 'backup_target_invalid' }
+    if ($DataRoot) {
+        $t = $Target.TrimEnd('\') + '\'
+        $d = $DataRoot.TrimEnd('\') + '\'
+        if ($t.StartsWith($d, [System.StringComparison]::OrdinalIgnoreCase) -or $d.StartsWith($t, [System.StringComparison]::OrdinalIgnoreCase)) { return 'backup_target_overlaps_data' }
+    }
+    return ''
+}
+
+function Test-BackupDrive {
+    # S10 Next and M03: the drive is there, writable and has the free space, without a backup
+    # (a backup stops Slate Operations for everyone). A file is made and removed at the drive
+    # root; nothing else changes.
+    param([Parameter(Mandatory = $true)][string]$Drive)
+    $disk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter ("DeviceID='{0}'" -f $Drive) -ErrorAction SilentlyContinue
+    if (-not $disk) { return New-StepResult -Code 'drive_missing' -MessageKey 'setup.backup.drive_missing' -Values @{ drive = $Drive } }
+    $free = [long]$disk.FreeSpace
+    $values = @{ drive = $Drive; free_gb = [int][math]::Floor([double]$free / 1GB) }
+    $probe = '{0}\.slateops-check-{1}' -f $Drive, ([guid]::NewGuid().ToString('N').Substring(0, 8))
+    try {
+        $file = [System.IO.File]::Open($probe, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+        $file.Dispose()
+        [System.IO.File]::Delete($probe)
+    } catch {
+        Write-RunLog 'setup.backup' 'WARN' ('{0} is not writable: {1}' -f $Drive, $_.Exception.Message)
+        return New-StepResult -Code 'not_writable' -MessageKey 'setup.backup.not_writable' -Values $values
+    }
+    if ($free -lt $SlateOpsWizard.BackupMinBytes) { return New-StepResult -Code 'too_small' -MessageKey 'setup.backup.too_small' -Values $values }
+    return New-StepResult -Code 'ready' -MessageKey 'setup.backup.ready' -Values $values
+}
+
+function Initialize-BackupFolder {
+    # Plan 3.2 rule 4: <drive>:\SlateOps-backups, which the service account can write. A new
+    # folder on NTFS gets its access list in the creating call (Administrators, SYSTEM, the
+    # account); an existing folder that is not a link gets the account's entry once. Other file
+    # systems (a FAT USB drive) have no access lists; the engine mounts them with the account's
+    # rights (plan 8.2). Runs before the install answers are sent.
+    param([Parameter(Mandatory = $true)][string]$Drive, [Parameter(Mandatory = $true)][string]$DataRoot, [string]$ServiceSid = '')
+    $target = '{0}\{1}' -f $Drive, $SlateOpsWizard.BackupFolder
+    $problem = Get-BackupTargetProblem -Target $target -DataRoot $DataRoot
+    if ($problem) { return New-StepResult -Code $problem -MessageKey ('setup.backup.{0}' -f $problem) }
+    if (-not $ServiceSid) { return New-StepResult -Code 'account_missing' -MessageKey 'setup.account.missing' }
+    $check = Test-BackupDrive -Drive $Drive
+    if ($check.code -ne 'ready') { return $check }
+    $disk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter ("DeviceID='{0}'" -f $Drive)
+    $ntfs = ([string]$disk.FileSystem -eq 'NTFS')
+    $item = Get-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
+    if ($item -and (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -or -not $item.PSIsContainer)) {
+        return New-StepResult -Code 'backup_target_unsafe' -MessageKey 'setup.backup.backup_target_unsafe'
+    }
+    $sid = New-Object System.Security.Principal.SecurityIdentifier($ServiceSid)
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'Modify, Synchronize', 'ContainerInherit, ObjectInherit', 'None', 'Allow')
+    if (-not $item) {
+        if ($ntfs) {
+            $security = Get-ProtectedDirectorySecurity
+            $security.AddAccessRule($rule)
+            [void][System.IO.Directory]::CreateDirectory($target, $security)
+        } else { [void][System.IO.Directory]::CreateDirectory($target) }
+        Write-RunLog 'setup.backup' 'INFO' ('backup folder {0} created ({1})' -f $target, [string]$disk.FileSystem)
+    } elseif ($ntfs) {
+        $acl = Get-Acl -LiteralPath $target
+        $has = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -eq $ServiceSid }).Count -gt 0
+        if (-not $has) { $acl.AddAccessRule($rule); Set-Acl -LiteralPath $target -AclObject $acl }
+        Write-RunLog 'setup.backup' 'INFO' ('backup folder {0} kept; the account entry is present' -f $target)
+    }
+    return New-StepResult -Code 'ready' -MessageKey 'setup.backup.ready' -Values @{ target = $target }
+}
+
+function Get-PrinterFact {
+    # Printers for "Print the key" (spec S14). A printer that writes a file is marked, so the
+    # wizard refuses it (W80-3). The key itself never reaches this script.
+    $out = @()
+    foreach ($printer in @(Get-CimInstance -ClassName Win32_Printer -ErrorAction SilentlyContinue)) {
+        $port = [string]$printer.PortName
+        $driver = [string]$printer.DriverName
+        $file = ($SlateOpsWizard.FilePorts -contains $port.ToUpperInvariant()) -or ($port -match '\.[A-Za-z]{2,4}$') -or ($driver -match $SlateOpsWizard.FileDrivers)
+        $out += [ordered]@{ name = [string]$printer.Name; default = [bool]$printer.Default; writes_file = [bool]$file }
+    }
+    return $out
+}
+
+function Test-HttpsFromWindows {
+    # Plan 10.3 F2 and W8-3: the product's Private firewall rule exists, then
+    # https://<name>.local/api/health opens from Windows with the normal certificate checks
+    # (through the hosts entry). The name is this PC's DNS host name, never an input.
+    $rule = Get-NetFirewallRule -Name $SlateOps.FirewallRuleName -ErrorAction SilentlyContinue
+    if ((-not $rule) -or ([string]$rule.Profile -notmatch 'Private')) { return New-StepResult -Code 'firewall_missing' -MessageKey 'install.f2.firewall_missing' }
+    $hostName = ([string](Get-CimInstance -ClassName Win32_ComputerSystem).DNSHostName).ToLowerInvariant()
+    $url = 'https://{0}.local/api/health' -f $hostName
+    $last = ''
+    for ($try = 1; $try -le 3; $try++) {
+        try {
+            $request = [System.Net.HttpWebRequest]::Create($url)
+            $request.Timeout = 20000
+            $request.AllowAutoRedirect = $false
+            $response = $request.GetResponse()
+            $status = [int]$response.StatusCode
+            $response.Dispose()
+            Write-RunLog 'install.f2' 'INFO' ('{0}: HTTP {1}' -f $url, $status)
+            if ($status -eq 200) { return New-StepResult -Code 'ok' -MessageKey 'install.f2.ok' -Values @{ url = $url } }
+            $last = 'http_{0}' -f $status
+        } catch [System.Net.WebException] {
+            $last = 'connection'
+            if (@('TrustFailure', 'SecureChannelFailure') -contains [string]$_.Exception.Status) { $last = 'certificate' }
+            Write-RunLog 'install.f2' 'WARN' ('{0}: try {1}, {2} ({3})' -f $url, $try, $last, $_.Exception.Message)
+        }
+        if ($try -lt 3) { Start-Sleep -Seconds 10 }
+    }
+    return New-StepResult -Code 'https_failed' -MessageKey 'install.f2.https_failed' -Values @{ reason = $last }
 }

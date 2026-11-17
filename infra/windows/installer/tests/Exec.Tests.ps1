@@ -43,6 +43,12 @@ public static class StandIn
         while ((read = input.Read(buffer, 0, buffer.Length)) > 0) { sha.TransformBlock(buffer, 0, read, null, 0); total += read; }
         sha.TransformFinalBlock(buffer, 0, 0);
         string hex = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
+        if (mode == "key")
+        {
+            // W8: an install result with a recovery key, as the engine writes it (sorted keys).
+            Emit("{\"bytes\":" + total + ",\"code\":\"installed\",\"recovery_key\":\"" + Environment.GetEnvironmentVariable("SLATEOPS_STANDIN_KEY") + "\",\"sha256\":\"" + hex + "\"}");
+            return 0;
+        }
         Emit("{\"code\":\"ok\",\"args\":\"" + string.Join(" ", args) + "\",\"bytes\":" + total + ",\"sha256\":\"" + hex + "\"}");
         return 0;
     }
@@ -96,11 +102,11 @@ Test-Case 'AC-2 the request check accepts one allow-listed job and refuses the r
     Assert-Equal 'input_too_large' (Test-ExecRequest -RequestText (Get-RequestText 'status') -InputBytes (New-Object byte[] 65537)).code
 }
 
-Test-Case 'AC-2 the allow-list is the plan 6.2 list plus resend-invitation, and three Windows-side jobs' {
+Test-Case 'AC-2 the allow-list is the plan 6.2 list plus resend-invitation, and the Windows-side jobs with the W8 pipe-test' {
     # Ordinal order (code points): "-" (0x2D) sorts before letters.
     Assert-Equal @('export-trust', 'install', 'log-bundle', 'new-recovery-key', 'prefetch', 'prepare', 'prepare-uninstall', 'receive', 'resend-invitation',
         'restore', 'set-backup-target', 'set-email', 'smtp-test', 'status', 'update') (Get-OrdinalSorted $SlateOpsExec.EngineJobs)
-    Assert-Equal @('import-distro', 'wsl-facts', 'wslconfig') (Get-OrdinalSorted $SlateOpsExec.WindowsJobs)
+    Assert-Equal @('import-distro', 'pipe-test', 'wsl-facts', 'wslconfig') (Get-OrdinalSorted $SlateOpsExec.WindowsJobs)
 }
 
 Test-Case 'AC-2 an engine job has one fixed command line with no shell' {
