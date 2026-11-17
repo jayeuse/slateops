@@ -173,6 +173,55 @@ def test_d7_redaction_keeps_ordinary_text(line: str) -> None:
     assert provisioning.redactor(HELD)(line) == line
 
 
+AT_HASH_PASSWORD = "pa@ss#wo" + "/rd-9x"
+
+
+@pytest.mark.parametrize(("environ", "line"), [
+    pytest.param(
+        {"MIGRATION_DATABASE_URL":
+         f"postgresql+psycopg://slateops_owner:{AT_HASH_PASSWORD}@db:5432/postgres"},
+        f"auth failed for slateops_owner with {AT_HASH_PASSWORD} here",
+        id="held-url-password-alone",
+    ),
+    pytest.param(
+        HELD, f"dsn postgresql://other:{AT_HASH_PASSWORD}@db:5432/postgres", id="unheld-url",
+    ),
+])
+def test_redaction_masks_a_database_password_with_at_and_hash(
+    environ: dict[str, str], line: str,
+) -> None:
+    redacted = provisioning.redactor(environ)(line)
+
+    for fragment in (AT_HASH_PASSWORD, "pa@ss", "ss#wo", "rd-9x"):
+        assert fragment not in redacted
+    assert "[REDACTED]" in redacted
+
+
+@pytest.mark.parametrize(("unit", "count"), [
+    pytest.param("a", MIB, id="letters"),
+    pytest.param("a.", MIB // 2, id="dots"),
+    pytest.param("x://", MIB // 4, id="url-runs"),
+    pytest.param('"key": "', MIB // 8, id="open-quotes"),
+    pytest.param("a@b.", MIB // 4, id="at-runs"),
+])
+def test_redaction_of_one_1_mib_line_finishes_in_one_pass(unit: str, count: int) -> None:
+    # A hang guard, not a speed measure: rules that scan again from every position take
+    # minutes to hours on these lines; a linear pass takes seconds.
+    script = (
+        "import sys\n"
+        "from operations.install.redaction import redactor\n"
+        "line = sys.argv[1] * int(sys.argv[2])\n"
+        "print(len(redactor({'SUPABASE_SECRET_KEY': 'A' * 40})(line)))\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script, unit, str(count)],
+        cwd=BACKEND, capture_output=True, text=True, check=True, timeout=60,
+    )
+
+    assert int(result.stdout) > 0
+
+
 def test_d7_child_output_is_logged_redacted_and_capped_after_the_step_line(
     monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str],
 ) -> None:
