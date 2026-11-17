@@ -67,6 +67,7 @@ def test_ac_s1_status_returns_only_safe_codes_booleans_and_whole_numbers(tmp_pat
         },
         "backup": "not_set_up",  # TASK-0093: added fields, safe codes or None only
         "linux_start": None,
+        "instance_id": None,  # TASK-0096 E-2: added field, None before the install
     }
     assert not paths.logs.exists()
 

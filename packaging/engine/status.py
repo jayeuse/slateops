@@ -18,7 +18,7 @@ from typing import Any
 
 from engine import backups, packages, prefetch, release, report, tick, update
 from engine.context import Context
-from engine.core import engine_version, is_run_id, is_version, lock_state
+from engine.core import INSTANCE_ID, engine_version, is_run_id, is_version, lock_state
 
 # The four-part form that `wsl --version` prints, for the input and the known-bad list.
 WSL_VERSION = re.compile(r"[0-9]{1,4}(?:\.[0-9]{1,6}){3}\Z")
@@ -51,6 +51,15 @@ def _backup(ctx: Context) -> str:
         return "not_set_up"
     known = ("ok", "backup_target_missing", "runner_layout_stale")
     return found if found in known else "not_set_up"
+
+
+def _instance_id(ctx: Context) -> str | None:
+    """W9 F3: the instance ID of the installation, which kept data must match (plan 9.2)."""
+    try:
+        found = json.loads(ctx.paths.installation.read_text()).get("instance_id")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return found if isinstance(found, str) and INSTANCE_ID.match(found) else None
 
 
 def _linux_start(ctx: Context) -> dict[str, Any] | None:
@@ -90,4 +99,5 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
         "progress": progress,
         "backup": _backup(ctx),
         "linux_start": _linux_start(ctx),
+        "instance_id": _instance_id(ctx),
     }

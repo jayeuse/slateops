@@ -26,6 +26,7 @@ from engine import (
     install,
     invitation,
     log_bundle,
+    maintenance,
     packages,
     prefetch,
     prepare,
@@ -85,6 +86,11 @@ JOBS: dict[str, Job] = {
     # Not on it: package-night (the tick runs it on Sunday; support runs it at once).
     "update": Job(update.handle, update.KEYS, update.REQUIRED),
     "package-night": Job(packages.handle, packages.KEYS, packages.REQUIRED),
+    # W9 (TASK-0096), both on the Windows Exec allow-list; set-email reads the secret pipe.
+    "prepare-uninstall": Job(
+        maintenance.prepare_uninstall, maintenance.KEYS, maintenance.REQUIRED
+    ),
+    "set-email": Job(maintenance.set_email, maintenance.KEYS, maintenance.REQUIRED),
 }
 
 

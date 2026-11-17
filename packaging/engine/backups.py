@@ -348,12 +348,24 @@ def _instance(ctx: Context) -> str:
     return instance
 
 
+def _stopped_at_backup(paths: Paths) -> str | None:
+    """The project of an install that stopped in step 12 (TASK-0094 F5: "Choose another drive"
+    after a failed first backup; the rerun of step 12 takes the stored target)."""
+    state = journal.load(paths)
+    project = (state or {}).get("project")
+    if state is None or not journal.done(state, 11) or journal.done(state, 12):
+        return None
+    return project if isinstance(project, str) else None
+
+
 def set_target(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     """``set-backup-target``: mount the new folder, open or create its repository, keep it.
     A refusal unmounts the new folder and keeps the old target stored; the next tick mounts
     it again."""
     paths, step = ctx.paths, ctx.step(1, "target")
-    instance = _instance(ctx)
+    instance = installed_instance(paths) or _stopped_at_backup(paths)
+    if instance is None:
+        raise refused("not_installed")
     target = request["backup_target"]
     with runner_idle(ctx, step, instance):
         if not drive.unmount(ctx, step):
