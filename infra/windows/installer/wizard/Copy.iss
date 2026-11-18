@@ -150,7 +150,7 @@ c29_leftover_account=This PC has a leftover of an earlier Slate Operations unins
 c29_unknown_parts=This PC has parts of Slate Operations that setup cannot identify. Setup changes nothing. Select Save report and send the file to Slate Operations support.
 c29_btn=Remove them
 c29_form_title=Remove the parts of the earlier test?
-c29_form_text=Setup removes the earlier test's server part and its data, its hidden account, its start tasks and its firewall rules. The test's log files stay. Your other programs and files do not change. If the normal removal does not work, setup stops the Windows feature that runs the server part for a moment, for every user of this PC.
+c29_form_text=Setup removes the earlier test's server part and its data, its hidden account, its start tasks and its firewall rules. The test's log files stay. Your other programs and files do not change. If the normal removal does not work, setup stops Windows Subsystem for Linux (WSL) for a moment, for every user of this PC.
 c30_name=Address
 c30_factory_name=The address of Slate Operations will be %1, from this PC's name. It cannot change after setup without every phone and PC trusting Slate Operations again. If you want a short address, rename this PC in Windows Settings before setup, restart it, then run setup again.
 cannot_read=Setup cannot check this on this PC. You can continue. If setup stops later, select Save report.
@@ -161,17 +161,16 @@ s04_notices=Third-party notices
 
 ; ---- S05 Restart this PC once
 s05_title=Restart this PC once
-s05_subtitle=Windows needs one restart to finish a feature that Slate Operations needs.
-s05_working=Turning on the Windows feature… (about 2 minutes)
+s05_subtitle=Windows finishes Virtual Machine Platform and WSL when this PC restarts.
 s05_waiting=Another installation is running on this PC. Setup waits and tries again.
-s05_done=The Windows feature is turned on. Windows finishes it when this PC restarts.
-s05_steps=1. Save your work and close your other programs.%n2. Select Restart now.%n3. Sign in again. Setup opens by itself and continues.%n%nIf setup does not open, double-click Continue Slate Operations setup on the desktop.
+s05_done=Setup turned on Virtual Machine Platform and installed Windows Subsystem for Linux (WSL). Windows finishes them when this PC restarts.
+s05_steps=1. Save your work and close your other programs.%n2. Select Restart now.%n3. Sign in again. Setup opens by itself, checks this PC again (about 1 minute) and continues with Where to keep your data.%n%nIf setup does not open, double-click Continue Slate Operations setup on the desktop.
 s05_steps_other_user=1. Save your work and close your other programs.%n2. Select Restart now.%n3. Sign in again, then open the setup file again. Setup cannot open by itself after this restart, because it runs with another administrator account.%n%nThe setup file: %1. When you open it, Windows asks for the administrator account again.
 s05_steps_unsafe=1. Save your work and close your other programs.%n2. Select Restart now.%n3. Sign in again, then open the setup file again.%n%nThe setup file: %1. When you open it, Windows asks for the administrator account again.
-s05_details=Virtual Machine Platform, Windows Subsystem for Linux.
+s05_details=WSL version %1. Virtual Machine Platform: %2. WSL: %3.
 s05_next=&Restart now
 s05_later=Restart &later
-s05_failed=Setup could not turn on a Windows feature that Slate Operations needs.
+s05_failed=Setup could not turn on Virtual Machine Platform.
 
 ; ---- S06 Welcome back
 s06_title=Welcome back
@@ -301,8 +300,8 @@ s11_next=&Install
 ; ---- S12 Installing
 s12_title=Installing Slate Operations
 s12_subtitle=This can take up to 30 minutes.
-s12_stage1=Download the parts
-s12_stage2=Prepare the settings
+s12_stage1=Load the Slate Operations programs
+s12_stage2=Create the settings and passwords
 s12_stage3=Set up the secure connection
 s12_stage4=Set up the database
 s12_stage5=Start Slate Operations
@@ -368,7 +367,7 @@ s15_finish=&Finish
 
 ; ---- Cancel (spec 4.5)
 cancel_nothing=Stop setup? Nothing was installed.
-cancel_feature=Stop setup? The Windows feature that setup turned on stays on. Other programs can use it.
+cancel_feature=Stop setup? Virtual Machine Platform and Windows Subsystem for Linux (WSL) stay on this PC. Other programs can use them.
 cancel_server=Stop setup? Setup has already added the server part to this PC.
 cancel_keep=Keep it and continue later: the next time you start setup, it continues here. Your email password is not kept.
 cancel_wait=Setup stops after the current step. This takes up to a minute.
@@ -406,7 +405,7 @@ u03_moving=Moving your data to %1…
 u03_remove=Remove the program and its Windows settings
 u04_kept=Slate Operations is removed. Your data is kept in %1.
 u04_deleted=Slate Operations and its data are removed.
-u04_feature=The Windows feature that Slate Operations used stays on, because other programs can use it.
+u04_feature=Virtual Machine Platform and Windows Subsystem for Linux (WSL) stay on this PC, because other programs can use them.
 u04_leftovers=Uninstall finished. Some items could not be removed. Setup removes them the next time it runs.
 u04_keep_failed=Setup could not keep your data safely. Nothing was removed.
 f4c_stopped=Uninstall stopped. Nothing was removed.
@@ -656,3 +655,21 @@ u03_stopping=Stopping Slate Operations
 u03_moving_line=Moving your data to %1
 u03_deleting=Deleting the data in %1
 u03_removing=Removing the program and its Windows settings
+; ---- W14-D3 and W14-D6: the layout rules (spec 6.1) and rule 2.8 (name things).
+s02_ready_prep_both=Setup will turn on Virtual Machine Platform and install Windows Subsystem for Linux (WSL), then restart this PC once.
+s02_ready_prep_vmp=Setup will turn on Virtual Machine Platform, then restart this PC once.
+s02_ready_prep_wsl=Setup will install Windows Subsystem for Linux (WSL), then restart this PC once.
+s05_stage_vmp=Turn on Virtual Machine Platform
+s05_stage_wsl=Install Windows Subsystem for Linux (WSL)
+s05_stage_restart=Restart this PC
+s05_stage_details=Your details
+s05_stage_install=Install
+s05_already=(already on this PC)
+s05_why_vmp=Virtual Machine Platform: lets this PC run the server part of Slate Operations.
+s05_why_wsl=Windows Subsystem for Linux (WSL): runs the server part of Slate Operations inside Windows.
+s05_done_no_restart=Virtual Machine Platform and Windows Subsystem for Linux (WSL) are ready on this PC.
+s05_failed_wsl=Setup could not install Windows Subsystem for Linux (WSL).
+drive_local_disk=Local Disk
+drive_usb_name=%1 (USB drive)
+drive_row=%1 (%2) · %3 GB free
+drive_row_most=%1 (%2) · %3 GB free · Most space

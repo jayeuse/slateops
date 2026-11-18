@@ -145,17 +145,27 @@ function DeleteObject(GdiObject: Longword): Boolean;
   external 'DeleteObject@gdi32.dll stdcall';
 function TextOut(DC: Longword; X, Y: Integer; Text: String; Count: Integer): Boolean;
   external 'TextOutW@gdi32.dll stdcall';
+{ W14-D3 (6.1 L1): the read-only verdict box shows no text cursor. }
+function HideCaret(Wnd: HWND): Boolean;
+  external 'HideCaret@user32.dll stdcall';
+{ W14-D3 (6.1 L10): the drive name that Windows shows (the volume label). }
+function GetVolumeInformation(Root, Name: String; NameSize: Longword; Serial, MaxLength, Flags: Longword; FsName: String; FsNameSize: Longword): Boolean;
+  external 'GetVolumeInformationW@kernel32.dll stdcall';
 
 var
   HelperScript, StateCheckCode, RunId, SetupVersion, ServiceSid, HostName: String;
   EntryScreen, EntryNext: String;
-  EntryWelcomeBack, StateUnsafe, ForceClose, ModalOpen, Ticking: Boolean;
+  EntryWelcomeBack, StateUnsafe, ForceClose, ModalOpen, Ticking, KeyTicking: Boolean;
   Pages: array of TWizardPage;
   Bodies: array of TPanel;
   Cur: TPanel;
   CurY, OutSeq: Integer;
   ExtraButton: TNewButton;
   NoticesLink: TNewLinkLabel;
+  { W14-D3 (6.1 L6): the page buttons on Inno's own pages, built once (S01, S15). }
+  S01Report, S15Open: TNewButton;
+  S01Line: TNewStaticText;
+  S15Steps: array of TNewStaticText;
 
   { S02, S06, S11: the check }
   CheckOut, CheckVerdict, CheckText, CheckFor: String;
@@ -167,6 +177,8 @@ var
 
   { S05 }
   PrepOut, PrepState, ResumeCode: String;
+  { W14-D3 (rule 2.8): what the helper did: feature and WSL codes, and the failed step's key. }
+  PrepFeature, PrepWsl, PrepFailKey: String;
   PrepDetails: Boolean;
 
   { S07 and the background preparation }
@@ -182,6 +194,13 @@ var
   OrgName, OrgEmail, OrgUser, OrgSlug: TNewEdit;
   OrgMoreLink: TNewLinkLabel;
   OrgUserLabel, OrgSlugLabel, OrgMoreHelp, OrgError: TNewStaticText;
+  { W14-D3 (6.1 L9): the S08 field blocks, laid out by LayoutOrg. }
+  OrgNameLabel, OrgNameHelp, OrgEmailLabel, OrgEmailHelp: TNewStaticText;
+  OrgErrorAfter: TControl;
+  OrgMoreOpen: Boolean;
+  { W14-D3 (6.1): S08 and S09 sit on the page surface; their stage line is built once and the
+    forms start under it. }
+  OrgTop, MailTop: Integer;
 
   { S09 }
   MailFrom, MailPassword, MailServer, MailPort, MailUser, MailSender: TNewEdit;
@@ -189,6 +208,10 @@ var
   MailShow: TNewCheckBox;
   MailNote, MailStatus, MailError, MailPasswordLabel, MailServerLabel, MailPortLabel, MailSecurityLabel, MailUserLabel, MailSenderLabel, MailFromLabel, MailProviderLabel: TNewStaticText;
   MailHelpLink, MailMoreLink: TNewLinkLabel;
+  { W14-D3 (6.1 L9): "Continue later" is the last line of the form; MailMeasure measures the
+    radio captions, so each radio is as wide as its text. }
+  MailLater: TNewLinkLabel;
+  MailMeasure: TNewStaticText;
   MailPassed, MailSelfTested, MailOutlook, MailMore, MailWaitingBg: Boolean;
   MailPhase, MailDetected, MailCheckedDomain, MailProviderName: String;
   MailErrorAfter: TControl;
@@ -251,6 +274,9 @@ var
 
   { Save report }
   ReportLine, ReportPath: String;
+  { W14-D3 (6.1 L5): the S13 extra action of the failure being drawn ('' or 'choose-drive'). }
+  FailureExtra: String;
+  FailureExtraOn: Boolean;
   { W14-D9: Save report runs from the timer: phase linux (the log-bundle job), collect, zip. }
   ReportPhase, ReportRun, ReportOut: String;
   ReportAt, ReportStepAt: Cardinal;
@@ -286,6 +312,14 @@ var
   RestartIndex: Integer;
   { The start of a wait with several steps (7.6: the time counts from the start of the wait). }
   MailAt, MaintAt, CdAt: Cardinal;
+  { W14-D3 (6.1 L5): the button row being built on the page. }
+  RowX, RowHeight: Integer;
+  { W14-D3 (6.1 L11): Inno's button row as Inno placed it: default width, right edge, gaps. }
+  BtnDefaultW, BtnRight, BtnGapBN, BtnGapNC: Integer;
+  { W14-D3: the buttons of the page body and of the forms, and the last verdict box, for the
+    self-test's caption and color checks. }
+  BodyButtons, FormButtons: array of TNewButton;
+  LastVerdict: TNewMemo;
   { The pinned WSL version of this setup (version.json), for the 7.6 lines. }
   WslVersion: String;
   { A close flow's failure message on the status line; it stays until the page changes. }
@@ -298,6 +332,8 @@ var
 
 procedure RenderPage(Index: Integer); forward;
 procedure SaveReport(Sender: TObject); forward;
+{ W14-D3: the S13 extra action "Choose another drive" sits in the Save report row. }
+procedure ChooseDriveClick(Sender: TObject); forward;
 { W14-D5 and W14-D9, in Maintenance.iss: what follows a step, and the page's current wait. }
 procedure StepFinished(ForTag, Code: String); forward;
 function WaitStage(Kind: String): Integer; forward;
@@ -631,10 +667,17 @@ begin
   Bodies[Index] := TPanel.Create(WizardForm);
   Bodies[Index].Parent := Pages[Index].Surface;
   Bodies[Index].BevelOuter := bvNone;
-  Bodies[Index].ParentBackground := True;
+  { W14-D3 (6.1 L1): the grey bands were the panel's own color (clBtnFace), which every text
+    control on it takes. The panel now has the page surface's color, so its texts and the
+    verdict box paint the page color; S08 and S09, built on the surface, never showed grey. }
+  Bodies[Index].ParentBackground := False;
+  Bodies[Index].Color := Pages[Index].SurfaceColor;
   Bodies[Index].SetBounds(0, 0, Pages[Index].SurfaceWidth, Pages[Index].SurfaceHeight);
   Cur := Bodies[Index];
   CurY := 0;
+  RowX := 0;
+  SetArrayLength(BodyButtons, 0);
+  LastVerdict := nil;
   { W14-D5: the old panel took its labels with it. }
   WaitTime := nil;
   WaitNow := nil;
@@ -658,10 +701,41 @@ begin
   WizardForm.AdjustLabelHeight(Result);
 end;
 
+{ W14-D3 (6.1 L4): every element ends with the 4 px of a block; ItemGap and BlockGap add the
+  rest to 12 px between items and 16 px between blocks. }
 function AddText(S: String; Bold: Boolean): TNewStaticText;
 begin
   Result := AddTextTo(Cur, CurY, S, Bold);
-  CurY := CurY + Result.Height + ScaleY(6);
+  CurY := CurY + Result.Height + ScaleY(4);
+end;
+
+procedure ItemGap;
+begin
+  CurY := CurY + ScaleY(8);
+end;
+
+procedure BlockGap;
+begin
+  CurY := CurY + ScaleY(12);
+end;
+
+{ W14-D3 (6.1 L1): the verdict box keeps the focus for a screen reader but shows no cursor. }
+procedure VerdictCaretOff(Sender: TObject);
+begin
+  HideCaret(TNewMemo(Sender).Handle);
+end;
+
+procedure VerdictKeyUp(Sender: TObject; var Key: Word; Shift: TShiftState);
+begin
+  HideCaret(TNewMemo(Sender).Handle);
+end;
+
+procedure FocusVerdict(Verdict: TNewMemo);
+begin
+  if (Verdict = nil) or not Verdict.CanFocus then
+    Exit;
+  WizardForm.ActiveControl := Verdict;
+  HideCaret(Verdict.Handle);
 end;
 
 { A sentence that takes focus when it appears (spec 9 item 2): a read-only, borderless memo that
@@ -680,12 +754,15 @@ begin
   Result.BorderStyle := bsNone;
   Result.WordWrap := True;
   Result.ScrollBars := ssNone;
-  Result.ParentBackground := True;
-  Result.Color := WizardForm.Color;
+  { W14-D3 (6.1 L1): the page color, not the window's grey. }
+  Result.Color := Cur.Color;
   Result.Font.Style := [fsBold];
   Result.SetBounds(0, CurY, Cur.Width, Height);
   Result.Text := S;
-  CurY := CurY + Result.Height + ScaleY(6);
+  Result.OnClick := @VerdictCaretOff;
+  Result.OnKeyUp := @VerdictKeyUp;
+  LastVerdict := Result;
+  CurY := CurY + Result.Height + ScaleY(4);
 end;
 
 function AddButtonAt(Caption: String; Left, Tag: Integer): TNewButton;
@@ -695,6 +772,23 @@ begin
   Result.Caption := Caption;
   Result.Tag := Tag;
   Result.SetBounds(Left, CurY, WizardForm.CalculateButtonWidth([Caption]), WizardForm.NextButton.Height);
+  SetArrayLength(BodyButtons, GetArrayLength(BodyButtons) + 1);
+  BodyButtons[GetArrayLength(BodyButtons) - 1] := Result;
+end;
+
+{ W14-D3 (6.1 L5): the buttons of one item or block in one row, left to right, 8 px apart. }
+function AddRowButton(Caption: String; Tag: Integer): TNewButton;
+begin
+  Result := AddButtonAt(Caption, RowX, Tag);
+  RowX := RowX + Result.Width + ScaleX(8);
+  RowHeight := Result.Height;
+end;
+
+procedure EndRow;
+begin
+  if RowX > 0 then
+    CurY := CurY + RowHeight + ScaleY(4);
+  RowX := 0;
 end;
 
 function AddLink(Caption: String; Tag: Integer): TNewLinkLabel;
@@ -707,7 +801,27 @@ begin
   Result.Top := CurY;
   Result.Width := Cur.Width;
   Result.AdjustHeight;
-  CurY := CurY + Result.Height + ScaleY(6);
+  CurY := CurY + Result.Height + ScaleY(4);
+end;
+
+{ W14-D3 (6.1 L7): a line that ends with its link ("23 checks passed. Show all checks"). The
+  text is plain; only Caption is the link. }
+function AddLinkLine(Text, Caption: String; Tag: Integer): TNewLinkLabel;
+var
+  Plain: String;
+begin
+  Plain := Text;
+  StringChangeEx(Plain, '<', '(', True);
+  StringChangeEx(Plain, '>', ')', True);
+  Result := TNewLinkLabel.Create(WizardForm);
+  Result.Parent := Cur;
+  Result.Caption := Plain + ' <a href="' + IntToStr(Tag) + '">' + Caption + '</a>';
+  Result.Tag := Tag;
+  Result.Left := 0;
+  Result.Top := CurY;
+  Result.Width := Cur.Width;
+  Result.AdjustHeight;
+  CurY := CurY + Result.Height + ScaleY(4);
 end;
 
 { ------------------------------------------------------------------------------------------- }
@@ -747,7 +861,7 @@ end;
   Kind names the wait for WaitStage and WaitActionText (Maintenance.iss). }
 procedure AddProgress(Kind, Stages: String; Current: Integer; Action: String; Since: Cardinal; Limit: String);
 var
-  Rest, Name, Word: String;
+  Rest, Name, StateWord: String;
   I, Cut: Integer;
   Row: TNewStaticText;
 begin
@@ -767,10 +881,10 @@ begin
       Name := Copy(Rest, 1, Cut - 1);
       Rest := Copy(Rest, Cut + 1, Length(Rest));
     end;
-    if I < Current then Word := CM('s12_done_word')
-    else if I = Current then Word := CM('s12_now_word')
-    else Word := CM('wait_next_word');
-    Row := AddTextTo(Cur, CurY, Word, I = Current);
+    if I < Current then StateWord := CM('s12_done_word')
+    else if I = Current then StateWord := CM('s12_now_word')
+    else StateWord := CM('wait_next_word');
+    Row := AddTextTo(Cur, CurY, StateWord, I = Current);
     Row.Width := ScaleX(52);
     Row := AddTextTo(Cur, CurY, Name, I = Current);
     Row.Left := ScaleX(60);
@@ -805,10 +919,20 @@ begin
     StatusLine.WordWrap := True;
     StatusLine.SetBounds(WizardForm.InnerNotebook.Left, WizardForm.Bevel.Top - ScaleY(22),
       WizardForm.InnerNotebook.Width, ScaleY(18));
+    { W14-D3 (6.1 L1): the line sits on the page area, so it takes the page color, not the
+      window's grey. }
+    StatusLine.Color := Pages[P_ORG].SurfaceColor;
   end;
   StatusLine.Caption := Text;
   StatusLine.Visible := Text <> '';
   StatusLine.BringToFront;
+end;
+
+{ W14-D3 (6.1 L12): the top of the status line in page coordinates. Content on S08 to S11 ends
+  12 px above it. }
+function StatusBandTop: Integer;
+begin
+  Result := WizardForm.Bevel.Top - ScaleY(22) - WizardForm.InnerNotebook.Top;
 end;
 
 { The page's one line for a short wait (7.6 one-line form); the timer keeps it current. }
@@ -822,8 +946,9 @@ begin
   StepLabel := AddText(Text, False);
 end;
 
-{ The stage line under the header on S02 to S12 (spec 6.1). }
-procedure AddStageLine(Stage: Integer);
+{ The stage line under the header on S02 to S12 (spec 6.1) on Parent at Top; returns the top of
+  the content under it (16 px under the line). }
+function StageLineAt(Parent: TWinControl; Top, Stage: Integer): Integer;
 var
   Labels: array of TNewStaticText;
   I, Left: Integer;
@@ -833,7 +958,7 @@ begin
   for I := 1 to 3 do
   begin
     Labels[I - 1] := TNewStaticText.Create(WizardForm);
-    Labels[I - 1].Parent := Cur;
+    Labels[I - 1].Parent := Parent;
     Labels[I - 1].ShowAccelChar := False;
     Labels[I - 1].Caption := CM('stage_' + IntToStr(I));
     if I < 3 then
@@ -841,10 +966,92 @@ begin
     if I = Stage then
       Labels[I - 1].Font.Style := [fsBold];
     Labels[I - 1].Left := Left;
-    Labels[I - 1].Top := CurY;
+    Labels[I - 1].Top := Top;
     Left := Left + Labels[I - 1].Width;
   end;
-  CurY := CurY + Labels[0].Height + ScaleY(10);
+  { 6.1 L4: the stage line is a block (16 px under it). }
+  Result := Top + Labels[0].Height + ScaleY(16);
+end;
+
+procedure AddStageLine(Stage: Integer);
+begin
+  CurY := StageLineAt(Cur, CurY, Stage);
+end;
+
+{ ------------------------------------------------------------------------------------------- }
+{ W14-D3 (6.1 L11): Inno's button row. Each button is as wide as its caption needs, never        }
+{ narrower than Inno's default; the row stays right aligned with Inno's gaps. Every caption      }
+{ change goes through a setter below, so no caption is cut ("end test ema", screenshot 10).      }
+{ ------------------------------------------------------------------------------------------- }
+
+function RowButtonWidth(Caption: String): Integer;
+begin
+  Result := WizardForm.CalculateButtonWidth([Caption]);
+  if Result < BtnDefaultW then
+    Result := BtnDefaultW;
+end;
+
+procedure PlaceRowButton(Button: TNewButton; Right: Integer);
+var
+  Width: Integer;
+begin
+  Width := RowButtonWidth(Button.Caption);
+  if (Button.Width <> Width) or (Button.Left <> Right - Width) then
+    Button.SetBounds(Right - Width, Button.Top, Width, Button.Height);
+end;
+
+procedure LayoutButtonRow;
+var
+  Right: Integer;
+begin
+  if (BtnDefaultW = 0) or not WizardReady then
+    Exit;
+  { Cancel keeps its slot when it is hidden, as Inno keeps it. }
+  PlaceRowButton(WizardForm.CancelButton, BtnRight);
+  Right := WizardForm.CancelButton.Left - BtnGapNC;
+  PlaceRowButton(WizardForm.NextButton, Right);
+  Right := WizardForm.NextButton.Left - BtnGapBN;
+  PlaceRowButton(WizardForm.BackButton, Right);
+  { S05 "Restart later" sits left of Back (6.1 L6 exception). }
+  if (ExtraButton <> nil) and ExtraButton.Visible then
+    PlaceRowButton(ExtraButton, WizardForm.BackButton.Left - BtnGapNC);
+end;
+
+procedure SetNextCaption(Caption: String);
+begin
+  WizardForm.NextButton.Caption := Caption;
+  LayoutButtonRow;
+end;
+
+procedure SetCancelCaption(Caption: String);
+begin
+  WizardForm.CancelButton.Caption := Caption;
+  LayoutButtonRow;
+end;
+
+procedure SetExtraCaption(Caption: String);
+begin
+  ExtraButton.Caption := Caption;
+  LayoutButtonRow;
+end;
+
+{ W14-D3 (6.1 L11): a form's right-aligned buttons (Left may be nil) as wide as their captions
+  need, never narrower than they were, 8 px apart, with the form's right margin kept. }
+procedure FitFormRow(Form: TSetupForm; Left, Right: TNewButton);
+var
+  Margin, Width: Integer;
+begin
+  Margin := Form.ClientWidth - (Right.Left + Right.Width);
+  Width := Form.CalculateButtonWidth([Right.Caption]);
+  if Width < Right.Width then
+    Width := Right.Width;
+  Right.SetBounds(Form.ClientWidth - Margin - Width, Right.Top, Width, Right.Height);
+  if Left = nil then
+    Exit;
+  Width := Form.CalculateButtonWidth([Left.Caption]);
+  if Width < Left.Width then
+    Width := Left.Width;
+  Left.SetBounds(Right.Left - ScaleX(8) - Width, Left.Top, Width, Left.Height);
 end;
 
 function ConfirmBox(Instruction, Text: String; Yes, No: String): Boolean;
@@ -880,6 +1087,7 @@ begin
     Button.Cancel := True;
     Button.Default := True;
     Button.SetBounds(Form.ClientWidth - ScaleX(10) - ScaleX(90), Form.ClientHeight - ScaleY(36), ScaleX(90), ScaleY(26));
+    FitFormRow(Form, nil, Button);
     ModalOpen := True;
     Form.ShowModal;
   finally
@@ -1379,7 +1587,7 @@ end;
 { window while it unpacks, so each file gets its own tick and the page shows the stage first.   }
 { ------------------------------------------------------------------------------------------- }
 
-{ Patterns: file patterns under {tmp}\payload, split by "|". }
+{ Patterns: file patterns in the payload folder of the temporary folder, split by "|". }
 procedure QueueExtract(Patterns, ForTag: String);
 begin
   ExtractList := Patterns;
@@ -1552,9 +1760,15 @@ begin
   if ReportLabel <> nil then
     ReportLabel.Caption := Text;
   if FailureStatus <> nil then
+  begin
     FailureStatus.Caption := Text;
-  if WizardReady and (WizardForm.CurPageID = wpWelcome) and StateUnsafe then
-    WizardForm.WelcomeLabel2.Caption := CM('s01_state_unsafe') + #13#10#13#10 + Text;
+    FailureStatus.AdjustHeight;
+  end;
+  if WizardReady and (WizardForm.CurPageID = wpWelcome) and StateUnsafe and (S01Line <> nil) then
+  begin
+    S01Line.Caption := Text;
+    WizardForm.AdjustLabelHeight(S01Line);
+  end;
 end;
 
 { W14-D9: the server part's logs need the one Exec job. They are left out (report.txt says so)
@@ -1649,26 +1863,39 @@ begin
     OpenAsUser(ExpandConstant('{win}\explorer.exe'), '/select,' + AddQuotes(ReportPath));
 end;
 
-{ The Save report button and, once saved, the result line with "Show in folder". }
-procedure AddReportControls;
+{ W14-D3 (6.1 L5): Save report in the row being built; the caller ends the row. }
+procedure AddReportButton;
 var
   Button: TNewButton;
+begin
+  Button := AddRowButton(CM('btn_save_report'), 0);
+  Button.OnClick := @SaveReport;
+end;
+
+{ W14-D9: the line while the report is saved; W14-D3 (6.1 L7): its result ends with "Show in
+  folder". }
+procedure AddReportLine;
+var
   Link: TNewLinkLabel;
 begin
-  Button := AddButtonAt(CM('btn_save_report'), 0, 0);
-  Button.OnClick := @SaveReport;
-  CurY := CurY + Button.Height + ScaleY(6);
-  { W14-D9: the line while the report is saved, then its result. }
-  if (ReportLine <> '') or (ReportPhase <> '') then
+  if (ReportPhase = '') and (ReportPath <> '') and (ReportLine <> '') then
+  begin
+    Link := AddLinkLine(ReportLine, CM('btn_show_in_folder'), 0);
+    Link.OnLinkClick := @ShowReportClick;
+  end
+  else if (ReportLine <> '') or (ReportPhase <> '') then
   begin
     ReportLabel := AddText(ReportLine, False);
     ShowReportLine;
-    if (ReportPath <> '') and (ReportPhase = '') then
-    begin
-      Link := AddLink(CM('btn_show_in_folder'), 0);
-      Link.OnLinkClick := @ShowReportClick;
-    end;
   end;
+end;
+
+{ The Save report button in its own row and, once saved, the result line. }
+procedure AddReportControls;
+begin
+  AddReportButton;
+  EndRow;
+  AddReportLine;
 end;
 
 { ------------------------------------------------------------------------------------------- }
@@ -1678,69 +1905,106 @@ end;
 procedure AddFailure(Stage, WhatHappened: String; TryAgain: Boolean);
 var
   Verdict: TNewMemo;
+  Button: TNewButton;
 begin
   WizardForm.PageNameLabel.Caption := CM('s13_title');
   WizardForm.PageDescriptionLabel.Caption := Stage;
   Verdict := AddVerdict(WhatHappened);
   if TryAgain then
     AddText(CM('s13_what'), False);
-  AddReportControls;
+  { W14-D3 (6.1 L4, L5): the actions 12 px under the text, in one row: the extra action of the
+    catalog row first, then Save report. }
+  ItemGap;
+  if FailureExtra = 'choose-drive' then
+  begin
+    Button := AddRowButton(CM('s12_choose_drive'), 0);
+    Button.OnClick := @ChooseDriveClick;
+    Button.Enabled := FailureExtraOn;
+  end;
+  FailureExtra := '';
+  AddReportButton;
+  EndRow;
+  AddReportLine;
   if TryAgain then
   begin
-    WizardForm.NextButton.Caption := CM('btn_try_again');
+    SetNextCaption(CM('btn_try_again'));
     WizardForm.NextButton.Enabled := True;
   end
   else
     WizardForm.NextButton.Enabled := False;
-  if Verdict.CanFocus then
-    WizardForm.ActiveControl := Verdict;
+  FocusVerdict(Verdict);
 end;
 
-{ A failure of background work, in a modal form with the S13 layout (spec 4.1). Returns True
-  for Try again. }
-function FailureForm(Stage, WhatHappened: String; TryAgain: Boolean): Boolean;
+{ W14-D3 (6.1 L11): a form button as wide as its caption needs, never narrower than Width. }
+function FormButton(Form: TSetupForm; Caption: String; Width, ModalCode: Integer): TNewButton;
+begin
+  Result := TNewButton.Create(Form);
+  Result.Parent := Form;
+  Result.Caption := Caption;
+  { ModalCode 0: the button does not close the form. }
+  Result.ModalResult := ModalCode;
+  if Form.CalculateButtonWidth([Caption]) > Width then
+    Width := Form.CalculateButtonWidth([Caption]);
+  Result.Width := Width;
+  Result.Height := ScaleY(26);
+  SetArrayLength(FormButtons, GetArrayLength(FormButtons) + 1);
+  FormButtons[GetArrayLength(FormButtons) - 1] := Result;
+end;
+
+function FormText(Form: TSetupForm; Y: Integer; S: String; Bold: Boolean): TNewStaticText;
+begin
+  Result := AddTextTo(Form, Y, S, Bold);
+  Result.Left := ScaleX(14);
+  Result.Width := Form.ClientWidth - ScaleX(28);
+  WizardForm.AdjustLabelHeight(Result);
+end;
+
+{ A failure of background work, in a modal form with the S13 layout (spec 4.1). W14-D3 (6.1 L4,
+  L5, L11): the texts flow with the rhythm, the report line takes the height of its text, and
+  the buttons sit in one row at their caption widths: [Try again] [Save report] ... [Close]. }
+function BuildFailureForm(Stage, WhatHappened: String; TryAgain: Boolean): TSetupForm;
 var
   Form: TSetupForm;
   Text: TNewStaticText;
   Again, Report, CloseButton: TNewButton;
+  Y: Integer;
 begin
   Form := CreateCustomForm(ScaleX(440), ScaleY(220), False, False);
+  Form.Caption := CM('s13_title');
+  Y := ScaleY(14);
+  Text := FormText(Form, Y, Stage, True);
+  Y := Y + Text.Height + ScaleY(4);
+  Text := FormText(Form, Y, WhatHappened, False);
+  Y := Y + Text.Height + ScaleY(4);
+  if TryAgain then
+  begin
+    Text := FormText(Form, Y, CM('s13_what'), False);
+    Y := Y + Text.Height + ScaleY(4);
+  end;
+  { Design B2: SaveReport writes its result line here. }
+  FailureStatus := FormText(Form, Y + ScaleY(8), '', False);
+  Y := Y + ScaleY(8) + ScaleY(36);
+  Again := FormButton(Form, CM('btn_try_again'), ScaleX(90), mrRetry);
+  Again.Enabled := TryAgain;
+  Again.Default := TryAgain;
+  Report := FormButton(Form, CM('btn_save_report'), ScaleX(90), 0);
+  Report.OnClick := @SaveReport;
+  CloseButton := FormButton(Form, CM('btn_close'), ScaleX(90), mrCancel);
+  CloseButton.Cancel := True;
+  Form.ClientHeight := Y + ScaleY(16) + Again.Height + ScaleY(14);
+  Again.SetBounds(ScaleX(14), Form.ClientHeight - ScaleY(14) - Again.Height, Again.Width, Again.Height);
+  Report.SetBounds(Again.Left + Again.Width + ScaleX(8), Again.Top, Report.Width, Report.Height);
+  CloseButton.SetBounds(Form.ClientWidth - ScaleX(14) - CloseButton.Width, Again.Top, CloseButton.Width, CloseButton.Height);
+  Result := Form;
+end;
+
+{ Returns True for Try again. }
+function FailureForm(Stage, WhatHappened: String; TryAgain: Boolean): Boolean;
+var
+  Form: TSetupForm;
+begin
+  Form := BuildFailureForm(Stage, WhatHappened, TryAgain);
   try
-    Form.Caption := CM('s13_title');
-    Text := AddTextTo(Form, ScaleY(10), Stage, True);
-    Text.Left := ScaleX(10);
-    Text.Width := Form.ClientWidth - ScaleX(20);
-    Text := AddTextTo(Form, ScaleY(36), WhatHappened, False);
-    Text.Left := ScaleX(10);
-    Text.Width := Form.ClientWidth - ScaleX(20);
-    if TryAgain then
-    begin
-      Text := AddTextTo(Form, ScaleY(80), CM('s13_what'), False);
-      Text.Left := ScaleX(10);
-      Text.Width := Form.ClientWidth - ScaleX(20);
-    end;
-    { Design B2: SaveReport writes its result line here. }
-    FailureStatus := AddTextTo(Form, ScaleY(140), '', False);
-    FailureStatus.Left := ScaleX(10);
-    FailureStatus.Width := Form.ClientWidth - ScaleX(20);
-    Again := TNewButton.Create(Form);
-    Again.Parent := Form;
-    Again.Caption := CM('btn_try_again');
-    Again.ModalResult := mrRetry;
-    Again.Enabled := TryAgain;
-    Again.Default := TryAgain;
-    Again.SetBounds(ScaleX(10), Form.ClientHeight - ScaleY(36), ScaleX(110), ScaleY(26));
-    Report := TNewButton.Create(Form);
-    Report.Parent := Form;
-    Report.Caption := CM('btn_save_report');
-    Report.OnClick := @SaveReport;
-    Report.SetBounds(ScaleX(130), Form.ClientHeight - ScaleY(36), ScaleX(120), ScaleY(26));
-    CloseButton := TNewButton.Create(Form);
-    CloseButton.Parent := Form;
-    CloseButton.Caption := CM('btn_close');
-    CloseButton.ModalResult := mrCancel;
-    CloseButton.Cancel := True;
-    CloseButton.SetBounds(Form.ClientWidth - ScaleX(100), Form.ClientHeight - ScaleY(36), ScaleX(90), ScaleY(26));
     ModalOpen := True;
     Result := Form.ShowModal = mrRetry;
   finally
@@ -1981,6 +2245,7 @@ begin
     Stop.Cancel := True;
     Stop.Default := True;
     Stop.SetBounds(Form.ClientWidth - ScaleX(105), Form.ClientHeight - ScaleY(36), ScaleX(95), ScaleY(26));
+    FitFormRow(Form, Go, Stop);
     ModalOpen := True;
     Answer := Form.ShowModal;
   finally
@@ -2053,16 +2318,16 @@ begin
   else if (Item.Id = 'C29') and (Item.Code <> 'unknown_parts') then Caption := CM('c29_btn');
   if Caption = '' then
     Exit;
-  Button := AddButtonAt(Caption, 0, Index * 16);
+  Button := AddRowButton(Caption, Index * 16);
   Button.OnClick := @ItemButtonClick;
   Button.Enabled := not FixRunning and not StepRunning;
   if Caption2 <> '' then
   begin
-    Button := AddButtonAt(Caption2, Button.Width + ScaleX(8), Index * 16 + 1);
+    Button := AddRowButton(Caption2, Index * 16 + 1);
     Button.OnClick := @ItemButtonClick;
     Button.Enabled := not FixRunning and not StepRunning;
   end;
-  CurY := CurY + Button.Height + ScaleY(8);
+  EndRow;
 end;
 
 { The check item that a fix action belongs to. }
@@ -2073,6 +2338,8 @@ begin
   else Result := 'C29';
 end;
 
+{ W14-D3 (6.1 L2, L3): one bold heading "<result word>: <check name>", its text directly under
+  it, then its buttons in one row. }
 procedure AddItem(Index: Integer);
 begin
   AddText(ItemWord(Items[Index]) + ': ' + ItemName(Items[Index]), True);
@@ -2114,6 +2381,28 @@ begin
 end;
 
 { The items that need the person: Fix first, then Advice; at most four, then "Show N more". }
+{ W14-D3 (6.1 L8): an item is drawn only while it can still fit above the bottom block. }
+function ItemFits: Boolean;
+begin
+  Result := CurY + ScaleY(200) <= Cur.Height;
+end;
+
+procedure AddOneItem(Index: Integer; var Shown, More: Integer);
+begin
+  if (Shown < 4) and ItemFits then
+  begin
+    if Shown > 0 then
+      ItemGap;
+    AddItem(Index);
+    Shown := Shown + 1;
+  end
+  else
+    More := More + 1;
+end;
+
+{ W14-D3 (6.1 L2 to L8, target layouts): the items (Fix first, then Recommended, no group line,
+  12 px apart), then the bottom block 16 px under them: "23 checks passed. Show all checks" and
+  the row [Check again] [Save report]. }
 procedure AddCheckItems(OnlyFix: Boolean);
 var
   I, Shown, Passed, More: Integer;
@@ -2128,36 +2417,30 @@ begin
       Passed := Passed + 1;
   for I := 0 to GetArrayLength(Items) - 1 do
     if Items[I].Cls = 'fix' then
-    begin
-      if Shown < 4 then begin AddItem(I); Shown := Shown + 1; end else More := More + 1;
-    end;
+      AddOneItem(I, Shown, More);
   if not OnlyFix then
-  begin
-    if CountClass('advice') > 0 then
-      AddText(CM('s02_recommended'), True);
     for I := 0 to GetArrayLength(Items) - 1 do
       if Items[I].Cls = 'advice' then
-      begin
-        if Shown < 4 then begin AddItem(I); Shown := Shown + 1; end else More := More + 1;
-      end;
-  end;
+        AddOneItem(I, Shown, More);
+  if Shown > 0 then
+    BlockGap;
   if More > 0 then
   begin
     Link := AddLink(FM1('s02_show_more', IntToStr(More)), 0);
     Link.OnLinkClick := @ShowAllChecks;
   end;
-  AddText(FM1('s02_passed', IntToStr(Passed)), False);
-  Link := AddLink(CM('s02_show_all'), 0);
+  Link := AddLinkLine(FM1('s02_passed', IntToStr(Passed)), CM('s02_show_all'), 0);
   Link.OnLinkClick := @ShowAllChecks;
-  Button := AddButtonAt(CM('btn_check_again'), 0, 0);
+  Button := AddRowButton(CM('btn_check_again'), 0);
   Button.OnClick := @CheckAgainClick;
   Button.Enabled := not FixRunning and not StepRunning;
-  CurY := CurY + Button.Height + ScaleY(6);
+  { W14-D1: Save report on S02 whatever the result. }
+  AddReportButton;
+  EndRow;
+  AddReportLine;
   { W14-D5 (7.6 "S02 and S06 restart"): the one line of the save and the restart. }
   if StepRunning then
     AddStepLine;
-  { W14-D1: Save report on S02 whatever the result. }
-  AddReportControls;
 end;
 
 function StopTodo(Item: TCheckItem): String;
@@ -2169,17 +2452,38 @@ begin
   else if (Item.Id = 'C01') and (Item.Code = 'windows_10') then Result := CM('s03_win10_todo');
 end;
 
+{ W14-D3 (rule 2.8, spec 5.2 item 3, C26): the ready verdict's second line names only the
+  components that are missing. }
+function PrepLine: String;
+var
+  I: Integer;
+  Vmp, Wsl: Boolean;
+begin
+  Result := '';
+  Vmp := False;
+  Wsl := False;
+  for I := 0 to GetArrayLength(Items) - 1 do
+    if (Items[I].Id = 'C26') and (Items[I].Cls = 'auto') then
+    begin
+      Vmp := JsonValue(Items[I].Raw, 'vmp_state') <> 'Enabled';
+      Wsl := JsonLiteral(Items[I].Raw, 'wsl_install_needed') = 'true';
+    end;
+  if Vmp and Wsl then Result := CM('s02_ready_prep_both')
+  else if Vmp then Result := CM('s02_ready_prep_vmp')
+  else if Wsl then Result := CM('s02_ready_prep_wsl');
+end;
+
 procedure RenderCheckBody;
 var
   Verdict: TNewMemo;
-  I: Integer;
+  I, Stops: Integer;
 begin
   BeginBody(P_CHECK);
   WizardForm.PageNameLabel.Caption := CM('s02_title');
   WizardForm.PageDescriptionLabel.Caption := CM('s02_subtitle');
   WizardForm.NextButton.Visible := True;
-  WizardForm.NextButton.Caption := CM('btn_next');
-  WizardForm.CancelButton.Caption := SetupMessage(msgButtonCancel);
+  SetNextCaption(CM('btn_next'));
+  SetCancelCaption(SetupMessage(msgButtonCancel));
   AddStageLine(1);
   if EntryWelcomeBack then
     AddText(CM('s02_welcome_back'), False);
@@ -2206,23 +2510,30 @@ begin
   end;
   if CheckVerdict = 'not_suitable' then
   begin
-    { S03: the same page in its "not suitable" state (spec S03). }
+    { S03: the same page in its "not suitable" state (spec S03). W14-D3 (6.1 L3, L4): each Stop
+      item is one block (name, message, what you can do), 12 px apart, 16 px around the list. }
     WizardForm.PageNameLabel.Caption := CM('s03_title');
     WizardForm.PageDescriptionLabel.Caption := CM('s03_subtitle');
     Verdict := AddVerdict(CM('s03_verdict'));
+    BlockGap;
+    Stops := 0;
     for I := 0 to GetArrayLength(Items) - 1 do
       if Items[I].Cls = 'stop' then
       begin
+        if Stops > 0 then
+          ItemGap;
+        Stops := Stops + 1;
         AddText(ItemName(Items[I]), True);
         AddText(ItemMessage(Items[I]), False);
         if StopTodo(Items[I]) <> '' then
           AddText(CM('s03_what') + ' ' + StopTodo(Items[I]), False);
       end;
+    BlockGap;
     AddText(CM('s03_suitable'), False);
     AddText(CM('s03_wrong'), False);
     AddReportControls;
     WizardForm.NextButton.Visible := False;
-    WizardForm.CancelButton.Caption := CM('btn_close');
+    SetCancelCaption(CM('btn_close'));
   end
   else if CheckVerdict = 'needs_fixes' then
   begin
@@ -2230,19 +2541,20 @@ begin
       Verdict := AddVerdict(CM('s02_needs_one'))
     else
       Verdict := AddVerdict(FM1('s02_needs', IntToStr(CountClass('fix'))));
+    BlockGap;
     AddCheckItems(False);
     WizardForm.NextButton.Enabled := False;
   end
   else
   begin
     Verdict := AddVerdict(CM('s02_ready'));
-    if RestartNeeded then
-      AddText(CM('s02_ready_restart'), False);
+    if PrepLine <> '' then
+      AddText(PrepLine, False);
+    BlockGap;
     AddCheckItems(False);
     WizardForm.NextButton.Enabled := not FixRunning;
   end;
-  if Verdict.CanFocus then
-    WizardForm.ActiveControl := Verdict;
+  FocusVerdict(Verdict);
 end;
 
 
@@ -2264,9 +2576,10 @@ begin
     AddVerdict(CM('s02_draw_failed'));
     AddText(CM('s13_what'), False);
     try
-      Button := AddButtonAt(CM('btn_save_report'), 0, 0);
+      ItemGap;
+      Button := AddRowButton(CM('btn_save_report'), 0);
       Button.OnClick := @SaveReport;
-      CurY := CurY + Button.Height + ScaleY(6);
+      EndRow;
       if (ReportLine <> '') or (ReportPhase <> '') then
       begin
         ReportLabel := AddText(ReportLine, False);
@@ -2276,7 +2589,7 @@ begin
       Log('S02 Save report button failed: ' + GetExceptionMessage);
     end;
     WizardForm.NextButton.Visible := True;
-    WizardForm.NextButton.Caption := CM('btn_try_again');
+    SetNextCaption(CM('btn_try_again'));
     WizardForm.NextButton.Enabled := True;
   end;
 end;
@@ -2306,6 +2619,21 @@ begin
   QueueExtract('wsl.*.msi', 'prep-unpack');
 end;
 
+{ W14-D3 (rule 2.8, spec S05): the stage list that stays after the work, with "(already on this
+  PC)" for a component that was there. }
+function S05DoneStages: String;
+var
+  Vmp, Wsl: String;
+begin
+  Vmp := CM('s05_stage_vmp');
+  if PrepFeature = 'enabled' then
+    Vmp := Vmp + ' ' + CM('s05_already');
+  Wsl := CM('s05_stage_wsl');
+  if PrepWsl = 'present' then
+    Wsl := Wsl + ' ' + CM('s05_already');
+  Result := Vmp + '|' + Wsl + '|' + CM('s05_stage_restart') + '|' + CM('s05_stage_details') + '|' + CM('s05_stage_install');
+end;
+
 procedure RenderRestart;
 var
   Steps: String;
@@ -2316,7 +2644,7 @@ begin
   WizardForm.PageNameLabel.Caption := CM('s05_title');
   WizardForm.PageDescriptionLabel.Caption := CM('s05_subtitle');
   AddStageLine(1);
-  WizardForm.NextButton.Caption := CM('btn_next');
+  SetNextCaption(CM('btn_next'));
   if ExtraButton <> nil then
     ExtraButton.Visible := False;
   if (PrepState = 'unpack') or (PrepState = 'working') or (PrepState = 'saving') then
@@ -2326,12 +2654,25 @@ begin
     WizardForm.NextButton.Enabled := False;
   end
   else if PrepState = 'failed' then
-    AddFailure(CM('s05_title'), CM('s05_failed'), True)
+  begin
+    { 7.5: the component by its name. }
+    if Pos('prepare.wsl', PrepFailKey) = 1 then
+      AddFailure(CM('s05_title'), CM('s05_failed_wsl'), True)
+    else
+      AddFailure(CM('s05_title'), CM('s05_failed'), True);
+  end
   else if PrepState = 'failed_av' then
     AddFailure(CM('s05_title'), CM('av_blocked'), True)
   else if PrepState = 'restart' then
   begin
+    { W14-D3 (rule 2.8, spec S05): the stage list stays; the verdict names both components,
+      one line of why for each; the steps; Details holds only the version and the codes. }
+    AddProgress('', S05DoneStages, 3, '', 0, '');
+    BlockGap;
     AddVerdict(CM('s05_done'));
+    AddText(CM('s05_why_vmp'), False);
+    AddText(CM('s05_why_wsl'), False);
+    BlockGap;
     Steps := RestartResumeText(ResumeCode, 's05_steps');
     if Steps = '' then
       Steps := CM('s05_steps');
@@ -2339,21 +2680,23 @@ begin
     Link := AddLink(CM('btn_details'), 0);
     Link.OnLinkClick := @PrepDetailsClick;
     if PrepDetails then
-      AddText(CM('s05_details'), False);
-    WizardForm.NextButton.Caption := CM('s05_next');
+      AddText(FM3('s05_details', WslVersion, PrepFeature, PrepWsl), False);
+    SetNextCaption(CM('s05_next'));
     WizardForm.NextButton.Enabled := not StepRunning;
     { 7.6: "Restarting this PC..." after Restart now. }
     AddStepLine;
     if ExtraButton <> nil then
     begin
-      ExtraButton.Caption := CM('s05_later');
       ExtraButton.OnClick := @RestartLaterClick;
       ExtraButton.Visible := True;
+      SetExtraCaption(CM('s05_later'));
     end;
   end
   else
   begin
-    AddVerdict(CM('s05_done'));
+    AddProgress('', S05DoneStages, 4, '', 0, '');
+    BlockGap;
+    AddVerdict(CM('s05_done_no_restart'));
     WizardForm.NextButton.Enabled := True;
   end;
 end;
@@ -2366,13 +2709,14 @@ procedure RenderWelcomeBack;
 begin
   BeginBody(P_BACK);
   AddStageLine(1);
-  WizardForm.NextButton.Caption := CM('btn_continue');
+  SetNextCaption(CM('btn_continue'));
+  { W14-D3: the subtitle already says where setup continues; a body line only when it adds to
+    it (screenshot 6 showed the same sentence twice, both bold). }
   if EntryNext = 'S14' then
-    AddText(CM('s06_stopped_key'), True)
-  else if EntryNext = 'S12' then
-    AddText(CM('s06_stopped'), True)
-  else
-    AddText(CM('s06_continue'), True);
+  begin
+    AddText(CM('s06_stopped_key'), False);
+    BlockGap;
+  end;
   if CheckVerdict = 'helper_timeout' then
   begin
     AddFailure(CM('s06_title'), CM('av_blocked'), True);
@@ -2458,6 +2802,42 @@ end;
 function GB(Bytes: Int64): String;
 begin
   Result := IntToStr(Integer(Bytes div 1073741824));
+end;
+
+{ W14-D3 (6.1 L10): the name that Windows shows for a drive (its volume label), "Local Disk"
+  when it has none. }
+function DriveName(Letter: String): String;
+var
+  Buffer, FsName: String;
+  I: Integer;
+begin
+  Result := '';
+  Buffer := StringOfChar(#0, 261);
+  FsName := '';
+  if GetVolumeInformation(AddBackslash(Copy(Letter, 1, 2)), Buffer, 261, 0, 0, 0, FsName, 0) then
+  begin
+    I := 1;
+    while (I <= Length(Buffer)) and (Copy(Buffer, I, 1) <> #0) do
+      I := I + 1;
+    Result := Trim(Copy(Buffer, 1, I - 1));
+  end;
+  if Result = '' then
+    Result := CM('drive_local_disk');
+end;
+
+{ The drive row of 6.1 L10 (copy drive_row): the name, the letter and the free space, with
+  "Most space" on the largest drive and "(USB drive)" after the name of a removable drive. }
+function DriveRow(Letter: String; FreeBytes: Int64; Most: Boolean): String;
+var
+  Name: String;
+begin
+  Name := DriveName(Letter);
+  if GetDriveType(Copy(Letter, 1, 2) + '\') = DRIVE_REMOVABLE then
+    Name := FM1('drive_usb_name', Name);
+  if Most then
+    Result := FM3('drive_row_most', Name, Copy(Letter, 1, 2), GB(FreeBytes))
+  else
+    Result := FM3('drive_row', Name, Copy(Letter, 1, 2), GB(FreeBytes));
 end;
 
 { W9: the S07 card uses the kept data (plan 9.2) when the folder holds it and the person keeps
@@ -2588,14 +2968,13 @@ end;
 procedure RenderData;
 var
   I: Integer;
-  Caption: String;
   Radio: TNewRadioButton;
   Link: TNewLinkLabel;
   Button: TNewButton;
 begin
   BeginBody(P_DATA);
   AddStageLine(2);
-  WizardForm.NextButton.Caption := CM('btn_next');
+  SetNextCaption(CM('btn_next'));
   if DataPrepared then
   begin
     AddText(FM1('s07_folder', DataRoot), True);
@@ -2614,30 +2993,50 @@ begin
   AddText(CM('s07_first'), False);
   { 7.6 "S07 drives, kept data": the one line while the list or the kept data is read. }
   AddStepLine;
+  ItemGap;
+  { W14-D3 (6.1 L10): one radio button per drive, 4 px apart. }
   SetArrayLength(DriveRadios, GetArrayLength(DriveLetters));
   for I := 0 to GetArrayLength(DriveLetters) - 1 do
   begin
-    Caption := DriveLetters[I];
-    if I = 0 then
-      Caption := Caption + ' ' + CM('stage_sep') + ' ' + CM('s07_most_space');
-    Caption := Caption + '   ' + FM1('s07_free', GB(DriveFree[I]));
     Radio := TNewRadioButton.Create(WizardForm);
     Radio.Parent := Cur;
-    Radio.Caption := Caption;
+    Radio.Caption := DriveRow(DriveLetters[I], DriveFree[I], I = 0);
     Radio.Tag := I;
     Radio.SetBounds(0, CurY, Cur.Width, ScaleY(18));
     Radio.Checked := CompareText(Copy(DataRoot, 1, 2), DriveLetters[I]) = 0;
     Radio.OnClick := @DriveRadioClick;
-    Radio.Enabled := not DataStarted;
     DriveRadios[I] := Radio;
     CurY := CurY + Radio.Height + ScaleY(4);
   end;
-  CurY := CurY + ScaleY(6);
-  AddText(FM1('s07_folder', DataRoot), False);
+  ItemGap;
+  { 6.1 L7: the Folder line ends with "Change folder". }
+  Link := AddLinkLine(FM1('s07_folder', DataRoot), CM('s07_change_folder'), 0);
+  Link.OnLinkClick := @ChangeFolderClick;
+  { The messages of the folder sit under the Folder line, in regular text (6.1 L2). }
+  if DataError = 'data_folder_parent_unsafe' then
+  begin
+    AddText(FM2('s07_parent_unsafe', DataRoot, DefaultFolderFor(DataRoot)), False);
+    Button := AddRowButton(FM1('s07_use_default', DefaultFolderFor(DataRoot)), 0);
+    Button.OnClick := @UseDefaultClick;
+    EndRow;
+  end
+  else if DataError = 'not_empty' then
+    AddText(CM('s07_not_empty'), False)
+  else if DataError = 'too_small' then
+    AddText(FM1('s07_too_small', DataErrorValue), False)
+  else if DataError = 'drive_not_fixed_ntfs' then
+    AddText(CM('s07_usb_note'), False)
+  else if (DataError = 'start_failed') or (DataError = 'helper_timeout') then
+  begin
+    { In place, never from the timer as a dialog (spec 12 item 1). }
+    if DataError = 'helper_timeout' then AddText(CM('av_blocked'), False) else AddText(CM('s07_start_failed'), False);
+    AddReportControls;
+  end;
   RefreshKept;
   if KeptState = 'kept' then
   begin
-    { Spec S07 kept-data card. }
+    { Spec S07 kept-data card: its heading, then the two choices 4 px apart. }
+    ItemGap;
     AddText(FM3('s07_kept', KeptName, KeptVersion, KeptOn), True);
     Radio := TNewRadioButton.Create(WizardForm);
     Radio.Parent := Cur;
@@ -2646,7 +3045,7 @@ begin
     Radio.Checked := KeptUse;
     Radio.OnClick := @KeptChoiceClick;
     Radio.SetBounds(0, CurY, Cur.Width, ScaleY(18));
-    CurY := CurY + ScaleY(22);
+    CurY := CurY + Radio.Height + ScaleY(4);
     Radio := TNewRadioButton.Create(WizardForm);
     Radio.Parent := Cur;
     Radio.Caption := CM('s07_start_new');
@@ -2654,46 +3053,22 @@ begin
     Radio.Checked := not KeptUse;
     Radio.OnClick := @KeptChoiceClick;
     Radio.SetBounds(0, CurY, Cur.Width, ScaleY(18));
-    CurY := CurY + ScaleY(24);
+    CurY := CurY + Radio.Height + ScaleY(4);
   end
   else if KeptState = 'kept_newer' then
-    AddText(FM1('s07_kept_newer', KeptVersion), True)
+    AddText(FM1('s07_kept_newer', KeptVersion), False)
   else if KeptState = 'kept_older' then
-    AddText(FM1('s07_kept_older', KeptVersion), True)
+    AddText(FM1('s07_kept_older', KeptVersion), False)
   else if KeptState = 'kept_unreadable' then
   begin
-    AddText(CM('s07_kept_unreadable'), True);
+    AddText(CM('s07_kept_unreadable'), False);
     AddReportControls;
   end;
-  if DataError = 'data_folder_parent_unsafe' then
-  begin
-    AddText(FM2('s07_parent_unsafe', DataRoot, DefaultFolderFor(DataRoot)), False);
-    Button := AddButtonAt(FM1('s07_use_default', DefaultFolderFor(DataRoot)), 0, 0);
-    Button.OnClick := @UseDefaultClick;
-    CurY := CurY + Button.Height + ScaleY(6);
-  end
-  else if DataError = 'not_empty' then
-    AddText(CM('s07_not_empty'), False)
-  else if DataError = 'too_small' then
-    AddText(FM1('s07_too_small', DataErrorValue), False)
-  else if DataError = 'drive_not_fixed_ntfs' then
-    AddText(CM('s07_usb_note'), True)
-  else if (DataError = 'start_failed') or (DataError = 'helper_timeout') then
-  begin
-    { In place, never from the timer as a dialog (spec 12 item 1). }
-    if DataError = 'helper_timeout' then AddText(CM('av_blocked'), True) else AddText(CM('s07_start_failed'), True);
-    AddReportControls;
-  end;
-  if not DataStarted then
-  begin
-    Link := AddLink(CM('s07_change_folder'), 0);
-    Link.OnLinkClick := @ChangeFolderClick;
-  end;
+  ItemGap;
   if DataError <> 'drive_not_fixed_ntfs' then
     AddText(CM('s07_usb_note'), False);
   Link := AddLink(CM('s07_change_program'), 0);
   Link.OnLinkClick := @ChangeProgramClick;
-  Link.Enabled := not DataStarted;
   { W9-3: newer, older (W13b) or unreadable kept data, and "Start new" in a kept folder, keep
     Next off until the folder changes; the kept data is read first (W14-D9). }
   WizardForm.NextButton.Enabled := (DataRoot <> '') and not DataStarted and not StepRunning and ((KeptState = '') or KeptMode);
@@ -3122,47 +3497,43 @@ begin
   Result := (S <> '') and (DefaultSlug(S) = S);
 end;
 
+procedure LayoutOrg; forward;
+
 procedure OrgMoreClick(Sender: TObject; const Link: String; LinkType: TSysLinkType);
 begin
   if OrgUser.Text = '' then OrgUser.Text := DefaultUser(OrgEmail.Text);
   if OrgSlug.Text = '' then OrgSlug.Text := DefaultSlug(OrgName.Text);
-  OrgUserLabel.Visible := True;
-  OrgUser.Visible := True;
-  OrgSlugLabel.Visible := True;
-  OrgSlug.Visible := True;
-  OrgMoreHelp.Visible := True;
+  { 6.1 L9: "More options" hides once it is open. }
+  OrgMoreOpen := True;
+  LayoutOrg;
 end;
 
 procedure BuildOrgPage;
 var
   Surface: TWinControl;
-  Y: Integer;
-  T: TNewStaticText;
 begin
   Surface := Pages[P_ORG].Surface;
-  Y := 0;
-  T := AddTextTo(Surface, Y, CM('s08_name'), True); Y := Y + T.Height + ScaleY(2);
-  T := AddTextTo(Surface, Y, CM('s08_name_help'), False); Y := Y + T.Height + ScaleY(2);
-  OrgName := NewEditAt(Surface, Y); OrgName.MaxLength := 200; Y := Y + OrgName.Height + ScaleY(10);
-  T := AddTextTo(Surface, Y, CM('s08_email'), True); Y := Y + T.Height + ScaleY(2);
-  T := AddTextTo(Surface, Y, CM('s08_email_help'), False); Y := Y + T.Height + ScaleY(2);
-  OrgEmail := NewEditAt(Surface, Y); OrgEmail.MaxLength := 254; Y := Y + OrgEmail.Height + ScaleY(10);
+  OrgTop := StageLineAt(Surface, 0, 2);
+  OrgNameLabel := AddTextTo(Surface, 0, CM('s08_name'), True);
+  OrgNameHelp := AddTextTo(Surface, 0, CM('s08_name_help'), False);
+  OrgName := NewEditAt(Surface, 0); OrgName.MaxLength := 200;
+  OrgEmailLabel := AddTextTo(Surface, 0, CM('s08_email'), True);
+  OrgEmailHelp := AddTextTo(Surface, 0, CM('s08_email_help'), False);
+  OrgEmail := NewEditAt(Surface, 0); OrgEmail.MaxLength := 254;
   OrgMoreLink := TNewLinkLabel.Create(WizardForm);
   OrgMoreLink.Parent := Surface;
   OrgMoreLink.Caption := '<a href="more">' + CM('s08_more') + '</a>';
-  OrgMoreLink.Top := Y;
   OrgMoreLink.Width := Surface.Width;
   OrgMoreLink.AdjustHeight;
   OrgMoreLink.OnLinkClick := @OrgMoreClick;
-  Y := Y + OrgMoreLink.Height + ScaleY(6);
-  OrgUserLabel := AddTextTo(Surface, Y, CM('s08_username'), True); Y := Y + OrgUserLabel.Height + ScaleY(2);
-  OrgUser := NewEditAt(Surface, Y); OrgUser.MaxLength := 100; Y := Y + OrgUser.Height + ScaleY(6);
-  OrgSlugLabel := AddTextTo(Surface, Y, CM('s08_slug'), True); Y := Y + OrgSlugLabel.Height + ScaleY(2);
-  OrgSlug := NewEditAt(Surface, Y); OrgSlug.MaxLength := 100; Y := Y + OrgSlug.Height + ScaleY(6);
-  OrgMoreHelp := AddTextTo(Surface, Y, CM('s08_more_help'), False); Y := Y + OrgMoreHelp.Height + ScaleY(6);
-  OrgError := AddTextTo(Surface, Y, '', True);
-  OrgUserLabel.Visible := False; OrgUser.Visible := False;
-  OrgSlugLabel.Visible := False; OrgSlug.Visible := False; OrgMoreHelp.Visible := False;
+  OrgUserLabel := AddTextTo(Surface, 0, CM('s08_username'), True);
+  OrgUser := NewEditAt(Surface, 0); OrgUser.MaxLength := 100;
+  OrgSlugLabel := AddTextTo(Surface, 0, CM('s08_slug'), True);
+  OrgSlug := NewEditAt(Surface, 0); OrgSlug.MaxLength := 100;
+  OrgMoreHelp := AddTextTo(Surface, 0, CM('s08_more_help'), False);
+  { 6.1 L2: a field error is regular text, under its field. }
+  OrgError := AddTextTo(Surface, 0, '', False);
+  LayoutOrg;
 end;
 
 function CheckOrg: Boolean;
@@ -3170,12 +3541,14 @@ begin
   Result := False;
   if OrgUser.Text = '' then OrgUser.Text := DefaultUser(OrgEmail.Text);
   if OrgSlug.Text = '' then OrgSlug.Text := DefaultSlug(OrgName.Text);
-  if Trim(OrgName.Text) = '' then begin OrgError.Caption := CM('s08_err_name'); WizardForm.ActiveControl := OrgName; Exit; end;
-  if Length(Trim(OrgName.Text)) > 100 then begin OrgError.Caption := CM('s08_err_name_long'); WizardForm.ActiveControl := OrgName; Exit; end;
-  if not ValidEmail(OrgEmail.Text) then begin OrgError.Caption := CM('s08_err_email'); WizardForm.ActiveControl := OrgEmail; Exit; end;
-  if not ValidUser(OrgUser.Text) then begin OrgMoreClick(nil, '', sltID); OrgError.Caption := CM('s08_err_username'); WizardForm.ActiveControl := OrgUser; Exit; end;
-  if not ValidSlug(OrgSlug.Text) then begin OrgMoreClick(nil, '', sltID); OrgError.Caption := CM('s08_err_slug'); WizardForm.ActiveControl := OrgSlug; Exit; end;
+  if Trim(OrgName.Text) = '' then begin OrgError.Caption := CM('s08_err_name'); OrgErrorAfter := OrgName; LayoutOrg; WizardForm.ActiveControl := OrgName; Exit; end;
+  if Length(Trim(OrgName.Text)) > 100 then begin OrgError.Caption := CM('s08_err_name_long'); OrgErrorAfter := OrgName; LayoutOrg; WizardForm.ActiveControl := OrgName; Exit; end;
+  if not ValidEmail(OrgEmail.Text) then begin OrgError.Caption := CM('s08_err_email'); OrgErrorAfter := OrgEmail; LayoutOrg; WizardForm.ActiveControl := OrgEmail; Exit; end;
+  if not ValidUser(OrgUser.Text) then begin OrgMoreClick(nil, '', sltID); OrgError.Caption := CM('s08_err_username'); OrgErrorAfter := OrgUser; LayoutOrg; WizardForm.ActiveControl := OrgUser; Exit; end;
+  if not ValidSlug(OrgSlug.Text) then begin OrgMoreClick(nil, '', sltID); OrgError.Caption := CM('s08_err_slug'); OrgErrorAfter := OrgSlug; LayoutOrg; WizardForm.ActiveControl := OrgSlug; Exit; end;
   OrgError.Caption := '';
+  OrgErrorAfter := nil;
+  LayoutOrg;
   Result := True;
 end;
 
@@ -3238,7 +3611,7 @@ begin
   MailPassed := False;
   MailChangedAt := GetTickCount;
   if WizardForm.CurPageID = Pages[P_EMAIL].ID then
-    WizardForm.NextButton.Caption := CM('s09_next_test');
+    SetNextCaption(CM('s09_next_test'));
 end;
 
 procedure MailProviderClick(Sender: TObject);
@@ -3310,7 +3683,85 @@ begin
   end;
 end;
 
-{ Shows the fields of the chosen provider in order (spec S09 "Fields, in order"). }
+{ W14-D3 (6.1 L9): S08 field blocks: label, 4 px, help, 4 px, field, 4 px, its error; 12 px to
+  the next block; "More options" 12 px under the last field, hidden once open. }
+procedure PlaceOrgError(After: TControl; var Y: Integer);
+begin
+  if (OrgErrorAfter = After) and (OrgError.Caption <> '') then
+  begin
+    OrgError.Top := Y;
+    WizardForm.AdjustLabelHeight(OrgError);
+    Y := Y + OrgError.Height + ScaleY(4);
+  end;
+end;
+
+procedure LayoutOrg;
+var
+  Y: Integer;
+begin
+  Y := OrgTop;
+  OrgError.Visible := (OrgErrorAfter <> nil) and (OrgError.Caption <> '');
+  Place(OrgNameLabel, Y, True, ScaleY(4));
+  Place(OrgNameHelp, Y, True, ScaleY(4));
+  Place(OrgName, Y, True, ScaleY(4));
+  PlaceOrgError(OrgName, Y);
+  Y := Y + ScaleY(8);
+  Place(OrgEmailLabel, Y, True, ScaleY(4));
+  Place(OrgEmailHelp, Y, True, ScaleY(4));
+  Place(OrgEmail, Y, True, ScaleY(4));
+  PlaceOrgError(OrgEmail, Y);
+  Y := Y + ScaleY(8);
+  Place(OrgMoreLink, Y, not OrgMoreOpen, ScaleY(4));
+  Place(OrgUserLabel, Y, OrgMoreOpen, ScaleY(4));
+  Place(OrgUser, Y, OrgMoreOpen, ScaleY(4));
+  if OrgMoreOpen then
+  begin
+    PlaceOrgError(OrgUser, Y);
+    Y := Y + ScaleY(8);
+  end;
+  Place(OrgSlugLabel, Y, OrgMoreOpen, ScaleY(4));
+  Place(OrgSlug, Y, OrgMoreOpen, ScaleY(4));
+  if OrgMoreOpen then
+    PlaceOrgError(OrgSlug, Y);
+  Place(OrgMoreHelp, Y, OrgMoreOpen, ScaleY(4));
+end;
+
+{ The status line, Save report and "Continue later" (16 px under the last block) under the
+  form; RenderMailStatus calls it again when the status line changes. }
+procedure PlaceMailTail;
+var
+  Y: Integer;
+begin
+  WizardForm.AdjustLabelHeight(MailStatus);
+  Y := MailStatus.Top;
+  if MailStatus.Caption <> '' then
+    Y := Y + MailStatus.Height + ScaleY(4);
+  MailReportButton.Top := Y;
+  if MailReportButton.Visible then
+    Y := Y + MailReportButton.Height + ScaleY(4);
+  if MailLater <> nil then
+    MailLater.Top := Y + ScaleY(12);
+end;
+
+{ The width of a radio button that shows S: its text and the round box. }
+function RadioWidth(S: String): Integer;
+begin
+  MailMeasure.Caption := S;
+  Result := MailMeasure.Width + ScaleX(24);
+end;
+
+{ 6.1 L9: a radio group is one row at the radios' own widths, 16 px apart. }
+procedure PlaceRadioRow(First, Second, Third: TNewRadioButton; Y: Integer);
+begin
+  First.SetBounds(0, Y, RadioWidth(First.Caption), First.Height);
+  Second.SetBounds(First.Left + First.Width + ScaleX(16), Y, RadioWidth(Second.Caption), Second.Height);
+  if Third <> nil then
+    Third.SetBounds(Second.Left + Second.Width + ScaleX(16), Y, RadioWidth(Third.Caption), Third.Height);
+end;
+
+{ Shows the fields of the chosen provider in order (spec S09 "Fields, in order"). W14-D3 (6.1
+  L9): the field blocks with the 4 / 12 px rhythm; the help link ends its help line; "Continue
+  later" is the last line of the form, 16 px under the last block. }
 procedure LayoutMail;
 var
   Y: Integer;
@@ -3320,64 +3771,85 @@ begin
   M365 := MailM365.Checked and not MailOutlook;
   Other := MailOther.Checked;
   MailError.Visible := False;
-  Y := 0;
-  Place(MailFromLabel, Y, True, ScaleY(2));
+  Y := MailTop;
+  Place(MailFromLabel, Y, True, ScaleY(4));
   Place(MailFrom, Y, True, ScaleY(4));
   PlaceError(MailFrom, Y);
-  Place(MailProviderLabel, Y, True, ScaleY(2));
-  MailGmail.Top := Y; MailM365.Top := Y; MailOther.Top := Y;
-  Y := Y + MailGmail.Height + ScaleY(6);
-  PlaceError(MailGmail, Y);
+  Y := Y + ScaleY(8);
+  Place(MailProviderLabel, Y, True, ScaleY(4));
   MailGmail.Caption := CM('s09_gmail');
   MailM365.Caption := CM('s09_m365');
   if MailDetected = 'gmail' then MailGmail.Caption := MailGmail.Caption + ' ' + CM('s09_detected');
   if MailDetected = 'm365' then MailM365.Caption := MailM365.Caption + ' ' + CM('s09_detected');
+  PlaceRadioRow(MailGmail, MailM365, MailOther, Y);
+  Y := Y + MailGmail.Height + ScaleY(4);
+  PlaceError(MailGmail, Y);
+  Y := Y + ScaleY(8);
   if MailOutlook and not Other then
   begin
     MailNote.Caption := CM('s09_outlook');
     WizardForm.AdjustLabelHeight(MailNote);
-    Place(MailNote, Y, True, ScaleY(6));
+    Place(MailNote, Y, True, ScaleY(4));
     Place(MailHelpLink, Y, False, 0);
     Place(MailPasswordLabel, Y, False, 0);
     Place(MailPassword, Y, False, 0);
     Place(MailShow, Y, False, 0);
+    Y := Y + ScaleY(8);
   end
   else
   begin
-    if Gmail then MailNote.Caption := CM('s09_gmail_help')
-    else if M365 then MailNote.Caption := CM('s09_m365_note')
-    else MailNote.Caption := '';
-    WizardForm.AdjustLabelHeight(MailNote);
-    Place(MailNote, Y, Gmail or M365, ScaleY(2));
-    if Gmail then MailHelpLink.Caption := '<a href="help">' + CM('s09_gmail_link') + '</a>'
-    else MailHelpLink.Caption := '<a href="help">' + CM('s09_m365_link') + '</a>';
-    Place(MailHelpLink, Y, Gmail or M365, ScaleY(6));
-    Place(MailServerLabel, Y, Other, ScaleY(2));
-    Place(MailServer, Y, Other, ScaleY(4));
-    PlaceError(MailServer, Y);
-    Place(MailPortLabel, Y, Other, ScaleY(2));
-    Place(MailPort, Y, Other, ScaleY(4));
-    Place(MailSecurityLabel, Y, Other, ScaleY(2));
-    MailSsl.Visible := Other; MailStartTls.Visible := Other;
+    MailNote.Visible := False;
     if Other then
     begin
-      MailSsl.Top := Y; MailStartTls.Top := Y;
+      Place(MailServerLabel, Y, True, ScaleY(4));
+      Place(MailServer, Y, True, ScaleY(4));
+      PlaceError(MailServer, Y);
+      Y := Y + ScaleY(8);
+      Place(MailPortLabel, Y, True, ScaleY(4));
+      Place(MailPort, Y, True, ScaleY(4));
+      Y := Y + ScaleY(8);
+      Place(MailSecurityLabel, Y, True, ScaleY(4));
+      MailSsl.Visible := True;
+      MailStartTls.Visible := True;
+      PlaceRadioRow(MailSsl, MailStartTls, nil, Y);
       Y := Y + MailSsl.Height + ScaleY(4);
       PlaceError(MailSsl, Y);
+      Y := Y + ScaleY(8);
+      Place(MailUserLabel, Y, True, ScaleY(4));
+      Place(MailUser, Y, True, ScaleY(4));
+      Y := Y + ScaleY(8);
+    end
+    else
+    begin
+      Place(MailServerLabel, Y, False, 0);
+      Place(MailServer, Y, False, 0);
+      Place(MailPortLabel, Y, False, 0);
+      Place(MailPort, Y, False, 0);
+      Place(MailSecurityLabel, Y, False, 0);
+      MailSsl.Visible := False;
+      MailStartTls.Visible := False;
+      Place(MailUserLabel, Y, False, 0);
+      Place(MailUser, Y, False, 0);
     end;
-    Place(MailUserLabel, Y, Other, ScaleY(2));
-    Place(MailUser, Y, Other, ScaleY(4));
     if Gmail then MailPasswordLabel.Caption := CM('s09_app_password') else MailPasswordLabel.Caption := CM('s09_password');
-    Place(MailPasswordLabel, Y, True, ScaleY(2));
-    Place(MailPassword, Y, True, ScaleY(2));
+    Place(MailPasswordLabel, Y, True, ScaleY(4));
+    { The help line ends with its link (Gmail: app password; Microsoft 365: the admin steps). }
+    if Gmail then
+      MailHelpLink.Caption := CM('s09_gmail_help') + ' <a href="help">' + CM('s09_gmail_link') + '</a>'
+    else if M365 then
+      MailHelpLink.Caption := CM('s09_m365_note') + ' <a href="help">' + CM('s09_m365_link') + '</a>';
+    MailHelpLink.AdjustHeight;
+    Place(MailHelpLink, Y, Gmail or M365, ScaleY(4));
+    Place(MailPassword, Y, True, ScaleY(4));
     Place(MailShow, Y, True, ScaleY(4));
     PlaceError(MailPassword, Y);
+    Y := Y + ScaleY(8);
   end;
   Place(MailMoreLink, Y, not MailMore, ScaleY(4));
-  Place(MailSenderLabel, Y, MailMore, ScaleY(2));
-  Place(MailSender, Y, MailMore, ScaleY(6));
+  Place(MailSenderLabel, Y, MailMore, ScaleY(4));
+  Place(MailSender, Y, MailMore, ScaleY(4));
   MailStatus.Top := Y;
-  WizardForm.AdjustLabelHeight(MailStatus);
+  PlaceMailTail;
 end;
 
 function NewRadioAt(Parent: TWinControl; Caption: String; Left, Width: Integer): TNewRadioButton;
@@ -3397,6 +3869,13 @@ var
 begin
   Surface := Pages[P_EMAIL].Surface;
   Third := Surface.Width div 3;
+  MailTop := StageLineAt(Surface, 0, 2);
+  MailMeasure := TNewStaticText.Create(WizardForm);
+  MailMeasure.Parent := Surface;
+  MailMeasure.AutoSize := True;
+  MailMeasure.WordWrap := False;
+  MailMeasure.ShowAccelChar := False;
+  MailMeasure.Visible := False;
   MailFromLabel := AddTextTo(Surface, 0, CM('s09_from'), True);
   MailFrom := NewEditAt(Surface, 0); MailFrom.MaxLength := 254; MailFrom.OnChange := @MailChanged;
   MailProviderLabel := AddTextTo(Surface, 0, CM('s09_provider'), True);
@@ -3431,7 +3910,8 @@ begin
   MailMoreLink.Width := Surface.Width; MailMoreLink.AdjustHeight;
   MailSenderLabel := AddTextTo(Surface, 0, CM('s09_sender_name'), True);
   MailSender := NewEditAt(Surface, 0); MailSender.MaxLength := 100; MailSender.OnChange := @MailChanged;
-  MailError := AddTextTo(Surface, 0, '', True);
+  { 6.1 L2: a field error is regular text. }
+  MailError := AddTextTo(Surface, 0, '', False);
   MailStatus := AddTextTo(Surface, 0, '', False);
   { QA B7: Save report for an unknown result and for the R7 stop. }
   MailReportButton := TNewButton.Create(WizardForm);
@@ -3445,10 +3925,11 @@ begin
   Later.Caption := '<a href="later">' + CM('s09_continue_later') + '</a>';
   Later.Width := Surface.Width;
   Later.AdjustHeight;
-  Later.Top := Pages[P_EMAIL].SurfaceHeight - Later.Height;
   Later.OnLinkClick := @ContinueLaterClick;
   { W9 review item 7 (design W9-B1): M02 has no "Continue later". }
   Later.Visible := EntryScreen <> 'M01';
+  { W14-D3 (6.1 L9): LayoutMail places it as the last line of the form. }
+  MailLater := Later;
 end;
 
 function MailHost: String;
@@ -3515,15 +3996,14 @@ begin
     ReportLabel := MailStatus;
     ShowReportLine;
   end;
-  WizardForm.AdjustLabelHeight(MailStatus);
   MailReportButton.Visible := MailShowReport and (MailPhase = '');
-  MailReportButton.Top := MailStatus.Top + MailStatus.Height + ScaleY(4);
+  PlaceMailTail;
   if MailPassed and (EntryScreen = 'M01') then
-    WizardForm.NextButton.Caption := CM('btn_done')
+    SetNextCaption(CM('btn_done'))
   else if MailPassed then
-    WizardForm.NextButton.Caption := CM('btn_next')
+    SetNextCaption(CM('btn_next'))
   else
-    WizardForm.NextButton.Caption := CM('s09_next_test');
+    SetNextCaption(CM('s09_next_test'));
   WizardForm.NextButton.Enabled := (MailPhase = '') and (MaintPhase = '') and (MailFieldsReady or MailPassed);
 end;
 
@@ -3727,10 +4207,12 @@ begin
   begin
     if Best >= 0 then BackupDrive := BackupLetters[Best] else BackupDrive := '';
   end;
+  ItemGap;
   if Count = 0 then
   begin
     AddText(CM('s10_plug'), True);
     AddText(CM('s10_none'), False);
+    ItemGap;
   end;
   SetArrayLength(BackupRadios, Count + 1);
   Removable := False;
@@ -3741,11 +4223,10 @@ begin
       Caption := FM1('s10_data_drive', Letter)
     else
     begin
-      Caption := Letter;
-      if GetDriveType(Letter + '\') = DRIVE_REMOVABLE then
-        Caption := Caption + ' (' + CM('s10_usb_word') + ')';
-      if GetSpaceOnDisk64(Letter + '\', FreeBytes, Ignored) then
-        Caption := Caption + '   ' + FM1('s07_free', GB(FreeBytes));
+      { W14-D3 (6.1 L10): the drive row with its name, "(USB drive)" for a removable one. }
+      if not GetSpaceOnDisk64(Letter + '\', FreeBytes, Ignored) then
+        FreeBytes := 0;
+      Caption := DriveRow(Letter, FreeBytes, False);
     end;
     Radio := TNewRadioButton.Create(WizardForm);
     Radio.Parent := Cur;
@@ -3759,15 +4240,16 @@ begin
     BackupRadios[I] := Radio;
     CurY := CurY + Radio.Height + ScaleY(4);
   end;
-  CurY := CurY + ScaleY(6);
+  ItemGap;
   OnData := CompareText(BackupDrive, Copy(DataRoot, 1, 2)) = 0;
   if Removable then
     AddText(CM('s10_usb'), False);
+  { 6.1 L2: a message under the list is regular text. }
   if BackupError <> '' then
-    AddText(BackupError, True);
+    AddText(BackupError, False);
   { 7.6 "S10 Next" and M03: the one line under the list. }
   AddStepLine;
-  WizardForm.NextButton.Caption := CM('btn_next');
+  SetNextCaption(CM('btn_next'));
   WizardForm.NextButton.Enabled := (BackupDrive <> '') and not StepRunning and (MaintPhase = '');
   if OnData then
   begin
@@ -3776,7 +4258,7 @@ begin
     BackupConfirm.Caption := FM1('s10_confirm', BackupDrive);
     BackupConfirm.SetBounds(0, CurY, Cur.Width, ScaleY(18));
     BackupConfirm.OnClick := @BackupConfirmClick;
-    CurY := CurY + BackupConfirm.Height + ScaleY(6);
+    CurY := CurY + BackupConfirm.Height + ScaleY(4);
     WizardForm.NextButton.Enabled := False;
     AddText(CM('s10_later'), False);
   end;
@@ -3832,7 +4314,8 @@ begin
     Link.Top := CurY;
     Link.OnLinkClick := @ChangeClick;
   end;
-  CurY := CurY + Row.Height + ScaleY(6);
+  { W14-D3 (6.1 L4): rows 4 px apart. }
+  CurY := CurY + Row.Height + ScaleY(4);
 end;
 
 procedure RenderReady;
@@ -3842,7 +4325,7 @@ var
 begin
   BeginBody(P_READY);
   AddStageLine(3);
-  WizardForm.NextButton.Caption := CM('s11_next');
+  SetNextCaption(CM('s11_next'));
   if CheckRunning and (CheckFor = 'S11') then
   begin
     { W14-D5 (7.6 "S06 and S11 recheck"): one line on S11. }
@@ -3878,7 +4361,7 @@ begin
     AddRow(FM1('s11_address', AddressUrl), -1);
     AddRow(CM('s11_edition'), -1);
   end;
-  CurY := CurY + ScaleY(6);
+  BlockGap;
   { W14-D5 (6.1 L12, 7.6 background row): a kept reinstall waits for the background here, in
     the full form. }
   if KeptMode and not BgDone and not BgFailed then
@@ -4208,6 +4691,7 @@ begin
     Stop.ModalResult := mrCancel;
     Stop.Cancel := True;
     Stop.SetBounds(Form.ClientWidth - ScaleX(105), Form.ClientHeight - ScaleY(36), ScaleX(95), ScaleY(26));
+    FitFormRow(Form, Go, Stop);
     ModalOpen := True;
     if Form.ShowModal <> mrOk then
       Exit;
@@ -4254,20 +4738,20 @@ begin
   BeginBody(P_INSTALL);
   WizardForm.PageNameLabel.Caption := CM('s12_title');
   WizardForm.PageDescriptionLabel.Caption := CM('s12_subtitle');
-  WizardForm.NextButton.Caption := CM('btn_next');
+  SetNextCaption(CM('btn_next'));
   AddStageLine(3);
   if InstallFailed then
   begin
-    AddFailure(InstallFailStage, InstallFailText, not InstallNoRetry);
+    { W14-D3 (6.1 L5): [Choose another drive] [Save report] in one row (AddFailure). }
     if InstallBackupFailed then
     begin
-      Button := AddButtonAt(CM('s12_choose_drive'), 0, 0);
-      Button.OnClick := @ChooseDriveClick;
-      Button.Enabled := (CdDrive = '') and not StepRunning;
-      CurY := CurY + Button.Height + ScaleY(6);
-      { 7.6 "S12 Choose another drive": its one line on the S13 page. }
-      AddStepLine;
+      FailureExtra := 'choose-drive';
+      FailureExtraOn := (CdDrive = '') and not StepRunning;
     end;
+    AddFailure(InstallFailStage, InstallFailText, not InstallNoRetry);
+    { 7.6 "S12 Choose another drive": its one line on the S13 page. }
+    if InstallBackupFailed then
+      AddStepLine;
     WizardForm.NextButton.Enabled := WizardForm.NextButton.Enabled and (CdDrive = '');
     Exit;
   end;
@@ -4279,15 +4763,18 @@ begin
     AddProgress('install', S12Stages, WaitStage('install'), WaitActionText('install'), InstallStartedAt, CM('wait_up_to_30'));
   if InstallSlow then
   begin
+    { W14-D3 (6.1 L5): [Wait] [Try again] [Save report] in one row. }
+    BlockGap;
     AddText(CM('s12_slow'), True);
-    Button := AddButtonAt(CM('s12_wait'), 0, 0);
+    Button := AddRowButton(CM('s12_wait'), 0);
     Button.OnClick := @WaitClick;
-    Button := AddButtonAt(CM('btn_try_again'), Button.Width + ScaleX(8), 0);
+    Button := AddRowButton(CM('btn_try_again'), 0);
     Button.OnClick := @SlowTryAgainClick;
-    CurY := CurY + Button.Height + ScaleY(6);
-    AddReportControls;
+    AddReportButton;
+    EndRow;
+    AddReportLine;
   end;
-  CurY := CurY + ScaleY(6);
+  BlockGap;
   AddText(CM('s12_box'), False);
   WizardForm.NextButton.Enabled := InstallDone;
 end;
@@ -4403,6 +4890,9 @@ var
   Count, Start, Answer: Integer;
 begin
   KeyStateText := '';
+  { The key form closed (or the key went) while the list was read: nothing to print. }
+  if KeyText = '' then
+    Exit;
   Form := CreateCustomForm(ScaleX(380), ScaleY(110), False, False);
   try
     Form.Caption := CM('s14_print_title');
@@ -4440,6 +4930,7 @@ begin
     Stop.ModalResult := mrCancel;
     Stop.Cancel := True;
     Stop.SetBounds(Form.ClientWidth - ScaleX(105), Form.ClientHeight - ScaleY(36), ScaleX(95), ScaleY(26));
+    FitFormRow(Form, Go, Stop);
     ModalOpen := True;
     Answer := Form.ShowModal;
     ModalOpen := False;
@@ -4488,7 +4979,7 @@ begin
   { Design B8: the header comes back after a failure and Try again. }
   WizardForm.PageNameLabel.Caption := CM('s14_title');
   WizardForm.PageDescriptionLabel.Caption := CM('s14_subtitle');
-  WizardForm.NextButton.Caption := CM('btn_next');
+  SetNextCaption(CM('btn_next'));
   WizardForm.CancelButton.Visible := False;
   WizardForm.BackButton.Visible := False;
   if KeyState = 'making' then
@@ -4504,9 +4995,13 @@ begin
     Exit;
   end;
   { The key is static text that cannot be selected; no Copy button (spec S14). }
+  { W14-D3: one flat border round the key, on the page color. }
   Panel := TPanel.Create(WizardForm);
   Panel.Parent := Cur;
-  Panel.BevelOuter := bvLowered;
+  Panel.BevelOuter := bvNone;
+  Panel.BorderStyle := bsSingle;
+  Panel.ParentBackground := False;
+  Panel.Color := Cur.Color;
   Panel.SetBounds(0, CurY, Cur.Width, ScaleY(46));
   KeyLabel := TNewStaticText.Create(WizardForm);
   KeyLabel.Parent := Panel;
@@ -4517,21 +5012,21 @@ begin
   KeyLabel.Caption := GroupedKey;
   KeyLabel.Left := ScaleX(10);
   KeyLabel.Top := ScaleY(10);
-  CurY := CurY + Panel.Height + ScaleY(8);
+  CurY := CurY + Panel.Height + ScaleY(4);
   AddText(CM('s14_text'), False);
-  Button := AddButtonAt(CM('s14_print'), 0, 0);
+  ItemGap;
+  { W14-D3 (6.1 L5): [Print the key] [E:] [Save to a USB drive] in one row. }
+  Button := AddRowButton(CM('s14_print'), 0);
   Button.OnClick := @PrintKeyClick;
-  CurY := CurY + Button.Height + ScaleY(8);
   List := UsbDrives;
   KeyUsb := nil;
-  if List = '' then
-    AddText(CM('s14_no_usb'), False)
-  else
+  if List <> '' then
   begin
     KeyUsb := TNewComboBox.Create(WizardForm);
     KeyUsb.Parent := Cur;
     KeyUsb.Style := csDropDownList;
-    KeyUsb.SetBounds(0, CurY, ScaleX(80), ScaleY(21));
+    KeyUsb.SetBounds(RowX, CurY + (Button.Height - ScaleY(21)) div 2, ScaleX(80), ScaleY(21));
+    RowX := RowX + KeyUsb.Width + ScaleX(8);
     while Pos(';', List) > 0 do
     begin
       Item := Copy(List, 1, Pos(';', List) - 1);
@@ -4539,12 +5034,16 @@ begin
       KeyUsb.Items.Add(Item);
     end;
     KeyUsb.ItemIndex := 0;
-    Button := AddButtonAt(CM('s14_usb'), ScaleX(90), 0);
+    Button := AddRowButton(CM('s14_usb'), 0);
     Button.OnClick := @SaveKeyClick;
-    CurY := CurY + Button.Height + ScaleY(8);
   end;
+  EndRow;
+  if List = '' then
+    AddText(CM('s14_no_usb'), False);
+  { 6.1 L2: result lines are regular. }
   if KeyStateText <> '' then
-    AddText(KeyStateText, True);
+    AddText(KeyStateText, False);
+  ItemGap;
   KeyCheck := TNewCheckBox.Create(WizardForm);
   KeyCheck.Parent := Cur;
   KeyCheck.Caption := CM('s14_check');
@@ -4614,7 +5113,7 @@ begin
   { Design B2: the S01 Save report line. }
   if (Index < 0) and (WizardForm.CurPageID = wpWelcome) and StateUnsafe then
   begin
-    WizardForm.WelcomeLabel2.Caption := CM('s01_state_unsafe') + #13#10#13#10 + ReportLine;
+    ShowReportLine;
     Exit;
   end;
   { QA B7: the S09 Save report line. }
@@ -4688,13 +5187,15 @@ begin
   begin
     if (KeyUsb <> nil) and (UsbDrives <> KeyFormUsbSeen) then
       FillKeyFormUsb;
-    if not Ticking then
+    { The key form opens from PollMaint, inside a tick (Ticking is set), so this branch has its
+      own guard. }
+    if not KeyTicking then
     begin
-      Ticking := True;
+      KeyTicking := True;
       try
         PollStep;
       finally
-        Ticking := False;
+        KeyTicking := False;
       end;
     end;
     Exit;
@@ -4744,6 +5245,8 @@ begin
       Code := ReadResultCode(PrepOut);
       if Code = 'prepared' then
       begin
+        PrepFeature := JsonValue(ReadText(PrepOut), 'feature');
+        PrepWsl := JsonValue(ReadText(PrepOut), 'wsl');
         if Pos('"restart_needed":true', ReadText(PrepOut)) > 0 then
         begin
           { Spec 7.5 resume_other_user: the progress is saved when "ready to restart" opens.
@@ -4758,6 +5261,7 @@ begin
       else if Code <> '' then
       begin
         PrepState := 'failed';
+        PrepFailKey := JsonValue(ReadText(PrepOut), 'message_key');
         RenderPage(P_RESTART);
       end
       else if Elapsed(PrepStartedAt) > DATA_LIMIT_MS then
@@ -4796,6 +5300,7 @@ begin
     PollUpdate;
     PollCloseFlow;
     RefreshWaitLabels;
+    LayoutButtonRow;
     { W14-D5: the page draws again only when its wait moves to another stage. }
     if (WaitKind <> '') and (WaitDrawn > 0) and (WaitStage(WaitKind) <> WaitDrawn) then
       RenderPage(-1);
@@ -5033,7 +5538,10 @@ begin
   Pages[P_KEY] := CreateCustomPage(wpInstalling, CM('s14_title'), CM('s14_subtitle'));
   BuildOrgPage;
   BuildMailPage;
-  WizardForm.LicenseLabel1.Caption := CM('s04_subtitle');
+  { W14-D3: the license page's own line repeated the subtitle; the license text takes its place. }
+  WizardForm.LicenseLabel1.Visible := False;
+  WizardForm.LicenseMemo.Height := WizardForm.LicenseMemo.Height + (WizardForm.LicenseMemo.Top - WizardForm.LicenseLabel1.Top);
+  WizardForm.LicenseMemo.Top := WizardForm.LicenseLabel1.Top;
   { Spec S04: a link-style button to the third-party notices, under the license text. }
   NoticesLink := TNewLinkLabel.Create(WizardForm);
   NoticesLink.Parent := WizardForm.LicensePage;
@@ -5048,6 +5556,11 @@ begin
   ExtraButton.Parent := WizardForm;
   ExtraButton.Visible := False;
   ExtraButton.SetBounds(WizardForm.BackButton.Left - ScaleX(130), WizardForm.BackButton.Top, ScaleX(120), WizardForm.BackButton.Height);
+  { W14-D3 (6.1 L11): Inno's row as Inno placed it. }
+  BtnDefaultW := WizardForm.NextButton.Width;
+  BtnRight := WizardForm.CancelButton.Left + WizardForm.CancelButton.Width;
+  BtnGapBN := WizardForm.NextButton.Left - (WizardForm.BackButton.Left + WizardForm.BackButton.Width);
+  BtnGapNC := WizardForm.CancelButton.Left - (WizardForm.NextButton.Left + WizardForm.NextButton.Width);
   WizardReady := True;
 #ifdef SelfTest
   RunSelfTest;
@@ -5116,32 +5629,64 @@ begin
     Result := True;
 end;
 
-{ S15 (spec S15); a procedure, so the W14 self-test draws it too. }
+{ S15 (spec S15); a procedure, so the W14 self-test draws it too. W14-D3 (6.1 L4, L6): one label
+  per step, 12 px apart, and "Open Slate Operations" on the page under step 2; built once,
+  because Inno's page stays and CurPageChanged can run again. }
+procedure PlaceFinishedText(Index: Integer; Text: String; var Y: Integer);
+begin
+  if S15Steps[Index] = nil then
+  begin
+    S15Steps[Index] := TNewStaticText.Create(WizardForm);
+    S15Steps[Index].Parent := WizardForm.FinishedPage;
+    S15Steps[Index].AutoSize := False;
+    S15Steps[Index].WordWrap := True;
+    S15Steps[Index].ShowAccelChar := False;
+  end;
+  S15Steps[Index].Visible := Text <> '';
+  if Text = '' then
+    Exit;
+  S15Steps[Index].SetBounds(WizardForm.FinishedLabel.Left, Y, WizardForm.FinishedLabel.Width, ScaleY(15));
+  S15Steps[Index].Caption := Text;
+  WizardForm.AdjustLabelHeight(S15Steps[Index]);
+  Y := Y + S15Steps[Index].Height + ScaleY(12);
+end;
+
 procedure RenderFinishedPage;
 var
-  Text: String;
+  Step1, Step3: String;
+  Y: Integer;
 begin
   WizardForm.FinishedHeadingLabel.Caption := CM('s15_title');
   { Design B9: after a resume the email address and the security code can be unknown. }
   if KeptMode then
-    Text := ''
+    Step1 := ''
   else if Trim(OrgEmail.Text) = '' then
-    Text := CM('s15_step1_no_address')
+    Step1 := CM('s15_step1_no_address')
   else
-    Text := FM1('s15_step1', Trim(OrgEmail.Text));
-  if Text <> '' then
-    Text := Text + #13#10#13#10;
-  Text := Text + CM('s15_step2') + #13#10#13#10 + CM('s15_step3') + #13#10 + 'http://' + HostName + '.local/trust';
+    Step1 := FM1('s15_step1', Trim(OrgEmail.Text));
+  Step3 := CM('s15_step3') + #13#10 + 'http://' + HostName + '.local/trust';
   if SecurityCode <> '' then
-    Text := Text + #13#10 + FM1('s15_security', SecurityCode);
-  WizardForm.FinishedLabel.Caption := Text + #13#10#13#10 + CM('s15_desk') + #13#10#13#10 + CM('s15_starts');
-  WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);
-  WizardForm.NextButton.Caption := CM('s15_finish');
-  ExtraButton.Parent := WizardForm;
-  ExtraButton.Caption := CM('s15_open');
-  ExtraButton.Width := WizardForm.CalculateButtonWidth([CM('s15_open')]);
-  ExtraButton.OnClick := @OpenAppClick;
-  ExtraButton.Visible := True;
+    Step3 := Step3 + #13#10 + FM1('s15_security', SecurityCode);
+  WizardForm.FinishedLabel.Caption := '';
+  WizardForm.FinishedLabel.Visible := False;
+  if GetArrayLength(S15Steps) = 0 then
+    SetArrayLength(S15Steps, 5);
+  Y := WizardForm.FinishedLabel.Top;
+  PlaceFinishedText(0, Step1, Y);
+  PlaceFinishedText(1, CM('s15_step2'), Y);
+  if S15Open = nil then
+  begin
+    S15Open := TNewButton.Create(WizardForm);
+    S15Open.Parent := WizardForm.FinishedPage;
+    S15Open.OnClick := @OpenAppClick;
+  end;
+  S15Open.Caption := CM('s15_open');
+  S15Open.SetBounds(WizardForm.FinishedLabel.Left, Y - ScaleY(8), WizardForm.CalculateButtonWidth([CM('s15_open')]), WizardForm.NextButton.Height);
+  Y := S15Open.Top + S15Open.Height + ScaleY(12);
+  PlaceFinishedText(2, Step3, Y);
+  PlaceFinishedText(3, CM('s15_desk'), Y);
+  PlaceFinishedText(4, CM('s15_starts'), Y);
+  SetNextCaption(CM('s15_finish'));
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
@@ -5168,14 +5713,33 @@ begin
   begin
     WizardForm.WelcomeLabel1.Caption := CM('s01_title');
     WizardForm.WelcomeLabel2.Caption := CM('s01_text');
-    WizardForm.NextButton.Caption := CM('s01_next');
+    SetNextCaption(CM('s01_next'));
     if StateUnsafe then
     begin
       WizardForm.WelcomeLabel2.Caption := CM('s01_state_unsafe');
       WizardForm.NextButton.Enabled := False;
-      ExtraButton.Caption := CM('btn_save_report');
-      ExtraButton.OnClick := @SaveReport;
-      ExtraButton.Visible := True;
+      { W14-D3 (6.1 L6): Save report sits on the page under the message, not in the row. }
+      WizardForm.AdjustLabelHeight(WizardForm.WelcomeLabel2);
+      if S01Report = nil then
+      begin
+        S01Report := TNewButton.Create(WizardForm);
+        S01Report.Parent := WizardForm.WelcomePage;
+        S01Report.Caption := CM('btn_save_report');
+        S01Report.OnClick := @SaveReport;
+      end;
+      S01Report.SetBounds(WizardForm.WelcomeLabel2.Left, WizardForm.WelcomeLabel2.Top + WizardForm.WelcomeLabel2.Height + ScaleY(12),
+        WizardForm.CalculateButtonWidth([CM('btn_save_report')]), WizardForm.NextButton.Height);
+      if S01Line = nil then
+      begin
+        S01Line := TNewStaticText.Create(WizardForm);
+        S01Line.Parent := WizardForm.WelcomePage;
+        S01Line.AutoSize := False;
+        S01Line.WordWrap := True;
+        S01Line.ShowAccelChar := False;
+      end;
+      S01Line.SetBounds(S01Report.Left, S01Report.Top + S01Report.Height + ScaleY(4), WizardForm.WelcomeLabel2.Width, ScaleY(15));
+      S01Line.Caption := ReportLine;
+      WizardForm.AdjustLabelHeight(S01Line);
     end;
   end
   else if CurPageID = wpLicense then
@@ -5218,7 +5782,7 @@ begin
   end
   else if CurPageID = Pages[P_ORG].ID then
   begin
-    WizardForm.NextButton.Caption := CM('btn_next');
+    SetNextCaption(CM('btn_next'));
     UpdateBgStatus;
   end
   else if CurPageID = Pages[P_EMAIL].ID then
@@ -5281,10 +5845,12 @@ begin
     WizardForm.FinishedHeadingLabel.Caption := CM('m05_title');
     WizardForm.FinishedLabel.Caption := FM1('m05_done', SetupVersion);
     WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);
-    WizardForm.NextButton.Caption := CM('s15_finish');
+    SetNextCaption(CM('s15_finish'));
   end
   else if CurPageID = wpFinished then
     RenderFinishedPage;
+  { W14-D3 (6.1 L11): Inno sets its own captions at each page change. }
+  LayoutButtonRow;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;

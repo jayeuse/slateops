@@ -199,23 +199,24 @@ begin
     URadioKeep.Checked := True;
     URadioKeep.OnClick := @URadioClick;
     URadioKeep.SetBounds(ScaleX(16), Y, Form.ClientWidth - ScaleX(32), ScaleY(18));
-    Y := Y + ScaleY(22);
+    { W14-D3 (6.1 L4): the option, 4 px, its text, 12 px to the next option. }
+    Y := Y + URadioKeep.Height + ScaleY(4);
     Text := UText(Form, Y, FM2('u01_keep_text', UDataRoot + '\kept', IntToStr(UDiskGb)), False);
     Text.Left := ScaleX(34);
     Text.Width := Form.ClientWidth - ScaleX(50);
     Text.AdjustHeight;
-    Y := Y + Text.Height + ScaleY(14);
+    Y := Y + Text.Height + ScaleY(12);
     URadioDelete := TNewRadioButton.Create(Form);
     URadioDelete.Parent := Form;
     URadioDelete.Caption := CM('u01_delete');
     URadioDelete.OnClick := @URadioClick;
     URadioDelete.SetBounds(ScaleX(16), Y, Form.ClientWidth - ScaleX(32), ScaleY(18));
-    Y := Y + ScaleY(22);
+    Y := Y + URadioDelete.Height + ScaleY(4);
     Text := UText(Form, Y, CM('u01_delete_text'), False);
     Text.Left := ScaleX(34);
     Text.Width := Form.ClientWidth - ScaleX(50);
     Text.AdjustHeight;
-    Y := Y + Text.Height + ScaleY(8);
+    Y := Y + Text.Height + ScaleY(4);
     { Offered only when the record names a backup folder (advisor item 6). }
     if UBackupFolder <> '' then
     begin

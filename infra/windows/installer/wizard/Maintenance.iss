@@ -44,85 +44,84 @@ begin
 end;
 
 { The S14 content as a modal form. It has no Cancel: the engine removes the old key when it makes
-  the new one (W10b), so Cancel cannot keep the old key (spec M04; TASK-0096 Result). }
-procedure KeyForm(FirstLine, FinalCaption: String);
+  the new one (W10b), so Cancel cannot keep the old key (spec M04; TASK-0096 Result). W14-D3: the
+  S14 layout with the rhythm (4 px in a block, 12 px between blocks), the flat key border, the
+  row [Print the key] [E:] [Save to a USB drive], regular result text and buttons sized to their
+  captions. Built apart from showing it, so the self-test can check it. }
+function BuildKeyForm(FirstLine, FinalCaption: String): TSetupForm;
 var
   Form: TSetupForm;
   Text, KeyLabel: TNewStaticText;
   Panel: TPanel;
   Print, Save: TNewButton;
-  Y: Integer;
+  Y, X: Integer;
 begin
   Form := CreateCustomForm(ScaleX(540), ScaleY(400), False, False);
+  Form.Caption := CM('s14_title');
+  Form.BorderIcons := [];
+  Y := ScaleY(14);
+  Text := FormText(Form, Y, FirstLine, True);
+  Y := Y + Text.Height + ScaleY(4);
+  Text := FormText(Form, Y, CM('s14_subtitle'), False);
+  Y := Y + Text.Height + ScaleY(12);
+  Panel := TPanel.Create(Form);
+  Panel.Parent := Form;
+  Panel.BevelOuter := bvNone;
+  Panel.BorderStyle := bsSingle;
+  Panel.SetBounds(ScaleX(14), Y, Form.ClientWidth - ScaleX(28), ScaleY(46));
+  KeyLabel := TNewStaticText.Create(Form);
+  KeyLabel.Parent := Panel;
+  KeyLabel.Font.Name := 'Consolas';
+  KeyLabel.Font.Size := 16;
+  KeyLabel.Font.Style := [fsBold];
+  KeyLabel.ShowAccelChar := False;
+  KeyLabel.Caption := GroupedKey;
+  KeyLabel.Left := ScaleX(10);
+  KeyLabel.Top := ScaleY(10);
+  Y := Y + Panel.Height + ScaleY(4);
+  Text := FormText(Form, Y, CM('s14_text'), False);
+  Y := Y + Text.Height + ScaleY(12);
+  Print := FormButton(Form, CM('s14_print'), 0, 0);
+  Print.OnClick := @PrintKeyClick;
+  Print.SetBounds(ScaleX(14), Y, Print.Width, Print.Height);
+  X := Print.Left + Print.Width + ScaleX(8);
+  KeyUsb := TNewComboBox.Create(Form);
+  KeyUsb.Parent := Form;
+  KeyUsb.Style := csDropDownList;
+  KeyUsb.SetBounds(X, Y + (Print.Height - ScaleY(21)) div 2, ScaleX(70), ScaleY(21));
+  FillKeyFormUsb;
+  X := X + KeyUsb.Width + ScaleX(8);
+  Save := FormButton(Form, CM('s14_usb'), 0, 0);
+  Save.OnClick := @SaveKeyClick;
+  Save.SetBounds(X, Y, Save.Width, Save.Height);
+  Y := Y + Print.Height + ScaleY(4);
+  KeyFormStatus := FormText(Form, Y, '', False);
+  Y := Y + ScaleY(36);
+  KeyFormCheck := TNewCheckBox.Create(Form);
+  KeyFormCheck.Parent := Form;
+  KeyFormCheck.Caption := CM('s14_check');
+  KeyFormCheck.OnClick := @KeyFormCheckClick;
+  KeyFormCheck.SetBounds(ScaleX(14), Y, Form.ClientWidth - ScaleX(28), ScaleY(18));
+  KeyFormDone := FormButton(Form, FinalCaption, ScaleX(110), mrOk);
+  KeyFormDone.Enabled := False;
+  KeyFormDone.SetBounds(Form.ClientWidth - ScaleX(14) - KeyFormDone.Width, Form.ClientHeight - ScaleY(38), KeyFormDone.Width, KeyFormDone.Height);
+  KeyStateText := '';
+  Result := Form;
+end;
+
+procedure KeyForm(FirstLine, FinalCaption: String);
+var
+  Form: TSetupForm;
+begin
+  Form := BuildKeyForm(FirstLine, FinalCaption);
   try
-    Form.Caption := CM('s14_title');
-    Form.BorderIcons := [];
-    Y := ScaleY(12);
-    Text := AddTextTo(Form, Y, FirstLine, True);
-    Text.Left := ScaleX(14);
-    Text.Width := Form.ClientWidth - ScaleX(28);
-    WizardForm.AdjustLabelHeight(Text);
-    Y := Y + Text.Height + ScaleY(8);
-    Text := AddTextTo(Form, Y, CM('s14_subtitle'), False);
-    Text.Left := ScaleX(14);
-    Text.Width := Form.ClientWidth - ScaleX(28);
-    WizardForm.AdjustLabelHeight(Text);
-    Y := Y + Text.Height + ScaleY(8);
-    Panel := TPanel.Create(Form);
-    Panel.Parent := Form;
-    Panel.BevelOuter := bvLowered;
-    Panel.SetBounds(ScaleX(14), Y, Form.ClientWidth - ScaleX(28), ScaleY(46));
-    KeyLabel := TNewStaticText.Create(Form);
-    KeyLabel.Parent := Panel;
-    KeyLabel.Font.Name := 'Consolas';
-    KeyLabel.Font.Size := 16;
-    KeyLabel.Font.Style := [fsBold];
-    KeyLabel.ShowAccelChar := False;
-    KeyLabel.Caption := GroupedKey;
-    KeyLabel.Left := ScaleX(10);
-    KeyLabel.Top := ScaleY(10);
-    Y := Y + Panel.Height + ScaleY(8);
-    Text := AddTextTo(Form, Y, CM('s14_text'), False);
-    Text.Left := ScaleX(14);
-    Text.Width := Form.ClientWidth - ScaleX(28);
-    WizardForm.AdjustLabelHeight(Text);
-    Y := Y + Text.Height + ScaleY(10);
-    Print := TNewButton.Create(Form);
-    Print.Parent := Form;
-    Print.Caption := CM('s14_print');
-    Print.OnClick := @PrintKeyClick;
-    Print.SetBounds(ScaleX(14), Y, ScaleX(130), ScaleY(26));
-    KeyUsb := TNewComboBox.Create(Form);
-    KeyUsb.Parent := Form;
-    KeyUsb.Style := csDropDownList;
-    KeyUsb.SetBounds(ScaleX(160), Y + ScaleY(2), ScaleX(70), ScaleY(21));
-    FillKeyFormUsb;
-    Save := TNewButton.Create(Form);
-    Save.Parent := Form;
-    Save.Caption := CM('s14_usb');
-    Save.OnClick := @SaveKeyClick;
-    Save.SetBounds(ScaleX(240), Y, ScaleX(170), ScaleY(26));
-    Y := Y + ScaleY(34);
-    KeyFormStatus := AddTextTo(Form, Y, '', True);
-    KeyFormStatus.Left := ScaleX(14);
-    KeyFormStatus.Width := Form.ClientWidth - ScaleX(28);
-    Y := Y + ScaleY(36);
-    KeyFormCheck := TNewCheckBox.Create(Form);
-    KeyFormCheck.Parent := Form;
-    KeyFormCheck.Caption := CM('s14_check');
-    KeyFormCheck.OnClick := @KeyFormCheckClick;
-    KeyFormCheck.SetBounds(ScaleX(14), Y, Form.ClientWidth - ScaleX(28), ScaleY(18));
-    KeyFormDone := TNewButton.Create(Form);
-    KeyFormDone.Parent := Form;
-    KeyFormDone.Caption := FinalCaption;
-    KeyFormDone.ModalResult := mrOk;
-    KeyFormDone.Enabled := False;
-    KeyFormDone.SetBounds(Form.ClientWidth - ScaleX(124), Form.ClientHeight - ScaleY(38), ScaleX(110), ScaleY(26));
-    KeyStateText := '';
     KeyFormOpen := True;
     Form.ShowModal;
   finally
     KeyFormOpen := False;
+    { A printer list still being read belongs to this form (W14-D9): it is dropped. }
+    if StepFor = 'printers' then
+      StepFor := '';
     KeyUsb := nil;
     KeyFormStatus := nil;
     KeyText := '';
@@ -226,6 +225,7 @@ begin
     Back.Cancel := True;
     Back.Default := True;
     Back.SetBounds(Form.ClientWidth - ScaleX(128), Form.ClientHeight - ScaleY(38), ScaleX(115), ScaleY(26));
+    FitFormRow(Form, Go, Back);
     ModalOpen := True;
     Result := Form.ShowModal = mrOk;
   finally
@@ -309,7 +309,7 @@ begin
   WizardForm.PageDescriptionLabel.Caption := FM2('m01_subtitle', SetupVersion, AddressUrl);
   WizardForm.NextButton.Visible := False;
   WizardForm.BackButton.Visible := False;
-  WizardForm.CancelButton.Caption := CM('btn_close');
+  SetCancelCaption(CM('btn_close'));
   Sentence := MaintSentence(Line);
   Verdict := AddVerdict(Sentence);
   if Line <> '' then
@@ -333,15 +333,15 @@ begin
   else
     AddStepLine;
   if MaintLine <> '' then
-    AddText(MaintLine, True);
+    AddText(MaintLine, False);
   if (ReportLine <> '') or (ReportPhase <> '') then
   begin
     ReportLabel := AddText(ReportLine, False);
     ShowReportLine;
   end;
   AddText(CM('m01_footer'), False);
-  if (MaintStatus <> 'checking') and Verdict.CanFocus then
-    WizardForm.ActiveControl := Verdict;
+  if MaintStatus <> 'checking' then
+    FocusVerdict(Verdict);
 end;
 
 { M02 (S09 form) and M03 (S10 form) Next; True lets Inno move on (never in maintenance). }
@@ -609,7 +609,7 @@ begin
   begin
     AddText(FM1('m05_backup', InstalledVersion), False);
     AddText(CM('m05_people'), False);
-    WizardForm.NextButton.Caption := CM('m05_next');
+    SetNextCaption(CM('m05_next'));
     WizardForm.NextButton.Enabled := True;
     Exit;
   end;
@@ -619,7 +619,7 @@ begin
     the engine's receive; stages 2 to 4 from the update job's standard error; the stage "Go back
     to version ..." when the engine reports a rollback or a recover. }
   if UpdWaiting then
-    AddText(CM('m05_waiting'), True);
+    AddText(CM('m05_waiting'), False);
   if UpdPhase = 'done' then
     AddProgress('update', UpdStages, 5, '', 0, '')
   else
@@ -628,12 +628,14 @@ begin
     engine still works. }
   if (UpdPhase = 'update') and UpdSlowShown then
   begin
+    BlockGap;
     AddText(CM('s12_slow'), True);
     AddText(CM('m05_slow_close'), False);
     AddReportControls;
   end;
-  CurY := CurY + ScaleY(6);
-  AddText(CM('m05_people'), False);
+  { W14-D3 (designer's M05 item): "People cannot use ... This can take up to 1 hour. Tell your
+    people before you start." shows before the start only; while it runs, the time line already
+    says the hour. }
 end;
 
 { From the timer. }
@@ -837,6 +839,7 @@ begin
     Back.Cancel := True;
     Back.Default := True;
     Back.SetBounds(Form.ClientWidth - ScaleX(128), Form.ClientHeight - ScaleY(38), ScaleX(115), ScaleY(26));
+    FitFormRow(Form, Stop, Back);
     ModalOpen := True;
     if Form.ShowModal = mrOk then
     begin
@@ -1609,6 +1612,7 @@ begin
       CloseButton.ModalResult := mrCancel;
       CloseButton.Cancel := True;
       CloseButton.SetBounds(ReportForm.ClientWidth - ScaleX(104), ReportForm.ClientHeight - ScaleY(38), ScaleX(90), ScaleY(26));
+      FitFormRow(ReportForm, nil, CloseButton);
       StartTimer;
       SaveReport(nil);
       ModalOpen := True;

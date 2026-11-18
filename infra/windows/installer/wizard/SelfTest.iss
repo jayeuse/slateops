@@ -18,6 +18,12 @@ begin
     SelfLog := SelfLog + 'FAIL ' + Name + ': ' + Message + #13#10;
 end;
 
+{ A measurement for a decision that is open (the workflow fails only on FAIL lines). }
+procedure SelfInfo(Name, Message: String);
+begin
+  SelfLog := SelfLog + 'INFO ' + Name + ': ' + Message + #13#10;
+end;
+
 #ifdef SelfTestRed
 function OpenArrayFM(Key: String; Args: array of String): String;
 begin
@@ -59,6 +65,56 @@ begin
   end;
 end;
 
+{ W14-D3: the checks after each page draw: the body panel and the verdict box have the page
+  color (6.1 L1), the content ends above the page bottom (6.1 L8, no scrolling), and no button
+  caption is wider than its button (6.1 L11). }
+function SelfButtonsFit(var Bad: String): Boolean;
+var
+  I: Integer;
+begin
+  Result := True;
+  for I := 0 to GetArrayLength(BodyButtons) - 1 do
+    if WizardForm.CalculateButtonWidth([BodyButtons[I].Caption]) > BodyButtons[I].Width then
+    begin
+      Result := False;
+      Bad := Bad + ' "' + BodyButtons[I].Caption + '"';
+    end;
+end;
+
+procedure SelfFits(Name: String; Index: Integer);
+var
+  Bad: String;
+  Ok: Boolean;
+  Limit: Integer;
+begin
+  try
+    { 6.1 L12: on S10 and S11 the status line takes the bottom of the page. }
+    Limit := Bodies[Index].Height;
+    if (Index = P_BACKUP) or (Index = P_READY) then
+      Limit := StatusBandTop - ScaleY(12);
+    Bad := '';
+    Ok := SelfButtonsFit(Bad);
+    if Bodies[Index].Color <> Pages[Index].SurfaceColor then
+    begin
+      Ok := False;
+      Bad := Bad + ' panel color';
+    end;
+    if (LastVerdict <> nil) and (LastVerdict.Color <> Pages[Index].SurfaceColor) then
+    begin
+      Ok := False;
+      Bad := Bad + ' verdict color';
+    end;
+    if CurY > Limit then
+    begin
+      Ok := False;
+      Bad := Bad + ' content ' + IntToStr(CurY) + ' > ' + IntToStr(Limit);
+    end;
+    SelfRecord(Name + ' layout', Ok, Bad);
+  except
+    SelfRecord(Name + ' layout', False, GetExceptionMessage);
+  end;
+end;
+
 procedure SelfDraw(Name: String; Index: Integer);
 begin
   try
@@ -78,10 +134,245 @@ begin
     else if Index = P_UPDATE then RenderUpdate
     else RenderFinishedPage;
     SelfRecord(Name, True, '');
+    if (Index >= 0) and (Index <> P_EMAIL) then
+      SelfFits(Name, Index);
   except
     SelfRecord(Name, False, GetExceptionMessage);
   end;
 end;
+
+{ W14-D3 (6.1 L11): Inno's button row with every caption the code sets: each button as wide as
+  its caption, the row in order with no overlap. }
+procedure SelfButtonRow;
+var
+  Captions: array of String;
+  I: Integer;
+  Ok: Boolean;
+  Bad: String;
+begin
+  try
+    SetArrayLength(Captions, 11);
+    Captions[0] := CM('s09_next_test'); Captions[1] := CM('s05_next'); Captions[2] := CM('m05_next');
+    Captions[3] := CM('btn_try_again'); Captions[4] := CM('s11_next'); Captions[5] := CM('s15_finish');
+    Captions[6] := CM('btn_continue'); Captions[7] := CM('btn_done'); Captions[8] := CM('s01_next');
+    Captions[9] := CM('btn_next'); Captions[10] := CM('btn_close');
+    Ok := True;
+    Bad := '';
+    ExtraButton.Visible := True;
+    SetExtraCaption(CM('s05_later'));
+    for I := 0 to GetArrayLength(Captions) - 1 do
+    begin
+      SetNextCaption(Captions[I]);
+      SetCancelCaption(CM('btn_close'));
+      if (WizardForm.CalculateButtonWidth([Captions[I]]) > WizardForm.NextButton.Width)
+        or (WizardForm.BackButton.Left + WizardForm.BackButton.Width > WizardForm.NextButton.Left)
+        or (WizardForm.NextButton.Left + WizardForm.NextButton.Width > WizardForm.CancelButton.Left)
+        or (ExtraButton.Left + ExtraButton.Width > WizardForm.BackButton.Left)
+        or (WizardForm.CalculateButtonWidth([CM('s05_later')]) > ExtraButton.Width) then
+      begin
+        Ok := False;
+        Bad := Bad + ' "' + Captions[I] + '"';
+      end;
+    end;
+    ExtraButton.Visible := False;
+    SetNextCaption(CM('btn_next'));
+    SetCancelCaption(SetupMessage(msgButtonCancel));
+    SelfRecord('W14-D3 the button row fits every caption', Ok, Bad);
+  except
+    SelfRecord('W14-D3 the button row fits every caption', False, GetExceptionMessage);
+  end;
+end;
+
+{ W14-D3: the S13 form and the M03/M04 key form are built (not shown, the build is silent) and
+  their buttons checked. }
+procedure SelfForms;
+var
+  Form: TSetupForm;
+  I: Integer;
+  Ok: Boolean;
+  Bad: String;
+begin
+  try
+    Ok := True;
+    Bad := '';
+    SetArrayLength(FormButtons, 0);
+    Form := BuildFailureForm(CM('s12_stage4'), FM1('s13_could_not', CM('s12_fail4')), True);
+    try
+      for I := 0 to GetArrayLength(FormButtons) - 1 do
+        if Form.CalculateButtonWidth([FormButtons[I].Caption]) > FormButtons[I].Width then
+        begin
+          Ok := False;
+          Bad := Bad + ' "' + FormButtons[I].Caption + '"';
+        end;
+    finally
+      FailureStatus := nil;
+      Form.Free;
+    end;
+    SetArrayLength(FormButtons, 0);
+    KeyText := 'ABCD-EFGH-IJKL-MNOP-QRST-UVWX';
+    Form := BuildKeyForm(CM('m04_first'), CM('s15_finish'));
+    try
+      for I := 0 to GetArrayLength(FormButtons) - 1 do
+        if Form.CalculateButtonWidth([FormButtons[I].Caption]) > FormButtons[I].Width then
+        begin
+          Ok := False;
+          Bad := Bad + ' "' + FormButtons[I].Caption + '"';
+        end;
+    finally
+      KeyUsb := nil;
+      KeyFormStatus := nil;
+      Form.Free;
+    end;
+    SetArrayLength(FormButtons, 0);
+    SelfRecord('W14-D3 the S13 form and the key form draw, buttons fit', Ok, Bad);
+  except
+    SelfRecord('W14-D3 the S13 form and the key form draw, buttons fit', False, GetExceptionMessage);
+  end;
+end;
+
+{ W14-D3 (6.1 L9): S08 with More options open and an error under its field; S09 with "Continue
+  later" under the form, inside the page. }
+procedure SelfFormPages;
+var
+  Ok: Boolean;
+begin
+  try
+    OrgMoreClick(nil, '', sltID);
+    OrgError.Caption := CM('s08_err_email');
+    OrgErrorAfter := OrgEmail;
+    LayoutOrg;
+    Ok := (not OrgMoreLink.Visible) and OrgUser.Visible and OrgError.Visible
+      and (OrgError.Top > OrgEmail.Top) and (OrgError.Top < OrgUserLabel.Top)
+      and (OrgNameLabel.Top >= OrgTop)
+      and (OrgMoreHelp.Top + OrgMoreHelp.Height <= StatusBandTop - ScaleY(12));
+    SelfRecord('W14-D3 S08 More options and the error under its field', Ok,
+      'error at ' + IntToStr(OrgError.Top) + ', email at ' + IntToStr(OrgEmail.Top));
+    OrgError.Caption := '';
+    OrgErrorAfter := nil;
+    LayoutOrg;
+    { S09 as the owner fills it: Gmail, More options open, an error under the password, a
+      status line. }
+    MailGmail.Checked := True;
+    MailMore := True;
+    MailError.Caption := CM('s09_err_auth_gmail');
+    MailErrorAfter := MailPassword;
+    MailStatus.Caption := CM('s09_policy');
+    LayoutMail;
+    Ok := (MailLater.Top > MailSender.Top) and (MailLater.Top + MailLater.Height <= StatusBandTop - ScaleY(12))
+      and (MailM365.Left >= MailGmail.Left + MailGmail.Width + ScaleX(16)) and (MailFromLabel.Top >= MailTop);
+    SelfRecord('W14-D3 S09 rhythm, radios and Continue later', Ok,
+      'later ends at ' + IntToStr(MailLater.Top + MailLater.Height) + ', status line at ' + IntToStr(StatusBandTop));
+    { The tallest state (Other, every field): measured for the open layout decision. }
+    MailOther.Checked := True;
+    LayoutMail;
+    SelfInfo('W14-D3 S09 Other, every field', 'Continue later ends at ' + IntToStr(MailLater.Top + MailLater.Height)
+      + ', the status line starts at ' + IntToStr(StatusBandTop) + ', page height ' + IntToStr(Pages[P_EMAIL].SurfaceHeight));
+    MailGmail.Checked := True;
+    MailError.Caption := '';
+    MailErrorAfter := nil;
+    MailStatus.Caption := '';
+    LayoutMail;
+    { 6.1 L1: the status line takes the page color. }
+    ShowStatusLine('x');
+    SelfRecord('W14-D3 the status line has the page color', StatusLine.Color = Pages[P_ORG].SurfaceColor, 'color');
+    ShowStatusLine('');
+  except
+    SelfRecord('W14-D3 S08 and S09 forms', False, GetExceptionMessage);
+  end;
+end;
+
+{ W14-D3: the states of the pages that part 3 changed, each drawn and checked. }
+procedure SelfPageStates;
+begin
+  { S03 }
+  try
+    CheckVerdict := 'not_suitable';
+    Items[0].Cls := 'stop';
+    RenderCheckBody;
+    SelfRecord('S03', True, '');
+    SelfFits('S03', P_CHECK);
+  except
+    SelfRecord('S03', False, GetExceptionMessage);
+  end;
+  { S05: working, ready to restart, failed (WSL), done without a restart }
+  try
+    PrepStartedAt := GetTickCount;
+    PrepState := 'working';
+    RenderRestart;
+    SelfFits('S05 working', P_RESTART);
+    PrepState := 'restart';
+    PrepFeature := 'enabled_now';
+    PrepWsl := 'present';
+    PrepDetails := True;
+    RenderRestart;
+    SelfFits('S05 ready to restart', P_RESTART);
+    { The longest step text (another administrator account). }
+    ResumeCode := 'resume_other_user';
+    RenderRestart;
+    SelfFits('S05 ready to restart, other user', P_RESTART);
+    ResumeCode := '';
+    PrepState := 'failed';
+    PrepFailKey := 'prepare.wsl.failed';
+    RenderRestart;
+    SelfFits('S05 failed', P_RESTART);
+    PrepState := 'done';
+    RenderRestart;
+    SelfFits('S05 done', P_RESTART);
+    PrepState := '';
+    SelfRecord('S05 states', True, '');
+  except
+    SelfRecord('S05 states', False, GetExceptionMessage);
+  end;
+  { S06 }
+  try
+    CheckVerdict := 'ready';
+    CheckRunning := False;
+    CheckDone := True;
+    SetArrayLength(Items, 0);
+    EntryNext := 'S14';
+    RenderWelcomeBack;
+    SelfFits('S06', P_BACK);
+    EntryNext := '';
+    SelfRecord('S06', True, '');
+  except
+    SelfRecord('S06', False, GetExceptionMessage);
+  end;
+  { S10 }
+  try
+    DataRoot := 'C:\SlateOps';
+    BackupError := FM1('s10_not_writable', 'E:');
+    RenderBackup;
+    SelfFits('S10', P_BACKUP);
+    BackupError := '';
+    SelfRecord('S10', True, '');
+  except
+    SelfRecord('S10', False, GetExceptionMessage);
+  end;
+  { S12 slow, and S13 in place with Choose another drive }
+  try
+    InstallStarted := True;
+    InstallStep := 2;
+    InstallStartedAt := GetTickCount;
+    InstallSlow := True;
+    RenderInstall;
+    SelfFits('S12 slow', P_INSTALL);
+    InstallSlow := False;
+    InstallFailed := True;
+    InstallBackupFailed := True;
+    InstallFailStage := CM('s12_stage7');
+    InstallFailText := FM1('s12_backup_failed', 'E:');
+    RenderInstall;
+    SelfFits('S13 with Choose another drive', P_INSTALL);
+    InstallFailed := False;
+    InstallBackupFailed := False;
+    InstallStarted := False;
+    SelfRecord('S12 slow and S13', True, '');
+  except
+    SelfRecord('S12 slow and S13', False, GetExceptionMessage);
+  end;
+end;
+
+
 
 { W14-D7 (closed; the part-1 reset is reverted): S07 on the owner's three fixed drives (C: 28 GB,
   D: 239 GB, E: 896 GB, in that order). The first entry, with no folder chosen, selects the
@@ -417,6 +708,17 @@ begin
 
   { S07 (W14-D7). }
   SelfDrives;
+  SelfFits('S07', P_DATA);
+
+  { W14-D3: the button row, the forms and the page states of part 3. }
+  SelfButtonRow;
+  SelfForms;
+  SelfFormPages;
+  SelfCheck('owner layout', 'check-owner.json', 'needs_fixes', 1);
+  SelfFits('S02 owner', P_CHECK);
+  SelfCheck('ready layout', 'check-ready.json', 'ready', 0);
+  SelfFits('S02 ready', P_CHECK);
+  SelfPageStates;
 
   { Sample state for the other pages. }
   OrgName.Text := 'Riverside Learning Center';
@@ -445,6 +747,13 @@ begin
   KeyState := 'shown';
   SelfDraw('S14', P_KEY);
   SelfDraw('S15', -1);
+  { 6.1 L8: the last S15 line ends inside the finished page. }
+  try
+    SelfRecord('S15 layout', S15Steps[4].Top + S15Steps[4].Height <= WizardForm.FinishedPage.Height,
+      IntToStr(S15Steps[4].Top + S15Steps[4].Height) + ' > ' + IntToStr(WizardForm.FinishedPage.Height));
+  except
+    SelfRecord('S15 layout', False, GetExceptionMessage);
+  end;
   MaintStatus := 'ok';
   MaintState := 'installed';
   MaintBackup := 'ok';

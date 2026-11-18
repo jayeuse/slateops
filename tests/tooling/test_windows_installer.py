@@ -100,6 +100,9 @@ NEVER_ALLOWED = {
     "s09_err_m365",
     "c25_name",
     "c25_installed",
+    # Spec S05 subtitle (rule 2.8): "Windows finishes Virtual Machine Platform and WSL when this
+    # PC restarts." names the component by the short name that Windows shows beside the long one.
+    "s05_subtitle",
 }
 INNO_URL = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe"
 # GitHub release asset digest of innosetup-6.7.4.exe (gh api repos/jrsoftware/issrc/releases,
@@ -938,8 +941,9 @@ class W14DefectTest(unittest.TestCase):
         self.assertIn("SelfCloseFlow;", selftest)
 
     def test_w14_d1_s02_offers_save_report(self) -> None:
+        # W14-D3 (6.1 L5): Check again and Save report share one row.
         items = routine(self.raw, "procedure AddCheckItems(OnlyFix: Boolean);")
-        self.assertLess(items.index("CM('btn_check_again')"), items.index("AddReportControls;"))
+        self.assertLess(items.index("CM('btn_check_again')"), items.index("AddReportButton;"))
 
 
 def routines(code: str) -> dict[str, str]:
@@ -1154,6 +1158,202 @@ class W14Part2Test(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(name, routine(selftest, "procedure RunSelfTest;"))
         self.assertIn("'Now: Setting up the database.'", selftest)
+
+
+def brace_comments(text: str) -> list[tuple[int, str]]:
+    """Each { } comment of a Pascal text (outside strings and // comments) with its line. A
+    comment ends at the first }, as the Inno Setup compiler reads it."""
+    found: list[tuple[int, str]] = []
+    index = 0
+    state = "code"
+    while index < len(text):
+        char = text[index]
+        if state == "code":
+            if char == "'":
+                state = "string"
+            elif text.startswith("//", index):
+                state = "line"
+            elif char == "{":
+                end = text.find("}", index + 1)
+                end = len(text) if end < 0 else end
+                found.append((text.count("\n", 0, index) + 1, text[index + 1 : end]))
+                index = end
+        elif state == "string":
+            if char == "'" or char == "\n":
+                state = "code"
+        elif char == "\n":
+            state = "code"
+        index += 1
+    return found
+
+
+class InnoCommentTest(unittest.TestCase):
+    """CI run 44239562945 on ad20c28c: "{ Patterns: file patterns under {tmp}\\payload ... }" ended
+    the comment at the } of {tmp}, and the rest was read as code (Syntax error, compile aborted)."""
+
+    def test_no_brace_inside_a_brace_comment(self) -> None:
+        files = (*CODE_FILES, INSTALLER / "wizard/SelfTest.iss")
+        for path in files:
+            text = path.read_text(encoding="ascii")
+            if path == WIZARD:
+                text = text.split("\n[Code]\n", 1)[1]
+            comments = brace_comments(text)
+            self.assertTrue(comments, path.name)
+            for line, comment in comments:
+                with self.subTest(file=path.name, line=line):
+                    self.assertNotIn("{", comment)
+
+
+# Spec (rule 2.8, sections 4.5, 5.2, S05, S12, U04, 7.5): the copy that names what setup did.
+SPEC_NAMED_COPY = {
+    "s02_ready_prep_both": "Setup will turn on Virtual Machine Platform and install Windows "
+    "Subsystem for Linux (WSL), then restart this PC once.",
+    "s05_subtitle": "Windows finishes Virtual Machine Platform and WSL when this PC restarts.",
+    "s05_done": "Setup turned on Virtual Machine Platform and installed Windows Subsystem for "
+    "Linux (WSL). Windows finishes them when this PC restarts.",
+    "s05_why_vmp": "Virtual Machine Platform: lets this PC run the server part of Slate "
+    "Operations.",
+    "s05_why_wsl": "Windows Subsystem for Linux (WSL): runs the server part of Slate Operations "
+    "inside Windows.",
+    "s05_failed": "Setup could not turn on Virtual Machine Platform.",
+    "s05_failed_wsl": "Setup could not install Windows Subsystem for Linux (WSL).",
+    "s12_stage1": "Load the Slate Operations programs",
+    "s12_stage2": "Create the settings and passwords",
+    "cancel_feature": "Stop setup? Virtual Machine Platform and Windows Subsystem for Linux (WSL) "
+    "stay on this PC. Other programs can use them.",
+    "u04_feature": "Virtual Machine Platform and Windows Subsystem for Linux (WSL) stay on this "
+    "PC, because other programs can use them.",
+}
+
+
+class W14Part3Test(unittest.TestCase):
+    """W14 fix round part 3 (TASK-0097): the layout rules of spec 6.1 (W14-D3) and rule 2.8, name
+    things (W14-D6), as a static read can hold them. The self-test checks the drawn pages."""
+
+    def setUp(self) -> None:
+        self.raw = pascal_code()
+
+    def test_w14_d3_l1_the_grey_is_fixed_at_its_source(self) -> None:
+        # The body panel painted clBtnFace and every text on it took that color; S08 and S09,
+        # built on the page surface, never showed grey (screenshots 4 to 11).
+        body = routine(self.raw, "procedure BeginBody(Index: Integer);")
+        self.assertIn("Bodies[Index].ParentBackground := False;", body)
+        self.assertIn("Bodies[Index].Color := Pages[Index].SurfaceColor;", body)
+        verdict = routine(self.raw, "function AddVerdict(S: String): TNewMemo;")
+        self.assertIn("Result.Color := Cur.Color;", verdict)
+        self.assertNotIn("WizardForm.Color", code_only(self.raw))
+        self.assertIn("external 'HideCaret@user32.dll stdcall';", self.raw)
+        self.assertIn("HideCaret(Verdict.Handle);", routine(self.raw, "procedure FocusVerdict("))
+        # The status line (6.1 L12) sits on the page area too.
+        self.assertIn(
+            "StatusLine.Color := Pages[P_ORG].SurfaceColor;",
+            routine(self.raw, "procedure ShowStatusLine(Text: String);"),
+        )
+        # S08 and S09 sit on the page surface: their stage line is built there (6.1, S02 to S12).
+        self.assertIn("OrgTop := StageLineAt(Surface, 0, 2);", self.raw)
+        self.assertIn("MailTop := StageLineAt(Surface, 0, 2);", self.raw)
+        self.assertIn("Y := OrgTop;", routine(self.raw, "procedure LayoutOrg;\nvar"))
+        self.assertIn("Y := MailTop;", routine(self.raw, "procedure LayoutMail;\nvar"))
+
+    def test_w14_d3_l2_to_l5_rhythm_and_rows(self) -> None:
+        self.assertIn(
+            "CurY := CurY + Result.Height + ScaleY(4);",
+            routine(self.raw, "function AddText(S: String; Bold: Boolean): TNewStaticText;"),
+        )
+        self.assertIn("ScaleY(8)", routine(self.raw, "procedure ItemGap;"))
+        self.assertIn("ScaleY(12)", routine(self.raw, "procedure BlockGap;"))
+        self.assertIn(
+            "RowX := RowX + Result.Width + ScaleX(8);", routine(self.raw, "function AddRowButton(")
+        )
+        items = routine(self.raw, "procedure AddCheckItems(OnlyFix: Boolean);")
+        self.assertNotIn("s02_recommended", items)
+        self.assertIn("AddLinkLine(FM1('s02_passed'", items)
+        self.assertNotIn("AddButtonAt(", items)
+        for head in (
+            "procedure AddItemButtons(Index: Integer);",
+            "procedure RenderInstall;",
+            "procedure RenderKey;",
+        ):
+            with self.subTest(head=head):
+                self.assertNotIn("AddButtonAt(", routine(self.raw, head))
+        failure = routine(self.raw, "procedure AddFailure(")
+        self.assertLess(failure.index("CM('s12_choose_drive')"), failure.index("AddReportButton;"))
+
+    def test_w14_d3_l6_l11_the_button_row(self) -> None:
+        # Every caption change of Inno's row goes through a setter that sizes and aligns it.
+        direct = re.findall(
+            r"(?m)^.*\b(?:NextButton|CancelButton|BackButton|ExtraButton)\.Caption :=.*$",
+            code_only(self.raw),
+        )
+        self.assertEqual(len(direct), 3, direct)
+        layout = routine(self.raw, "procedure LayoutButtonRow;")
+        self.assertIn("PlaceRowButton(WizardForm.NextButton, Right);", layout)
+        self.assertIn(
+            "WizardForm.CalculateButtonWidth([Caption])",
+            routine(self.raw, "function RowButtonWidth("),
+        )
+        self.assertIn(
+            "LayoutButtonRow;", routine(self.raw, "procedure CurPageChanged(CurPageID: Integer);")
+        )
+        # 6.1 L6: S01 Save report and S15 "Open Slate Operations" are page buttons.
+        self.assertNotIn("ExtraButton.OnClick := @SaveReport;", self.raw)
+        self.assertNotIn("ExtraButton.OnClick := @OpenAppClick;", self.raw)
+        self.assertIn("S15Open.Parent := WizardForm.FinishedPage;", self.raw)
+        self.assertIn("S01Report.Parent := WizardForm.WelcomePage;", self.raw)
+
+    def test_w14_d3_l7_l9_l10_lines_forms_and_drives(self) -> None:
+        self.assertIn(
+            "AddLinkLine(FM1('s07_folder', DataRoot), CM('s07_change_folder'), 0);", self.raw
+        )
+        self.assertIn("AddLinkLine(ReportLine, CM('btn_show_in_folder'), 0);", self.raw)
+        build = routine(self.raw, "procedure BuildMailPage;")
+        self.assertNotIn("SurfaceHeight", build)
+        self.assertIn("MailError := AddTextTo(Surface, 0, '', False);", build)
+        self.assertIn("OrgError := AddTextTo(Surface, 0, '', False);", self.raw)
+        self.assertIn(
+            "Place(OrgMoreLink, Y, not OrgMoreOpen, ScaleY(4));",
+            routine(self.raw, "procedure LayoutOrg;\nvar"),
+        )
+        self.assertIn("ScaleX(16)", routine(self.raw, "procedure PlaceRadioRow("))
+        copy = read_copy()
+        self.assertEqual(copy.get("drive_row"), "%1 (%2) · %3 GB free")
+        self.assertEqual(copy.get("drive_row_most"), "%1 (%2) · %3 GB free · Most space")
+        self.assertEqual(copy.get("drive_usb_name"), "%1 (USB drive)")
+        self.assertEqual(copy.get("drive_local_disk"), "Local Disk")
+        self.assertIn("external 'GetVolumeInformationW@kernel32.dll stdcall';", self.raw)
+
+    def test_w14_d6_the_copy_names_what_setup_did(self) -> None:
+        copy = read_copy()
+        for key, value in SPEC_NAMED_COPY.items():
+            with self.subTest(key=key):
+                self.assertEqual(copy.get(key), value)
+        for key, value in copy.items():
+            with self.subTest(key=key):
+                self.assertNotRegex(value, r"(?i)\b(the|a) Windows feature\b|\ba feature that\b")
+
+    def test_w14_d3_the_self_test_checks_every_changed_page(self) -> None:
+        selftest = (INSTALLER / "wizard/SelfTest.iss").read_text(encoding="ascii")
+        run = routine(selftest, "procedure RunSelfTest;")
+        for call in (
+            "SelfButtonRow;",
+            "SelfForms;",
+            "SelfFormPages;",
+            "SelfPageStates;",
+            "SelfFits('S02 owner', P_CHECK);",
+        ):
+            with self.subTest(call=call):
+                self.assertIn(call, run)
+        fits = routine(selftest, "procedure SelfFits(Name: String; Index: Integer);")
+        for check in (
+            "SelfButtonsFit(Bad)",
+            "Pages[Index].SurfaceColor",
+            "CurY > Limit",
+            "Limit := StatusBandTop - ScaleY(12);",
+        ):
+            with self.subTest(check=check):
+                self.assertIn(check, fits)
+        self.assertIn("BuildFailureForm(", selftest)
+        self.assertIn("BuildKeyForm(", selftest)
 
 
 if __name__ == "__main__":
