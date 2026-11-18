@@ -1436,6 +1436,17 @@ class W14RecheckTest(unittest.TestCase):
         self.assertIn(head, self.raw)
         return routine(self.raw, head)
 
+    def test_w14_d11_the_resume_status_line_names_the_unpack_and_data_folder_steps(self) -> None:
+        # Owner on rc.24: for minutes the line said "2 of 7: Setting the memory of the server part
+        # to 6 GB" while the resume unpacked and copied this build's parts.
+        action = self.part("function BgPrepAction: String;")
+        self.assertIn("if BgPrep = 'unpack' then\n    Result := CM('step_data_unpack')", action)
+        self.assertIn("Result := FM1('step_data_folder', DataRoot)", action)
+        self.assertIn(
+            "ShowStatusLine(BgLineText(BgPrepAction));", self.part("procedure UpdateBgStatus;")
+        )
+        self.assertIn("  SelfBgPrepLine;\n", self.selftest)
+
     def test_w14_d10_an_outlook_address_hides_every_other_field(self) -> None:
         # Owner on rc.24: with an Outlook.com address, the User name box of the Other fields
         # stayed at its build position at the top of S09, as an unlabeled empty field.
@@ -1656,7 +1667,7 @@ class W14RecheckTest(unittest.TestCase):
         )
         self.assertIn("NoStop(Action)", self.part("function BgLineText(Action: String): String;"))
         self.assertIn(
-            "ShowStatusLine(BgLineText(BgAction));", self.part("procedure UpdateBgStatus;")
+            "ShowStatusLine(BgLineText(BgPrepAction));", self.part("procedure UpdateBgStatus;")
         )
         self.assertIn("SelfStatusLine;", routine(self.selftest, "procedure RunSelfTest;"))
         fits = routine(self.selftest, "procedure SelfStatusLine;")

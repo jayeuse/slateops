@@ -231,6 +231,30 @@ begin
   end;
 end;
 
+{ W14-D11: the resume's unpack and data folder steps name themselves on the status line. }
+procedure SelfBgPrepLine;
+var
+  SavedAction, SavedPrep: String;
+  Ok: Boolean;
+begin
+  SavedAction := BgAction;
+  SavedPrep := BgPrep;
+  try
+    BgAction := CM('step_bg_wslconfig');
+    BgPrep := 'unpack';
+    Ok := BgPrepAction = CM('step_data_unpack');
+    BgPrep := 'data';
+    Ok := Ok and (BgPrepAction = FM1('step_data_folder', DataRoot));
+    BgPrep := '';
+    Ok := Ok and (BgPrepAction = BgAction);
+    SelfRecord('W14-D11 the resume names its unpack and data folder steps', Ok, BgPrepAction);
+  except
+    SelfRecord('W14-D11 the resume names its unpack and data folder steps', False, GetExceptionMessage);
+  end;
+  BgAction := SavedAction;
+  BgPrep := SavedPrep;
+end;
+
 { W14-D10: the S09 fields that show, for the self-test detail. }
 function MailShownOne(C: TControl; Name: String): String;
 begin
@@ -938,6 +962,7 @@ begin
   SelfButtonRow;
   SelfForms;
   SelfFormPages;
+  SelfBgPrepLine;
   SelfCheck('owner layout', 'check-owner.json', 'needs_fixes', 1);
   SelfFits('S02 owner', P_CHECK);
   SelfCheck('ready layout', 'check-ready.json', 'ready', 0);
