@@ -59,7 +59,7 @@ end;
 procedure UReportSaved(Path: String);
 begin
   if Path <> '' then
-    MsgBox(FM('report_saved', [ExtractFileName(Path)]), mbInformation, MB_OK);
+    MsgBox(FM1('report_saved', ExtractFileName(Path)), mbInformation, MB_OK);
 end;
 
 { Save report from the uninstaller (plan 10.6), while the helper is still there. }
@@ -117,7 +117,7 @@ begin
     URadioKeep.OnClick := @URadioClick;
     URadioKeep.SetBounds(ScaleX(16), Y, Form.ClientWidth - ScaleX(32), ScaleY(18));
     Y := Y + ScaleY(22);
-    Text := UText(Form, Y, FM('u01_keep_text', [UDataRoot + '\kept', IntToStr(UDiskGb)]), False);
+    Text := UText(Form, Y, FM2('u01_keep_text', UDataRoot + '\kept', IntToStr(UDiskGb)), False);
     Text.Left := ScaleX(34);
     Text.Width := Form.ClientWidth - ScaleX(50);
     Text.AdjustHeight;
@@ -138,7 +138,7 @@ begin
     begin
       UBackupsCheck := TNewCheckBox.Create(Form);
       UBackupsCheck.Parent := Form;
-      UBackupsCheck.Caption := FM('u01_backups', [Copy(UBackupFolder, 1, 2)]);
+      UBackupsCheck.Caption := FM1('u01_backups', Copy(UBackupFolder, 1, 2));
       UBackupsCheck.Enabled := False;
       UBackupsCheck.SetBounds(ScaleX(34), Y, Form.ClientWidth - ScaleX(50), ScaleY(18));
     end;
@@ -173,8 +173,8 @@ begin
   Form := CreateCustomForm(ScaleX(460), ScaleY(200), False, False);
   try
     Form.Caption := CM('u02_title');
-    if UDeleteBackups then Line := FM('u02_backups_deleted', [Copy(UBackupFolder, 1, 2)])
-    else if UBackupFolder <> '' then Line := FM('u02_backups_kept', [Copy(UBackupFolder, 1, 2)])
+    if UDeleteBackups then Line := FM1('u02_backups_deleted', Copy(UBackupFolder, 1, 2))
+    else if UBackupFolder <> '' then Line := FM1('u02_backups_kept', Copy(UBackupFolder, 1, 2))
     else Line := '';
     Text := UText(Form, ScaleY(14), CM('u02_text') + ' ' + Line, False);
     UConfirmCheck := TNewCheckBox.Create(Form);
@@ -266,7 +266,7 @@ begin
     end;
     { U03 stage 2. }
     if UKeep then
-      UStatus(FM('u03_moving', [UDataRoot + '\kept']))
+      UStatus(FM1('u03_moving', UDataRoot + '\kept'))
     else
       UStatus(CM('u03_remove'));
     Extra := '';
@@ -296,7 +296,7 @@ begin
   begin
     { U04. }
     if UKeep then
-      Text := FM('u04_kept', [UDataRoot + '\kept'])
+      Text := FM1('u04_kept', UDataRoot + '\kept')
     else
       Text := CM('u04_deleted');
     Text := Text + #13#10#13#10 + CM('u04_feature');

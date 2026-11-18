@@ -162,7 +162,7 @@ begin
   else if MaintBackup = 'backup_target_missing' then
   begin
     { Option b: when the drive is back and backups still fail, Repair sets the rights again. }
-    Result := FM('m01_needs_backup_repair', [Copy(MaintBackupFolder, 1, 2)]);
+    Result := FM1('m01_needs_backup_repair', Copy(MaintBackupFolder, 1, 2));
     Line := CM('m01_runs_line');
   end
   else
@@ -248,7 +248,7 @@ begin
          Text := CM('s15_step3') + #13#10 + 'http://' + HostName + '.local/trust';
          Code := JsonValue(ReadText(NewOutRun('security-code', '')), 'security_code');
          if Code <> '' then
-           Text := Text + #13#10#13#10 + FM('s15_security', [Code]);
+           Text := Text + #13#10#13#10 + FM1('s15_security', Code);
          InfoForm(CM('m01_code'), Text);
        end;
     3: GoToMaintPage('email');
@@ -303,7 +303,7 @@ var
 begin
   BeginBody(P_MAINT);
   WizardForm.PageNameLabel.Caption := CM('m01_title');
-  WizardForm.PageDescriptionLabel.Caption := FM('m01_subtitle', [SetupVersion, AddressUrl]);
+  WizardForm.PageDescriptionLabel.Caption := FM2('m01_subtitle', SetupVersion, AddressUrl);
   WizardForm.NextButton.Visible := False;
   WizardForm.BackButton.Visible := False;
   WizardForm.CancelButton.Caption := CM('btn_close');
@@ -359,7 +359,7 @@ begin
   end
   else if PageID = Pages[P_BACKUP].ID then
   begin
-    WizardForm.BeveledLabel.Caption := ' ' + FM('m03_checking', [BackupDrive]);
+    WizardForm.BeveledLabel.Caption := ' ' + FM1('m03_checking', BackupDrive);
     WizardForm.Refresh;
     if not CheckBackupDrive then
     begin
@@ -370,7 +370,7 @@ begin
     if Code <> 'ready' then
     begin
       WizardForm.BeveledLabel.Caption := '';
-      BackupError := FM('s10_not_writable', [BackupDrive]);
+      BackupError := FM1('s10_not_writable', BackupDrive);
       RenderPage(P_BACKUP);
       Exit;
     end;
@@ -409,7 +409,7 @@ begin
   if MaintPhase = 'setemail' then
   begin
     if JobCode = 'email_set' then
-      BackToMaint(FM('m02_done', [Trim(MailFrom.Text)]))
+      BackToMaint(FM1('m02_done', Trim(MailFrom.Text)))
     else
       BackToMaint(CM('m02_failed'));
   end
@@ -422,7 +422,7 @@ begin
     begin
       MaintPhase := '';
       WizardForm.BeveledLabel.Caption := '';
-      BackupError := FM('s10_not_writable', [MaintTarget]);
+      BackupError := FM1('s10_not_writable', MaintTarget);
       RenderPage(P_BACKUP);
     end;
   end
@@ -433,14 +433,14 @@ begin
     if KeyText = '' then
     begin
       { W9 review item 9: the drive changed, but its key was not made. }
-      if MaintPhase = 'key3' then BackToMaint(FM('m03_key_failed', [MaintTarget])) else begin MaintPhase := ''; MaintLine := CM('s14_key_failed'); RenderPage(P_MAINT); end;
+      if MaintPhase = 'key3' then BackToMaint(FM1('m03_key_failed', MaintTarget)) else begin MaintPhase := ''; MaintLine := CM('s14_key_failed'); RenderPage(P_MAINT); end;
       Exit;
     end;
     if MaintPhase = 'key3' then
     begin
       MaintPhase := 'keyform';
       KeyForm(CM('m03_first'), CM('btn_done'));
-      BackToMaint(FM('m03_done', [MaintTarget]));
+      BackToMaint(FM1('m03_done', MaintTarget));
     end
     else
     begin
@@ -530,7 +530,7 @@ begin
   else if Code = 'service_logon_failed' then
     Result := CM('service_logon_failed')
   else
-    Result := FM('m05_not_changed', [InstalledVersion]);
+    Result := FM1('m05_not_changed', InstalledVersion);
 end;
 
 { P2-3: the sentence follows the engine's journal state (job-result update_state), because only
@@ -540,11 +540,11 @@ begin
   UpdState := JsonValue(JobRaw, 'update_state');
   UpdNeedsGb := JsonLiteral(JobRaw, 'needs_gb');
   if UpdState = 'rolled_back' then
-    UpdFail(4, FM('m05_rolled_back', [InstalledVersion]), True)
+    UpdFail(4, FM1('m05_rolled_back', InstalledVersion), True)
   else if UpdState = 'needs_support' then
     UpdFail(4, CM('m05_support'), False)
   else if JobCode = 'insufficient_space' then
-    UpdFail(2, FM('m05_space', [UpdNeedsGb]), False)
+    UpdFail(2, FM1('m05_space', UpdNeedsGb), False)
   else
     UpdFail(3, UpdStepText(JobCode), True);
 end;
@@ -580,7 +580,7 @@ var
 begin
   BeginBody(P_UPDATE);
   WizardForm.PageNameLabel.Caption := CM('m05_title');
-  WizardForm.PageDescriptionLabel.Caption := FM('m05_subtitle', [InstalledVersion, SetupVersion]);
+  WizardForm.PageDescriptionLabel.Caption := FM2('m05_subtitle', InstalledVersion, SetupVersion);
   WizardForm.BackButton.Visible := False;
   if UpdFailed then
   begin
@@ -589,7 +589,7 @@ begin
   end;
   if UpdPhase = '' then
   begin
-    AddText(FM('m05_backup', [InstalledVersion]), False);
+    AddText(FM1('m05_backup', InstalledVersion), False);
     AddText(CM('m05_people'), False);
     WizardForm.NextButton.Caption := CM('m05_next');
     WizardForm.NextButton.Enabled := True;
@@ -752,7 +752,7 @@ begin
       UpdFail(4, CM('av_blocked'), True)
     else
       { The engine runs the new version; Try again reaches here again through version_not_newer. }
-      UpdFail(4, FM('m05_finish_failed', [SetupVersion]), True);
+      UpdFail(4, FM1('m05_finish_failed', SetupVersion), True);
   end;
 end;
 

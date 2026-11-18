@@ -486,3 +486,5 @@ m03_key_failed=Backups now go to %1, but setup could not make their recovery key
 m04_confirm_title=Make a new recovery key?
 m04_confirm_text=Your current recovery key stops working. Have a printer or a USB drive ready to save the new key.
 m04_confirm_go=&Make a new key
+; ---- W14-D1 (TASK-0097): S02 when its result cannot be drawn (engineer copy; Product Designer review)
+s02_draw_failed=Setup could not show the result of the check.

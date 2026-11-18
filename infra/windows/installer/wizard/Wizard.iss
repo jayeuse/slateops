@@ -150,6 +150,8 @@ var
   { S02, S06, S11: the check }
   CheckOut, CheckVerdict, CheckText, CheckFor: String;
   CheckRunning, CheckDone, NeedPrepare, RestartNeeded, LidChosen, FixRunning: Boolean;
+  { W14-D1: S02 shows the draw failure; Next runs the check again. }
+  CheckDrawFailed: Boolean;
   Items: array of TCheckItem;
   FixOut, FixAction: String;
 
@@ -373,9 +375,21 @@ begin
   end;
 end;
 
-function FM(Key: String; Args: array of String): String;
+{ W14-D1: FmtMessage gets a bracket literal only. A script routine with an "array of String"
+  parameter that handed it on raised "Type Mismatch" on the first S02 item. }
+function FM1(Key, A: String): String;
 begin
-  Result := FmtMessage(CM(Key), Args);
+  Result := FmtMessage(CM(Key), [A]);
+end;
+
+function FM2(Key, A, B: String): String;
+begin
+  Result := FmtMessage(CM(Key), [A, B]);
+end;
+
+function FM3(Key, A, B, C: String): String;
+begin
+  Result := FmtMessage(CM(Key), [A, B, C]);
 end;
 
 function HasMessage(Key: String): Boolean;
@@ -1104,7 +1118,7 @@ begin
   RunHelper('report-zip', ReportRun, OutFile, '');
   ReportPath := JsonValue(ReadText(OutFile), 'path');
   if ReportPath <> '' then
-    ReportLine := FM('report_saved', [ExtractFileName(ReportPath)])
+    ReportLine := FM1('report_saved', ExtractFileName(ReportPath))
   else
     ReportLine := '';
   if not WizardReady then
@@ -1273,7 +1287,7 @@ begin
   Key := Lowercase(Item.Id) + '_' + Item.Code;
   if not HasMessage(Key) then
   begin
-    Result := FM('cannot_read', [Lowercase(ItemName(Item))]);
+    Result := FM1('cannot_read', Lowercase(ItemName(Item)));
     Exit;
   end;
   V := '';
@@ -1285,11 +1299,11 @@ begin
   else if Item.Id = 'C20' then V := JsonFirstItem(Item.Raw, 'products')
   else if Item.Id = 'C24' then V := JsonValue(Item.Raw, 'letter');
   if Item.Id = 'C05' then
-    Result := FM(Key, [JsonLiteral(Item.Raw, 'installed_gb'), JsonLiteral(Item.Raw, 'usable_gb')])
+    Result := FM2(Key, JsonLiteral(Item.Raw, 'installed_gb'), JsonLiteral(Item.Raw, 'usable_gb'))
   else if Item.Id = 'C07' then
-    Result := FM(Key, [V, JsonValue(Item.Raw, 'letter')])
+    Result := FM2(Key, V, JsonValue(Item.Raw, 'letter'))
   else
-    Result := FM(Key, [V]);
+    Result := FM1(Key, V);
 end;
 
 function ItemWord(Item: TCheckItem): String;
@@ -1352,9 +1366,9 @@ function RestartResumeText(Code: String; Prefix: String): String;
 begin
   Result := '';
   if Code = 'resume_other_user' then
-    Result := FM(Prefix + '_other_user', [ExpandConstant('{srcexe}')])
+    Result := FM1(Prefix + '_other_user', ExpandConstant('{srcexe}'))
   else if Code = 'resume_path_unsafe' then
-    Result := FM(Prefix + '_unsafe', [ExpandConstant('{srcexe}')]);
+    Result := FM1(Prefix + '_unsafe', ExpandConstant('{srcexe}'));
 end;
 
 { C08 "Restart now" and C04 "Restart to startup settings": save the progress (with the resume
@@ -1410,7 +1424,7 @@ begin
   Text := '';
   if JsonLiteral(Items[Index].Raw, 'bitlocker_caution') = 'true' then
     Text := CM('c04_how_caution') + #13#10#13#10;
-  Text := Text + FM('c04_how_text', [JsonValue(Items[Index].Raw, 'maker')]);
+  Text := Text + FM1('c04_how_text', JsonValue(Items[Index].Raw, 'maker'));
   InfoForm(CM('c04_how_title'), Text);
 end;
 
@@ -1596,16 +1610,18 @@ begin
   end;
   if More > 0 then
   begin
-    Link := AddLink(FM('s02_show_more', [IntToStr(More)]), 0);
+    Link := AddLink(FM1('s02_show_more', IntToStr(More)), 0);
     Link.OnLinkClick := @ShowAllChecks;
   end;
-  AddText(FM('s02_passed', [IntToStr(Passed)]), False);
+  AddText(FM1('s02_passed', IntToStr(Passed)), False);
   Link := AddLink(CM('s02_show_all'), 0);
   Link.OnLinkClick := @ShowAllChecks;
   Button := AddButtonAt(CM('btn_check_again'), 0, 0);
   Button.OnClick := @CheckAgainClick;
   Button.Enabled := not FixRunning;
   CurY := CurY + Button.Height + ScaleY(6);
+  { W14-D1: Save report on S02 whatever the result. }
+  AddReportControls;
 end;
 
 function StopTodo(Item: TCheckItem): String;
@@ -1617,7 +1633,7 @@ begin
   else if (Item.Id = 'C01') and (Item.Code = 'windows_10') then Result := CM('s03_win10_todo');
 end;
 
-procedure RenderCheck;
+procedure RenderCheckBody;
 var
   Verdict: TNewMemo;
   I: Integer;
@@ -1677,7 +1693,7 @@ begin
     if CountClass('fix') = 1 then
       Verdict := AddVerdict(CM('s02_needs_one'))
     else
-      Verdict := AddVerdict(FM('s02_needs', [IntToStr(CountClass('fix'))]));
+      Verdict := AddVerdict(FM1('s02_needs', IntToStr(CountClass('fix'))));
     AddCheckItems(False);
     WizardForm.NextButton.Enabled := False;
   end
@@ -1693,6 +1709,38 @@ begin
     WizardForm.ActiveControl := Verdict;
 end;
 
+
+{ W14-D1: a fault while S02 draws the check result never leaves the page without its way on.
+  The fault goes to the setup log (Save report), and S02 shows the S13 layout with Save report;
+  Try again runs the check again. Only calls that ran on the owner's PC draw it. }
+procedure RenderCheck;
+var
+  Button: TNewButton;
+begin
+  try
+    RenderCheckBody;
+  except
+    Log('S02 draw failed: ' + GetExceptionMessage);
+    CheckDrawFailed := True;
+    BeginBody(P_CHECK);
+    WizardForm.PageNameLabel.Caption := CM('s13_title');
+    WizardForm.PageDescriptionLabel.Caption := CM('s02_title');
+    AddVerdict(CM('s02_draw_failed'));
+    AddText(CM('s13_what'), False);
+    try
+      Button := AddButtonAt(CM('btn_save_report'), 0, 0);
+      Button.OnClick := @SaveReport;
+      CurY := CurY + Button.Height + ScaleY(6);
+      if ReportLine <> '' then
+        AddText(ReportLine, False);
+    except
+      Log('S02 Save report button failed: ' + GetExceptionMessage);
+    end;
+    WizardForm.NextButton.Visible := True;
+    WizardForm.NextButton.Caption := CM('btn_try_again');
+    WizardForm.NextButton.Enabled := True;
+  end;
+end;
 { ------------------------------------------------------------------------------------------- }
 { S05 Restart this PC once                                                                      }
 { ------------------------------------------------------------------------------------------- }
@@ -1987,8 +2035,8 @@ begin
   WizardForm.NextButton.Caption := CM('btn_next');
   if DataPrepared then
   begin
-    AddText(FM('s07_folder', [DataRoot]), True);
-    AddText(FM('s07_already', [Copy(DataRoot, 1, 2)]), False);
+    AddText(FM1('s07_folder', DataRoot), True);
+    AddText(FM1('s07_already', Copy(DataRoot, 1, 2)), False);
     WizardForm.NextButton.Enabled := True;
     Exit;
   end;
@@ -1999,7 +2047,7 @@ begin
     Caption := DriveLetters[I];
     if I = 0 then
       Caption := Caption + ' ' + CM('stage_sep') + ' ' + CM('s07_most_space');
-    Caption := Caption + '   ' + FM('s07_free', [GB(DriveFree[I])]);
+    Caption := Caption + '   ' + FM1('s07_free', GB(DriveFree[I]));
     Radio := TNewRadioButton.Create(WizardForm);
     Radio.Parent := Cur;
     Radio.Caption := Caption;
@@ -2012,12 +2060,12 @@ begin
     CurY := CurY + Radio.Height + ScaleY(4);
   end;
   CurY := CurY + ScaleY(6);
-  AddText(FM('s07_folder', [DataRoot]), False);
+  AddText(FM1('s07_folder', DataRoot), False);
   RefreshKept;
   if KeptState = 'kept' then
   begin
     { Spec S07 kept-data card. }
-    AddText(FM('s07_kept', [KeptName, KeptVersion, KeptOn]), True);
+    AddText(FM3('s07_kept', KeptName, KeptVersion, KeptOn), True);
     Radio := TNewRadioButton.Create(WizardForm);
     Radio.Parent := Cur;
     Radio.Caption := CM('s07_use_kept');
@@ -2036,9 +2084,9 @@ begin
     CurY := CurY + ScaleY(24);
   end
   else if KeptState = 'kept_newer' then
-    AddText(FM('s07_kept_newer', [KeptVersion]), True)
+    AddText(FM1('s07_kept_newer', KeptVersion), True)
   else if KeptState = 'kept_older' then
-    AddText(FM('s07_kept_older', [KeptVersion]), True)
+    AddText(FM1('s07_kept_older', KeptVersion), True)
   else if KeptState = 'kept_unreadable' then
   begin
     AddText(CM('s07_kept_unreadable'), True);
@@ -2046,15 +2094,15 @@ begin
   end;
   if DataError = 'data_folder_parent_unsafe' then
   begin
-    AddText(FM('s07_parent_unsafe', [DataRoot, DefaultFolderFor(DataRoot)]), False);
-    Button := AddButtonAt(FM('s07_use_default', [DefaultFolderFor(DataRoot)]), 0, 0);
+    AddText(FM2('s07_parent_unsafe', DataRoot, DefaultFolderFor(DataRoot)), False);
+    Button := AddButtonAt(FM1('s07_use_default', DefaultFolderFor(DataRoot)), 0, 0);
     Button.OnClick := @UseDefaultClick;
     CurY := CurY + Button.Height + ScaleY(6);
   end
   else if DataError = 'not_empty' then
     AddText(CM('s07_not_empty'), False)
   else if DataError = 'too_small' then
-    AddText(FM('s07_too_small', [DataErrorValue]), False)
+    AddText(FM1('s07_too_small', DataErrorValue), False)
   else if DataError = 'drive_not_fixed_ntfs' then
     AddText(CM('s07_usb_note'), True)
   else if (DataError = 'start_failed') or (DataError = 'helper_timeout') then
@@ -2075,7 +2123,7 @@ begin
   Link.Enabled := not DataStarted;
   if DataStarted then
   begin
-    AddText(FM('s07_preparing', ['0%']), False);
+    AddText(FM1('s07_preparing', '0%'), False);
     AddMarquee;
   end;
   { W9-3: newer, older (W13b) or unreadable kept data, and "Start new" in a kept folder, keep
@@ -2212,7 +2260,7 @@ begin
   else if BgDone then
     WizardForm.BeveledLabel.Caption := ' ' + CM('s07_prepared')
   else
-    WizardForm.BeveledLabel.Caption := ' ' + FM('s07_preparing', [IntToStr((BgIndex * 100) div BgCount) + '%']);
+    WizardForm.BeveledLabel.Caption := ' ' + FM1('s07_preparing', IntToStr((BgIndex * 100) div BgCount) + '%');
   WizardForm.BeveledLabel.Visible := True;
 end;
 
@@ -2337,7 +2385,7 @@ begin
   if (BgCode = 'data_folder_parent_unsafe') or (BgCode = 'payload_part_missing') then
   begin
     { Parent decision: a folder above changed after the check; no Try again. }
-    FailureForm(CM('s07_title'), FM('s07_folder_changed', [DataRoot]), False);
+    FailureForm(CM('s07_title'), FM1('s07_folder_changed', DataRoot), False);
     Result := False;
     Exit;
   end;
@@ -2793,8 +2841,8 @@ end;
 procedure RenderMailStatus;
 begin
   if MailPhase = 'waiting' then MailStatus.Caption := CM('s09_waiting')
-  else if (MailPhase = 'selftest') or (MailPhase = 'sending') then MailStatus.Caption := FM('s09_sending', [Trim(OrgEmail.Text)])
-  else if MailPassed then MailStatus.Caption := FM('s09_passed', [Trim(OrgEmail.Text)])
+  else if (MailPhase = 'selftest') or (MailPhase = 'sending') then MailStatus.Caption := FM1('s09_sending', Trim(OrgEmail.Text))
+  else if MailPassed then MailStatus.Caption := FM1('s09_passed', Trim(OrgEmail.Text))
   else MailStatus.Caption := '';
   if MailShowReport and (ReportLine <> '') then
     MailStatus.Caption := ReportLine;
@@ -2861,14 +2909,14 @@ begin
   else if Code = 'smtp_m365_auth_disabled' then SetMailError(CM('s09_err_m365'), MailPassword)
   else if Code = 'smtp_unreachable' then
   begin
-    if MailGmail.Checked then SetMailError(FM('s09_err_unreachable_known', [CM('s09_gmail')]), MailGmail)
-    else if MailM365.Checked then SetMailError(FM('s09_err_unreachable_known', [CM('s09_m365')]), MailGmail)
-    else SetMailError(FM('s09_err_unreachable', [MailHost]), MailServer);
+    if MailGmail.Checked then SetMailError(FM1('s09_err_unreachable_known', CM('s09_gmail')), MailGmail)
+    else if MailM365.Checked then SetMailError(FM1('s09_err_unreachable_known', CM('s09_m365')), MailGmail)
+    else SetMailError(FM1('s09_err_unreachable', MailHost), MailServer);
   end
   else if Code = 'smtp_no_tls' then SetMailError(CM('s09_err_no_tls'), MailSsl)
-  else if Code = 'smtp_tls_certificate' then SetMailError(FM('s09_err_certificate', [MailHost]), MailServer)
-  else if Code = 'smtp_sender_refused' then SetMailError(FM('s09_err_sender', [Trim(MailFrom.Text)]), MailFrom)
-  else if Code = 'smtp_recipient_refused' then SetMailError(FM('s09_err_recipient', [Trim(OrgEmail.Text)]), MailFrom)
+  else if Code = 'smtp_tls_certificate' then SetMailError(FM1('s09_err_certificate', MailHost), MailServer)
+  else if Code = 'smtp_sender_refused' then SetMailError(FM1('s09_err_sender', Trim(MailFrom.Text)), MailFrom)
+  else if Code = 'smtp_recipient_refused' then SetMailError(FM1('s09_err_recipient', Trim(OrgEmail.Text)), MailFrom)
   else
   begin
     MailShowReport := True;
@@ -3017,14 +3065,14 @@ begin
   begin
     Letter := BackupLetters[I];
     if I = Count then
-      Caption := FM('s10_data_drive', [Letter])
+      Caption := FM1('s10_data_drive', Letter)
     else
     begin
       Caption := Letter;
       if GetDriveType(Letter + '\') = DRIVE_REMOVABLE then
         Caption := Caption + ' (' + CM('s10_usb_word') + ')';
       if GetSpaceOnDisk64(Letter + '\', FreeBytes, Ignored) then
-        Caption := Caption + '   ' + FM('s07_free', [GB(FreeBytes)]);
+        Caption := Caption + '   ' + FM1('s07_free', GB(FreeBytes));
     end;
     Radio := TNewRadioButton.Create(WizardForm);
     Radio.Parent := Cur;
@@ -3050,7 +3098,7 @@ begin
   begin
     BackupConfirm := TNewCheckBox.Create(WizardForm);
     BackupConfirm.Parent := Cur;
-    BackupConfirm.Caption := FM('s10_confirm', [BackupDrive]);
+    BackupConfirm.Caption := FM1('s10_confirm', BackupDrive);
     BackupConfirm.SetBounds(0, CurY, Cur.Width, ScaleY(18));
     BackupConfirm.OnClick := @BackupConfirmClick;
     CurY := CurY + BackupConfirm.Height + ScaleY(6);
@@ -3069,9 +3117,9 @@ begin
   Code := ReadResultCode(OutFile);
   Result := Code = 'ready';
   if Code = 'too_small' then
-    BackupError := FM('s10_too_small', [BackupDrive, JsonLiteral(Text, 'free_gb')])
+    BackupError := FM2('s10_too_small', BackupDrive, JsonLiteral(Text, 'free_gb'))
   else if not Result then
-    BackupError := FM('s10_not_writable', [BackupDrive]);
+    BackupError := FM1('s10_not_writable', BackupDrive);
   if not Result then
     RenderPage(P_BACKUP);
 end;
@@ -3141,22 +3189,22 @@ begin
   begin
     { Spec 4.3: the summary of the kept installation; the kept data holds the answers. }
     if KeptName <> '' then
-      AddRow(FM('s11_org', [KeptName]), -1);
-    AddRow(FM('s11_data', [DataRoot]), -1);
-    AddRow(FM('s11_address', [AddressUrl]), -1);
+      AddRow(FM1('s11_org', KeptName), -1);
+    AddRow(FM1('s11_data', DataRoot), -1);
+    AddRow(FM1('s11_address', AddressUrl), -1);
     AddRow(CM('s11_edition'), -1);
   end
   else
   begin
-    AddRow(FM('s11_org', [Trim(OrgName.Text)]), P_ORG);
-    AddRow(FM('s11_admin', [Trim(OrgEmail.Text)]), P_ORG);
-    AddRow(FM('s11_mail', [Trim(MailFrom.Text), MailProviderName]), P_EMAIL);
-    AddRow(FM('s11_data', [DataRoot]), -1);
+    AddRow(FM1('s11_org', Trim(OrgName.Text)), P_ORG);
+    AddRow(FM1('s11_admin', Trim(OrgEmail.Text)), P_ORG);
+    AddRow(FM2('s11_mail', Trim(MailFrom.Text), MailProviderName), P_EMAIL);
+    AddRow(FM1('s11_data', DataRoot), -1);
     Backups := BackupDrive;
     if GetDriveType(BackupDrive + '\') = DRIVE_REMOVABLE then
       Backups := Backups + ' (' + CM('s10_usb_word') + ')';
-    AddRow(FM('s11_backups', [Backups]), P_BACKUP);
-    AddRow(FM('s11_address', [AddressUrl]), -1);
+    AddRow(FM1('s11_backups', Backups), P_BACKUP);
+    AddRow(FM1('s11_address', AddressUrl), -1);
     AddRow(CM('s11_edition'), -1);
   end;
   CurY := CurY + ScaleY(6);
@@ -3201,7 +3249,7 @@ begin
   begin
     InstallFailStage := CM('s12_stage' + IntToStr(Stage));
     if Text = '' then
-      Text := FM('s13_could_not', [CM('s12_fail' + IntToStr(Stage))]);
+      Text := FM1('s13_could_not', CM('s12_fail' + IntToStr(Stage)));
   end
   else
     InstallFailStage := CM('s12_stage5');
@@ -3317,7 +3365,7 @@ begin
       end
       else if Code = 'service_logon_failed' then InstallFail(0, CM('service_logon_failed'))
       else if Code = 'helper_timeout' then InstallFail(0, CM('av_blocked'))
-      else if StageOfCode(Code) = 7 then InstallFail(7, FM('s12_backup_failed', [BackupDrive]))
+      else if StageOfCode(Code) = 7 then InstallFail(7, FM1('s12_backup_failed', BackupDrive))
       else InstallFail(StageOfCode(Code), '');
       Exit;
     end;
@@ -3344,7 +3392,7 @@ begin
   begin
     if Code <> 'ready' then
     begin
-      InstallFail(7, FM('s12_backup_failed', [BackupDrive]));
+      InstallFail(7, FM1('s12_backup_failed', BackupDrive));
       Exit;
     end;
     InstallStep := 1;
@@ -3369,7 +3417,7 @@ begin
     end;
     if Code <> 'ok' then
     begin
-      InstallFail(8, FM('s12_https', [AddressUrl]));
+      InstallFail(8, FM1('s12_https', AddressUrl));
       Exit;
     end;
     InstallDone := True;
@@ -3471,7 +3519,7 @@ begin
   end;
   if Code <> 'ready' then
   begin
-    MsgBox(FM('s10_not_writable', [Chosen]), mbError, MB_OK);
+    MsgBox(FM1('s10_not_writable', Chosen), mbError, MB_OK);
     Exit;
   end;
   BackupDrive := Chosen;
@@ -3584,7 +3632,7 @@ begin
     Exit;
   { The person's own save (plan 3.2 check 7); never logged. }
   if SaveStringToFile(Path, AnsiString(CM('s14_title') + #13#10#13#10 + KeyText + #13#10), False) then
-    KeyStateText := FM('s14_saved', [Path]);
+    KeyStateText := FM1('s14_saved', Path);
   RefreshKeyState;
 end;
 
@@ -4390,7 +4438,7 @@ begin
   else if (CurPageID = wpFinished) and (EntryScreen = 'M05') then
   begin
     WizardForm.FinishedHeadingLabel.Caption := CM('m05_title');
-    WizardForm.FinishedLabel.Caption := FM('m05_done', [SetupVersion]);
+    WizardForm.FinishedLabel.Caption := FM1('m05_done', SetupVersion);
     WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);
     WizardForm.NextButton.Caption := CM('s15_finish');
   end
@@ -4403,12 +4451,12 @@ begin
     else if Trim(OrgEmail.Text) = '' then
       Text := CM('s15_step1_no_address')
     else
-      Text := FM('s15_step1', [Trim(OrgEmail.Text)]);
+      Text := FM1('s15_step1', Trim(OrgEmail.Text));
     if Text <> '' then
       Text := Text + #13#10#13#10;
     Text := Text + CM('s15_step2') + #13#10#13#10 + CM('s15_step3') + #13#10 + 'http://' + HostName + '.local/trust';
     if SecurityCode <> '' then
-      Text := Text + #13#10 + FM('s15_security', [SecurityCode]);
+      Text := Text + #13#10 + FM1('s15_security', SecurityCode);
     WizardForm.FinishedLabel.Caption := Text + #13#10#13#10 + CM('s15_desk') + #13#10#13#10 + CM('s15_starts');
     WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);
     WizardForm.NextButton.Caption := CM('s15_finish');
@@ -4446,7 +4494,17 @@ begin
   if CurPageID = wpWelcome then
     Result := not StateUnsafe
   else if CurPageID = Pages[P_CHECK].ID then
-    Result := CheckDone and (CheckVerdict = 'ready')
+  begin
+    if CheckDrawFailed then
+    begin
+      CheckDrawFailed := False;
+      StartCheck('check', 'S02');
+      RenderCheck;
+      Result := False;
+    end
+    else
+      Result := CheckDone and (CheckVerdict = 'ready');
+  end
   else if CurPageID = Pages[P_RESTART].ID then
   begin
     if PrepState = 'failed' then

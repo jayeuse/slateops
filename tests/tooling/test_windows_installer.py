@@ -278,7 +278,7 @@ class WizardCopyTest(unittest.TestCase):
     def test_wz11_text_is_never_a_tlabel_and_every_key_the_code_uses_exists(self) -> None:
         code = pascal_code()
         self.assertNotRegex(code, r"\bTLabel\b")
-        used = set(re.findall(r"\b(?:CM|FM)\('([a-z0-9_]+)'", code))
+        used = set(re.findall(r"\b(?:CM|FM[1-3])\('([a-z0-9_]+)'", code))
         prefixed = {"s12_stage", "s12_fail", "stage_"}
         missing = {key for key in used - set(self.copy()) if key not in prefixed}
         self.assertEqual(missing, set())
@@ -508,7 +508,7 @@ class UpdatePathTest(unittest.TestCase):
     def test_p2_3_the_result_sentence_follows_the_update_state(self) -> None:
         result = routine(pascal_code(), "procedure UpdateFailed;")
         self.assertRegex(
-            result, r"if UpdState = 'rolled_back' then\s+UpdFail\(4, FM\('m05_rolled_back'"
+            result, r"if UpdState = 'rolled_back' then\s+UpdFail\(4, FM1\('m05_rolled_back'"
         )
         self.assertRegex(
             result,
@@ -516,7 +516,7 @@ class UpdatePathTest(unittest.TestCase):
         )
         self.assertRegex(
             result,
-            r"JobCode = 'insufficient_space' then\s+UpdFail\(2, FM\('m05_space', \[UpdNeedsGb\]\)",
+            r"JobCode = 'insufficient_space' then\s+UpdFail\(2, FM1\('m05_space', UpdNeedsGb\)",
         )
         self.assertEqual(pascal_code().count("'m05_rolled_back'"), 1)
 
@@ -655,14 +655,14 @@ class W9ReviewCorrectionTest(unittest.TestCase):
         self.assertIn("KeptName := JsonValue(Text, 'business_name');", kept)
         ready = routine(self.raw, "procedure RenderReady;")
         self.assertRegex(
-            ready, r"if KeptName <> '' then\s+AddRow\(FM\('s11_org', \[KeptName\]\), -1\);"
+            ready, r"if KeptName <> '' then\s+AddRow\(FM1\('s11_org', KeptName\), -1\);"
         )
         helper = (INSTALLER / "scripts/setup-helper.ps1").read_text(encoding="ascii")
         self.assertIn("-Restored:$Restored", helper)
 
     def test_option_b_m01_names_repair_for_a_missing_backup_drive(self) -> None:
         sentence = routine(self.raw, "function MaintSentence(var Line: String): String;")
-        self.assertIn("FM('m01_needs_backup_repair', [Copy(MaintBackupFolder, 1, 2)])", sentence)
+        self.assertIn("FM1('m01_needs_backup_repair', Copy(MaintBackupFolder, 1, 2))", sentence)
         copy = read_copy()
         self.assertIn("select Repair", copy.get("m01_needs_backup_repair", ""))
         self.assertEqual(
@@ -727,7 +727,7 @@ class W9ReviewCorrectionTest(unittest.TestCase):
 
     def test_item_9_a_drive_change_without_a_key_says_so(self) -> None:
         poll = routine(self.raw, "procedure PollMaint;\nvar")
-        self.assertIn("BackToMaint(FM('m03_key_failed', [MaintTarget]))", poll)
+        self.assertIn("BackToMaint(FM1('m03_key_failed', MaintTarget))", poll)
 
     def test_item_12_m04_asks_before_the_key_changes(self) -> None:
         click = routine(self.raw, "procedure MaintActionClick(Sender: TObject);")
@@ -787,6 +787,48 @@ class W9ReviewCorrectionTest(unittest.TestCase):
         for key, value in expected.items():
             with self.subTest(key=key):
                 self.assertEqual(copy.get(key), value)
+
+
+class W14DefectTest(unittest.TestCase):
+    """W14 defects (TASK-0097) that a static read of the setup program can hold."""
+
+    def setUp(self) -> None:
+        self.raw = pascal_code()
+        self.code = code_only(self.raw)
+
+    def test_w14_d1_no_script_routine_hands_on_an_open_array(self) -> None:
+        # W14-D1: S02 stopped at its first FM call ("Runtime error (at 72:16): Type Mismatch."):
+        # FM took "Args: array of String" and passed it on to FmtMessage. FmtMessage now gets
+        # only a bracket literal, from wrappers with a fixed number of values.
+        heads = re.findall(r"(?m)^(?:procedure|function)\s+\w+\(([^)]*)\)", self.code)
+        self.assertTrue(heads)
+        for params in heads:
+            with self.subTest(params=params):
+                self.assertNotIn("array of", params)
+        calls = re.findall(r"FmtMessage\(([^;]*)", self.raw)
+        self.assertTrue(calls)
+        for call in calls:
+            with self.subTest(call=call):
+                self.assertRegex(call, r"^CM\(Key\), \[")
+        self.assertNotRegex(self.code, r"\bFM\(")
+
+    def test_w14_d1_a_draw_failure_on_s02_shows_the_failure_with_save_report(self) -> None:
+        check = routine(self.raw, "procedure RenderCheck;")
+        self.assertRegex(check, r"try\s+RenderCheckBody;\s+except")
+        self.assertIn("Log('S02 draw failed: ' + GetExceptionMessage);", check)
+        self.assertIn("CheckDrawFailed := True;", check)
+        self.assertIn("CM('s02_draw_failed')", check)
+        self.assertIn("CM('btn_save_report')", check)
+        nxt = routine(self.raw, "function NextButtonClick(CurPageID: Integer): Boolean;")
+        self.assertRegex(
+            nxt,
+            r"if CheckDrawFailed then\s+begin\s+CheckDrawFailed := False;\s+"
+            r"StartCheck\('check', 'S02'\);",
+        )
+
+    def test_w14_d1_s02_offers_save_report(self) -> None:
+        items = routine(self.raw, "procedure AddCheckItems(OnlyFix: Boolean);")
+        self.assertLess(items.index("CM('btn_check_again')"), items.index("AddReportControls;"))
 
 
 if __name__ == "__main__":
