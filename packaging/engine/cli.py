@@ -105,6 +105,7 @@ def main(
     stdin: BinaryIO | None = None,
     stdout: TextIO | None = None,
     deps: Dependencies | None = None,
+    stderr: TextIO | None = None,
 ) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     source = stdin if stdin is not None else sys.stdin.buffer
@@ -133,8 +134,9 @@ def main(
             else NullLog(redactor)
         )
         ctx = Context(
-            deps, name, run_id, log, deps.make_runner(log), redactor, deps.clock(), source
-        )
+            deps, name, run_id, log, deps.make_runner(log), redactor, deps.clock(), source,
+            progress=stderr if stderr is not None else sys.stderr,
+        )  # fmt: skip
         log.line(ctx.step(0, "start"), "INFO", f"engine {engine_version(deps.paths)} job {name}")
         lock: AbstractContextManager[None] = (
             held_lock(deps.paths.engine_lock, "engine_busy") if job.locked else nullcontext()

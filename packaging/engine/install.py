@@ -50,6 +50,7 @@ from engine import (
     invitation,
     journal,
     prefetch,
+    progress,
     release,
     subnet,
     trust,
@@ -75,21 +76,7 @@ KEYS = {
     "answers": lambda value: isinstance(value, dict),
 }
 REQUIRED = frozenset({"run_id", "version"})
-STEPS = (
-    (1, "release"),
-    (2, "folders"),
-    (3, "images"),
-    (4, "secrets"),
-    (5, "env"),
-    (6, "tls"),
-    (7, "providers"),
-    (8, "provision"),
-    (9, "api"),
-    (10, "caddy"),
-    (11, "admin"),
-    (12, "backup"),
-    (13, "finish"),
-)
+STEPS = tuple(enumerate(progress.STEPS["install"], start=1))  # the one list (W14-D5)
 ENV_FILES = ("provider.env", "app.env", "provision.env")
 GENERATED = "generated.env"
 RESTIC = "restic-password"
@@ -739,8 +726,10 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     for number, name in STEPS:
         step = ctx.step(number, name)
         if journal.done(state, number):
+            progress.report(ctx, name, state="done")
             skipped += 1
             continue
+        progress.report(ctx, name)
         if number > 1:
             _space(ctx, step)
         ctx.log.line(step, "INFO", f"start {name}")

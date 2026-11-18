@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, TextIO
 
 from engine.core import Paths
 from engine.docker_api import DockerApi
@@ -91,6 +91,8 @@ class Context:
     outputs: dict[str, str] = field(default_factory=dict)
     # False when the job did nothing worth a log (an idle tick): its run folder is removed.
     keep_log: bool = True
+    # Where ``engine.progress`` writes its lines: the job's standard error (TASK-0097 W14-D5).
+    progress: TextIO | None = None
 
     @property
     def paths(self) -> Paths:

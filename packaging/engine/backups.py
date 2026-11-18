@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from engine import compose, drive, journal, release
+from engine import compose, drive, journal, progress, release
 from engine.context import Context
 from engine.core import (
     Paths,
@@ -368,11 +368,14 @@ def set_target(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
         raise refused("not_installed")
     target = request["backup_target"]
     with runner_idle(ctx, step, instance):
+        progress.report(ctx, "unmount")
         if not drive.unmount(ctx, step):
             raise failed("backup_target_busy")
         try:
+            progress.report(ctx, "mount")
             if not drive.mount(ctx, step, target):
                 raise refused("backup_target_missing")
+            progress.report(ctx, "repository")
             repository = drive.open_or_init(ctx, step)
         except Exception:
             drive.unmount(ctx, step)
@@ -386,8 +389,10 @@ def new_key(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     paths, step = ctx.paths, ctx.step(1, "key")
     instance = _instance(ctx)
     with runner_idle(ctx, step, instance):
+        progress.report(ctx, "mount")
         target = drive.load_target(paths)
         if target is None or not drive.mount(ctx, step, target):
             raise refused("backup_target_missing")
+        progress.report(ctx, "key")
         key = drive.new_recovery_key(ctx, step)
     return {"code": "recovery_key_created", "recovery_key": key}

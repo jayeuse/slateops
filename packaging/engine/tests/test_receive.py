@@ -17,7 +17,19 @@ from engine import receive, release
 from engine.core import Paths, held_lock
 from engine.runner import Result
 
-from .helpers import RUN_ID, VERSION, Response, Script, call, deps, fail, log_text, make_paths, ok
+from .helpers import (
+    RUN_ID,
+    VERSION,
+    Response,
+    Script,
+    call,
+    deps,
+    fail,
+    log_text,
+    make_paths,
+    ok,
+    progress_lines,
+)
 
 SERVER_DIGEST = "sha256:" + "1" * 64
 CADDY_DIGEST = "sha256:" + "2" * 64
@@ -386,3 +398,17 @@ def test_ac_r2_a_busy_receive_leaves_the_running_jobs_staging_alone(paths: Paths
 
     assert (code, result["code"]) == (2, "engine_busy")
     assert (running / "release-manifest.json").exists()
+
+
+def test_w14_d5_receive_reports_each_step(paths: Paths, capsys: pytest.CaptureFixture[str]) -> None:
+    code, _ = _receive(paths, payload(), script())
+
+    assert code == 0
+    assert progress_lines(capsys.readouterr().err) == [
+        "progress receive 1/6 space start",
+        "progress receive 2/6 stage start",
+        "progress receive 3/6 signature start",
+        "progress receive 4/6 check start",
+        "progress receive 5/6 load start",
+        "progress receive 6/6 keep start",
+    ]

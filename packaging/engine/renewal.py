@@ -27,7 +27,7 @@ from __future__ import annotations
 import ssl
 from typing import Any
 
-from engine import answers, backups, compose, install, journal, trust
+from engine import answers, backups, compose, install, journal, progress, trust
 from engine.context import Context
 from engine.core import failed, is_run_id, refused
 
@@ -99,10 +99,15 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     for name in STAGED:
         (ctx.paths.etc / "tls" / name).unlink(missing_ok=True)
     host, image = given["public_host"], str(state["server_image"])
+    progress.report(ctx, "renew")
     result = install.run_ca(ctx, ctx.step(1, "renew"), image, "renew", host)
+    progress.report(ctx, "check")
     install.run_ca(ctx, ctx.step(2, "check"), image, "check", host)
     install.give_key_to_caddy(ctx)
+    progress.report(ctx, "trust")
     trust.write(ctx, ctx.step(4, "trust"))
+    if journal.done(state, 10):
+        progress.report(ctx, "reload")
     reloaded = journal.done(state, 10) and _reload(
         ctx, ctx.step(5, "reload"), str(state["project"]), host
     )

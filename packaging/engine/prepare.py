@@ -21,7 +21,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from engine import facts, release, report
+from engine import facts, progress, release, report
 from engine.context import Context
 from engine.core import failed, is_run_id, is_version
 
@@ -337,6 +337,7 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
         if name == "container" and {"docker_not_ready", "docker_store_unknown"} & set(failures):
             ctx.log.line(step, "WARN", "not run: Docker does not answer")
             continue
+        progress.report(ctx, name)
         code = check(ctx, step, manifest, version)
         if code is not None:
             failures.append(code)

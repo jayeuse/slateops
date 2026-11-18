@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from engine import answers, backups, compose, smtp_env
+from engine import answers, backups, compose, progress, smtp_env
 from engine.context import Context
 from engine.core import failed, is_run_id, refused, write_private
 from engine.env_templates import TemplateError, render
@@ -47,7 +47,8 @@ def prepare_uninstall(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     if given is None:
         raise failed("install_state_mismatch", part="answers")
     with backups.runner_idle(ctx, step, instance):
-        for argv in STOPS:
+        for key, argv in zip(("stop_timer", "stop_docker"), STOPS, strict=True):
+            progress.report(ctx, key)
             if not ctx.runner.run(step, argv, timeout=300).ok:
                 raise failed("services_not_stopped")
     ctx.log.line(step, "INFO", "the timer and Docker are stopped; ready for the uninstall")
@@ -76,6 +77,7 @@ def set_email(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     }
     target = paths.etc / "provider.env"
     with backups.runner_idle(ctx, step, instance):
+        progress.report(ctx, "write")
         written = []
         try:
             for line in target.read_text(encoding="utf-8").splitlines():
@@ -86,6 +88,7 @@ def set_email(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
         write_private(target, ("\n".join(written) + "\n").encode())
         staged.unlink()
         ctx.log.line(step, "INFO", "email settings written to provider.env")
+        progress.report(ctx, "auth")
         compose.up(ctx, step, instance, ("auth",), deps=False, recreate=True)
         compose.wait_healthy(ctx, step, instance, ("auth",))
     return {"code": "email_set"}

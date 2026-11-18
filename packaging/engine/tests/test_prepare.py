@@ -12,7 +12,18 @@ from engine import report
 from engine.core import Paths, private_dir
 from engine.runner import Result
 
-from .helpers import RUN_ID, VERSION, Script, call, deps, fail, log_text, make_paths, ok
+from .helpers import (
+    RUN_ID,
+    VERSION,
+    Script,
+    call,
+    deps,
+    fail,
+    log_text,
+    make_paths,
+    ok,
+    progress_lines,
+)
 
 BUNDLE_SHA = "b" * 64
 SERVER = f"ghcr.io/jayeuse/slateops-server:{VERSION}@sha256:" + "1" * 64
@@ -354,3 +365,24 @@ def test_s85_7_drive_mounts_of_any_type_are_refused(paths: Paths, mount: str) ->
     code, result = _prepare(paths, healthy())
 
     assert (code, result["code"]) == (3, "windows_drive_mounted")
+
+
+def test_w14_d5_prepare_reports_each_check(
+    paths: Paths,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code, _ = _prepare(paths, healthy())
+
+    assert code == 0
+    assert progress_lines(capsys.readouterr().err) == [
+        "progress prepare 1/10 systemd start",
+        "progress prepare 2/10 docker start",
+        "progress prepare 3/10 container start",
+        "progress prepare 4/10 networking start",
+        "progress prepare 5/10 time start",
+        "progress prepare 6/10 listeners start",
+        "progress prepare 7/10 interop start",
+        "progress prepare 8/10 mounts start",
+        "progress prepare 9/10 shells start",
+        "progress prepare 10/10 bundle start",
+    ]

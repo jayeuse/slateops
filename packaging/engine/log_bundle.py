@@ -24,7 +24,7 @@ import tarfile
 from pathlib import Path
 from typing import Any
 
-from engine import facts, report, snapshot
+from engine import facts, progress, report, snapshot
 from engine.context import Context
 from engine.core import RUN_KINDS, is_run_id
 from engine.logs import cap
@@ -93,15 +93,18 @@ def _add(tar: tarfile.TarFile, name: str, data: bytes) -> None:
 
 
 def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
+    progress.report(ctx, "facts")
     facts.record(ctx)
     usage = shutil.disk_usage(ctx.paths.state) if ctx.paths.state.is_dir() else None
     if usage is not None:
         report.record(ctx.paths, "disk", {"at": ctx.deps.clock().isoformat(), **usage._asdict()})
+    progress.report(ctx, "snapshot")
     snapshot.take(ctx, since=None, folder="snapshot")
     included: list[str] = []
     left_out: list[dict[str, str]] = []
     used = 0
     buffer = io.BytesIO()
+    progress.report(ctx, "bundle")
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
         for name, path in _candidates(ctx):
             content = _read(path)

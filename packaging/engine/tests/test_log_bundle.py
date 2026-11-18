@@ -21,7 +21,7 @@ from engine import log_bundle, report
 from engine.core import Paths, private_dir
 from engine.redaction import forms
 
-from .helpers import Script, call, deps, make_paths, ok
+from .helpers import Script, call, deps, make_paths, ok, progress_lines
 
 REPORT_RUN = "report-20261117T120000Z-zz99yy"
 OLD_RUN = "install-20261116T080000Z-aa11bb"
@@ -326,3 +326,19 @@ def test_s85_8_a_file_swapped_for_a_symlink_or_fifo_after_listing_is_left_out(
     assert code == 0
     assert left_out[f"slateops/install/{OLD_RUN}/linked.log"] == "not_regular"
     assert left_out[f"slateops/install/{OLD_RUN}/fifo.log"] == "not_regular"
+
+
+def test_w14_d5_log_bundle_reports_each_step(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    paths = make_paths(tmp_path)
+
+    code, _, _ = call(["log-bundle"], {"run_id": REPORT_RUN}, deps(paths, Script()))
+
+    assert code == 0
+    assert progress_lines(capsys.readouterr().err) == [
+        "progress log-bundle 1/3 facts start",
+        "progress log-bundle 2/3 snapshot start",
+        "progress log-bundle 3/3 bundle start",
+    ]

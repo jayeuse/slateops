@@ -28,7 +28,7 @@ from engine import cli, update
 from engine.core import Paths, private_dir
 from engine.runner import Result
 
-from .helpers import VERSION, Clock, deps
+from .helpers import VERSION, Clock, deps, progress_lines
 from .test_install import PROVIDERS, ROOT, Killed, World, _setup, run
 
 TARGET = "0.1.0-rc.10"
@@ -755,3 +755,65 @@ def test_s95_1_after_a_rollback_that_needs_support_nothing_starts_the_failed_pro
     assert (code, result["code"]) == (2, "update_needs_support")
     status = {"run_id": SUPPORT, "windows_part_version": "0.1.0", "wsl_version": "2.6.1.0"}
     assert machine.job("status", status)[1]["state"] == "needs_support"
+
+
+def test_w14_d5_update_reports_each_step(
+    machine: Installed,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    machine.stage()
+    capsys.readouterr()
+
+    assert machine.update()[0] == 0
+
+    assert progress_lines(capsys.readouterr().err) == [
+        "progress update 1/12 lock start",
+        "progress update 2/12 release start",
+        "progress update 3/12 space start",
+        "progress update 4/12 images start",
+        "progress update 5/12 backup start",
+        "progress update 6/12 env start",
+        "progress update 7/12 providers start",
+        "progress update 8/12 health start",
+        "progress update 9/12 provision start",
+        "progress update 10/12 api start",
+        "progress update 11/12 caddy start",
+        "progress update 12/12 switch start",
+    ]
+
+
+def test_w14_d5_a_failed_update_reports_its_rollback_or_recover_steps(
+    machine: Installed, capsys: pytest.CaptureFixture[str]
+) -> None:
+    machine.stage()
+    machine.fake.migration_fails = True
+    capsys.readouterr()
+    assert machine.update()[1]["update"] == "rolled_back"
+    rolled = progress_lines(capsys.readouterr().err)
+    machine.fake.migration_fails = False
+    machine.fake.host.first_backup_fails = True
+
+    assert machine.job("update", {"run_id": UPDATE.replace("ab12cd", "ef56gh"),
+                                  "version": TARGET})[1]["update"] == "failed"  # fmt: skip
+
+    assert rolled == [
+        "progress update 1/12 lock start",
+        "progress update 2/12 release start",
+        "progress update 3/12 space start",
+        "progress update 4/12 images start",
+        "progress update 5/12 backup start",
+        "progress update 6/12 env start",
+        "progress update 7/12 providers start",
+        "progress update 8/12 health start",
+        "progress update 9/12 provision start",
+        "progress rollback 1/6 down start",
+        "progress rollback 2/6 restore start",
+        "progress rollback 3/6 rebind start",
+        "progress rollback 4/6 finalize start",
+        "progress rollback 5/6 start start",
+        "progress rollback 6/6 adopt start",
+    ]
+    assert progress_lines(capsys.readouterr().err)[-2:] == [
+        "progress update 5/12 backup start",
+        "progress recover 1/1 recover start",
+    ]

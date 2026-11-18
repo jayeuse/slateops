@@ -14,7 +14,7 @@ import pytest
 from engine import smtp, smtp_env
 from engine.core import Paths
 
-from .helpers import RUN_ID, call, deps, log_text, make_paths
+from .helpers import RUN_ID, call, deps, log_text, make_paths, progress_lines
 from .smtp_server import Behavior, SmtpServer, closed_port, make_certificates
 
 USER = "office" + "@frontdesk.test"
@@ -338,3 +338,20 @@ def test_ac_m1_a_password_that_smtp_cannot_send_is_refused_before_connecting(
 
     assert (code, payload["code"]) == (2, "invalid_input")
     assert server.behavior.commands == []
+
+
+def test_w14_d5_smtp_test_reports_the_send_and_the_stage(
+    paths: Paths,
+    certificates: dict[str, Path],
+    serve: Callable[..., SmtpServer],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server = serve()
+
+    code, _ = _run(paths, certificates, _request(server.port))
+
+    assert code == 0
+    assert progress_lines(capsys.readouterr().err) == [
+        "progress smtp-test 1/2 send start",
+        "progress smtp-test 2/2 stage start",
+    ]

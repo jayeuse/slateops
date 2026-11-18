@@ -16,7 +16,7 @@ from engine.core import Paths
 from engine.runner import Result
 
 from .backup_host import CHUNKER_SECRET
-from .helpers import RUN_ID, log_text
+from .helpers import RUN_ID, log_text, progress_lines
 from .test_install import ANSWERS, World, _commands, _mode, _setup, run
 
 TARGET = ANSWERS["backup_target"]
@@ -318,3 +318,25 @@ def test_ac8_target_key_and_renewal_jobs_refuse_while_the_runner_runs(
     assert (paths.state / "backup-target.json").read_bytes() == target
     assert (fake.host.mounts, fake.host.unmounts) == mounts
     assert not _commands(fake, "local_ca.py renew")
+
+
+def test_w14_d5_target_and_key_jobs_report_their_steps(
+    installed: tuple[Paths, World, dict[str, Any]],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    paths, fake, _ = installed
+    other = "F:\\SlateOps-backups"
+    fake.host.add_drive(other, tmp_path / "drives/F")
+    capsys.readouterr()
+
+    assert _job(paths, fake, "set-backup-target", backup_target=other)[0] == 0
+    assert _job(paths, fake, "new-recovery-key")[0] == 0
+
+    assert progress_lines(capsys.readouterr().err) == [
+        "progress set-backup-target 1/3 unmount start",
+        "progress set-backup-target 2/3 mount start",
+        "progress set-backup-target 3/3 repository start",
+        "progress new-recovery-key 1/2 mount start",
+        "progress new-recovery-key 2/2 key start",
+    ]

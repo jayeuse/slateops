@@ -12,7 +12,7 @@ import pytest
 from engine import smtp_env
 from engine.core import Paths, private_dir
 
-from .helpers import log_text
+from .helpers import log_text, progress_lines
 from .test_install import ANSWERS, World, _setup, run
 
 MAINTENANCE = "maintenance-20261117T120000Z-ab12cd"
@@ -160,3 +160,21 @@ def test_e4_after_a_failed_first_backup_another_drive_is_set_and_the_install_com
     )
     assert (code, result["code"], result["backup_setup"]) == (0, "installed", "ready")
     assert fake.host.mounted == other and fake.host.snapshots == 1
+
+
+def test_w14_d5_set_email_and_prepare_uninstall_report_their_steps(
+    installed: tuple[Paths, World], capsys: pytest.CaptureFixture[str]
+) -> None:
+    paths, fake = installed
+    _stage_new_email(paths)
+    capsys.readouterr()
+
+    assert _job(paths, fake, "set-email")["exit"] == 0
+    assert _job(paths, fake, "prepare-uninstall", UNINSTALL)["exit"] == 0
+
+    assert progress_lines(capsys.readouterr().err) == [
+        "progress set-email 1/2 write start",
+        "progress set-email 2/2 auth start",
+        "progress prepare-uninstall 1/2 stop_timer start",
+        "progress prepare-uninstall 2/2 stop_docker start",
+    ]

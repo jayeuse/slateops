@@ -36,6 +36,7 @@ from engine.core import (
 from engine.docker_api import DockerApi, DockerError
 from engine.held import load_held
 from engine.logs import RunLog
+from engine.progress import report as report_step
 from engine.redaction import Redactor
 
 KEYS = {"run_id": is_run_id, "version": is_version}
@@ -138,6 +139,7 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
             "steps_total": len(images),
         },
     )
+    report_step(ctx, "start_pull")
     result = ctx.runner.run(
         ctx.step(1, "start"),
         [

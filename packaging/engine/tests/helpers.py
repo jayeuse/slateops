@@ -126,3 +126,8 @@ def log_text(paths: Paths) -> str:
     return "\n".join(
         file.read_text(errors="replace") for file in sorted(paths.logs.rglob("*")) if file.is_file()
     )
+
+
+def progress_lines(err: str) -> list[str]:
+    """The progress lines a job wrote to standard error (TASK-0097 W14-D5)."""
+    return [line for line in err.splitlines() if line.startswith("progress ")]

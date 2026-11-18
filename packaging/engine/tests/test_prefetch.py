@@ -19,7 +19,17 @@ from engine import cli, prefetch
 from engine.core import Paths, private_dir
 from engine.docker_api import DockerApi
 
-from .helpers import RUN_ID, VERSION, Script, call, deps, fail, log_text, make_paths
+from .helpers import (
+    RUN_ID,
+    VERSION,
+    Script,
+    call,
+    deps,
+    fail,
+    log_text,
+    make_paths,
+    progress_lines,
+)
 
 DB = "supabase/postgres:17.11.0.004@sha256:" + "6" * 64
 AUTH = "supabase/gotrue:v2.196.0@sha256:" + "c" * 64
@@ -340,3 +350,15 @@ def test_architect_9_a_stalled_pull_stream_is_a_time_out(
 
     assert (code, sleeps) == (3, [30.0, 90.0])
     assert prefetch.progress(paths)["code"] == "pull_timeout"
+
+
+def test_w14_d5_prefetch_reports_the_worker_start(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    paths = _paths(tmp_path, tmp_path, [DB, AUTH])
+
+    code, _, _ = call(["prefetch"], {"run_id": RUN_ID, "version": VERSION}, deps(paths, Script()))
+
+    assert code == 0
+    assert progress_lines(capsys.readouterr().err) == ["progress prefetch 1/1 start_pull start"]

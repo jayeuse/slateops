@@ -24,7 +24,7 @@ import tarfile
 from pathlib import Path
 from typing import IO, Any, BinaryIO
 
-from engine import release
+from engine import progress, release
 from engine.context import Context
 from engine.core import RUN_ID, Paths, failed, is_run_id, is_version, private_dir, refused
 
@@ -126,6 +126,7 @@ def _store(source: IO[bytes], target: Path) -> tuple[str, int]:
 def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     paths, version = ctx.paths, request["setup_version"]
     tar: tarfile.TarFile = request["_tar"]
+    progress.report(ctx, "space")
     free = ctx.deps.disk_free(private_dir(paths.state))
     ctx.log.line(ctx.step(1, "space"), "INFO", f"free {free} bytes, need {MIN_FREE_BYTES}")
     if free < MIN_FREE_BYTES:
@@ -133,13 +134,18 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     _clear_old_staging(paths)
     staging = paths.staging / ctx.run_id
     staging.mkdir(mode=0o700)
+    progress.report(ctx, "stage")
     received = _stage(ctx, tar, staging, expected_parts(version))
+    progress.report(ctx, "signature")
     _verify_signature(ctx, staging, version)
+    progress.report(ctx, "check")
     manifest = _manifest(staging / release.MANIFEST, version)
     _compare(manifest, received, version)
+    progress.report(ctx, "load")
     for role, name in ROLES:
         entry = manifest["images"][role]
         _load(ctx, staging / release.archive_name(name, version), entry["ref"], role)
+    progress.report(ctx, "keep")
     keep = private_dir(release.release_folder(paths, version))
     for name in (release.MANIFEST, release.SIGNATURE, release.bundle_name(version)):
         os.replace(staging / name, keep / name)

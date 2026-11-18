@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from engine import answers, journal
+from engine import answers, journal, progress
 from engine.context import Context
 from engine.core import failed, is_run_id, refused
 
@@ -103,6 +103,7 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     given = answers.load(ctx.paths)
     if state is None or given is None or not journal.done(state, 11):
         raise refused("not_installed")
+    progress.report(ctx, "resend")
     code = bootstrap(
         ctx, ctx.step(1, "resend"), str(state["project"]), str(state["server_image"]), given
     )

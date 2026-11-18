@@ -50,7 +50,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from engine import answers, backups, compose, drive, install, journal, release, tick
+from engine import answers, backups, compose, drive, install, journal, progress, release, tick
 from engine.context import Context
 from engine.core import (
     FAILED,
@@ -401,6 +401,7 @@ def _switch(ctx: Context, record: dict[str, Any]) -> None:
     """Step 12 in the C-2 order; the labels are checked before anything changes."""
     paths, version, project = ctx.paths, record["target_version"], record["project"]
     step, root = ctx.step(12, "switch"), bundle_root(paths, record["target_version"])
+    progress.report(ctx, "switch", job="update")
     wanted = str(root / "infra" / "supabase")
     label = f"label=com.docker.compose.project={project}"
     listing = ctx.runner.run(step, ["docker", "ps", "--all", "--filter", label,
@@ -426,34 +427,44 @@ def _switch(ctx: Context, record: dict[str, Any]) -> None:
 def _forward(ctx: Context, record: dict[str, Any], manifest: dict[str, Any]) -> None:
     paths, version, project = ctx.paths, record["target_version"], record["project"]
     images = _images(manifest, version)
+    progress.report(ctx, "release")
     new = _with_bundle(ctx, _bundle(ctx, ctx.step(2, "release"), manifest, version))
     _mark(ctx, record, 2)
+    progress.report(ctx, "space")
     _space(ctx, ctx.step(3, "space"), project)
     _mark(ctx, record, 3)
+    progress.report(ctx, "images")
     install.step_images(new, ctx.step(4, "images"), {"version": version}, {}, manifest)
     _mark(ctx, record, 4)
+    progress.report(ctx, "backup")
     _backup(ctx, ctx.step(5, "backup"), record)
     _mark(ctx, record, 5)
+    progress.report(ctx, "env")
     write_env(new, ctx.step(6, "env"), images)
     _mark(ctx, record, 6)
     step = ctx.step(7, "providers")
+    progress.report(ctx, "providers")
     record["boundary"] = True  # 7.3 step 7: recorded before the first target container starts
     _save(paths, record)
     compose.check_config(new, step, project)
     compose.up(new, step, project, compose.PROVIDER_SERVICES, deps=True, recreate=True)
     _mark(ctx, record, 7)
+    progress.report(ctx, "health")
     compose.wait_healthy(new, ctx.step(8, "health"), project, compose.PROVIDER_SERVICES)
     _mark(ctx, record, 8)
+    progress.report(ctx, "provision")
     state = {"project": project, "server_image": images["server"]}
     install.step_provision(new, ctx.step(9, "provision"), state, {}, manifest)
     _mark(ctx, record, 9)
     step = ctx.step(10, "api")
+    progress.report(ctx, "api")
     compose.up(new, step, project, ("api",), deps=False, recreate=True)
     compose.wait_healthy(new, step, project, ("api",))
     compose.wait_api_ready(new, step, project)
     _check_version(new, step, project, version)
     _mark(ctx, record, 10)
     step = ctx.step(11, "caddy")
+    progress.report(ctx, "caddy")
     compose.up(new, step, project, ("caddy",), deps=False, recreate=True)
     install.wait_https(new, step, _host(paths))
     _mark(ctx, record, 11)
@@ -503,6 +514,7 @@ def _recover(ctx: Context, record: dict[str, Any]) -> None:
     if not record.get("stopped"):
         ctx.log.line(step, "INFO", "nothing was stopped; nothing to recover")
         return
+    progress.report(ctx, "recover", job="recover")
     if not _done(record, 5):  # the backup did not finish: its children may remain
         _remove_tool_children(ctx, step, record["project"])
     old = _images(release.require(ctx.paths, record["from_version"]), record["from_version"])
@@ -587,9 +599,11 @@ def _rollback(ctx: Context, record: dict[str, Any]) -> None:
     record["state"] = "rolling_back"
     _save(paths, record)
     step = ctx.step(21, "down")
+    progress.report(ctx, "down", job="rollback")
     for name in earlier:
         _down(ctx, step, name)
     step = ctx.step(22, "restore")
+    progress.report(ctx, "restore", job="rollback")
     if not _HEX.match(str(record.get("snapshot_id", ""))):
         raise failed("snapshot_missing")
     directory = private_dir(paths.state / "restore") / project
@@ -616,19 +630,23 @@ def _rollback(ctx: Context, record: dict[str, Any]) -> None:
     ) != (record["snapshot_id"], record["manifest_sha256"]):
         raise failed("restore_mismatch")
     step = ctx.step(23, "rebind")
+    progress.report(ctx, "rebind", job="rollback")
     private = directory / "restored-source-private"
     for name in ("provider.env", "app.env"):
         write_private(paths.etc / name, _rebind((private / name).read_text(), project))
     write_private(paths.etc / "provision.env",
                   _rebind((paths.etc / "provision.env").read_text(), project))  # fmt: skip
     step = ctx.step(24, "finalize")
+    progress.report(ctx, "finalize", job="rollback")
     compose.up(ctx, step, project, ("db",), deps=False)
     compose.wait_healthy(ctx, step, project, ("db",))
     finalized = _tool(ctx, step, "finalize", record, project, directory)
     if not finalized.ok or not (directory / "restore-finalized.json").is_file():
         raise failed("finalize_failed")
+    progress.report(ctx, "start", job="rollback")
     start_all(ctx, ctx.step(25, "start"), project)
     step = ctx.step(26, "adopt")
+    progress.report(ctx, "adopt", job="rollback")
     _rename(paths, project)
     _link(paths, paths.bundle_root)  # the old engine stays the command
     backups.write_config(ctx, step, project)
@@ -703,6 +721,7 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
         "boundary": False, "stopped": False,
     }  # fmt: skip
     step = ctx.step(1, "lock")
+    progress.report(ctx, "lock")
     with backups.runner_idle(ctx, step, instance):
         if backups.active_journal(paths, instance).exists():
             raise refused("recovery_required")

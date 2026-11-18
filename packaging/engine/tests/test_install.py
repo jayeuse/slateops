@@ -28,7 +28,7 @@ from engine.logs import RunLog
 from engine.runner import ENVIRONMENT, Result, Runner
 
 from .backup_host import BackupHost
-from .helpers import RUN_ID, VERSION, deps, log_text, make_paths
+from .helpers import RUN_ID, VERSION, deps, log_text, make_paths, progress_lines
 
 ROOT = Path(__file__).resolve().parents[3]
 DIGEST = {"server": "sha256:" + "a" * 64, "caddy": "sha256:" + "b" * 64}
@@ -1262,3 +1262,68 @@ def test_w89_2_a_failed_certificate_job_is_removed_and_a_passing_one_is_not(
     assert (code, result["code"]) == (3, "ca_check_failed")
     assert len(set(names)) == len(names) == 4  # init, check, renew, check: one name each
     assert _removed(fake) == [names[-1]]  # only the failed check; --rm removed the others
+
+
+def test_w14_d5_install_reports_each_step_and_a_rerun_reports_finished_steps_as_done(
+    world: tuple[Paths, World], capsys: pytest.CaptureFixture[str]
+) -> None:
+    paths, fake = world
+    fake.bootstrap_exit = (3, '{"code":"bootstrap_failed"}')
+    assert run(paths, fake)[0] == 3
+    first = progress_lines(capsys.readouterr().err)
+    fake.bootstrap_exit = None
+
+    code, _ = run(paths, fake, {"run_id": "install-20261117T103000Z-cd34ef", "version": VERSION})
+
+    assert code == 0
+    assert first == [
+        "progress install 1/13 release start",
+        "progress install 2/13 folders start",
+        "progress install 3/13 images start",
+        "progress install 4/13 secrets start",
+        "progress install 5/13 env start",
+        "progress install 6/13 tls start",
+        "progress install 7/13 providers start",
+        "progress install 8/13 provision start",
+        "progress install 9/13 api start",
+        "progress install 10/13 caddy start",
+        "progress install 11/13 admin start",
+        "progress install 12/13 backup start",
+        "progress install 13/13 finish start",
+    ][:11]
+    assert progress_lines(capsys.readouterr().err) == [
+        "progress install 1/13 release done",
+        "progress install 2/13 folders done",
+        "progress install 3/13 images done",
+        "progress install 4/13 secrets done",
+        "progress install 5/13 env done",
+        "progress install 6/13 tls done",
+        "progress install 7/13 providers done",
+        "progress install 8/13 provision done",
+        "progress install 9/13 api done",
+        "progress install 10/13 caddy done",
+        "progress install 11/13 admin start",
+        "progress install 12/13 backup start",
+        "progress install 13/13 finish start",
+    ]
+
+
+def test_w14_d5_resend_and_renewal_report_their_steps(
+    world: tuple[Paths, World], capsys: pytest.CaptureFixture[str]
+) -> None:
+    paths, fake = world
+    run(paths, fake)
+    fake.renew_due = True
+    capsys.readouterr()
+
+    assert run(paths, fake, {"run_id": "maintenance-20261118T080000Z-mm11nn"},
+               job="resend-invitation")[0] == 0  # fmt: skip
+    assert renew(paths, fake)[0] == 0
+
+    assert progress_lines(capsys.readouterr().err) == [
+        "progress resend-invitation 1/1 resend start",
+        "progress renew-certificate 1/4 renew start",
+        "progress renew-certificate 2/4 check start",
+        "progress renew-certificate 3/4 trust start",
+        "progress renew-certificate 4/4 reload start",
+    ]

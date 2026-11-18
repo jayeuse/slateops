@@ -29,7 +29,7 @@ from email.message import EmailMessage
 from email.utils import format_datetime, formataddr, make_msgid
 from typing import Any
 
-from engine import smtp_env
+from engine import progress, smtp_env
 from engine.context import Context
 from engine.core import failed, is_run_id, private_dir, refused, write_private
 from engine.env_templates import TemplateError, compose_quoted, is_literal
@@ -104,7 +104,9 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
         words=[request["password"]],
     )
     ctx.log.redact = ctx.redactor
+    progress.report(ctx, "send")
     _send(ctx, request)
+    progress.report(ctx, "stage")
     folder = private_dir(ctx.paths.staged_smtp.parent)
     write_private(folder / ctx.paths.staged_smtp.name, smtp_env.render(values).encode())
     ctx.log.line(ctx.step(3, "stage"), "INFO", "staged email settings written")
