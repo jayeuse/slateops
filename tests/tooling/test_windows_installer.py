@@ -1582,7 +1582,9 @@ class W14RecheckTest(unittest.TestCase):
         self.assertIn("WizardForm.PageDescriptionLabel.Caption := CM(S05SubtitleKey);", render)
         self.assertIn("else if not Vmp and not Wsl then Result := 's05_subtitle_ready'", self.raw)
         self.assertIn("'AC-6 S05 subtitle with no restart'", self.selftest)
-        self.assertIn("WizardForm.PageDescriptionLabel.Caption := CM('s05_subtitle_ready');", render)
+        self.assertIn(
+            "WizardForm.PageDescriptionLabel.Caption := CM('s05_subtitle_ready');", render
+        )
         self.assertIn("AddProgress('', S05NoRestartStages, 3, '', 0, '');", render)
         self.assertIn("FM3('s05_details', S05WslVersion, PrepFeature, PrepWsl)", render)
         self.assertIn("StepText('pc', Key, S05WslVersion, '', '')", self.raw)
