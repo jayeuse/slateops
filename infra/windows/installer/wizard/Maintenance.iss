@@ -348,32 +348,35 @@ begin
     FocusVerdict(Verdict);
 end;
 
+{ W9-4: set-email applies the staged values and recreates auth; through the pipe. }
+procedure StartSetEmail;
+begin
+  MaintPhase := 'setemail';
+  MaintAt := GetTickCount;
+  WizardForm.NextButton.Enabled := False;
+  StartJob('set-email', '{"run_id":"' + RunId + '"}', 'setemail', True, False, 5);
+  RenderMailStatus;
+end;
+
 { M02 (S09 form) and M03 (S10 form) Next; True lets Inno move on (never in maintenance). }
 function MaintNext(PageID: Integer): Boolean;
 begin
   Result := False;
   if PageID = Pages[P_EMAIL].ID then
   begin
-    if MailPassed then
+    { DEC-0041 (AC-W6): one Next sends the test email and saves the settings (StartSetEmail);
+      Done returns to M01. }
+    if MailSaved then
     begin
-      if JobRunning then
-        Exit;
-      { W9-4: set-email applies the staged values and recreates auth; through the pipe. }
-      MaintPhase := 'setemail';
-      MaintAt := GetTickCount;
-      WizardForm.NextButton.Enabled := False;
-      StartJob('set-email', '{"run_id":"' + RunId + '"}', 'setemail', True, False, 5);
-      RenderMailStatus;
-    end
-    else
-    begin
-      { No administrator email on Windows: the test goes to the sending address itself. }
-      OrgEmail.Text := Trim(MailFrom.Text);
-      if Trim(OrgName.Text) = '' then
-        OrgName.Text := 'Slate Operations';
-      if MailFieldsReady then
-        StartMailTest;
+      BackToMaint(FM1('m02_done', Trim(MailFrom.Text)));
+      Exit;
     end;
+    { No administrator email on Windows: the test goes to the sending address itself. }
+    OrgEmail.Text := Trim(MailFrom.Text);
+    if Trim(OrgName.Text) = '' then
+      OrgName.Text := 'Slate Operations';
+    if MailFieldsReady then
+      StartMailTest;
   end
   else if PageID = Pages[P_BACKUP].ID then
   begin
@@ -432,8 +435,13 @@ begin
   end
   else if MaintPhase = 'setemail' then
   begin
+    { The page says where the test email went (m02_test_sent) and Next becomes Done. }
+    MaintPhase := '';
     if JobCode = 'email_set' then
-      BackToMaint(FM1('m02_done', Trim(MailFrom.Text)))
+    begin
+      MailSaved := True;
+      RenderMailStatus;
+    end
     else
       BackToMaint(CM('m02_failed'));
   end
@@ -794,271 +802,231 @@ begin
 end;
 
 { ------------------------------------------------------------------------------------------- }
-{ Cancel at S08 to S11: "Remove everything" (default) or "Keep it and continue later" (spec 4.5) }
+{ DEC-0041 (AC-W3, AC-W4): Remove everything setup added                                       }
 { ------------------------------------------------------------------------------------------- }
 
-{ 0 go back, 1 remove everything, 2 keep it and continue later. }
-function AskCancelChoice: Integer;
-var
-  Form: TSetupForm;
-  Text: TNewStaticText;
-  Remove, Keep: TNewRadioButton;
-  Stop, Back: TNewButton;
-  Y: Integer;
-begin
-  Result := 0;
-  Form := CreateCustomForm(ScaleX(460), ScaleY(230), False, False);
-  try
-    Form.Caption := CM('btn_stop_setup');
-    Y := ScaleY(12);
-    Text := AddTextTo(Form, Y, CM('cancel_server'), True);
-    Text.Left := ScaleX(14);
-    Text.Width := Form.ClientWidth - ScaleX(28);
-    WizardForm.AdjustLabelHeight(Text);
-    Y := Y + Text.Height + ScaleY(10);
-    Remove := TNewRadioButton.Create(Form);
-    Remove.Parent := Form;
-    Remove.Caption := CM('cancel_remove');
-    Remove.Checked := True;
-    Remove.SetBounds(ScaleX(14), Y, Form.ClientWidth - ScaleX(28), ScaleY(18));
-    Y := Y + ScaleY(24);
-    Keep := TNewRadioButton.Create(Form);
-    Keep.Parent := Form;
-    Keep.Caption := CM('cancel_keep_option');
-    Keep.SetBounds(ScaleX(14), Y, Form.ClientWidth - ScaleX(28), ScaleY(18));
-    Y := Y + ScaleY(22);
-    Text := AddTextTo(Form, Y, CM('cancel_keep'), False);
-    Text.Left := ScaleX(32);
-    Text.Width := Form.ClientWidth - ScaleX(46);
-    WizardForm.AdjustLabelHeight(Text);
-    Stop := TNewButton.Create(Form);
-    Stop.Parent := Form;
-    Stop.Caption := CM('btn_stop_setup');
-    Stop.ModalResult := mrOk;
-    Stop.SetBounds(Form.ClientWidth - ScaleX(250), Form.ClientHeight - ScaleY(38), ScaleX(115), ScaleY(26));
-    Back := TNewButton.Create(Form);
-    Back.Parent := Form;
-    Back.Caption := CM('btn_go_back');
-    Back.ModalResult := mrCancel;
-    Back.Cancel := True;
-    Back.Default := True;
-    Back.SetBounds(Form.ClientWidth - ScaleX(128), Form.ClientHeight - ScaleY(38), ScaleX(115), ScaleY(26));
-    FitFormRow(Form, Stop, Back);
-    ModalOpen := True;
-    if Form.ShowModal = mrOk then
-    begin
-      if Remove.Checked then Result := 1 else Result := 2;
-    end;
-  finally
-    ModalOpen := False;
-    Form.Free;
-  end;
-end;
-
-{ W14-D9: "Keep it and continue later" (spec 4.5, 7.6 "S09 Continue later") and "Remove everything
-  setup added" (7.6 "Cancel Remove everything") run from the wizard's timer, one step at a time,
-  each with its time limit; the window stays responsive and shows one line with the step and the
-  time so far. At the end setup closes (or restarts this PC); a step past its limit is logged and
-  the flow goes on, and a save that fails shows its message and gives the buttons back.
-  Flows: 'later' = wait for the running step, discard the staged email settings (smtp-test
-  discard through the pipe), save the progress; 'remove' = wait for the running step, stop
-  Slate Operations, remove the data (kept data goes back to kept\), remove the Windows settings. }
+{ Setup is a complete installation or nothing. Cancel, closing the window, a failed install
+  (after Save report) and an earlier run found at start run this one removal, in a modal form
+  with its stages and the time so far: 1 the running step stops, 2 Slate Operations stops, 3 the
+  data of this run goes (kept data is never deleted: setup-remove-data returns it to kept\), 4
+  WSL and Virtual Machine Platform go only when setup turned them on and no other distribution
+  is registered, 5 the Windows settings and the state folder go, last, so a removal that stops
+  early leaves the records for the next start (AC-W4). Every step has a limit; a step past it
+  stops the removal, is logged, and setup closes. The form's Close button works at any time.
+  The steps run from the wizard's timer (TimerTick), never inside a tick of their own. }
 const
-  CLOSE_WAIT_MS = 120000;
-  CLOSE_STEP_MS = 600000;
+  REMOVE_STEP_MS = 20000;
+  { Unregistering the server part (the helper waits up to 60 s for each Exec job) and deleting
+    the data folder. }
+  REMOVE_DATA_MS = 150000;
+  { "wsl --uninstall" and DISM, up to 90 s each inside the helper. }
+  REMOVE_FEATURES_MS = 200000;
+  { The tasks, the hidden account and its profile, the firewall, the state folder. }
+  REMOVE_WINDOWS_MS = 90000;
 
 var
-  CloseFlow, CloseAfter, ClosePhase, CloseOut, CloseLine: String;
-  CloseAt, CloseStartedAt: Cardinal;
+  CloseFlow, CloseAfter, ClosePhase, CloseOut, CloseLine, CloseEnd, RemoveFeaturesCode, RemoveDataCode: String;
+  CloseAt, CloseStartedAt, CloseLimitMs: Cardinal;
+  CloseNumber: Integer;
+  RemoveClose: TNewButton;
 
 function CloseFlowRunning: Boolean;
 begin
   Result := ClosePhase <> '';
 end;
 
-{ W14-D5: the step's place in its flow (7.6): later 1 to 3, remove 1 to 4; clear and the restart
-  have one step. }
-function ClosePhaseNumber: Integer;
+{ The removal's page in its form: what happens, the stages, the step that runs and the time;
+  at the end the last line (Windows finishes at the next restart, or why it stopped). }
+procedure RenderRemove;
 begin
-  Result := 0;
-  if ClosePhase = 'wait' then Result := 1
-  else if (ClosePhase = 'discard') or (ClosePhase = 'stop') then Result := 2
-  else if (ClosePhase = 'save') or (ClosePhase = 'data') then Result := 3
-  else if ClosePhase = 'windows' then Result := 4;
-end;
-
-function CloseText: String;
-var
-  Total: Integer;
-begin
-  Total := 0;
-  if CloseFlow = 'later' then Total := 3
-  else if CloseFlow = 'remove' then Total := 4;
-  if (ClosePhase = 'restart') or (ClosePhase = 'clear') then
-    Result := OneLine(0, 0, CloseLine, CloseStartedAt)
+  if RemoveForm = nil then
+    Exit;
+  if RemovePanel <> nil then
+    RemovePanel.Free;
+  RemovePanel := TPanel.Create(RemoveForm);
+  RemovePanel.Parent := RemoveForm;
+  RemovePanel.BevelOuter := bvNone;
+  RemovePanel.ParentBackground := False;
+  RemovePanel.Color := RemoveForm.Color;
+  RemovePanel.SetBounds(ScaleX(14), ScaleY(14), RemoveForm.ClientWidth - ScaleX(28), RemoveClose.Top - ScaleY(26));
+  Cur := RemovePanel;
+  CurY := 0;
+  RowX := 0;
+  WaitTime := nil;
+  WaitNow := nil;
+  if CloseAfter = 'start' then
+    AddText(CM('remove_start'), False)
   else
-    Result := OneLine(ClosePhaseNumber, Total, CloseLine, CloseStartedAt);
+    AddText(CM('remove_text'), False);
+  BlockGap;
+  if ClosePhase <> '' then
+    AddProgress('remove', CM('remove_stages'), CloseNumber, FM1('wait_now', CloseLine), CloseStartedAt, '')
+  else
+  begin
+    if CloseEnd = 'done' then
+      AddProgress('remove', CM('remove_stages'), 6, '', 0, '')
+    else
+      AddProgress('remove', CM('remove_stages'), CloseNumber, '', 0, '');
+    if CloseEnd = 'limit' then AddText(CM('remove_limit'), False)
+    else if CloseEnd = 'kept' then AddText(CM('remove_kept_failed'), False)
+    else if RemoveFeaturesCode = 'removed' then AddText(CM('remove_restart_line'), False);
+  end;
 end;
 
-{ The line above the button row (6.1 L12), shared with the background preparation. }
-procedure ShowCloseStatus(Text: String);
-begin
-  ShowStatusLine(Text);
-end;
-
-procedure CloseStep(Phase, Line, Action, Extra: String);
+procedure CloseStep(Number: Integer; Phase, Line, Action, Extra: String; LimitMs: Cardinal);
 begin
   ClosePhase := Phase;
+  CloseNumber := Number;
   CloseAt := GetTickCount;
-  CloseOut := '';
+  CloseLimitMs := LimitMs;
   CloseLine := Line;
+  CloseOut := '';
   if Action <> '' then
   begin
     CloseOut := NewOut(Action);
-    StartHelper(Action, RunId, CloseOut, Extra);
+    if not StartHelper(Action, RunId, CloseOut, Extra) then
+      CloseOut := '';
   end;
-  ShowCloseStatus(CloseText);
-  Log('Close flow ' + CloseFlow + ': ' + Phase);
+  Log('Removal ' + IntToStr(Number) + ' of 5: ' + Phase + ' (limit ' + IntToStr(LimitMs div 1000) + ' s).');
+  RenderRemove;
 end;
 
+{ Flow: 'remove'. After: 'close' (Cancel, closing the window, a failed install), 'start' (an
+  earlier run, AC-W4), 'none' (the self-test: no form, no end action). }
 procedure StartCloseFlow(Flow, After: String);
 begin
   if ClosePhase <> '' then
     Exit;
-  CloseNotice := '';
   CloseFlow := Flow;
   CloseAfter := After;
+  CloseEnd := '';
+  RemoveFeaturesCode := '';
+  RemoveDataCode := '';
   CloseStartedAt := GetTickCount;
-  WizardForm.NextButton.Enabled := False;
-  WizardForm.BackButton.Enabled := False;
-  WizardForm.CancelButton.Enabled := False;
-  CloseStep('wait', CM('later_waiting'), '', '');
+  { Nothing of the install goes on: no step, no unpacking, no job result is awaited. }
+  StepFor := '';
+  ExtractList := '';
+  ExtractFor := '';
+  JobState := JOB_IDLE;
+  ClosePipe;
+  CloseStep(1, 'job', CM('remove_job'), 'job-stop', '', REMOVE_STEP_MS);
 end;
 
-{ The end of a flow: setup closes, or restarts this PC (W14-D9: the restart helper runs from
-  the timer too, phase restart). }
-procedure EndCloseFlow;
-var
-  Extra: String;
+{ The end of the removal: the form closes by itself when there is nothing more to read, else it
+  shows the last line and its Close button. }
+procedure EndCloseFlow(EndKey: String);
 begin
   ClosePhase := '';
-  { The self-test runs a flow with no end action. }
-  if CloseAfter = 'none' then
+  CloseEnd := EndKey;
+  Log('Removal ended: ' + EndKey + '.');
+  if RemoveForm = nil then
     Exit;
-  if CloseAfter = 'close' then
-  begin
-    ForceClose := True;
-    WizardForm.Close;
-    Exit;
-  end;
-  Extra := '';
-  if CloseAfter = 'restart-firmware' then
-    Extra := '-Firmware';
-  CloseStep('restart', CM('later_restarting'), 'restart', Extra);
-end;
-
-{ A failed save or restart: the message stays (until the page changes), and the buttons come
-  back. }
-procedure FailCloseFlow(Text: String);
-begin
-  ClosePhase := '';
-  CloseNotice := Text;
-  ShowCloseStatus(Text);
-  WizardForm.NextButton.Enabled := True;
-  WizardForm.BackButton.Enabled := True;
-  WizardForm.CancelButton.Enabled := True;
-  { TASK-0097 AC-3: the background goes on. }
-  RestartBackgroundStep;
+  if (EndKey = 'done') and (RemoveFeaturesCode <> 'removed') then
+    RemoveForm.ModalResult := mrOk
+  else
+    RenderRemove;
 end;
 
 { From the timer. }
 procedure PollCloseFlow;
 var
-  Code: String;
+  Code, Extra: String;
 begin
   if ClosePhase = '' then
     Exit;
-  if ClosePhase = 'wait' then
-  begin
-    if JobRunning and (Elapsed(CloseAt) < CLOSE_WAIT_MS) then
-    begin
-      ShowCloseStatus(CloseText);
-      Exit;
-    end;
-    if JobRunning then
-      Log('Close flow: the running step did not end in its time; setup goes on.');
-    JobState := JOB_IDLE;
-    ClosePipe;
-    if CloseFlow = 'later' then
-    begin
-      ClosePhase := 'discard';
-      CloseAt := GetTickCount;
-      CloseLine := CM('later_discarding');
-      ShowCloseStatus(CloseText);
-      StartJob('smtp-test', '{"run_id":"' + RunId + '","mode":"discard"}', 'discard', True, False, 2);
-    end
-    else if CloseFlow = 'clear' then
-      CloseStep('clear', CM('cancel_closing'), 'clear-resume', '-Cancel')
-    else
-      CloseStep('stop', CM('remove_stopping'), 'uninstall-stop', '');
-    Exit;
-  end;
-  if ClosePhase = 'discard' then
-  begin
-    if (JobState <> JOB_DONE) and (Elapsed(CloseAt) < CLOSE_WAIT_MS) then
-    begin
-      ShowCloseStatus(CloseText);
-      Exit;
-    end;
-    { The mark email_discarded only when the engine confirms the discard (D2). }
-    Code := '';
-    if JobState = JOB_DONE then
-      Code := JobCode;
-    JobState := JOB_IDLE;
-    ClosePipe;
-    CloseStep('save', CM('later_saving'), 'save-progress', LaterSaveExtra(Code = 'smtp_discarded'));
-    Exit;
-  end;
-  { The helper steps. }
-  Code := ReadResultCode(CloseOut);
-  if (Code = '') and (Elapsed(CloseAt) < CLOSE_STEP_MS) then
-  begin
-    ShowCloseStatus(CloseText);
-    Exit;
-  end;
-  if Code = '' then
-    Log('Close flow: ' + ClosePhase + ' gave no result in its time.');
-  if ClosePhase = 'save' then
-  begin
-    if Code <> 'saved' then
-      FailCloseFlow(CM('later_save_failed'))
-    else
-      EndCloseFlow;
-  end
-  else if ClosePhase = 'restart' then
-  begin
-    if Code = 'restarting' then
-    begin
-      ClosePhase := '';
-      ForceClose := True;
-      WizardForm.Close;
-    end
-    else
-      FailCloseFlow(CM('later_restart_failed'));
-  end
-  else if ClosePhase = 'stop' then
-  begin
-    { W9 review item 1 (QA W9-B1): kept data in the folder goes back to kept\, never deleted,
-      whatever mode this run of setup is in. }
-    if (DataRoot <> '') and FileExists(AddBackslash(DataRoot) + 'kept\kept.json') then
-      CloseStep('data', FM1('remove_moving_kept', AddBackslash(DataRoot) + 'kept'), 'kept-return', '')
-    else
-      CloseStep('data', FM1('remove_data', DataRoot), 'uninstall-data', '');
-  end
-  else if ClosePhase = 'data' then
-    CloseStep('windows', CM('remove_windows'), 'remove-windows', '')
+  if CloseOut = '' then
+    Code := 'helper_failed'
   else
-    EndCloseFlow;
+    Code := ReadResultCode(CloseOut);
+  if (Code = '') and (Elapsed(CloseAt) < CloseLimitMs) then
+    Exit;
+  if Code = '' then
+  begin
+    { AC-W3: past its limit the removal stops and setup closes; the records stay, so the next
+      start removes the rest (AC-W4). }
+    Log('Removal: ' + ClosePhase + ' gave no result in ' + IntToStr(CloseLimitMs div 1000) + ' s; setup closes, and the next setup run removes the rest.');
+    EndCloseFlow('limit');
+    Exit;
+  end;
+  Log('Removal: ' + ClosePhase + ': ' + Code + '.');
+  if ClosePhase = 'job' then
+    CloseStep(2, 'stop', CM('remove_stopping'), 'uninstall-stop', '', REMOVE_STEP_MS)
+  else if ClosePhase = 'stop' then
+    CloseStep(3, 'data', CM('remove_data_line'), 'setup-remove-data', '', REMOVE_DATA_MS)
+  else if ClosePhase = 'data' then
+  begin
+    { Kept data that could not go back to kept\ stops the removal: nothing else goes, so the next
+      start tries again; the data is never deleted. }
+    if Code = 'keep_failed' then
+    begin
+      EndCloseFlow('kept');
+      Exit;
+    end;
+    RemoveDataCode := Code;
+    CloseStep(4, 'features', CM('remove_features'), 'remove-features', '', REMOVE_FEATURES_MS);
+  end
+  else if ClosePhase = 'features' then
+  begin
+    RemoveFeaturesCode := Code;
+    { W9 review item 4: with the data folder left over, the scripts stay for Save report. }
+    Extra := '';
+    if (RemoveDataCode <> 'removed') and (RemoveDataCode <> 'returned') and (RemoveDataCode <> 'nothing') then
+      Extra := '-DataLeft';
+    CloseStep(5, 'windows', CM('remove_windows'), 'remove-windows', Extra, REMOVE_WINDOWS_MS);
+  end
+  else
+    EndCloseFlow('done');
+end;
+
+{ The form, built without being shown (the self-test builds it too). }
+function BuildRemoveForm(After: String): TSetupForm;
+begin
+  Result := CreateCustomForm(ScaleX(480), ScaleY(330), False, False);
+  Result.Caption := CM('remove_title');
+  RemoveForm := Result;
+  CloseAfter := After;
+  SetArrayLength(FormButtons, 0);
+  RemoveClose := FormButton(Result, CM('btn_close'), ScaleX(90), mrCancel);
+  RemoveClose.Cancel := True;
+  RemoveClose.SetBounds(Result.ClientWidth - ScaleX(14) - RemoveClose.Width, Result.ClientHeight - ScaleY(14) - RemoveClose.Height,
+    RemoveClose.Width, RemoveClose.Height);
+  RenderRemove;
+end;
+
+{ The labels of the form go with it; nothing that the timer reads may point at them. }
+procedure FreeRemoveForm;
+begin
+  if RemoveForm <> nil then
+    RemoveForm.Free;
+  RemoveForm := nil;
+  RemovePanel := nil;
+  RemoveClose := nil;
+  Cur := nil;
+  WaitKind := '';
+  WaitTime := nil;
+  WaitNow := nil;
+  WaitDrawn := 0;
+end;
+
+{ Runs the removal in its modal form. True when every step ended; False when a step passed its
+  limit, kept data stayed in distro, or the person closed the form first (logged; the next
+  start removes the rest). Never call it from inside a timer tick. }
+function RunRemoval(Why: String): Boolean;
+begin
+  Result := False;
+  BuildRemoveForm(Why);
+  try
+    StartCloseFlow('remove', Why);
+    RemoveForm.ShowModal;
+    if ClosePhase <> '' then
+    begin
+      Log('The removal was closed during ' + ClosePhase + '; the next setup run removes the rest.');
+      ClosePhase := '';
+    end;
+    Result := CloseEnd = 'done';
+  finally
+    FreeRemoveForm;
+  end;
 end;
 
 { ------------------------------------------------------------------------------------------- }
@@ -1122,8 +1090,27 @@ begin
   end
   else if ForTag = 'data-unpack' then
     StartDataFolder
-  else if ForTag = 'resume-unpack' then
-    StartBgPrepData
+  else if ForTag = 'data-check' then
+  begin
+    { DEC-0041 (AC-W1): the S07 folder check; Next goes on only with "ready". }
+    if Code = 'ready' then
+    begin
+      DataChecked := DataRoot;
+      KeptChecked := KeptMode;
+      WizardForm.NextButton.Enabled := True;
+      WizardForm.NextButton.OnClick(WizardForm.NextButton);
+    end
+    else
+    begin
+      DataChecked := '';
+      DataError := Code;
+      { The three folder messages of S07; a helper that never answered gets the antivirus
+        message; any other answer the start failure. }
+      if (Code <> 'data_folder_parent_unsafe') and (Code <> 'not_empty') and (Code <> 'drive_not_fixed_ntfs') and (Code <> 'helper_timeout') then
+        DataError := 'start_failed';
+      RenderPage(P_DATA);
+    end;
+  end
   else if ForTag = 'provider' then
   begin
     MailDetected := Code;
@@ -1160,42 +1147,28 @@ begin
   end
   else if ForTag = 'inst-save' then
   begin
-    if ResumedInstall or KeptMode then
-      InstallStartJob('')
+    { DEC-0041 (AC-W2): a step past its limit stops the install with its message. }
+    if Code = 'helper_timeout' then
+      InstallFail(0, CM('s12_av_blocked'))
+    else if KeptMode then
+      InstallChannelCheck('')
     else
-      RunStep('time-zone', '', 'inst-tz', '', 0, 0, HELPER_LIMIT_MS);
+      RunStep('time-zone', '', 'inst-tz', '', 0, 0, INSTALL_STEP_MS);
   end
   else if ForTag = 'inst-tz' then
-    InstallStartJob(JsonValue(Text, 'iana'))
-  else if ForTag = 'inst-logon' then
-    InstallFail(0, CM('service_logon_failed'))
-  else if ForTag = 'inst-retry' then
   begin
-    InstallStep := 1;
-    InstallNextStep;
-  end
-  else if ForTag = 'cd-check' then
-  begin
-    if Code <> 'ready' then
-      ChooseDriveFailed
+    if Code = 'helper_timeout' then
+      InstallFail(0, CM('s12_av_blocked'))
     else
-    begin
-      RunStep('prepare-backup', '-Drive ' + Uppercase(CdDrive), 'cd-prepare', FM1('cd_preparing', CdDrive), 2, 3, HELPER_LIMIT_MS);
-      RenderPage(P_INSTALL);
-    end;
+      InstallChannelCheck(JsonValue(Text, 'iana'));
   end
-  else if ForTag = 'cd-prepare' then
+  else if ForTag = 'inst-r7' then
   begin
-    if Code <> 'ready' then
-      ChooseDriveFailed
-    else if InstallStep >= 2 then
-    begin
-      { The engine keeps its target from step 12; set-backup-target changes it (PollInstall). }
-      StartJob('set-backup-target', '{"run_id":"' + RunId + '","backup_target":' + JsonText(Uppercase(CdDrive) + '\SlateOps-backups') + '}', 'cdtarget', False, False, 5);
-      RenderPage(P_INSTALL);
-    end
-    else
-      ChooseDriveDone;
+    { AC-W5: R7 again right before the password goes to the install job (spec 5.2). }
+    if Code = 'clear' then InstallStartJob(InstallTz)
+    else if Code = 'policy' then InstallFail(6, CM('c18_policy'))
+    else if Code = 'helper_timeout' then InstallFail(6, CM('s12_av_blocked'))
+    else InstallFail(6, CM('c18_unreadable'));
   end
   else if ForTag = 'printers' then
     ShowPrinterForm(Text)
@@ -1330,17 +1303,19 @@ begin
       else if Key = 'check' then Result := 3;
     end;
   end
-  else if Kind = 'data' then
-  begin
-    if not ExtractRunning then Result := 2;
-  end
-  else if Kind = 'bg' then
-    Result := BgIndex + 1
   else if Kind = 'install' then
   begin
-    if InstallDone then Result := 9
-    else if InstallStep >= 3 then Result := 8
-    else if (InstallStep = 2) and (JobPurpose = 'install') and (JobStepJob = 'install') then Result := InstallKeyStage(JobStepKey);
+    { DEC-0041 (AC-W2): 1 the data folder, then one stage per server part step, then the eight
+      stages of the install. }
+    if InstallStep = -1 then
+    begin
+      if DataPrepared then Result := 2 + BgIndex;
+    end
+    else if InstallDone then Result := PrepStageCount + 9
+    else if InstallStep >= 3 then Result := PrepStageCount + 8
+    else if (InstallStep = 2) and (JobPurpose = 'install') and (JobStepJob = 'install') then Result := PrepStageCount + InstallKeyStage(JobStepKey)
+    else if InstallStep = 1 then Result := PrepStageCount + 6
+    else Result := PrepStageCount + 1;
   end
   else if Kind = 'repair' then
   begin
@@ -1426,18 +1401,21 @@ begin
       else Result := StepText('pc', 'vmp', '', '', '');
     end;
   end
-  else if Kind = 'data' then
-  begin
-    if ExtractRunning then Result := StepText('data', 'unpack', '', '', '')
-    else Result := StepText('data', 'folder', DataRoot, '', '');
-  end
-  else if Kind = 'bg' then
-    Result := BgAction
   else if Kind = 'install' then
   begin
     if InstallDone then
       Exit;
-    if InstallStep = 0 then
+    if InstallStep = -1 then
+    begin
+      if DataPrepared then Result := BgAction
+      else if ExtractRunning or (BgOut = '') then Result := StepText('data', 'unpack', '', '', '')
+      else Result := StepText('data', 'folder', DataRoot, '', '');
+    end
+    else if (InstallStep = 1) and (Copy(JobPurpose, 1, 9) = 'selftest:') then
+      Result := CM('s09_channel')
+    else if (InstallStep = 1) and (StepFor = 'inst-r7') then
+      Result := CM('s09_policy')
+    else if InstallStep = 0 then
       Result := StepText('backup', 'check', BackupDrive, '', '')
     else if (InstallStep = 2) and (JobPurpose = 'install') and (JobStepJob = 'install') then
       Result := StepText('install', JobStepKey, HostName + '.local', Trim(OrgEmail.Text), BackupDrive)
@@ -1491,10 +1469,8 @@ begin
   begin
     if (StepFor = 'm03-check') or (StepFor = 'm03-prepare') then
       Result := OneLine(StepNumber, StepTotal, StepLine, MaintAt)
-    else if (StepFor = 'cd-check') or (StepFor = 'cd-prepare') then
-      Result := OneLine(StepNumber, StepTotal, StepLine, CdAt)
     else if StepFor = 'r7' then
-      Result := OneLine(3, 4, StepLine, MailAt)
+      Result := OneLine(2, 4, StepLine, MailAt)
     else
       Result := OneLine(StepNumber, StepTotal, StepLine, StepAt);
     Exit;
@@ -1527,10 +1503,10 @@ begin
     Result := OneLine(0, 0, Action, CheckStartedAt);
     Exit;
   end;
-  if MailPhase = 'waiting' then
-    Result := OneLine(1, 4, FM1('s09_ready_bg', BgAction), MailAt)
-  else if MailPhase = 'selftest' then
-    Result := OneLine(2, 4, CM('s09_channel'), MailAt)
+  { M02 (DEC-0041 AC-W6): 1 the channel self-test, 2 the security policy, 3 the test email,
+    4 set-email (MaintPhase 'setemail' below). }
+  if MailPhase = 'selftest' then
+    Result := OneLine(1, 4, CM('s09_channel'), MailAt)
   else if MailPhase = 'sending' then
   begin
     Action := '';
@@ -1538,19 +1514,16 @@ begin
       Action := StepText(JobStepJob, JobStepKey, Trim(OrgEmail.Text), '', '');
     if Action = '' then
       Action := StepText('smtp-test', 'send', Trim(OrgEmail.Text), '', '');
-    Result := OneLine(4, 4, Action, MailAt);
+    Result := OneLine(3, 4, Action, MailAt);
   end
   else if MaintPhase = 'setemail' then
   begin
-    Number := 2;
     Action := '';
     if JobPurpose = 'setemail' then
       Action := StepText(JobStepJob, JobStepKey, '', '', '');
-    if JobStepKey = 'auth' then
-      Number := 3;
     if Action = '' then
       Action := StepText('set-email', 'write', '', '', '');
-    Result := OneLine(Number, 3, Action, MaintAt);
+    Result := OneLine(4, 4, Action, MailAt);
   end
   else if MaintPhase = 'target' then
   begin
@@ -1576,14 +1549,7 @@ begin
     Result := OneLine(0, 0, Action, MaintAt);
   end
   else if MaintPhase = 'invite' then
-    Result := OneLine(0, 0, StepText('resend-invitation', 'resend', '', '', ''), MaintAt)
-  else if (JobPurpose = 'cdtarget') and JobRunning then
-  begin
-    Action := StepText(JobStepJob, JobStepKey, BackupDrive, CdDrive, '');
-    if Action = '' then
-      Action := FM1('m03_setting', CdDrive);
-    Result := OneLine(3, 3, Action, CdAt);
-  end;
+    Result := OneLine(0, 0, StepText('resend-invitation', 'resend', '', '', ''), MaintAt);
 end;
 
 { ------------------------------------------------------------------------------------------- }

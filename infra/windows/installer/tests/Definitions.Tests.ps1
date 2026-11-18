@@ -144,22 +144,6 @@ Test-Case 'AC-4 the resume starts the original setup file through Explorer, so W
     Assert-Throws { Get-ResumeCommand -SetupPath 'D:\x" /evil "y.exe' } 'Not a setup file path.'
 }
 
-Test-Case 'AC-4 the first screen comes from the saved progress only (spec 4.1)' {
-    $cases = [ordered]@{
-        'check_restart'    = 'S02'
-        'feature_restart'  = 'S06 S07'
-        'continue_later'   = 'S06 S08'
-        'install_started'  = 'S06 S12'
-        'install_finished' = 'S06 S14'
-    }
-    Assert-Equal 'S01' (Get-SetupEntry -Progress $null).screen
-    foreach ($stage in $cases.Keys) {
-        $entry = Get-SetupEntry -Progress @{ stage = $stage }
-        Assert-Equal $cases[$stage] (('{0} {1}' -f $entry.screen, $entry.next).Trim()) $stage
-    }
-    Assert-Equal 'S09' (Get-SetupEntry -Progress @{ stage = 'install_started'; email_discarded = $true }).next
-}
-
 Test-Case 'AC-4 the saved progress holds the stage, the run ID and true or false marks only' {
     $layout = New-SlateOpsLayout -StateRoot (Join-Path (New-TestDirectory 'progress') 'SlateOps')
     $null = Initialize-ProtectedTree -Tree $layout.StateTree

@@ -505,6 +505,140 @@ function Remove-WindowsParts {
 }
 
 # ---------------------------------------------------------------------------
+# DEC-0041 (TASK-0097 AC-W3, AC-W4): the removal of a setup run that did not finish. Setup is a
+# complete installation or nothing: Cancel, closing the window, a failed install and an earlier
+# run found at start remove what setup added. Kept data is never deleted, and WSL and Virtual
+# Machine Platform go only when setup turned them on and no other distribution is registered.
+# ---------------------------------------------------------------------------
+
+function Invoke-LimitedProcess {
+    # Runs a program hidden and waits at most LimitSeconds. Returns its exit code, or -1 when it
+    # did not end in time (it is left running and logged; nothing waits for it).
+    param([Parameter(Mandatory = $true)][string]$File, [string[]]$Arguments = @(), [Parameter(Mandatory = $true)][int]$LimitSeconds)
+    Write-RunLog 'setup.remove' 'INFO' ('> {0} {1} (limit {2} s)' -f $File, ($Arguments -join ' '), $LimitSeconds)
+    $process = Start-Process -FilePath $File -ArgumentList $Arguments -WindowStyle Hidden -PassThru
+    # Windows PowerShell 5.1 gives the exit code only when the handle was read before the end.
+    $null = $process.Handle
+    if (-not $process.WaitForExit($LimitSeconds * 1000)) {
+        Write-RunLog 'setup.remove' 'WARN' ('{0} did not end in {1} s; setup goes on' -f (Split-Path -Leaf $File), $LimitSeconds)
+        return -1
+    }
+    Write-RunLog 'setup.remove' 'INFO' ('  exit code {0}' -f $process.ExitCode)
+    return [int]$process.ExitCode
+}
+
+function Get-WslDistroNames {
+    # Every WSL distribution of every user whose registry hive is loaded (the per-user Lxss key
+    # that "wsl --list" reads, read here for all users at once and without the UTF-16 output of
+    # wsl.exe). ok is false when a local profile's hive is not loaded, so its list cannot be read;
+    # the caller then keeps WSL. The service account's own profile holds only our distribution.
+    param([string]$ServiceSid = '')
+    $names = New-Object System.Collections.Generic.List[string]
+    $loaded = @{}
+    foreach ($key in @(Get-ChildItem -LiteralPath 'Registry::HKEY_USERS' -ErrorAction Stop)) {
+        $sid = [string]$key.PSChildName
+        if ($sid -notmatch '^S-1-5-21-[0-9-]+$') { continue }
+        $loaded[$sid] = $true
+        $lxss = 'Registry::HKEY_USERS\{0}\Software\Microsoft\Windows\CurrentVersion\Lxss' -f $sid
+        if (-not (Test-Path -LiteralPath $lxss)) { continue }
+        foreach ($distro in @(Get-ChildItem -LiteralPath $lxss -ErrorAction Stop)) {
+            $name = [string](Get-ItemProperty -LiteralPath $distro.PSPath -ErrorAction Stop).DistributionName
+            if ($name) { $names.Add($name) }
+        }
+    }
+    $ok = $true
+    foreach ($userProfile in @(Get-CimInstance -ClassName Win32_UserProfile -ErrorAction Stop)) {
+        $sid = [string]$userProfile.SID
+        if (($sid -notmatch '^S-1-5-21-') -or $userProfile.Special -or $loaded.ContainsKey($sid) -or ($ServiceSid -and ($sid -eq $ServiceSid))) { continue }
+        Write-RunLog 'setup.remove' 'INFO' ('the distributions of {0} cannot be read (its profile is not loaded)' -f $sid)
+        $ok = $false
+    }
+    return @{ ok = $ok; names = $names.ToArray() }
+}
+
+function Remove-SetupFeatures {
+    # WSL and Virtual Machine Platform, only when both rules hold (parent addition to AC-W3):
+    # (1) setup turned them on: windows-changes.json says so (vmp_enabled_by_setup, written when
+    # S05 enabled the feature; wsl_version_before_setup = none, written before the first WSL
+    # install, so an upgrade of an older WSL never counts); (2) no WSL distribution other than
+    # ours is registered. A failed or unclear check keeps both. Setup never touches another
+    # distribution and never restarts: Windows finishes at the next restart.
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Layout,
+        [scriptblock]$ListDistros = { Get-WslDistroNames -ServiceSid (Get-RecordedServiceSid -Layout $Layout) },
+        [scriptblock]$Run = { param([string]$File, [string[]]$Arguments, [int]$LimitSeconds) Invoke-LimitedProcess -File $File -Arguments $Arguments -LimitSeconds $LimitSeconds }
+    )
+    $record = Read-WindowsChanges -Layout $Layout
+    $vmp = ((Get-DictValue $record 'vmp_enabled_by_setup') -eq $true)
+    $wsl = ([string](Get-DictValue $record 'wsl_version_before_setup') -ceq 'none')
+    if (-not ($vmp -or $wsl)) {
+        Write-RunLog 'setup.remove' 'INFO' 'WSL and Virtual Machine Platform were on this PC before setup; they stay'
+        return New-StepResult -Code 'kept' -MessageKey 'setup.features.kept' -Values @{ reason = 'not_by_setup' }
+    }
+    $check = $null
+    try { $check = & $ListDistros } catch { Write-RunLog 'setup.remove' 'WARN' ('distribution check failed: {0}' -f $_.Exception.Message) }
+    if (($null -eq $check) -or ($check['ok'] -ne $true)) {
+        Write-RunLog 'setup.remove' 'INFO' 'the distribution check failed or is unclear; WSL and Virtual Machine Platform stay'
+        return New-StepResult -Code 'kept' -MessageKey 'setup.features.kept' -Values @{ reason = 'check_failed' }
+    }
+    $others = @(@($check['names']) | Where-Object { $_ -and ([string]$_ -ine $SlateOps.DistroName) })
+    if ($others.Count -gt 0) {
+        Write-RunLog 'setup.remove' 'INFO' ('{0} other distribution(s) registered; WSL and Virtual Machine Platform stay' -f $others.Count)
+        return New-StepResult -Code 'kept' -MessageKey 'setup.features.kept' -Values @{ reason = 'other_distribution' }
+    }
+    $done = @{ wsl = $false; vmp = $false }
+    if ($wsl) { $done.wsl = ((& $Run (Get-WslExe) @('--uninstall') 90) -eq 0) }
+    if ($vmp) {
+        # dism 3010: done, a restart finishes it.
+        $code = & $Run (Join-Path $SlateOpsPaths.System32 'dism.exe') @('/Online', '/Disable-Feature', '/FeatureName:VirtualMachinePlatform', '/NoRestart', '/Quiet') 90
+        $done.vmp = (@(0, 3010) -contains $code)
+    }
+    Write-RunLog 'setup.remove' 'INFO' ('WSL removed: {0}; Virtual Machine Platform off: {1}; Windows finishes at the next restart' -f $done.wsl, $done.vmp)
+    if (-not ($done.wsl -or $done.vmp)) { return New-StepResult -Code 'remove_failed' -MessageKey 'setup.features.remove_failed' -Values @{ wsl = $done.wsl; vmp = $done.vmp } }
+    return New-StepResult -Code 'removed' -MessageKey 'setup.features.removed' -Values @{ wsl = $done.wsl; vmp = $done.vmp; restart_needed = $true }
+}
+
+function Remove-SetupData {
+    # The data folder of a setup run that did not finish (state\install.json names it). A data
+    # folder that holds kept\ is never deleted: a disk that a kept reinstall moved back goes to
+    # kept\ first (the Keep path), then the distribution is unregistered and only this run's
+    # distro and payload folders go. Any other data folder: unregister, then the S91-2 delete.
+    # The uninstaller keeps its own paths (uninstall-data, kept-return).
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Layout,
+        [string]$RunId = '',
+        [scriptblock]$ExecJob = {
+            param([string]$Job)
+            if (-not (Get-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.ExecTaskName -ErrorAction SilentlyContinue)) { return @{ code = 'no_task'; exit_code = 1 } }
+            return Invoke-ExecJobAndWait -Layout $Layout -Job $Job -RunId $RunId -TimeoutSeconds 60
+        }
+    )
+    $state = $null
+    try { $state = Read-InstallState -Layout $Layout } catch { $state = $null }
+    if ($null -eq $state) { return New-StepResult -Code 'nothing' -MessageKey 'setup.remove.nothing' }
+    Set-LayoutDataRoot -Layout $Layout -DataRoot $state.data_root
+    $paths = Get-KeptPaths -Layout $Layout
+    if (Test-Path -LiteralPath $paths.Folder) {
+        if (Test-Path -LiteralPath $paths.Live -PathType Leaf) {
+            $null = & $ExecJob 'terminate-distro'
+            $moved = Move-KeptDisk -Layout $Layout
+            if ($moved.code -ne 'kept') {
+                Write-RunLog 'setup.remove' 'FAIL' 'the kept disk could not go back to kept\; nothing is deleted'
+                return $moved
+            }
+        }
+        $job = & $ExecJob 'unregister-distro'
+        Write-RunLog 'setup.remove' 'INFO' ('unregister: {0}' -f (Get-DictValue $job 'code'))
+        foreach ($path in @($Layout.Distro, $Layout.Payload)) { if (Test-Path -LiteralPath $path) { Remove-PathNoFollow -Path $path } }
+        Write-RunLog 'setup.remove' 'INFO' ('kept data stays in {0}' -f $paths.Folder)
+        return New-StepResult -Code 'returned' -MessageKey 'setup.kept.returned'
+    }
+    $job = & $ExecJob 'unregister-distro'
+    Write-RunLog 'setup.remove' 'INFO' ('unregister: {0}' -f (Get-DictValue $job 'code'))
+    return Remove-DataFolder -DataRoot $state.data_root
+}
+
+# ---------------------------------------------------------------------------
 # Repair (plan 9.3, 10.7 "The service account cannot sign in"; spec M01)
 # ---------------------------------------------------------------------------
 

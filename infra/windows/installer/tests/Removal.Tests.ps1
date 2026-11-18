@@ -1,0 +1,154 @@
+# Removal.Tests.ps1 - DEC-0041 (TASK-0097): setup is a complete installation or nothing. An earlier
+# run that did not finish is removed at start (AC-W4); the removal never deletes kept data and
+# turns WSL and Virtual Machine Platform off only when setup turned them on and no other
+# distribution is registered (AC-W3, with the parent's WSL guard). Every reader and command is
+# the test's own: no test lists the runner's distributions or changes a Windows feature.
+
+function New-RemovalLayout {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    $root = New-TestDirectory $Name
+    foreach ($parent in @('ProgramData', 'Data')) { [void][System.IO.Directory]::CreateDirectory((Join-Path $root $parent)) }
+    $layout = New-SlateOpsLayout -StateRoot (Join-Path $root 'ProgramData\SlateOps')
+    $null = Initialize-ProtectedTree -Tree $layout.StateTree
+    return $layout
+}
+
+Test-Case 'AC-W4 an earlier run that did not finish is removed at start; only the S05 restart continues' {
+    # Rows: stage ('' = no progress file), Windows records left, installed version, expected
+    # "screen next cleanup".
+    $rows = @(
+        @('continue_later', $true, '', 'S01  cleanup'),
+        @('install_started', $true, '', 'S01  cleanup'),
+        @('check_restart', $true, '', 'S01  cleanup'),
+        @('key_saved', $true, '', 'S01  cleanup'),
+        @('', $true, '', 'S01  cleanup'),
+        @('feature_restart', $true, '', 'S06 S07 '),
+        @('install_finished', $true, '', 'S06 S14 '),
+        @('', $false, '', 'S01  '),
+        # Denials: an installed program is never removed at start.
+        @('install_started', $true, '0.2.0', 'M01  '),
+        @('key_saved', $true, '0.2.0', 'M01  '),
+        @('', $true, '0.2.0', 'M01  '),
+        @('install_finished', $true, '0.2.0', 'S06 S14 ')
+    )
+    foreach ($row in $rows) {
+        $progress = $null
+        if ($row[0]) { $progress = @{ stage = $row[0] } }
+        $entry = Get-SetupEntry -Progress $progress -Leftover:$row[1] -Installed $row[2] -SetupVersion '0.2.0'
+        $cleanup = $(if ($entry['cleanup'] -eq $true) { 'cleanup' } else { '' })
+        Assert-Equal $row[3] ('{0} {1} {2}' -f $entry.screen, $entry.next, $cleanup) ('{0}, records {1}, installed "{2}"' -f $row[0], $row[1], $row[2])
+    }
+}
+
+Test-Case 'AC-W4 the records of an earlier run are the progress file, install.json or windows-changes.json, whatever stage they hold' {
+    $layout = New-RemovalLayout 'ac-w4-records'
+    Assert-Equal $false (Test-SetupLeftover -Layout $layout) 'an empty state folder'
+    [System.IO.File]::WriteAllText($layout.ProgressFile, '{"schema_version":1,"stage":"stage_of_an_older_setup"}')
+    Assert-Equal $true (Test-SetupLeftover -Layout $layout) 'a progress file with a stage that this setup does not know'
+    Remove-Item -LiteralPath $layout.ProgressFile
+    Write-JsonFile -Path (Join-Path $layout.State 'windows-changes.json') -Value ([ordered]@{ vmp_enabled_by_setup = $true })
+    Assert-Equal $true (Test-SetupLeftover -Layout $layout) 'the Windows changes of S05'
+    Remove-Item -LiteralPath (Join-Path $layout.State 'windows-changes.json')
+    Write-JsonFile -Path $layout.StateFile -Value ([ordered]@{ schema_version = 1; data_root = 'D:\SlateOps' })
+    Assert-Equal $true (Test-SetupLeftover -Layout $layout) 'install.json'
+}
+
+# The WSL guard (parent addition to AC-W3). Run records the commands instead of running them.
+function New-FeatureRun {
+    $calls = New-Object System.Collections.Generic.List[string]
+    $run = { param([string]$File, [string[]]$Arguments, [int]$LimitSeconds) $calls.Add(('{0} {1}' -f (Split-Path -Leaf $File), ($Arguments -join ' '))); return 0 }.GetNewClosure()
+    return @{ Calls = $calls; Run = $run }
+}
+
+Test-Case 'AC-W3 WSL that was on the PC before setup stays' {
+    $layout = New-RemovalLayout 'ac-w3-wsl-before'
+    Write-JsonFile -Path (Join-Path $layout.State 'windows-changes.json') -Value ([ordered]@{ wsl_version_before_setup = '2.6.1.0' })
+    $fake = New-FeatureRun
+    $result = Remove-SetupFeatures -Layout $layout -ListDistros { @{ ok = $true; names = @() } } -Run $fake.Run
+    Assert-Equal 'kept' $result.code
+    Assert-Equal 0 $fake.Calls.Count 'nothing is uninstalled or turned off'
+}
+
+Test-Case 'AC-W3 WSL that setup installed stays while another distribution is registered' {
+    $layout = New-RemovalLayout 'ac-w3-other-distro'
+    Write-JsonFile -Path (Join-Path $layout.State 'windows-changes.json') -Value ([ordered]@{ vmp_enabled_by_setup = $true; wsl_version_before_setup = 'none' })
+    $fake = New-FeatureRun
+    $result = Remove-SetupFeatures -Layout $layout -ListDistros { @{ ok = $true; names = @('SlateOps', 'Ubuntu-24.04') } } -Run $fake.Run
+    Assert-Equal 'kept' $result.code
+    Assert-Equal 'other_distribution' $result.values.reason
+    Assert-Equal 0 $fake.Calls.Count 'the other distribution is not touched, and WSL stays'
+}
+
+Test-Case 'AC-W3 WSL and Virtual Machine Platform that setup turned on go when no other distribution is registered, with no restart' {
+    $layout = New-RemovalLayout 'ac-w3-removed'
+    Write-JsonFile -Path (Join-Path $layout.State 'windows-changes.json') -Value ([ordered]@{ vmp_enabled_by_setup = $true; wsl_version_before_setup = 'none' })
+    $fake = New-FeatureRun
+    $result = Remove-SetupFeatures -Layout $layout -ListDistros { @{ ok = $true; names = @('SlateOps') } } -Run $fake.Run
+    Assert-Equal 'removed' $result.code
+    Assert-Equal @('wsl.exe --uninstall', 'dism.exe /Online /Disable-Feature /FeatureName:VirtualMachinePlatform /NoRestart /Quiet') @($fake.Calls)
+    Assert-Equal $true $result.values.restart_needed 'Windows finishes at the next restart; setup does not restart'
+}
+
+Test-Case 'AC-W3 a distribution check that fails or is unclear keeps WSL and Virtual Machine Platform' {
+    $layout = New-RemovalLayout 'ac-w3-check-failed'
+    Write-JsonFile -Path (Join-Path $layout.State 'windows-changes.json') -Value ([ordered]@{ vmp_enabled_by_setup = $true; wsl_version_before_setup = 'none' })
+    foreach ($reader in @({ @{ ok = $false; names = @() } }, { throw 'registry_unreadable' })) {
+        $fake = New-FeatureRun
+        $result = Remove-SetupFeatures -Layout $layout -ListDistros $reader -Run $fake.Run
+        Assert-Equal 'kept' $result.code
+        Assert-Equal 'check_failed' $result.values.reason
+        Assert-Equal 0 $fake.Calls.Count
+    }
+}
+
+Test-Case 'AC-W3 the setup removal never deletes kept data: a kept reinstall returns the disk to kept\, a kept folder stays' {
+    # A kept reinstall that failed after restore-kept: the disk is back in distro and kept.json
+    # is still in kept\. The removal moves the disk back and leaves kept\ as it was.
+    $layout = New-RemovalLayout 'ac-w3-kept'
+    $dataRoot = Join-Path (Split-Path -Parent (Split-Path -Parent $layout.StateRoot)) 'Data\SlateOps'
+    Write-JsonFile -Path $layout.StateFile -Value ([ordered]@{ schema_version = 1; data_root = $dataRoot; vhd_size_gb = 30 })
+    foreach ($folder in @('distro', 'payload', 'kept')) { [void][System.IO.Directory]::CreateDirectory((Join-Path $dataRoot $folder)) }
+    [System.IO.File]::WriteAllText((Join-Path $dataRoot 'kept\kept.json'), '{"version":"0.2.0"}')
+    [System.IO.File]::WriteAllText((Join-Path $dataRoot 'distro\ext4.vhdx'), 'the kept data')
+    [System.IO.File]::WriteAllText((Join-Path $dataRoot 'payload\slateops-engine-0.2.0.tar.gz'), 'x')
+    $jobs = New-Object System.Collections.Generic.List[string]
+    $exec = { param([string]$Job) $jobs.Add($Job); return @{ code = 'done'; exit_code = 0 } }.GetNewClosure()
+    $result = Remove-SetupData -Layout $layout -ExecJob $exec
+    Assert-Equal 'returned' $result.code (ConvertTo-JsonText $result)
+    Assert-Equal 'the kept data' ([System.IO.File]::ReadAllText((Join-Path $dataRoot 'kept\ext4.vhdx'))) 'the disk is back in kept\'
+    Assert-Equal '{"version":"0.2.0"}' ([System.IO.File]::ReadAllText((Join-Path $dataRoot 'kept\kept.json'))) 'kept.json is unchanged'
+    Assert-Equal @('terminate-distro', 'unregister-distro') @($jobs)
+    Assert-Equal $false (Test-Path -LiteralPath (Join-Path $dataRoot 'payload')) 'the parts of this run go'
+    # The disk still in kept\ (restore-kept never ran): nothing in kept\ moves, the root stays.
+    Remove-Item -LiteralPath (Join-Path $dataRoot 'distro') -Recurse -Force -ErrorAction SilentlyContinue
+    $jobs.Clear()
+    $again = Remove-SetupData -Layout $layout -ExecJob $exec
+    Assert-Equal 'returned' $again.code (ConvertTo-JsonText $again)
+    Assert-Equal 'the kept data' ([System.IO.File]::ReadAllText((Join-Path $dataRoot 'kept\ext4.vhdx')))
+    Assert-Equal @('unregister-distro') @($jobs)
+}
+
+Test-Case 'AC-W3 the setup removal has nothing to remove before the data folder step' {
+    $layout = New-RemovalLayout 'ac-w3-no-data'
+    $jobs = New-Object System.Collections.Generic.List[string]
+    $result = Remove-SetupData -Layout $layout -ExecJob { param([string]$Job) $jobs.Add($Job); @{ code = 'done'; exit_code = 0 } }.GetNewClosure()
+    Assert-Equal 'nothing' $result.code
+    Assert-Equal 0 $jobs.Count
+}
+
+Test-Case 'AC-W1 S07 checks the chosen data folder on Next and writes nothing; the server work waits for Install' {
+    $root = New-AdminOnlyFolder 'SlateOpsAcW1Data'
+    try {
+        $dataRoot = Join-Path $root 'SlateOps'
+        Assert-Equal 'ready' (Test-DataFolderChoice -DataRoot $dataRoot).code 'a folder that does not exist yet'
+        Assert-Equal $false (Test-Path -LiteralPath $dataRoot) 'the check creates nothing'
+        [void][System.IO.Directory]::CreateDirectory($dataRoot)
+        [System.IO.File]::WriteAllText((Join-Path $dataRoot 'notes.txt'), 'x')
+        Assert-Equal 'not_empty' (Test-DataFolderChoice -DataRoot $dataRoot).code
+        Remove-Item -LiteralPath (Join-Path $dataRoot 'notes.txt')
+        [void][System.IO.Directory]::CreateDirectory((Join-Path $dataRoot 'kept'))
+        Assert-Equal 'not_empty' (Test-DataFolderChoice -DataRoot $dataRoot).code 'kept data without the kept choice'
+        Assert-Equal 'ready' (Test-DataFolderChoice -DataRoot $dataRoot -AllowKept).code 'kept data with "Use the kept data"'
+        Assert-Equal 'path_invalid' (Test-DataFolderChoice -DataRoot 'D:\').code
+    } finally { Remove-PathNoFollow -Path $root }
+}

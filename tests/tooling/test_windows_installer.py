@@ -545,7 +545,7 @@ class UpdatePathTest(unittest.TestCase):
         branch = cancel.split("if EntryScreen = 'M05' then", 1)
         self.assertEqual(len(branch), 2, "M05 has its own branch")
         self.assertLess(
-            cancel.index("if EntryScreen = 'M05' then"), cancel.index("AskCancelChoice")
+            cancel.index("if EntryScreen = 'M05' then"), cancel.index("RunRemoval('close');")
         )
         m05 = branch[1].split("Exit;", 1)[0]
         self.assertNotIn("RemoveEverything", m05)
@@ -566,11 +566,7 @@ class UpdatePathTest(unittest.TestCase):
         # job-result answer that the poll already asked for, not a blocking helper call.
         self.assertIn("if JobLogonFailed then", routine(raw, "procedure PollUpdate;\nvar"))
         poll = routine(pascal_code(), "procedure PollJob;")
-        self.assertIn(
-            "(JobPurpose <> 'install') and (JobPurpose <> 'update') and "
-            "(Elapsed(JobStartedAt) > JobLimitMs)",
-            poll,
-        )
+        self.assertIn("(JobPurpose <> 'update') and (Elapsed(JobStartedAt) > JobLimitMs)", poll)
 
     def test_w13b_5_the_wsl_step_has_its_own_limit_and_shows_f10(self) -> None:
         raw = pascal_code()
@@ -614,28 +610,12 @@ class W9ReviewCorrectionTest(unittest.TestCase):
         self.raw = pascal_code()
 
     def test_item_1_a_resumed_kept_reinstall_stays_kept_and_never_deletes_kept_data(self) -> None:
-        start = routine(self.raw, "function InitializeSetup(): Boolean;")
-        self.assertRegex(
-            start, r"if Pos\('\"kept\":true', StateText\) > 0 then\s+begin\s+KeptState := 'kept';"
-        )
-        self.assertIn("KeptFor := DataRoot;", start)
-        # No second restore: with the disk already back, the resume starts at import-kept.
-        self.assertRegex(
-            start,
-            r"if FileExists\(AddBackslash\(DataRoot\) \+ 'kept\\ext4\.vhdx'\) then\s+"
-            r"BgIndex := 1\s+else\s+BgIndex := 3;",
-        )
-        later = routine(self.raw, "function LaterSaveExtra(Discarded: Boolean): String;")
-        self.assertEqual(later.count("if KeptMode then\n    Extra := Extra + ' -KeptMark';"), 1)
         install = routine(self.raw, "procedure InstallNextStep;")
         self.assertIn("if KeptMode then\n      Extra := Extra + ' -KeptMark';", install)
-        # W14-D9: "Remove everything" runs from the timer (PollCloseFlow).
+        # DEC-0041: the removal never deletes kept data, whatever mode this run is in; the
+        # helper decides from the data folder (Remove-SetupData, Removal.Tests.ps1).
         remove = routine(self.raw, "procedure PollCloseFlow;\nvar")
-        self.assertRegex(
-            remove,
-            r"if \(DataRoot <> ''\) and FileExists\(AddBackslash\(DataRoot\) \+ "
-            r"'kept\\kept\.json'\) then\s+CloseStep\('data', [^;]*'kept-return', ''\)",
-        )
+        self.assertIn("'setup-remove-data'", remove)
         self.assertNotIn("KeptMode", remove)
         helper = (INSTALLER / "scripts/setup-helper.ps1").read_text(encoding="ascii")
         self.assertIn("if ($KeptMark) { $marks.kept = $true }", helper)
@@ -651,11 +631,6 @@ class W9ReviewCorrectionTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertNotRegex(block[1], rf"(?im)^\s*\${name}\s*=")
 
-    def test_item_1_a_kept_resume_after_the_background_finished_is_done(self) -> None:
-        start = routine(self.raw, "function InitializeSetup(): Boolean;")
-        self.assertNotIn("BgIndex := 7;", start)
-        self.assertLess(start.index("KeptFor := DataRoot;"), start.index("BgIndex := BgCount;"))
-
     def test_item_1_import_kept_repeats_safely_on_a_resume(self) -> None:
         exec_source = (INSTALLER / "scripts/lib/Exec.ps1").read_text(encoding="ascii")
         kept = exec_source.split("'import-kept' {", 1)[1].split("'wsl-facts' {", 1)[0]
@@ -663,12 +638,7 @@ class W9ReviewCorrectionTest(unittest.TestCase):
         self.assertIn("$Result.code = 'already_imported'", kept)
 
     def test_n1_a_resumed_kept_reinstall_shows_the_organization_name(self) -> None:
-        # Design N-1: S07 does not run on a resume, so the name comes from kept.json through the
-        # helper at start; the row is left out while the name is still empty.
-        start = routine(self.raw, "function InitializeSetup(): Boolean;")
-        kept = start.split("KeptFor := DataRoot;", 1)[1].split("end;", 1)[0]
-        self.assertIn("NewOutRun('kept-read', '-DataRoot ' + AddQuotes(DataRoot)", kept)
-        self.assertIn("KeptName := JsonValue(Text, 'business_name');", kept)
+        # Design N-1: the row is left out while the name is still empty.
         ready = routine(self.raw, "procedure RenderReady;")
         self.assertRegex(
             ready, r"if KeptName <> '' then\s+AddRow\(FM1\('s11_org', KeptName\), -1\);"
@@ -686,14 +656,6 @@ class W9ReviewCorrectionTest(unittest.TestCase):
             "This PC has parts left by an earlier Slate Operations uninstall. Setup removes them "
             "before it continues. Your data and backups do not change.",
         )
-
-    def test_item_2_a_kept_failure_on_s11_can_open(self) -> None:
-        ready = routine(self.raw, "procedure RenderReady;")
-        self.assertIn(
-            "WizardForm.NextButton.Enabled := (not KeptMode) or BgDone or BgFailed;", ready
-        )
-        poll = routine(self.raw, "procedure PollBackground;")
-        self.assertEqual(poll.count("RedrawKeptReady;"), 2)
 
     def test_item_3_c29_uninstall_leftovers_run_remove_windows(self) -> None:
         click = routine(self.raw, "procedure ItemButtonClick(Sender: TObject);")
@@ -715,7 +677,7 @@ class W9ReviewCorrectionTest(unittest.TestCase):
         self.assertRegex(
             step,
             r"if ULeft = 'data' then\s+Extra := '-DataLeft';\s+"
-            r"Text := URun\('remove-windows', URunId, Extra\);",
+            r"Text := URun\('remove-windows', URunId, Extra, U_WINDOWS_SEC\);",
         )
 
     def test_item_5_m01_names_a_changed_network(self) -> None:
@@ -727,15 +689,10 @@ class W9ReviewCorrectionTest(unittest.TestCase):
         )
         self.assertIn("MaintNetwork := JsonLiteral(Text, 'network_changed') = 'true';", self.raw)
 
-    def test_item_6_the_s09_resume_keeps_the_started_install(self) -> None:
-        later = routine(self.raw, "function LaterSaveExtra(Discarded: Boolean): String;")
-        self.assertIn(
-            "if (InstallStep >= 2) or (EntryNext = 'S12') or (EntryNext = 'S09') then", later
-        )
-
     def test_item_7_m02_has_no_continue_later(self) -> None:
-        build = routine(self.raw, "procedure BuildMailPage;")
-        self.assertIn("Later.Visible := EntryScreen <> 'M01';", build)
+        # DEC-0041: no "Continue later" anywhere (M02 never had one).
+        self.assertNotIn("ContinueLater", self.raw)
+        self.assertNotIn("s09_continue_later", read_copy())
 
     def test_item_8_the_start_menu_report_says_what_it_does_first(self) -> None:
         entry = routine(self.raw, "function SettingsEntry: Boolean;\nvar")
@@ -759,7 +716,9 @@ class W9ReviewCorrectionTest(unittest.TestCase):
             self.raw,
             "procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);",
         )
-        self.assertLess(cancel.index("if EntryNext = 'S14' then"), cancel.index("AskCancelChoice"))
+        self.assertLess(
+            cancel.index("if EntryNext = 'S14' then"), cancel.index("RunRemoval('close');")
+        )
         # Only S06 and S14 close; every other page of that session (Inno's file copy) refuses.
         self.assertIn(
             "Cancel := (CurPageID = Pages[P_BACK].ID) or (CurPageID = Pages[P_KEY].ID);", cancel
@@ -902,15 +861,16 @@ class W14DefectTest(unittest.TestCase):
         self.assertIn("(DataRoot = 'D:\\SlateOps')", drives)
 
     def test_w14_d9_continue_later_and_remove_everything_never_hold_the_window(self) -> None:
-        # W14-D9: "Continue later" froze the window (a Sleep loop waited for the stuck job). Both
-        # flows now run from the timer with time limits; no routine of theirs sleeps or waits.
+        # W14-D9: "Continue later" froze the window (a Sleep loop waited for the stuck job). The
+        # removal runs from the timer with time limits; no routine of it sleeps or waits.
         self.assertNotIn("procedure SaveContinueLater;", self.raw)
         self.assertNotIn("procedure RemoveEverything;", self.raw)
         self.assertNotIn("KeepAndClose", self.raw)
         for head in (
             "procedure StartCloseFlow(Flow, After: String);\nbegin",
             "procedure PollCloseFlow;\nvar",
-            "procedure CloseStep(Phase, Line, Action, Extra: String);\nbegin",
+            "procedure CloseStep(Number: Integer; Phase, Line, Action, Extra: String; "
+            "LimitMs: Cardinal);\nbegin",
         ):
             with self.subTest(head=head):
                 body = routine(self.raw, head)
@@ -919,20 +879,27 @@ class W14DefectTest(unittest.TestCase):
         self.assertIn(
             "PollCloseFlow;", routine(self.raw, "procedure TimerTick(H, Msg, Id, Tick: Longword);")
         )
-        for limit in ("CLOSE_WAIT_MS", "CLOSE_STEP_MS"):
+        for limit in (
+            "REMOVE_STEP_MS",
+            "REMOVE_DATA_MS",
+            "REMOVE_FEATURES_MS",
+            "REMOVE_WINDOWS_MS",
+        ):
             self.assertIn(limit, routine(self.raw, "procedure PollCloseFlow;\nvar"))
         cancel = routine(
             self.raw,
             "procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);",
         )
-        self.assertIn("StartCloseFlow('later', 'close');", cancel)
-        self.assertIn("StartCloseFlow('remove', 'close');", cancel)
+        self.assertIn("RunRemoval('close');", cancel)
+        self.assertIn("StartCloseFlow('remove', Why);", self.raw)
 
     def test_w14_d8_the_job_poll_asks_the_helper_and_has_limits(self) -> None:
         # W14-D8: the poll never collected a finished Windows-side result on the owner's PC. The
         # job-result helper is asked every 15 s too; its answer and its start have limits.
         poll = routine(self.raw, "procedure PollJob;\nvar")
-        self.assertIn("if (not Found) and (Elapsed(JobPollAt) < JOB_ASK_MS) then", poll)
+        self.assertIn(
+            "if ((not Found) or JobAnswered) and (Elapsed(JobPollAt) < JOB_ASK_MS) then", poll
+        )
         # W14-D9: Save report's log-bundle job keeps its own run ID (JobRunId).
         self.assertIn("if not StartHelper('job-result', JobRunId, JobResultOut,", poll)
         self.assertIn("(Elapsed(JobResultAt) > JOB_ANSWER_MS)", poll)
@@ -1220,8 +1187,6 @@ SPEC_NAMED_COPY = {
     "s05_failed_wsl": "Setup could not install Windows Subsystem for Linux (WSL).",
     "s12_stage1": "Load the Slate Operations programs",
     "s12_stage2": "Create the settings and passwords",
-    "cancel_feature": "Stop setup? Virtual Machine Platform and Windows Subsystem for Linux (WSL) "
-    "stay on this PC. Other programs can use them.",
     "u04_feature": "Virtual Machine Platform and Windows Subsystem for Linux (WSL) stay on this "
     "PC, because other programs can use them.",
 }
@@ -1245,11 +1210,6 @@ class W14Part3Test(unittest.TestCase):
         self.assertNotIn("WizardForm.Color", code_only(self.raw))
         self.assertIn("external 'HideCaret@user32.dll stdcall';", self.raw)
         self.assertIn("HideCaret(Verdict.Handle);", routine(self.raw, "procedure FocusVerdict("))
-        # The status line (6.1 L12) sits on the page area too.
-        self.assertIn(
-            "StatusLine.Color := Pages[P_ORG].SurfaceColor;",
-            routine(self.raw, "procedure ShowStatusLine(Text: String);"),
-        )
         # S08 and S09 sit on the page surface: their stage line is built there (6.1, S02 to S12).
         self.assertIn("OrgTop := StageLineAt(Surface, 0, 2);", self.raw)
         self.assertIn("MailTop := StageLineAt(Surface, 0, 2);", self.raw)
@@ -1278,7 +1238,7 @@ class W14Part3Test(unittest.TestCase):
             with self.subTest(head=head):
                 self.assertNotIn("AddButtonAt(", routine(self.raw, head))
         failure = routine(self.raw, "procedure AddFailure(")
-        self.assertLess(failure.index("CM('s12_choose_drive')"), failure.index("AddReportButton;"))
+        self.assertIn("AddReportButton;", failure)
 
     def test_w14_d3_l6_l11_the_button_row(self) -> None:
         # Every caption change of Inno's row goes through a setter that sizes and aligns it.
@@ -1312,8 +1272,7 @@ class W14Part3Test(unittest.TestCase):
         self.assertIn("MailError := AddTextTo(Surface, 0, '', False);", build)
         self.assertIn("OrgError := AddTextTo(Surface, 0, '', False);", self.raw)
         self.assertIn(
-            "Place(OrgMoreLink, Y, not OrgMoreOpen, ScaleY(4));",
-            routine(self.raw, "procedure LayoutOrg;\nvar"),
+            "Place(OrgConfirm, Y, True, ScaleY(4));", routine(self.raw, "procedure LayoutOrg;\nvar")
         )
         self.assertIn("ScaleX(16)", routine(self.raw, "procedure PlaceRadioRow("))
         copy = read_copy()
@@ -1352,10 +1311,8 @@ class W14Part3Test(unittest.TestCase):
         self.assertIn('"Show" sits at the right end of the Password label\'s line', rule)
         selftest = (INSTALLER / "wizard/SelfTest.iss").read_text(encoding="ascii")
         forms = routine(selftest, "procedure SelfFormPages;")
-        self.assertIn(
-            "SelfRecord('W14-D3 S09 Other with every field fits above the status line', Ok,", forms
-        )
-        self.assertIn("MailLater.Top + MailLater.Height <= StatusBandTop - ScaleY(12)", forms)
+        self.assertIn("SelfRecord('W14-D3 M02 Other with every field fits the page', Ok,", forms)
+        self.assertIn("MailStatus.Top + MailStatus.Height <= StatusBandTop - ScaleY(12)", forms)
         self.assertNotIn("SelfInfo('W14-D3 S09 Other, every field'", forms)
 
     def test_w14_d6_the_copy_names_what_setup_did(self) -> None:
@@ -1461,67 +1418,6 @@ class W14RecheckTest(unittest.TestCase):
             "'W14-D10 S09 Outlook address hides the password and the Other fields'", self.selftest
         )
 
-    def test_ac_1_a_resume_unpacks_and_prepares_the_data_folder_before_the_background(
-        self,
-    ) -> None:
-        # QA B1, Architect A-B1: rc.22's continue_later resumes at background step 1 with rc.22's
-        # parts and Exec scripts on disk; this build's receive then finds no part of its version.
-        # Every resume with the background not done prepares the data folder again (one path).
-        self.assertIn("BgPrepNeeded := True;", self.raw)
-        start = self.part("function InitializeSetup(")
-        branch = start.split("BgResume := True;", 1)[1].split("end;", 1)[0]
-        self.assertIn("BgPrepNeeded := True;", branch)
-        self.assertNotRegex(branch, r"InstalledVersion|SetupVersion|Compare")
-        step = self.part("procedure StartBgStep;")
-        self.assertLess(step.index("if BgPrepNeeded then"), step.index("BgStepName(BgIndex)"))
-        prep = self.part("procedure StartBgPrep;")
-        data = self.part("procedure StartDataPrepare;")
-        patterns = re.search(r"QueueExtract\('([^']+)', 'data-unpack'\)", data)
-        if patterns is None:
-            self.fail("StartDataPrepare queues no data-unpack")
-        self.assertIn(f"QueueExtract('{patterns.group(1)}', 'resume-unpack');", prep)
-        finished = self.part("procedure StepFinished(ForTag, Code: String);\nvar")
-        self.assertRegex(finished, r"ForTag = 'resume-unpack' then\s+StartBgPrepData")
-        helper = self.part("procedure StartBgPrepData;")
-        self.assertIn(
-            "StartHelper('prepare-data', RunId, BgOut, '-DataRoot ' + AddQuotes(DataRoot)"
-            " + ' -UseKept')",
-            helper,
-        )
-        self.assertIn(
-            "StartHelper('prepare-data', RunId, BgOut, '-DataRoot ' + AddQuotes(DataRoot))", helper
-        )
-        poll = self.part("procedure PollBgPrep;")
-        ready = poll.split("if Code = 'ready' then", 1)[1]
-        self.assertLess(ready.index("BgPrepNeeded := False;"), ready.index("StartBgStep;"))
-        self.assertIn("BgFailed := True;", poll)
-        self.assertIn("DATA_LIMIT_MS", poll)
-        self.assertIn("PollBgPrep", self.part("procedure PollBackground;"))
-        # The helper action and the script function: this version's parts, then the receive
-        # parts of other versions go (as after an update, 7bf1c939).
-        helper_script = (SCRIPTS / "setup-helper.ps1").read_text(encoding="ascii")
-        action = helper_script.split("'prepare-data' {", 1)[1].split("\n        }\n", 1)[0]
-        self.assertIn("Invoke-PrepareData", action)
-        windows = (SCRIPTS / "lib/Windows.ps1").read_text(encoding="ascii")
-        self.assertIn("function Invoke-PrepareData {", windows)
-        body = windows.split("function Invoke-PrepareData {", 1)[1].split("\n}\n", 1)[0]
-        self.assertLess(body.index("Copy-PayloadPart"), body.index("Remove-OldPayloadParts"))
-        tests = (PS_TESTS / "Wizard.Tests.ps1").read_text(encoding="ascii")
-        self.assertIn("Test-Case 'AC-1 ", tests)
-
-    def test_ac_1_a_server_part_from_another_setup_file_stops_without_try_again(self) -> None:
-        # A resume after an older build imported its Linux image: import-distro answers
-        # already_imported and prepare refuses the image (engine_bundle_mismatch). Try again
-        # can never pass, so setup stops and names Remove everything.
-        check = self.part("function CheckBackground: Boolean;")
-        self.assertRegex(
-            check,
-            r"\(BgCode = 'engine_bundle_mismatch'\) or \(BgCode = 'image_record_missing'\)"
-            r"[^;]*then\s+begin\s+FailureForm\(CM\('s07_title'\), "
-            r"CM\('s07_other_version'\), False\);",
-        )
-        self.assertIn("s07_other_version", read_copy())
-
     def test_ac_2_receive_through_the_task_layout_reads_the_data_folder(self) -> None:
         # Architect U-1: exec.ps1 builds the layout with no data root, so receive joined an
         # empty payload path. receive now sets the data root as the Windows-side jobs do.
@@ -1540,30 +1436,12 @@ class W14RecheckTest(unittest.TestCase):
         self.assertIn("'receive'", case)
 
     def test_ac_3_no_background_step_starts_during_a_close_flow(self) -> None:
-        # Architect N-1: Continue later and Remove everything never meet a new background job.
-        # Comments removed: the gate is the first statement.
+        # Architect N-1: the removal never meets a new server part job. Comments removed: the
+        # gate is the first statement.
         poll = code_only(self.part("procedure PollBackground;"))
         self.assertRegex(
             poll, r"(?s)begin\s+if CloseFlowRunning then\s+Exit;\s+if PollBgPending then"
         )
-        mail = code_only(self.part("procedure PollMail;"))
-        self.assertRegex(
-            mail,
-            # code_only empties strings: the first branch is MailPhase = 'waiting'.
-            r"(?s)begin\s+if MailPhase = '' then\s+begin\s+"
-            r"if CloseFlowRunning then\s+Exit;\s+if BgDone then",
-        )
-        tick = self.part("procedure TimerTick(H, Msg, Id, Tick: Longword);")
-        self.assertIn(
-            "if DataStarted and not DataPrepared and (BgOut <> '') and not CloseFlowRunning then",
-            tick,
-        )
-        # A failed save leaves setup open: the background step that the flow took over runs
-        # again (the server part steps repeat safely).
-        self.assertIn("RestartBackgroundStep;", self.part("procedure FailCloseFlow(Text: String);"))
-        again = self.part("procedure RestartBackgroundStep;")
-        self.assertIn("(BgBeganAt = 0)", again)
-        self.assertIn("IsHelperStep(", again)
 
     def test_ac_4_only_the_password_error_moves_into_the_password_column(self) -> None:
         # Designer B1: every error moved to the right half and lost its last lines.
@@ -1629,8 +1507,6 @@ class W14RecheckTest(unittest.TestCase):
     def test_ac_7_copy_strings_and_no_bitlocker_suggestion(self) -> None:
         copy = read_copy()
         for key in (
-            "later_save_failed",
-            "later_restart_failed",
             "report_failed",
             "s05_done_no_restart",
             "s12_fail1",
@@ -1646,7 +1522,7 @@ class W14RecheckTest(unittest.TestCase):
             message.index("Key := Lowercase(Item.Id) + '_' + Item.Code;"),
         )
 
-    def test_ac_8_one_line_texts_have_one_full_stop_and_fit_the_status_line(self) -> None:
+    def test_ac_8_one_line_texts_have_one_full_stop(self) -> None:
         # Designer 4 and 9: "D:. · 2:10", and a status line of 18 px that a long step wraps.
         self.assertIn("function NoStop(Text: String): String;", self.raw)
         self.assertIn(
@@ -1655,27 +1531,8 @@ class W14RecheckTest(unittest.TestCase):
                 "function OneLine(Number, Total: Integer; Action: String; Since: Cardinal): String;"
             ),
         )
-        self.assertIn("NoStop(Action)", self.part("function BgLineText(Action: String): String;"))
-        self.assertIn(
-            "ShowStatusLine(BgLineText(BgAction));", self.part("procedure UpdateBgStatus;")
-        )
-        self.assertIn("SelfStatusLine;", routine(self.selftest, "procedure RunSelfTest;"))
-        fits = routine(self.selftest, "procedure SelfStatusLine;")
-        self.assertIn("SelfRecord('AC-8 every status line text fits on one line'", fits)
-        listed = set(re.findall(r"SelfLineFits\('(step_[a-z_]+)'", fits))
-        steps = {
-            key for key in read_copy() if re.match(r"step_(bg|receive|prepare|prefetch|data)_", key)
-        }
-        self.assertEqual(steps - listed, set())
-        for key in (
-            "later_save_failed",
-            "later_restart_failed",
-            "remove_data",
-            "remove_moving_kept",
-            "s07_prep_failed",
-        ):
-            with self.subTest(key=key):
-                self.assertIn(f"SelfLineFits('{key}'", fits)
+        # DEC-0041: the status line is gone (no background before Install, no close flow line).
+        self.assertNotIn("StatusLine", self.raw)
 
     def test_ac_9_the_report_zips_only_a_collected_report(self) -> None:
         # Security S97-1: after the collect limit, the password drop and the zip ran while
@@ -1687,3 +1544,294 @@ class W14RecheckTest(unittest.TestCase):
         self.assertIn("EndReport", failed)
         self.assertNotIn("report-zip", failed)
         self.assertIn("ReportLine := CM('report_failed');", self.part("procedure EndReport;"))
+
+
+class Dec0041Test(unittest.TestCase):
+    """DEC-0041 (TASK-0097): setup is a complete installation or nothing, with no email page.
+    AC-W1 to AC-W8 as a static read can hold them; the PowerShell cases (Removal.Tests.ps1) and
+    the [Code] self-test prove the behavior on the Windows runner."""
+
+    def setUp(self) -> None:
+        self.raw = pascal_code()
+        self.selftest = SELFTEST.read_text(encoding="ascii")
+        self.helper = (SCRIPTS / "setup-helper.ps1").read_text(encoding="ascii")
+        self.removal = (
+            (PS_TESTS / "Removal.Tests.ps1").read_text(encoding="ascii")
+            if (PS_TESTS / "Removal.Tests.ps1").is_file()
+            else ""
+        )
+
+    def part(self, head: str) -> str:
+        self.assertIn(head, self.raw)
+        return routine(self.raw, head)
+
+    def test_ac_w1_setup_has_no_email_page_and_no_server_work_before_install(self) -> None:
+        skip = self.part("function ShouldSkipPage(PageID: Integer): Boolean;")
+        self.assertIn(
+            "if (PageID = Pages[P_MAINT].ID) or (PageID = Pages[P_EMAIL].ID) then Result := True",
+            skip,
+        )
+        for gone in ("ContinueLater", "AskCancelChoice", "BgResume", "StatusLine", "MailLater"):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, self.raw)
+        # S07 Next only checks the folder; the data folder and the server part start on S12.
+        nxt = self.part("function NextButtonClick(CurPageID: Integer): Boolean;")
+        data = nxt.split("else if CurPageID = Pages[P_DATA].ID then", 1)[1].split("else if", 1)[0]
+        self.assertIn("StartDataCheck;", data)
+        self.assertNotIn("prepare-data", self.part("procedure StartDataCheck;"))
+        self.assertIn("'data-check'", self.helper)
+        self.assertEqual(len(re.findall(r"(?m)^\s+StartServerPrep;", self.raw)), 1)
+        changed = self.part("procedure CurPageChanged(CurPageID: Integer);")
+        install = changed.split("else if CurPageID = Pages[P_INSTALL].ID then", 1)[1]
+        self.assertIn("StartServerPrep;", install.split("RenderInstall;", 1)[0])
+        self.assertNotIn(
+            "StartBackground", self.part("procedure TimerTick(H, Msg, Id, Tick: Longword);")
+        )
+        self.assertIn("Test-Case 'AC-W1 S07 checks the chosen data folder", self.removal)
+
+    def test_ac_w1_s08_asks_the_admin_and_a_password_and_s11_names_the_sign_in_address(
+        self,
+    ) -> None:
+        build = self.part("procedure BuildOrgPage;")
+        for field in (
+            "OrgName :=",
+            "OrgYourName :=",
+            "OrgEmail :=",
+            "OrgPassword :=",
+            "OrgConfirm :=",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, build)
+        self.assertIn("OrgPassword.PasswordChar := '*';", build)
+        self.assertIn("OrgConfirm.PasswordChar := '*';", build)
+        self.assertIn("OrgShow.OnClick := @OrgShowClick;", build)
+        check = self.part("function CheckOrg: Boolean;")
+        self.assertIn("if not ValidEmail(Trim(OrgEmail.Text)) then", check)
+        self.assertIn("if not PasswordLengthOk(OrgPassword.Text) then", check)
+        self.assertIn("if OrgConfirm.Text <> OrgPassword.Text then", check)
+        length = self.part("function PasswordLengthOk(S: String): Boolean;")
+        self.assertIn("(Length(S) >= 12) and (Length(S) <= 128)", length)
+        # The app's own rule (backend validate_password): at least 12, at most 128.
+        policy = (ROOT / "backend/app/systems/manage/workspace/security_policy.py").read_text()
+        self.assertIn("minimum = max(12, profile.password_min_length)", policy)
+        self.assertIn("len(password) > 128", policy)
+        copy = read_copy()
+        self.assertEqual(copy.get("s11_admin"), "Administrator: %1. You sign in with this address.")
+        self.assertNotIn("s11_mail", self.part("procedure RenderReady;"))
+        self.assertIn(
+            "SelfRecord('AC-W1 S08 fields in order, Show on the password line, the error inside "
+            "the page', Ok,",
+            self.selftest,
+        )
+
+    def test_ac_w2_every_server_step_runs_on_s12_in_order_with_a_limit(self) -> None:
+        prep = self.part("procedure PollServerPrep;")
+        self.assertLess(prep.index("DataPrepared := True;"), prep.index("StartBackground;"))
+        self.assertLess(prep.index("PollBackground;"), prep.index("InstallStep := 0;"))
+        self.assertIn("InstallFailAt(CM('s12_stage_data'), PrepFailText(Code));", prep)
+        self.assertIn("if (Code = '') and (Elapsed(DataStartedAt) > DATA_LIMIT_MS) then", prep)
+        stages = self.part("function S12Stages: String;")
+        self.assertIn("Result := CM('s12_stage_data') + '|' + BgStageNames;", stages)
+        step_names = self.part("function BgStepName(Index: Integer): String;")
+        names = re.findall(r"[0-6]: Result := '([a-z-]+)';", step_names)
+        self.assertEqual(
+            names,
+            [
+                "service",
+                "wslconfig",
+                "import-distro",
+                "start-boot",
+                "receive",
+                "prepare",
+                "prefetch",
+            ],
+        )
+        # The install job ends at its limit (only M05's update keeps no limit, Preserved).
+        poll = self.part("procedure PollJob;")
+        self.assertIn(
+            "if (JobPurpose <> 'update') and (Elapsed(JobStartedAt) > JobLimitMs) then", poll
+        )
+        self.assertIn(
+            "StartJob('install', Answers, 'install', True, True, INSTALL_JOB_MINUTES);", self.raw
+        )
+        install = self.part("procedure PollInstall;")
+        self.assertIn(
+            "else if Code = 'job_timeout' then InstallFail(0, CM('s12_step_limit'))", install
+        )
+        self.assertIn("(Elapsed(InstallOutAt) > INSTALL_STEP_MS)", install)
+        self.assertNotIn("InstallSlow", self.raw)
+        self.assertIn(
+            "SelfRecord('AC-W2 S12 lists every stage and stands at the server part step'",
+            self.selftest,
+        )
+
+    def test_ac_w3_cancel_close_and_a_failed_install_remove_everything_with_limits(self) -> None:
+        cancel = self.part(
+            "procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);"
+        )
+        self.assertRegex(cancel, r"RunRemoval\('close'\);\s+Cancel := True;\s+end;")
+        nxt = self.part("function NextButtonClick(CurPageID: Integer): Boolean;")
+        failed = nxt.split("if InstallFailed then", 1)[1].split("end", 1)[0]
+        self.assertIn("if ReportPhase <> '' then", failed)
+        self.assertRegex(
+            failed, r"RunRemoval\('close'\);\s+ForceClose := True;\s+WizardForm\.Close;"
+        )
+        self.assertIn("SetNextCaption(CM('s13_remove'));", self.part("procedure RenderInstall;"))
+        flow = self.part("procedure PollCloseFlow;\nvar")
+        order = [
+            flow.index(
+                "CloseStep(2, 'stop', CM('remove_stopping'), 'uninstall-stop', '', REMOVE_STEP_MS)"
+            ),
+            flow.index(
+                "CloseStep(3, 'data', CM('remove_data_line'), 'setup-remove-data', '', "
+                "REMOVE_DATA_MS)"
+            ),
+            flow.index(
+                "CloseStep(4, 'features', CM('remove_features'), 'remove-features', '', "
+                "REMOVE_FEATURES_MS)"
+            ),
+            flow.index(
+                "CloseStep(5, 'windows', CM('remove_windows'), 'remove-windows', Extra, "
+                "REMOVE_WINDOWS_MS)"
+            ),
+        ]
+        self.assertEqual(order, sorted(order))
+        self.assertIn("EndCloseFlow('limit');", flow)
+        self.assertIn("EndCloseFlow('kept');", flow)
+        self.assertIn("REMOVE_STEP_MS = 20000;", self.raw)
+        self.assertIn(
+            "CloseStep(1, 'job', CM('remove_job'), 'job-stop', '', REMOVE_STEP_MS);",
+            self.part("procedure StartCloseFlow(Flow, After: String);\nbegin"),
+        )
+        # The removal runs from the timer ahead of the gates, never from inside a tick.
+        tick = self.part("procedure TimerTick(H, Msg, Id, Tick: Longword);")
+        self.assertLess(
+            tick.index("if RemoveForm <> nil then"), tick.index("if not WizardReady then")
+        )
+        self.assertNotIn("RunRemoval(", tick)
+        self.assertIn("'setup-remove-data', 'remove-features'", self.helper)
+        uninstall = (SCRIPTS / "lib/Uninstall.ps1").read_text(encoding="ascii")
+        features = uninstall.split("function Remove-SetupFeatures {", 1)[1].split("\nfunction ", 1)[
+            0
+        ]
+        self.assertIn("-ceq 'none'", features)
+        self.assertIn("-ine $SlateOps.DistroName", features)
+        for case in (
+            "AC-W3 WSL that was on the PC before setup stays",
+            "AC-W3 WSL that setup installed stays while another distribution is registered",
+            "AC-W3 WSL and Virtual Machine Platform that setup turned on go when no other "
+            "distribution is registered, with no restart",
+            "AC-W3 a distribution check that fails or is unclear keeps WSL and Virtual Machine "
+            "Platform",
+            "AC-W3 the setup removal never deletes kept data",
+        ):
+            with self.subTest(case=case):
+                self.assertIn(f"Test-Case '{case}", self.removal)
+        self.assertIn(
+            "SelfRecord('AC-W3 the removal never holds the window, every step has its limit, and "
+            "it ends'",
+            self.selftest,
+        )
+
+    def test_ac_w4_an_earlier_unfinished_run_is_removed_at_start(self) -> None:
+        windows = (SCRIPTS / "lib/Windows.ps1").read_text(encoding="ascii")
+        entry = windows.split("function Get-SetupEntry {", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("return @{ screen = 'S01'; next = ''; cleanup = $true }", entry)
+        self.assertNotIn("continue_later", entry)
+        self.assertIn("-Leftover:(Test-SetupLeftover -Layout $layout)", self.helper)
+        start = self.part("function InitializeSetup(): Boolean;")
+        self.assertIn(
+            "EntryCleanup := (Pos('\"cleanup\":true', Text) > 0) and not StateUnsafe", start
+        )
+        changed = self.part("procedure CurPageChanged(CurPageID: Integer);")
+        welcome = changed.split("if CurPageID = wpWelcome then", 1)[1]
+        self.assertLess(welcome.index("RunRemoval('start')"), welcome.index("CM('s01_title')"))
+        self.assertIn(
+            "Test-Case 'AC-W4 an earlier run that did not finish is removed at start", self.removal
+        )
+
+    def test_ac_w5_the_install_job_gets_the_admin_password_through_the_pipe_only(self) -> None:
+        job = self.part("procedure InstallStartJob(TimeZone: String);")
+        self.assertIn("'\"admin_password\":' + JsonText(OrgPassword.Text)", job)
+        self.assertLess(job.index("'},' +"), job.index('"admin_password"'))
+        self.assertIn('"admin_email"', job)
+        self.assertIn('"admin_username"', job)
+        # No email server key (DEC-0041: email is set up later, in M02).
+        self.assertNotRegex(job, r'(?i)smtp|"(host|port|user|password|sender_email|sender_name)"')
+        self.assertIn("StartJob('install', Answers, 'install', True, True,", job)
+        # The channel self-test and R7 come first, as M02 runs them before the email password.
+        check = self.part("procedure InstallChannelCheck(TimeZone: String);")
+        self.assertIn("StartJob('pipe-test', Value, 'selftest:'", check)
+        finished = self.part("procedure StepFinished(ForTag, Code: String);\nvar")
+        r7 = finished.split("else if ForTag = 'inst-r7' then", 1)[1].split("else if ForTag", 1)[0]
+        self.assertIn("if Code = 'clear' then InstallStartJob(InstallTz)", r7)
+        for line in re.findall(r"(?m)^.*\bLog\(.*$", self.raw):
+            with self.subTest(line=line.strip()):
+                self.assertNotIn("OrgPassword", line)
+        self.assertIn("DropFilesHolding(Staging, OrgPassword.Text);", self.raw)
+        self.assertNotIn("SetPreviousData(", self.raw)
+
+    def test_ac_w6_m02_offers_gmail_and_other_and_says_where_the_test_went(self) -> None:
+        self.assertNotIn("MailM365", self.raw)
+        copy = read_copy()
+        self.assertFalse([key for key in copy if "m365" in key])
+        self.assertEqual(
+            copy.get("s09_outlook"),
+            "Outlook.com accounts cannot send email for Slate Operations. Use a Gmail account, "
+            "or the mail server of another email provider.",
+        )
+        self.assertEqual(
+            copy.get("m02_test_sent"), "Test email sent to %1. Check its inbox and Spam folder."
+        )
+        mail = self.part("procedure PollMail;")
+        self.assertRegex(
+            mail,
+            r"if JobCode = 'smtp_passed' then\s+begin[^;]*;?\s*MailPassed := True;"
+            r"\s+StartSetEmail;",
+        )
+        self.assertIn(
+            "else if MailSaved then MailStatus.Caption := "
+            "FM1('m02_test_sent', Trim(OrgEmail.Text))",
+            self.part("procedure RenderMailStatus;"),
+        )
+        self.assertIn("HideMailOtherFields;", self.part("procedure LayoutMail;\nvar"))
+
+    def test_ac_w7_no_wait_without_a_limit_and_no_focus_box_on_links(self) -> None:
+        for path in (WIZARD, MAINTENANCE):
+            text = path.read_text(encoding="ascii")
+            for match in re.finditer(r"(\w+) := TNewLinkLabel\.Create\(WizardForm\);", text):
+                with self.subTest(link=match.group(1)):
+                    after = text[match.end() : match.end() + 200]
+                    self.assertIn(f"NoFocusBox({match.group(1)});", after)
+        self.assertIn(
+            "Link.TabStop := False;", self.part("procedure NoFocusBox(Link: TNewLinkLabel);")
+        )
+        uninstall = UNINSTALL.read_text(encoding="ascii")
+        run = routine(
+            uninstall, "function URun(Action, ARunId, Extra: String; LimitSec: Integer): String;"
+        )
+        self.assertIn("SW_HIDE, ewNoWait, Code);", run)
+        self.assertIn("(GetTickCount - Started) < Cardinal(LimitSec * 1000)", run)
+        calls = re.findall(r"URun\('[a-z-]+', [^;]*", uninstall)
+        self.assertEqual(len(calls), 7)
+        for call in calls:
+            with self.subTest(call=call):
+                self.assertRegex(call, r"U_[A-Z]+_SEC\)")
+        self.assertIn("SelfRecord('AC-W7 link labels draw no focus box'", self.selftest)
+
+    def test_ac_w8_a_job_ends_at_its_limit_even_when_its_result_is_seen(self) -> None:
+        poll = self.part("procedure PollJob;")
+        self.assertNotIn("(not Found) and (JobPurpose", poll)
+        self.assertIn(
+            "Log('Job ' + JobName + ': the job-result helper answered ' + Code + '.');", poll
+        )
+        self.assertIn("SelfJobLimit;", routine(self.selftest, "procedure RunSelfTest;"))
+        self.assertIn(
+            "SelfRecord('AC-W8 a handover that job-result never confirms ends at the job limit "
+            "with its message'",
+            self.selftest,
+        )
+        # The resume's unpacking (no limit, dropped by a close flow) is gone with DEC-0041.
+        for gone in ("StartBgPrep", "PollBgPrep", "'resume-unpack'"):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, self.raw)

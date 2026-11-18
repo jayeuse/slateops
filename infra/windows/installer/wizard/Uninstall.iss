@@ -10,6 +10,18 @@
   stops the uninstall before Inno removes a file); Inno removes its files; usPostUninstall shows
   U04. ASCII only. }
 
+const
+  { DEC-0041 (AC-W7): the limits of the uninstaller's helper steps, each above the waits inside
+    the helper: the checks (60 s); the stop, whose "Keep my data" runs prepare-uninstall (up to
+    600 s) and, when it fails, the restart of the server part (720 s); the data step (terminate
+    120 s, unregister 300 s, the restart of a failed keep 120 s, then the delete: 660 s); the
+    Windows parts (180 s); Save report's collect and zip (300 s each). }
+  U_SHORT_SEC = 60;
+  U_STOP_SEC = 720;
+  U_DATA_SEC = 660;
+  U_WINDOWS_SEC = 180;
+  U_REPORT_SEC = 300;
+
 var
   UHelper, URoot, URunId, UDataRoot, UBackupFolder, ULeft: String;
   UKeep, UDeleteBackups: Boolean;
@@ -29,17 +41,28 @@ var
   UReportForm: TSetupForm;
   UReportLabel: TNewStaticText;
 
-function URun(Action, ARunId, Extra: String): String;
+{ DEC-0041 (AC-W7): every helper step has a limit. The helper starts without a wait, and the
+  uninstaller waits for its result file in one-second waits on ping.exe (Exec keeps the window
+  painting while it waits, as noted above). Past LimitSec the step gives no result (''), which
+  each caller treats as a failed step; the helper is left to end by itself, and this is logged.
+  The helper writes its result file with a rename, so the file is complete once it exists. }
+function URun(Action, ARunId, Extra: String; LimitSec: Integer): String;
 var
   OutFile: String;
   Code: Integer;
+  Started: Cardinal;
 begin
   USeq := USeq + 1;
   OutFile := URoot + '\uninstall-' + IntToStr(USeq) + '.json';
   DeleteFile(OutFile);
   Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
     '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' + AddQuotes(UHelper) + ' -Action ' + Action +
-    ' -RunId ' + ARunId + ' -OutFile ' + AddQuotes(OutFile) + ' ' + Extra, '', SW_HIDE, ewWaitUntilTerminated, Code);
+    ' -RunId ' + ARunId + ' -OutFile ' + AddQuotes(OutFile) + ' ' + Extra, '', SW_HIDE, ewNoWait, Code);
+  Started := GetTickCount;
+  while (not FileExists(OutFile)) and ((GetTickCount - Started) < Cardinal(LimitSec * 1000)) do
+    Exec(ExpandConstant('{sys}\ping.exe'), '-n 2 127.0.0.1', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  if not FileExists(OutFile) then
+    Log('Uninstall step ' + Action + ': no result in ' + IntToStr(LimitSec) + ' s; the uninstaller goes on.');
   Result := ReadText(OutFile);
   DeleteFile(OutFile);
   DeleteFile(OutFile + '.progress');
@@ -138,11 +161,11 @@ begin
     UStageNumber := 3;
     UStageLine := CM('report_stage3');
     UShow;
-    URun('report-collect', ReportRun, '');
+    URun('report-collect', ReportRun, '', U_REPORT_SEC);
     UStageNumber := 4;
     UStageLine := CM('report_stage4');
     UShow;
-    Path := JsonValue(URun('report-zip', ReportRun, ''), 'path');
+    Path := JsonValue(URun('report-zip', ReportRun, '', U_REPORT_SEC), 'path');
   finally
     UReportLabel := nil;
     UReportForm.Free;
@@ -295,13 +318,13 @@ begin
     Exit;
   end;
   try
-    Text := URun('state-check', URunId, '');
+    Text := URun('state-check', URunId, '', U_SHORT_SEC);
     if JsonValue(Text, 'code') <> 'safe' then
     begin
       UStopped(CM('f4c_stopped'), False);
       Exit;
     end;
-    Text := URun('uninstall-info', URunId, '');
+    Text := URun('uninstall-info', URunId, '', U_SHORT_SEC);
     UDataRoot := JsonValue(Text, 'data_root');
     UBackupFolder := JsonValue(Text, 'backup_folder');
     UDiskGb := StrToIntDef(JsonLiteral(Text, 'disk_gb'), 0);
@@ -335,7 +358,7 @@ begin
     Extra := '';
     if UKeep then
       Extra := '-Keep';
-    Code := JsonValue(URun('uninstall-stop', URunId, Extra), 'code');
+    Code := JsonValue(URun('uninstall-stop', URunId, Extra, U_STOP_SEC), 'code');
     if Code <> 'stopped' then
     begin
       UStageLine := '';
@@ -356,7 +379,7 @@ begin
       Extra := '-Keep'
     else if UDeleteBackups then
       Extra := '-DeleteBackups';
-    Code := JsonValue(URun('uninstall-data', URunId, Extra), 'code');
+    Code := JsonValue(URun('uninstall-data', URunId, Extra, U_DATA_SEC), 'code');
     if UKeep and (Code <> 'kept') then
     begin
       UStageLine := '';
@@ -371,7 +394,7 @@ begin
     Extra := '';
     if ULeft = 'data' then
       Extra := '-DataLeft';
-    Text := URun('remove-windows', URunId, Extra);
+    Text := URun('remove-windows', URunId, Extra, U_WINDOWS_SEC);
     if JsonValue(Text, 'code') = 'leftovers' then
       ULeft := ULeft + ' windows';
     { Inno's own lines follow (its files). }

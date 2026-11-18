@@ -1,7 +1,7 @@
 { SelfTest.iss - the [Code] self-test (W14-D1, TASK-0097). Compiled only with /DSelfTest; the
   windows-installer workflow runs the result with /VERYSILENT /SELFTESTOUT=<file>. It runs the
   message helpers, the check reader and the S02 draw on the owner's check result (fixture), and
-  the draw routines of S07, S09, S11, S12, S14, S15, M01 and M05 with sample state, so that a runtime
+  the draw routines of S07, S08, S11, S12, S14, S15, M01, M02 and M05 with sample state, so that a runtime
   fault (Type Mismatch, nil access) shows on the CI runner before the owner's next pass. Every
   step writes PASS or FAIL with the fault text; the last line is DONE. The pages stay hidden.
   With /DSelfTestRed one more step calls a routine that hands an "array of String" parameter on
@@ -88,7 +88,7 @@ var
   Limit: Integer;
 begin
   try
-    { 6.1 L12: on S10 and S11 the status line takes the bottom of the page. }
+    { 6.1 L12: S10 and S11 keep the bottom band of the page free. }
     Limit := Bodies[Index].Height;
     if (Index = P_BACKUP) or (Index = P_READY) then
       Limit := StatusBandTop - ScaleY(12);
@@ -153,7 +153,7 @@ var
 begin
   try
     SetArrayLength(Captions, 11);
-    Captions[0] := CM('s09_next_test'); Captions[1] := CM('s05_next'); Captions[2] := CM('m05_next');
+    Captions[0] := CM('s13_remove'); Captions[1] := CM('s05_next'); Captions[2] := CM('m05_next');
     Captions[3] := CM('btn_try_again'); Captions[4] := CM('s11_next'); Captions[5] := CM('s15_finish');
     Captions[6] := CM('btn_continue'); Captions[7] := CM('btn_done'); Captions[8] := CM('s01_next');
     Captions[9] := CM('btn_next'); Captions[10] := CM('btn_close');
@@ -250,53 +250,64 @@ begin
   if Result = '' then Result := 'none';
 end;
 
-{ W14-D3 (6.1 L9): S08 with More options open and an error under its field; S09 with "Continue
-  later" under the form, inside the page. }
+{ DEC-0041 (AC-W1): S08 holds the organization name, your name, the email address, the password
+  and its second entry, in that order, with Show on the Password label's line and an error under
+  its field, inside the page. AC-W6: M02 (the S09 form) offers Gmail and Other only; an
+  Outlook.com address shows only its note. }
 procedure SelfFormPages;
 var
   Ok: Boolean;
   ErrorHeight: Integer;
 begin
   try
-    OrgMoreClick(nil, '', sltID);
-    OrgError.Caption := CM('s08_err_email');
-    OrgErrorAfter := OrgEmail;
+    OrgError.Caption := CM('s08_err_confirm');
+    OrgErrorAfter := OrgConfirm;
     LayoutOrg;
-    Ok := (not OrgMoreLink.Visible) and OrgUser.Visible and OrgError.Visible
-      and (OrgError.Top > OrgEmail.Top) and (OrgError.Top < OrgUserLabel.Top)
-      and (OrgNameLabel.Top >= OrgTop)
-      and (OrgMoreHelp.Top + OrgMoreHelp.Height <= StatusBandTop - ScaleY(12));
-    SelfRecord('W14-D3 S08 More options and the error under its field', Ok,
-      'error at ' + IntToStr(OrgError.Top) + ', email at ' + IntToStr(OrgEmail.Top) + ', ends at '
-      + IntToStr(OrgMoreHelp.Top + OrgMoreHelp.Height) + ', limit ' + IntToStr(StatusBandTop - ScaleY(12)));
-    SelfInfo('S08 height', 'content ends at ' + IntToStr(OrgMoreHelp.Top + OrgMoreHelp.Height) + ', limit '
+    Ok := (OrgNameLabel.Top >= OrgTop) and (OrgName.Top < OrgYourNameLabel.Top) and (OrgYourName.Top < OrgEmailLabel.Top)
+      and (OrgEmail.Top < OrgPasswordLabel.Top) and (OrgPassword.Top < OrgConfirmLabel.Top)
+      and (OrgShow.Top = OrgPasswordLabel.Top) and (OrgShow.Left >= OrgPasswordLabel.Left + OrgPasswordLabel.Width)
+      and (OrgPassword.PasswordChar = '*') and (OrgConfirm.PasswordChar = '*')
+      and OrgError.Visible and (OrgError.Top > OrgConfirm.Top)
+      and (OrgError.Top + OrgError.Height <= StatusBandTop - ScaleY(12));
+    SelfRecord('AC-W1 S08 fields in order, Show on the password line, the error inside the page', Ok,
+      'error ends at ' + IntToStr(OrgError.Top + OrgError.Height) + ', limit ' + IntToStr(StatusBandTop - ScaleY(12)));
+    SelfInfo('S08 height', 'content ends at ' + IntToStr(OrgError.Top + OrgError.Height) + ', limit '
       + IntToStr(StatusBandTop - ScaleY(12)) + ', page ' + IntToStr(Pages[P_ORG].SurfaceHeight));
+    OrgShow.Checked := True;
+    OrgShowClick(nil);
+    Ok := (OrgPassword.PasswordChar = #0) and (OrgConfirm.PasswordChar = #0);
+    HideOrgShow;
+    Ok := Ok and (OrgPassword.PasswordChar = '*') and (OrgConfirm.PasswordChar = '*') and not OrgShow.Checked;
+    SelfRecord('AC-W1 S08 Show shows both passwords and hides them again', Ok, '');
+    SelfRecord('AC-W1 S08 email format check (the engine shape)', ValidEmail('maria@example.com') and ValidEmail('a.b+c@mail.example-school.org')
+      and (not ValidEmail('maria@example')) and (not ValidEmail('maria@-example.com')) and (not ValidEmail('maria@example-.com'))
+      and (not ValidEmail('ma ria@example.com')) and (not ValidEmail('@example.com')) and (not ValidEmail('maria@example..com')), '');
+    SelfRecord('AC-W1 S08 password length rule (12 to 128)', (not PasswordLengthOk('elevenchars')) and PasswordLengthOk('twelve chars')
+      and PasswordLengthOk(StringOfChar('a', 128)) and not PasswordLengthOk(StringOfChar('a', 129)), '');
+    SelfRecord('AC-W5 the user name from the name on S08', (UserFromName('Maria Santos', 'maria@example.com') = 'maria-santos')
+      and (UserFromName('  ', 'jo@example.com') = 'jo_') and (UserFromName('Al', 'al@example.com') = 'al_'),
+      UserFromName('Maria Santos', 'maria@example.com') + ', ' + UserFromName('  ', 'jo@example.com'));
     OrgError.Caption := '';
     OrgErrorAfter := nil;
     LayoutOrg;
-    { S09 as the owner fills it: Gmail, More options open, an error under the password, a
-      status line. }
+    { M02 as the owner fills it: Gmail, More options open, an error under the password. }
     MailGmail.Checked := True;
     MailMore := True;
     MailError.Caption := CM('s09_err_auth_gmail');
     MailErrorAfter := MailPassword;
     MailStatus.Caption := CM('s09_policy');
     LayoutMail;
-    Ok := (MailLater.Top > MailSender.Top) and (MailLater.Top + MailLater.Height <= StatusBandTop - ScaleY(12))
-      and (MailM365.Left >= MailGmail.Left + MailGmail.Width + ScaleX(16)) and (MailFromLabel.Top >= MailTop);
-    SelfRecord('W14-D3 S09 rhythm, radios and Continue later', Ok,
-      'later ends at ' + IntToStr(MailLater.Top + MailLater.Height) + ', limit ' + IntToStr(StatusBandTop - ScaleY(12)));
-    SelfInfo('S09 Gmail height', 'content ends at ' + IntToStr(MailLater.Top + MailLater.Height) + ', limit '
-      + IntToStr(StatusBandTop - ScaleY(12)) + ', page ' + IntToStr(Pages[P_EMAIL].SurfaceHeight));
-    { The tallest state (parent decision, 2026-11-18): Other with every field, More options, an
-      error under the password and the status line. Server and Port share a row, User name and
-      Password share a row (6.1 rule 9, its only exception); it must end inside the page. }
+    Ok := (MailStatus.Top > MailSender.Top) and (MailStatus.Top + MailStatus.Height <= StatusBandTop - ScaleY(12))
+      and (MailOther.Left >= MailGmail.Left + MailGmail.Width + ScaleX(16)) and (MailFromLabel.Top >= MailTop);
+    SelfRecord('AC-W6 M02 Gmail and Other, the rhythm inside the page', Ok,
+      'status ends at ' + IntToStr(MailStatus.Top + MailStatus.Height) + ', limit ' + IntToStr(StatusBandTop - ScaleY(12)));
+    { The tallest state: Other with every field, More options, an error under the password.
+      Server and Port share a row, User name and Password share a row (6.1 rule 9). }
     MailOther.Checked := True;
     MailError.Caption := CM('s09_err_auth');
-    MailStatus.Caption := '';
-    ShowStatusLine(FM4('bg_line', '3', '7', CM('step_bg_import'), '2:10'));
+    MailStatus.Caption := CM('s09_policy');
     LayoutMail;
-    Ok := (MailLater.Top + MailLater.Height <= StatusBandTop - ScaleY(12))
+    Ok := (MailStatus.Top + MailStatus.Height <= StatusBandTop - ScaleY(12))
       and (MailPort.Top = MailServer.Top) and (MailPassword.Top = MailUser.Top)
       and (MailPort.Left >= MailServer.Left + MailServer.Width + ScaleX(16))
       and (MailPassword.Left >= MailUser.Left + MailUser.Width + ScaleX(16))
@@ -304,14 +315,12 @@ begin
       and (MailError.Left = MailPassword.Left)
       and (MailShow.Top < MailPassword.Top) and (MailShow.Left + MailShow.Width <= MailPassword.Left + MailPassword.Width)
       and (MailPasswordLabel.Left + MailPasswordLabel.Width <= MailShow.Left);
-    SelfRecord('W14-D3 S09 Other with every field fits above the status line', Ok,
-      'Continue later ends at ' + IntToStr(MailLater.Top + MailLater.Height) + ', limit ' + IntToStr(StatusBandTop - ScaleY(12))
+    SelfRecord('W14-D3 M02 Other with every field fits the page', Ok,
+      'status ends at ' + IntToStr(MailStatus.Top + MailStatus.Height) + ', limit ' + IntToStr(StatusBandTop - ScaleY(12))
       + ', page ' + IntToStr(Pages[P_EMAIL].SurfaceHeight));
-    SelfInfo('S09 Other height', 'content ends at ' + IntToStr(MailLater.Top + MailLater.Height) + ', limit '
+    SelfInfo('M02 Other height', 'content ends at ' + IntToStr(MailStatus.Top + MailStatus.Height) + ', limit '
       + IntToStr(StatusBandTop - ScaleY(12)) + ', page ' + IntToStr(Pages[P_EMAIL].SurfaceHeight));
-    { TASK-0097 AC-4 (Designer B1): Other with the server error. Only the password's error goes
-      to the password column; this one starts at the left edge under Server and Port, full
-      width, and is as tall as its text needs at that width. }
+    { TASK-0097 AC-4 (Designer B1): only the password's error goes to the password column. }
     MailError.Caption := FM1('s09_err_unreachable', 'smtp.example.com');
     MailErrorAfter := MailServer;
     LayoutMail;
@@ -319,38 +328,43 @@ begin
     WizardForm.AdjustLabelHeight(MailError);
     Ok := MailError.Visible and (MailError.Left = 0) and (MailError.Width = MailFrom.Width)
       and (MailError.Top > MailServer.Top) and (MailError.Top < MailSecurityLabel.Top)
-      and (MailError.Height = ErrorHeight) and (MailError.Top + MailError.Height <= MailSecurityLabel.Top)
-      and (MailLater.Top + MailLater.Height <= StatusBandTop - ScaleY(12));
+      and (MailError.Height = ErrorHeight) and (MailError.Top + MailError.Height <= MailSecurityLabel.Top);
     SelfRecord('AC-4 S09 Other: the server error is under its field, full width', Ok,
       'left ' + IntToStr(MailError.Left) + ', width ' + IntToStr(MailError.Width) + ' of ' + IntToStr(MailFrom.Width)
       + ', height ' + IntToStr(ErrorHeight) + ' needs ' + IntToStr(MailError.Height) + ', top ' + IntToStr(MailError.Top)
       + ', next label ' + IntToStr(MailSecurityLabel.Top));
-    { W14-D10 (owner, rc.24): an Outlook.com address shows the note and hides the password and
-      every Other field, also after Other showed them. }
-    MailError.Caption := '';
-    MailErrorAfter := nil;
-    ShowStatusLine('');
-    MailOutlook := True;
-    MailGmail.Checked := False;
-    MailM365.Checked := False;
-    MailOther.Checked := False;
-    LayoutMail;
-    Ok := MailNote.Visible and (MailNote.Top >= MailTop) and (MailShownNames = 'Note ');
-    SelfRecord('W14-D10 S09 Outlook address hides the password and the Other fields', Ok, MailShownNames);
-    MailOutlook := False;
-    MailErrorAfter := MailPassword;
-    ShowStatusLine('');
-    MailGmail.Checked := True;
+    { W14-D10 (owner, rc.24) and AC-W6: an Outlook.com address shows only its note, also after
+      Other showed the fields. }
     MailError.Caption := '';
     MailErrorAfter := nil;
     MailStatus.Caption := '';
+    MailOutlook := True;
+    MailGmail.Checked := False;
+    MailOther.Checked := False;
     LayoutMail;
-    { 6.1 L1: the status line takes the page color. }
-    ShowStatusLine('x');
-    SelfRecord('W14-D3 the status line has the page color', StatusLine.Color = Pages[P_ORG].SurfaceColor, 'color');
-    ShowStatusLine('');
+    Ok := MailNote.Visible and (MailNote.Top >= MailTop) and (MailShownNames = 'Note ') and (MailNote.Caption = CM('s09_outlook'));
+    SelfRecord('W14-D10 S09 Outlook address hides the password and the Other fields', Ok, MailShownNames);
+    MailOutlook := False;
+    MailGmail.Checked := True;
+    LayoutMail;
   except
-    SelfRecord('W14-D3 S08 and S09 forms', False, GetExceptionMessage);
+    SelfRecord('AC-W1 S08 and AC-W6 M02 forms', False, GetExceptionMessage);
+  end;
+end;
+
+{ DEC-0041 (AC-W7): no link label takes keyboard focus from Tab, so none draws the dotted focus
+  box; every one is built through NoFocusBox. }
+procedure SelfLinks;
+var
+  Link: TNewLinkLabel;
+begin
+  try
+    BeginBody(P_READY);
+    Link := AddLink('x', 0);
+    SelfRecord('AC-W7 link labels draw no focus box', (not Link.TabStop) and (not NoticesLink.TabStop) and (not MailHelpLink.TabStop)
+      and (not MailMoreLink.TabStop), '');
+  except
+    SelfRecord('AC-W7 link labels draw no focus box', False, GetExceptionMessage);
   end;
 end;
 
@@ -421,123 +435,46 @@ begin
   except
     SelfRecord('S10', False, GetExceptionMessage);
   end;
-  { S12 slow, and S13 in place with Choose another drive }
+  { DEC-0041 (AC-W2): S12 with every stage (the data folder, each server part step, the install's
+    eight), at a server part step; AC-W3: S13 in place offers Save report, and Next removes
+    everything and closes setup. }
   try
+    DataRoot := 'D:\SlateOps';
     InstallStarted := True;
-    InstallStep := 2;
+    InstallStep := -1;
+    DataPrepared := True;
+    BgIndex := 2;
     InstallStartedAt := GetTickCount;
-    InstallSlow := True;
     RenderInstall;
-    SelfFits('S12 slow', P_INSTALL);
-    InstallSlow := False;
+    SelfRecord('AC-W2 S12 lists every stage and stands at the server part step', (WaitDrawn = 4) and (WaitNow <> nil)
+      and (StageName(S12Stages, 1) = CM('s12_stage_data'))
+      and (StageName(S12Stages, 2) = CM('bg_stage_service')) and (StageName(S12Stages, PrepStageCount + 1) = CM('s12_stage1'))
+      and (StageName(S12Stages, PrepStageCount + 8) = CM('s12_stage8')),
+      'stage ' + IntToStr(WaitDrawn) + ', count ' + IntToStr(PrepStageCount + 8));
+    SelfFits('AC-W2 S12 every stage', P_INSTALL);
+    KeptState := 'kept';
+    KeptUse := True;
+    RenderInstall;
+    SelfFits('AC-W2 S12 every stage, kept data', P_INSTALL);
+    KeptState := '';
     InstallFailed := True;
-    InstallBackupFailed := True;
     InstallFailStage := CM('s12_stage7');
     InstallFailText := FM1('s12_backup_failed', 'E:');
     RenderInstall;
-    SelfFits('S13 with Choose another drive', P_INSTALL);
+    SelfRecord('AC-W3 S13 offers Save report, then Remove and close', WizardForm.NextButton.Enabled
+      and (WizardForm.NextButton.Caption = CM('s13_remove')), WizardForm.NextButton.Caption);
+    SelfFits('AC-W3 S13 remove and close', P_INSTALL);
     InstallFailed := False;
-    InstallBackupFailed := False;
     InstallStarted := False;
-    SelfRecord('S12 slow and S13', True, '');
-  except
-    SelfRecord('S12 slow and S13', False, GetExceptionMessage);
-  end;
-end;
-
-
-
-{ TASK-0097 AC-8 (Designer 9): every text that the status line shows fits on its one line (18 px
-  high, so a second line is cut off): the background line with each step, the close flows and
-  their notices. Each text is measured at the status line's own font with no wrapping; the time
-  gets one more digit (10:00). One INFO line per text gives its width and the limit. }
-procedure SelfLineFits(Key: String; Measure: TNewStaticText; Limit: Integer; var Ok: Boolean; var Bad: String);
-var
-  Text: String;
-begin
-  if Copy(Key, 1, 5) = 'step_' then
-    Text := BgLineText(FM1(Key, 'D:\SlateOps'))
-  else if (Key = 'later_save_failed') or (Key = 'later_restart_failed') or (Copy(Key, 1, 4) = 's07_') then
-    Text := CM(Key)
-  else
-    Text := OneLine(4, 4, FM1(Key, 'D:\SlateOps\kept'), GetTickCount);
-  Measure.Caption := Text + '0';
-  SelfInfo('AC-8 status line ' + Key, 'width ' + IntToStr(Measure.Width) + ', limit ' + IntToStr(Limit));
-  if Measure.Width > Limit then
-  begin
-    Ok := False;
-    Bad := Bad + ' ' + Key + ' (' + IntToStr(Measure.Width) + ')';
-  end;
-end;
-
-procedure SelfStatusLine;
-var
-  Measure: TNewStaticText;
-  Bad: String;
-  L: Integer;
-  Ok: Boolean;
-begin
-  try
-    ShowStatusLine('x');
-    L := StatusLine.Width;
-    ShowStatusLine('');
-    Measure := TNewStaticText.Create(WizardForm);
-    Measure.Parent := WizardForm;
-    Measure.Visible := False;
-    Measure.AutoSize := True;
-    Measure.WordWrap := False;
-    Measure.ShowAccelChar := False;
-    BgIndex := 7;
-    BgBeganAt := GetTickCount;
-    Ok := True;
-    Bad := '';
-    SelfLineFits('step_data_unpack', Measure, L, Ok, Bad);
-    SelfLineFits('step_data_folder', Measure, L, Ok, Bad);
-    SelfLineFits('step_bg_service', Measure, L, Ok, Bad);
-    SelfLineFits('step_bg_wslconfig', Measure, L, Ok, Bad);
-    SelfLineFits('step_bg_import', Measure, L, Ok, Bad);
-    SelfLineFits('step_bg_restore_kept', Measure, L, Ok, Bad);
-    SelfLineFits('step_bg_import_kept', Measure, L, Ok, Bad);
-    SelfLineFits('step_bg_start', Measure, L, Ok, Bad);
-    SelfLineFits('step_bg_kept_status', Measure, L, Ok, Bad);
-    SelfLineFits('step_receive_space', Measure, L, Ok, Bad);
-    SelfLineFits('step_receive_stage', Measure, L, Ok, Bad);
-    SelfLineFits('step_receive_signature', Measure, L, Ok, Bad);
-    SelfLineFits('step_receive_check', Measure, L, Ok, Bad);
-    SelfLineFits('step_receive_load', Measure, L, Ok, Bad);
-    SelfLineFits('step_receive_keep', Measure, L, Ok, Bad);
-    SelfLineFits('step_prepare_systemd', Measure, L, Ok, Bad);
-    SelfLineFits('step_prepare_docker', Measure, L, Ok, Bad);
-    SelfLineFits('step_prepare_container', Measure, L, Ok, Bad);
-    SelfLineFits('step_prepare_networking', Measure, L, Ok, Bad);
-    SelfLineFits('step_prepare_time', Measure, L, Ok, Bad);
-    SelfLineFits('step_prepare_listeners', Measure, L, Ok, Bad);
-    SelfLineFits('step_prepare_interop', Measure, L, Ok, Bad);
-    SelfLineFits('step_prepare_mounts', Measure, L, Ok, Bad);
-    SelfLineFits('step_prepare_shells', Measure, L, Ok, Bad);
-    SelfLineFits('step_prepare_bundle', Measure, L, Ok, Bad);
-    SelfLineFits('step_prefetch_start_pull', Measure, L, Ok, Bad);
-    SelfLineFits('later_waiting', Measure, L, Ok, Bad);
-    SelfLineFits('later_discarding', Measure, L, Ok, Bad);
-    SelfLineFits('later_saving', Measure, L, Ok, Bad);
-    SelfLineFits('later_restarting', Measure, L, Ok, Bad);
-    SelfLineFits('cancel_closing', Measure, L, Ok, Bad);
-    SelfLineFits('remove_stopping', Measure, L, Ok, Bad);
-    SelfLineFits('remove_data', Measure, L, Ok, Bad);
-    SelfLineFits('remove_moving_kept', Measure, L, Ok, Bad);
-    SelfLineFits('remove_windows', Measure, L, Ok, Bad);
-    SelfLineFits('later_save_failed', Measure, L, Ok, Bad);
-    SelfLineFits('later_restart_failed', Measure, L, Ok, Bad);
-    SelfLineFits('s07_prep_failed', Measure, L, Ok, Bad);
-    SelfLineFits('s07_prepared', Measure, L, Ok, Bad);
+    InstallStep := 0;
+    DataPrepared := False;
     BgIndex := 0;
-    BgBeganAt := 0;
-    Measure.Free;
-    SelfRecord('AC-8 every status line text fits on one line', Ok, 'wider than ' + IntToStr(L) + ':' + Bad);
   except
-    SelfRecord('AC-8 every status line text fits on one line', False, GetExceptionMessage);
+    SelfRecord('AC-W2 S12 and AC-W3 S13', False, GetExceptionMessage);
   end;
 end;
+
+
 
 { TASK-0097 AC-6 (Designer 1 to 3): S05 says what setup did. The verdict and the subtitle come
   from the helper's codes (before the work: from the C26 values); a WSL already on the PC shows
@@ -680,38 +617,138 @@ begin
   end;
 end;
 
-{ W14-D9: "Continue later" runs from the timer. Each call of PollCloseFlow returns at once (no
-  call holds the window for 2 s), and the flow ends within its limits. }
-procedure SelfCloseFlow;
+{ AC-W8 (W14-D8, CI engineer): this process sees a result that names its request, but the
+  job-result helper never confirms it (the request ID differs in case, and the helper compares
+  it exactly), so every answer is something other than "done". Driven as the timer drives it,
+  the job must end at its limit, and S12 must stop with the limit message. }
+procedure SelfJobLimit;
 var
-  Start, Call, Longest: Cardinal;
+  Start: Cardinal;
   Created: Boolean;
 begin
   Created := not DirExists(ExpandConstant('{commonappdata}\SlateOps'));
   try
     try
-      JobState := JOB_IDLE;
-      DataPrepared := True;
-      StartCloseFlow('later', 'none');
+      ForceDirectories(ExpandConstant('{commonappdata}\SlateOps\svc-out'));
+      SaveStringToFile(ExecResultFile, '{"code":"installed","exit_code":0,"job":"install","request_id":"B6B02C87-F769-41B1-8C56-4AABFDC2DD94"}', False);
+      JobName := 'install';
+      JobPurpose := 'install';
+      JobRequestId := 'b6b02c87-f769-41b1-8c56-4aabfdc2dd94';
+      JobResultOut := '';
+      JobPipeOut := False;
+      JobAnswered := False;
+      JobLogonFailed := False;
+      JobText := '';
+      JobStartedAt := GetTickCount;
+      JobLimitMs := 30000;
+      JobPollAt := GetTickCount;
+      JobState := JOB_WAIT;
+      InstallStarted := True;
+      InstallStep := 2;
+      InstallDone := False;
+      InstallFailed := False;
       Start := GetTickCount;
-      Longest := 0;
-      while CloseFlowRunning and (Elapsed(Start) < 180000) do
+      while (JobState <> JOB_DONE) and (Elapsed(Start) < 120000) do
       begin
-        Call := GetTickCount;
         PollJob;
-        PollCloseFlow;
-        if Elapsed(Call) > Longest then
-          Longest := Elapsed(Call);
-        Sleep(200);
+        Sleep(500);
       end;
-      SelfRecord('W14-D9 continue later never holds the window', (not CloseFlowRunning) and (Longest < 2000),
-        'running ' + IntToStr(Ord(CloseFlowRunning)) + ', longest call ' + IntToStr(Longest) + ' ms');
+      PollInstall;
+      SelfRecord('AC-W8 a handover that job-result never confirms ends at the job limit with its message',
+        (JobState = JOB_IDLE) and InstallFailed and (InstallFailText = CM('s12_step_limit')) and JobAnswered and (Elapsed(Start) < 60000),
+        'job state ' + IntToStr(JobState) + ', code ' + JobCode + ', answered ' + IntToStr(Ord(JobAnswered)) + ', after '
+        + IntToStr(Elapsed(Start) div 1000) + ' s, text ' + InstallFailText);
     except
-      SelfRecord('W14-D9 continue later never holds the window', False, GetExceptionMessage);
+      SelfRecord('AC-W8 a handover that job-result never confirms ends at the job limit with its message', False, GetExceptionMessage);
     end;
   finally
     JobState := JOB_IDLE;
-    DataPrepared := False;
+    JobPurpose := '';
+    InstallStarted := False;
+    InstallFailed := False;
+    InstallStep := 0;
+    DeleteFile(ExecResultFile);
+    if Created then
+      DelTree(ExpandConstant('{commonappdata}\SlateOps'), True, True, True);
+  end;
+end;
+
+{ DEC-0041 (AC-W3): the removal runs from the timer. Each call of PollCloseFlow returns at once
+  (no call holds the window for 2 s), every step has a limit (20 s, or one of the three named
+  longer ones), and the removal ends with every step done. On the CI runner nothing of Slate
+  Operations is installed, so each step finds nothing to remove. The form is built and checked,
+  never shown (a modal form would hold the self-test). }
+procedure SelfCloseFlow;
+var
+  Start, Call, Longest, MaxLimit: Cardinal;
+  Created, LimitsOk: Boolean;
+  Phases: String;
+begin
+  Created := not DirExists(ExpandConstant('{commonappdata}\SlateOps'));
+  try
+    try
+      if Created then
+      begin
+        JobState := JOB_IDLE;
+        StartCloseFlow('remove', 'none');
+        Start := GetTickCount;
+        Longest := 0;
+        MaxLimit := 0;
+        LimitsOk := True;
+        Phases := '';
+        while CloseFlowRunning and (Elapsed(Start) < 600000) do
+        begin
+          if Pos(ClosePhase + ' ', Phases) = 0 then
+          begin
+            Phases := Phases + ClosePhase + ' ';
+            if (CloseLimitMs <> REMOVE_STEP_MS) and (CloseLimitMs <> REMOVE_DATA_MS) and (CloseLimitMs <> REMOVE_FEATURES_MS) and (CloseLimitMs <> REMOVE_WINDOWS_MS) then
+              LimitsOk := False;
+            if CloseLimitMs > MaxLimit then
+              MaxLimit := CloseLimitMs;
+          end;
+          Call := GetTickCount;
+          PollCloseFlow;
+          if Elapsed(Call) > Longest then
+            Longest := Elapsed(Call);
+          Sleep(200);
+        end;
+        SelfRecord('AC-W3 the removal never holds the window, every step has its limit, and it ends', (not CloseFlowRunning) and (Longest < 2000)
+          and LimitsOk and (CloseEnd = 'done') and (Phases = 'job stop data features windows '),
+          'end ' + CloseEnd + ', steps ' + Phases + ', longest call ' + IntToStr(Longest) + ' ms, longest limit ' + IntToStr(MaxLimit div 1000) + ' s');
+      end
+      else
+        SelfInfo('AC-W3 the removal', 'not run: this PC has a C:\ProgramData\SlateOps folder');
+    except
+      SelfRecord('AC-W3 the removal never holds the window, every step has its limit, and it ends', False, GetExceptionMessage);
+    end;
+    try
+      BuildRemoveForm('start');
+      try
+        CloseNumber := 3;
+        ClosePhase := 'data';
+        CloseLine := CM('remove_data_line');
+        CloseStartedAt := GetTickCount;
+        RenderRemove;
+        SelfRecord('AC-W4 the removal form shows the stages, the step and the time, inside the form', (WaitDrawn = 3) and (WaitNow <> nil)
+          and (WaitTime <> nil) and (CurY <= RemovePanel.Height),
+          'stage ' + IntToStr(WaitDrawn) + ', content ends at ' + IntToStr(CurY) + ', panel ' + IntToStr(RemovePanel.Height));
+        ClosePhase := '';
+        CloseEnd := 'done';
+        RemoveFeaturesCode := 'removed';
+        RenderRemove;
+        SelfRecord('AC-W3 the last line says Windows finishes at the next restart', (CurY <= RemovePanel.Height)
+          and (WaitDrawn = 6), 'content ends at ' + IntToStr(CurY) + ', panel ' + IntToStr(RemovePanel.Height));
+      finally
+        ClosePhase := '';
+        CloseEnd := '';
+        RemoveFeaturesCode := '';
+        FreeRemoveForm;
+      end;
+    except
+      SelfRecord('AC-W4 the removal form', False, GetExceptionMessage);
+    end;
+  finally
+    JobState := JOB_IDLE;
     if Created then
       DelTree(ExpandConstant('{commonappdata}\SlateOps'), True, True, True);
   end;
@@ -920,6 +957,7 @@ begin
 
   { W14-D8 and W14-D9. }
   SelfPoll;
+  SelfJobLimit;
   SelfCloseFlow;
 
   { W14-D5 and W14-D9 (part 2). SelfPoll put the helper in place. }
@@ -944,18 +982,18 @@ begin
   SelfFits('S02 ready', P_CHECK);
   SelfPageStates;
   SelfS05;
-  SelfStatusLine;
+  SelfLinks;
 
   { Sample state for the other pages. }
   OrgName.Text := 'Riverside Learning Center';
   OrgEmail.Text := 'maria@example.com';
-  OrgUser.Text := 'maria';
+  OrgYourName.Text := 'Maria Santos';
   MailFrom.Text := 'office@example.com';
   MailGmail.Checked := True;
   BackupDrive := 'E:';
   DataRoot := 'D:\SlateOps';
   SecurityCode := '3F:A2:00:9C';
-  SelfDraw('S09', P_EMAIL);
+  SelfDraw('M02', P_EMAIL);
   SelfDraw('S11', P_READY);
   KeptState := 'kept';
   KeptUse := True;

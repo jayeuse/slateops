@@ -37,7 +37,6 @@ s01_state_unsafe=Setup cannot use the folder C:\ProgramData\SlateOps, because a 
 ; ---- S02 Check this PC
 s02_title=Check this PC
 s02_subtitle=Setup checks whether this PC can be your Slate Operations server. It changes nothing.
-s02_welcome_back=Welcome back. Setup checks this PC again.
 s02_checking=Checking this PC… (about 1 minute)
 s02_ready=This PC is ready to be your Slate Operations server.
 s02_ready_restart=Setup will restart this PC once.
@@ -174,7 +173,6 @@ s05_failed=Setup could not turn on Virtual Machine Platform.
 ; ---- S06 Welcome back
 s06_title=Welcome back
 s06_continue=Setup continues where it stopped.
-s06_stopped=Setup stopped before it finished. It continues from the step that stopped.
 s06_stopped_key=Setup stopped before you saved the recovery key.
 s06_checking=Checking this PC again…
 s06_still_ready=This PC is still ready. Setup checked it again.
@@ -188,36 +186,34 @@ s07_folder=Folder: %1
 s07_change_folder=Change folder
 s07_change_program=Change program folder
 s07_usb_note=USB and network drives are not listed. The data must stay inside this PC.
+s07_checking=Checking the folder %1…
 s07_not_empty=This folder is not empty. Choose an empty folder.
 s07_too_small=This drive has %1 GB free. Slate Operations needs 15 GB. Choose another drive.
 s07_parent_unsafe=Setup cannot keep your data in %1, because it cannot protect a folder above it. This is common for folders made in File Explorer. Setup can protect %2 for you.
 s07_use_default=Use %1
-s07_already=The server part is already on %1. To use another drive, select Cancel, then Remove everything, and start setup again.
 s07_free=%1 GB free
-s07_preparing=Preparing the server part: %1
-s07_prepared=The server part is ready.
-s07_prep_failed=Preparing the server part stopped. Select Next for details.
 s07_start_failed=Setup could not start the server part of Slate Operations.
-s07_folder_changed=Setup cannot keep your data in %1, because a folder above it changed. Select Cancel, then Remove everything, and start setup again.
 ; TASK-0097 AC-1: engineer copy for the Product Designer's review (a resume after an older setup file put its server part on this PC).
-s07_other_version=Setup cannot use the server part that is on this PC. Select Cancel, then Remove everything, and start setup again.
 
 ; ---- S08 Your organization
 s08_title=Your organization
 s08_subtitle=You become the administrator of Slate Operations.
 s08_name=Organization name
 s08_name_help=People see this name in Slate Operations.
+s08_your_name=Your name
 s08_email=Your email address
-s08_email_help=Your invitation goes to this address. You set your password from it.
+s08_email_help=You sign in with this address. Setup sends no email to it.
+s08_password=Password
+s08_password_help=Use 12 to 128 characters. You sign in with this password.
+s08_confirm=Type the password again
+s08_show=Show
 s08_more=More options
-s08_username=User name
-s08_slug=Short name
-s08_more_help=Setup makes these from your email and the organization name. You can keep them.
 s08_err_name=Enter the name of your organization.
 s08_err_name_long=Use 100 characters or fewer.
 s08_err_email=Enter an email address, for example maria@example.com.
-s08_err_username=Use 3 to 100 letters, numbers, - or _.
-s08_err_slug=Use only lowercase letters, numbers and single hyphens, for example riverside-learning.
+s08_err_your_name=Enter your name.
+s08_err_password=Use 12 to 128 characters.
+s08_err_confirm=The two passwords are not the same. Type them again.
 
 ; ---- S09 Email for Slate Operations
 s09_title=Email for Slate Operations
@@ -225,13 +221,10 @@ s09_subtitle=Slate Operations sends invitations and password resets from this ac
 s09_from=Send from
 s09_provider=Provider
 s09_gmail=Gmail
-s09_m365=Microsoft 365
 s09_other=Other
 s09_detected=(detected)
 s09_gmail_help=Gmail needs an app password, not your normal password.
 s09_gmail_link=How to make an app password
-s09_m365_note=Microsoft 365 blocks this kind of sign-in until the person who manages your Microsoft 365 turns it on for this mailbox.
-s09_m365_link=Steps for your Microsoft 365 admin
 s09_app_password=App password
 s09_password=Password
 s09_show=Show
@@ -243,21 +236,15 @@ s09_starttls=STARTTLS (usually port 587)
 s09_user=User name
 s09_sender_name=Sender name
 s09_next_test=&Send test email
-s09_continue_later=Continue later
 s09_waiting=Getting ready to send… (about 1 minute)
 s09_sending=Sending a test email to %1…
-s09_passed=Test email sent to %1. It can take a few minutes to arrive. Look in Spam too.
 s09_channel_failed=Setup cannot pass the password safely to the server part. Nothing was sent.
-s09_outlook=Outlook.com accounts cannot send email for Slate Operations. Microsoft allows them only a sign-in method that Slate Operations cannot use yet. Use a Gmail or Microsoft 365 account, or an account from another email provider.
+s09_outlook=Outlook.com accounts cannot send email for Slate Operations. Use a Gmail account, or the mail server of another email provider.
 s09_gmail_title=How to make an app password
 s09_gmail_steps=1. Select Open Google's page. Your browser opens myaccount.google.com/apppasswords.%n2. Sign in. If Google asks, turn on 2-Step Verification first.%n3. Type Slate Operations as the app name and select Create.%n4. Copy the 16-letter password and paste it here.%n%nIf you change your Google password, Google removes this app password. Then use Change email account in Slate Operations settings.
 s09_gmail_open=Open Google's page
-s09_m365_title=Steps for your Microsoft 365 admin
-s09_m365_steps=Send these steps to the person who manages your Microsoft 365: In the Microsoft 365 admin center, open Users → Active users, select this mailbox, open Mail → Manage email apps, turn on Authenticated SMTP, and save.%n%nFrom the end of December 2026, Microsoft turns this setting off by default.%nSecurity defaults, or a policy that blocks basic authentication, also block Authenticated SMTP.
-s09_m365_copy=Copy the steps
 s09_err_auth_gmail=Gmail did not accept this password. Use an app password, not your normal Gmail password.
 s09_err_auth=The email provider did not accept the user name or password. Check them and try again.
-s09_err_m365=Microsoft 365 blocked the sign-in. The person who manages your Microsoft 365 must turn on Authenticated SMTP for this mailbox.
 s09_err_unreachable=Setup cannot reach the email server %1. Check the server name and port.
 s09_err_unreachable_known=Setup cannot reach %1. Check the internet connection.
 s09_err_no_tls=This email server does not offer a secure connection. Slate Operations sends email only over a secure connection. Choose the other security option, or ask your email provider.
@@ -285,8 +272,7 @@ s10_too_small=%1 has %2 GB free. Choose a drive with more space.
 s11_title=Ready to install
 s11_subtitle=Check your choices, then select Install.
 s11_org=Organization: %1
-s11_admin=Administrator: %1
-s11_mail=Email sent from: %1 (%2, test passed)
+s11_admin=Administrator: %1. You sign in with this address.
 s11_data=Data: %1
 s11_backups=Backups: %1, every night at 2:00
 s11_address=Address for PCs and phones: %1
@@ -300,13 +286,14 @@ s11_next=&Install
 
 ; ---- S12 Installing
 s12_title=Installing Slate Operations
+s12_stage_data=Prepare the data folder
 s12_subtitle=This can take up to 30 minutes.
 s12_stage1=Load the Slate Operations programs
 s12_stage2=Create the settings and passwords
 s12_stage3=Set up the secure connection
 s12_stage4=Set up the database
 s12_stage5=Start Slate Operations
-s12_stage6=Create your administrator account and send your invitation
+s12_stage6=Create your administrator account
 s12_stage7=Make the first backup
 s12_stage8=Finish on this PC
 s12_fail1=load the Slate Operations programs
@@ -314,28 +301,32 @@ s12_fail2=create the settings and passwords
 s12_fail3=set up the secure connection
 s12_fail4=set up the database
 s12_fail5=start Slate Operations
-s12_fail6=create your administrator account and send your invitation
+s12_fail6=create your administrator account
 s12_fail7=make the first backup
 s12_fail8=finish on this PC
 s12_box=While you wait: You can use this PC. Keep it on, plugged in and connected, and do not restart it. At the end, setup shows your recovery key. Have a printer or a USB drive ready.
 s12_done_word=Done
 s12_now_word=Now
-s12_slow=This step takes longer than expected.
-s12_wait=&Wait
 s12_not_ready=Slate Operations did not start.
+s12_slow=This step takes longer than expected.
 s12_disk_full=The server part of Slate Operations has no free space left. Select Save report and send the file to Slate Operations support.
 s12_backup_failed=Slate Operations cannot save backups to %1.
 s12_firewall=Setup could not set up Windows Firewall for Slate Operations.
 s12_https=Slate Operations is installed, but this PC cannot open it at %1.
+s12_step_limit=A step of setup did not end in its time.
+s12_av_blocked=A security program on this PC blocked part of Slate Operations setup. Allow the folder C:\Program Files\Slate Operations in the security program, then start setup again.
+s12_logon_failed=Windows did not let Slate Operations start. A security policy on this PC can cause this. Ask the person who manages this PC, then start setup again.
+s12_folder_changed=Setup cannot keep your data in %1, because a folder above it changed.
 ; Spec 7.5 (catalog rows "Antivirus or Smart App Control blocks a file" and "Service account cannot sign in").
 av_blocked=A security program on this PC blocked part of Slate Operations setup. Allow the folder C:\Program Files\Slate Operations in the security program, then select Try again.
 service_logon_failed=Windows did not let Slate Operations start. A security policy on this PC can cause this. Select Repair. If it happens again, ask the person who manages this PC.
-s12_choose_drive=Choose another drive
 
 ; ---- S13 Setup stopped (layout shown in place)
 s13_title=Setup stopped
 s13_could_not=Setup could not %1.
 s13_what=What you can do:%n1. Select Try again. Setup continues from this step. Nothing is lost.%n2. If it stops again, select Save report and send the file to Slate Operations support.
+s13_remove=&Remove and close
+s13_remove_what=Select Save report first if you want to send the details to Slate Operations support. Then select Remove and close. Setup removes everything it added, and you can start setup again.
 
 ; ---- S14 Save your recovery key
 s14_title=Save your recovery key
@@ -368,10 +359,7 @@ s15_finish=&Finish
 
 ; ---- Cancel (spec 4.5)
 cancel_nothing=Stop setup? Nothing was installed.
-cancel_feature=Stop setup? Virtual Machine Platform and Windows Subsystem for Linux (WSL) stay on this PC. Other programs can use them.
-cancel_server=Stop setup? Setup has already added the server part to this PC.
-cancel_keep=Keep it and continue later: the next time you start setup, it continues here. Your email password is not kept.
-cancel_wait=Setup stops after the current step. This takes up to a minute.
+cancel_remove_all=Stop setup? Setup removes everything it added to this PC, so nothing stays half installed.
 
 ; ---- M01 Slate Operations on this PC (W8 part: spec 12 item 11)
 m01_title=Slate Operations on this PC
@@ -421,8 +409,6 @@ s07_kept_older=This data is from Slate Operations version %1. This setup cannot 
 s07_kept_unreadable=Setup could not open the kept data. The kept data is not changed.
 
 ; ---- W9: Cancel at S08 to S11 (spec 4.5)
-cancel_remove=Remove everything setup added
-cancel_keep_option=Keep it and continue later
 
 ; ---- W9: maintenance (spec M01 to M04, plan 9.3)
 m01_running=Running.
@@ -451,6 +437,7 @@ m01_repair_failed=Repair did not finish. Select Save report and send the file to
 m01_not_installed=Slate Operations is not installed on this PC. To install it, open the Slate Operations setup file.
 m02_title=Change email account
 m02_done=Slate Operations sends email from %1 now. Sign-ins stop for about a minute while it restarts.
+m02_test_sent=Test email sent to %1. Check its inbox and Spam folder.
 m02_failed=Slate Operations could not change the email account. Select Save report and send the file to Slate Operations support.
 m03_checking=Checking drive %1…
 m03_first=Your new backup drive has its own lock. The old recovery key does not open it.
@@ -489,15 +476,21 @@ m04_confirm_go=&Make a new key
 ; ---- W14-D1 (TASK-0097): S02 when its result cannot be drawn (engineer copy; Product Designer review)
 s02_draw_failed=Setup could not show the result of the check.
 ; ---- W14-D9 (TASK-0097): Continue later and Remove everything from the timer (spec 7.6)
-later_waiting=Waiting for the current step to end…
-later_discarding=Deleting the email settings that setup kept…
 later_saving=Saving your progress…
 later_restarting=Restarting this PC…
-later_save_failed=Setup could not save your progress, so it stays open. To try again, select the same action again.
 remove_stopping=Stopping Slate Operations…
-remove_moving_kept=Moving your data back to %1…
-remove_data=Removing the server part and the data in %1…
+remove_title=Removing what setup added
+remove_text=Setup removes everything it added to this PC. Kept data from an earlier installation stays.
+remove_start=An earlier setup did not finish. Setup removes everything it added, then starts again. Kept data from an earlier installation stays.
+remove_stages=Stop the step that runs|Stop Slate Operations|Remove the data of this setup|Turn off the Windows features that setup turned on|Remove the Windows settings
+remove_job=Stopping the step that runs…
+remove_data_line=Removing the server part and its data…
+remove_features=Turning off Virtual Machine Platform and Windows Subsystem for Linux (WSL), if setup turned them on…
+remove_restart_line=Windows finishes turning off Virtual Machine Platform and Windows Subsystem for Linux (WSL) at the next restart. Setup does not restart this PC.
+remove_limit=A step did not end in its time, so setup stops here. The next time setup starts, it removes the rest.
+remove_kept_failed=Setup could not move your kept data back to its folder. The data is not changed. The next time setup starts, it tries again.
 remove_windows=Removing the Windows settings…
+cd_preparing=Preparing drive %1 for backups…
 ; ---- W14-D5: the progress block and the one-line form of every wait (spec 2.4, 6.1, 7.6). Keys
 ; step_<job>_<key> are the engine's step keys (packaging/engine/progress.py STEPS) and the
 ; helper's keys; %1 to %3 are the values that the wait names (drive, address, email, version).
@@ -528,12 +521,10 @@ step_pc_busy=Another installation is running on this PC. Setup waits and tries a
 step_pc_check=Checking whether Windows needs a restart.
 s07_looking=Looking for drives…
 s07_reading_kept=Reading the kept data in %1…
-s07_stages=Unpack the server part|Prepare the data folder
 step_data_unpack=Unpacking the server part from this setup file.
 step_data_folder=Preparing the data folder %1.
 bg_stages=Add the hidden Windows account|Set the memory of the server part|Copy the server part to drive %1|Start the server part|Receive the Slate Operations programs|Check the server part|Download the database and sign-in programs
 bg_stages_kept=Add the hidden Windows account|Set the memory of the server part|Move your kept data back|Open your kept data|Start the server part|Check the kept data|Receive the Slate Operations programs|Check the server part
-bg_line=Preparing the server part, %1 of %2: %3 · %4
 bg_stage_service=Add the hidden Windows account
 bg_stage_wslconfig=Set the memory of the server part
 bg_stage_import_distro=Copy the server part
@@ -569,7 +560,6 @@ step_prepare_shells=Checking the user accounts of the server part.
 step_prepare_bundle=Checking the Slate Operations program files.
 step_prefetch_start_pull=Downloading the database and sign-in programs.
 s09_looking_up=Looking up the email provider of %1…
-s09_ready_bg=Getting ready to send: %1
 s09_channel=Checking that setup can pass the password safely.
 s09_policy=Checking the security policy of this PC.
 step_smtp_test_send=Sending a test email to %1.
@@ -594,7 +584,6 @@ step_win_trust=Making this PC trust the security certificate of Slate Operations
 step_win_power=Keeping this PC awake when it is plugged in.
 step_win_lid=Keeping this laptop running when the lid is closed.
 step_win_https=Checking that https://%1 opens on this PC.
-cd_preparing=Preparing drive %1 for backups…
 step_set_backup_target_unmount=Disconnecting the backup drive %1.
 step_set_backup_target_mount=Connecting drive %2.
 step_set_backup_target_repository=Preparing the backup store on %2.
@@ -613,8 +602,6 @@ report_failed=Setup could not save the report. Select Save report again.
 step_log_bundle_facts=Collecting facts about the server part
 step_log_bundle_snapshot=Collecting the server part's logs
 step_log_bundle_bundle=Packing the server part's logs
-cancel_closing=Closing setup…
-later_restart_failed=Setup saved your progress but could not restart this PC. Restart it from the Start menu.
 m01_reading_code=Reading the security code…
 step_resend_invitation_resend=Sending your invitation again.
 repair_stages=Check the security policy|Set a new password for the hidden account|Set up the start tasks|Set up Windows Firewall|Set the address on this PC|Start Slate Operations|Set the backup folder rights

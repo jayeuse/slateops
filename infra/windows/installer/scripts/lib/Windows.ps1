@@ -44,6 +44,29 @@ function Get-VhdSizeGB {
     return [int]$size
 }
 
+function Test-DataFolderChoice {
+    # DEC-0041 (AC-W1): S07 checks the chosen folder on Next with the rules of
+    # Initialize-DataFolder and writes nothing; prepare-data checks it again on S12, right before
+    # it writes. Codes: ready, path_invalid, data_folder_parent_unsafe, drive_not_fixed_ntfs,
+    # not_empty.
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$DataRoot, [switch]$AllowKept)
+    if (-not (Test-DataRootPath $DataRoot)) { return New-StepResult -Code 'path_invalid' -MessageKey 'setup.data.path_invalid' }
+    $parents = @(Get-FolderParentProblem -Path $DataRoot)
+    if ($parents.Count -gt 0) {
+        foreach ($problem in $parents) { Write-RunLog 'setup.data' 'INFO' ('S07 check: {0}' -f $problem) }
+        return New-StepResult -Code 'data_folder_parent_unsafe' -MessageKey 'setup.data.data_folder_parent_unsafe' -Values @{ reason = ($parents[0] -split ':')[0] }
+    }
+    $disk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter ("DeviceID='{0}'" -f $DataRoot.Substring(0, 2))
+    if ((-not $disk) -or ([int]$disk.DriveType -ne 3) -or ([string]$disk.FileSystem -ne 'NTFS')) { return New-StepResult -Code 'drive_not_fixed_ntfs' -MessageKey 'setup.data.drive_not_fixed_ntfs' }
+    if (Test-Path -LiteralPath $DataRoot) {
+        $allowed = @('distro', 'payload')
+        if ($AllowKept) { $allowed += 'kept' }
+        $owned = @(Get-ChildItem -LiteralPath $DataRoot -Force | Where-Object { $allowed -notcontains $_.Name })
+        if ($owned.Count -gt 0) { return New-StepResult -Code 'not_empty' -MessageKey 'setup.data.not_empty' }
+    }
+    return New-StepResult -Code 'ready' -MessageKey 'setup.data.ready'
+}
+
 function Initialize-DataFolder {
     # Creates <data folder> with its access list (the service account: modify on distro, read on
     # payload) and writes state\install.json. Refuses a folder that fails the safety check or
@@ -298,32 +321,34 @@ function Get-InstalledVersion {
     try { return (Read-SetupVersion -Path (Join-Path ([string]$key.InstallLocation) 'version.json')).version } catch { return '' }
 }
 
+function Test-SetupLeftover {
+    # DEC-0041 (TASK-0097 AC-W4): the records that a setup run leaves: the saved progress (any
+    # stage, also one that an older setup wrote), install.json (S12) or windows-changes.json
+    # (S05 and later). Presence only; the files are not parsed here.
+    param([Parameter(Mandatory = $true)][hashtable]$Layout)
+    foreach ($path in @($Layout.ProgressFile, $Layout.StateFile, (Join-Path $Layout.State 'windows-changes.json'))) {
+        if (Test-Path -LiteralPath $path) { return $true }
+    }
+    return $false
+}
+
 function Get-SetupEntry {
     # Spec 4.1: the first screen from Windows-side records only: the saved progress, then the
     # installed version (W8): this setup newer gives M05 (W13b), the same or older gives M01.
-    param([AllowNull()][System.Collections.IDictionary]$Progress, [string]$Installed = '', [string]$SetupVersion = '')
-    # W9 review item 3: "key saved" with no installed program is progress that an uninstall left;
-    # it opens a new setup, not maintenance.
-    if ((-not $Installed) -and ($null -ne $Progress) -and ([string](Get-DictValue $Progress 'stage') -eq 'key_saved')) { $Progress = $null }
-    if ($Installed -and $SetupVersion -and (($null -eq $Progress) -or ([string](Get-DictValue $Progress 'stage') -eq 'key_saved'))) {
-        if ((Compare-ReleaseVersion -Left $SetupVersion -Right $Installed) -gt 0) { return @{ screen = 'M05'; next = ''; installed = $Installed } }
+    # DEC-0041 (AC-W4): setup is a complete installation or nothing. Only the restart after S05
+    # continues (S06, S07), and a finished install shows its recovery key (S14); any other
+    # record of an earlier run is removed at start (cleanup), then setup starts at S01. An
+    # installed program is never removed here.
+    param([AllowNull()][System.Collections.IDictionary]$Progress, [string]$Installed = '', [string]$SetupVersion = '', [switch]$Leftover)
+    $stage = ''
+    if ($null -ne $Progress) { $stage = [string](Get-DictValue $Progress 'stage') }
+    if ($stage -eq 'install_finished') { return @{ screen = 'S06'; next = 'S14'; new_recovery_key = $true } }
+    if ($Installed) {
+        if ($SetupVersion -and ((Compare-ReleaseVersion -Left $SetupVersion -Right $Installed) -gt 0)) { return @{ screen = 'M05'; next = ''; installed = $Installed } }
         return @{ screen = 'M01'; next = ''; installed = $Installed }
     }
-    if ($null -eq $Progress) { return @{ screen = 'S01'; next = '' } }
-    # W9 review item 1: a kept reinstall stays kept on resume.
-    $kept = ((Get-DictValue $Progress 'kept') -eq $true)
-    switch ([string](Get-DictValue $Progress 'stage')) {
-        'check_restart'    { return @{ screen = 'S02'; next = ''; welcome_back = $true } }
-        'feature_restart'  { return @{ screen = 'S06'; next = 'S07' } }
-        # W8 correction 4: the background preparation runs again on resume unless it finished.
-        'continue_later'   { return @{ screen = 'S06'; next = 'S08'; background_done = ((Get-DictValue $Progress 'background_done') -eq $true); kept = $kept } }
-        'install_started'  {
-            if ((Get-DictValue $Progress 'email_discarded') -eq $true) { return @{ screen = 'S06'; next = 'S09'; kept = $kept } }
-            return @{ screen = 'S06'; next = 'S12'; kept = $kept }
-        }
-        'install_finished' { return @{ screen = 'S06'; next = 'S14'; new_recovery_key = $true } }
-        'key_saved'        { return @{ screen = 'M01'; next = '' } }
-    }
+    if ($stage -eq 'feature_restart') { return @{ screen = 'S06'; next = 'S07' } }
+    if ($Leftover -or $stage) { return @{ screen = 'S01'; next = ''; cleanup = $true } }
     return @{ screen = 'S01'; next = '' }
 }
 

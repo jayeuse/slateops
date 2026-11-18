@@ -19,9 +19,9 @@ param(
     [ValidateSet('state-check', 'check', 'recheck', 'facts', 'time-zone', 'fix-network-private', 'remove-kit',
         'save-progress', 'clear-resume', 'restart', 'prepare-pc', 'prepare-data', 'service', 'job', 'job-result',
         'start-boot', 'windows-steps', 'account-sid', 'r7', 'provider-detect', 'drives', 'drive-check', 'prepare-backup',
-        'printers', 'https-check', 'job-stop', 'report-collect', 'report-zip', 'fix-mdns',
+        'printers', 'data-check', 'https-check', 'job-stop', 'report-collect', 'report-zip', 'fix-mdns',
         'uninstall-info', 'uninstall-stop', 'uninstall-data', 'remove-windows', 'kept-read', 'restore-kept', 'kept-status',
-        'kept-return', 'kept-done', 'engine-status', 'repair', 'security-code', 'update-prepare', 'update-wsl', 'update-done')]
+        'kept-return', 'kept-done', 'setup-remove-data', 'remove-features', 'engine-status', 'repair', 'security-code', 'update-prepare', 'update-wsl', 'update-done')]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$RunId,
     [Parameter(Mandatory = $true)][string]$OutFile,
@@ -37,8 +37,6 @@ param(
     [switch]$Firmware,
     [switch]$Lid,
     [switch]$Cancel,
-    [switch]$EmailDiscarded,
-    [switch]$BackgroundDone,
     [switch]$Keep,
     [switch]$DeleteBackups,
     [switch]$UseKept,
@@ -110,7 +108,13 @@ try {
             $setupVersion = ''
             try { $setupVersion = (Read-HelperVersion).version } catch { $setupVersion = '' }
             $installed = Get-InstalledVersion
-            if ($step.code -eq 'safe') { $result.values = @{ entry = (Get-SetupEntry -Progress (Read-SetupProgress -Layout $layout) -Installed $installed -SetupVersion $setupVersion) } }
+            if ($step.code -eq 'safe') {
+                # DEC-0041 (AC-W4): a progress file that cannot be read still counts as a record of
+                # an earlier run (Test-SetupLeftover), so it is removed, not resumed.
+                $progress = $null
+                try { $progress = Read-SetupProgress -Layout $layout } catch { Write-RunLog 'setup.progress' 'WARN' ('progress not readable: {0}' -f $_.Exception.Message) }
+                $result.values = @{ entry = (Get-SetupEntry -Progress $progress -Installed $installed -SetupVersion $setupVersion -Leftover:(Test-SetupLeftover -Layout $layout)) }
+            }
             elseif ($step.code -eq 'absent') { $result.values = @{ entry = (Get-SetupEntry -Progress $null -Installed $installed -SetupVersion $setupVersion) } }
         }
         { $_ -in @('check', 'recheck') } {
@@ -215,6 +219,11 @@ try {
                 }
             }
         }
+        # DEC-0041 (AC-W3, AC-W4): the setup removal's data step (kept data never deleted) and
+        # the WSL and Virtual Machine Platform step (only what setup turned on, no other
+        # distribution); both before remove-windows, which removes the records they read.
+        'setup-remove-data' { $result = Remove-SetupData -Layout $layout -RunId $RunId }
+        'remove-features' { $result = Remove-SetupFeatures -Layout $layout }
         # W9 review item 4: with the data folder left over, the scripts stay for Save report.
         'remove-windows' { $result = Remove-WindowsParts -Layout $layout -DataLeft:$DataLeft }
         'kept-read' {
@@ -338,8 +347,6 @@ try {
             $ready = Initialize-StateFolder -Layout $layout -ServiceSid $serviceSid
             if ($ready.code -ne 'ready') { $result = $ready; break }
             $marks = @{}
-            if ($EmailDiscarded) { $marks.email_discarded = $true }
-            if ($BackgroundDone) { $marks.background_done = $true }
             # W9 review item 1: a kept reinstall stays kept on resume.
             if ($KeptMark) { $marks.kept = $true }
             Save-SetupProgress -Layout $layout -Stage $Stage -RunId $RunId -Marks $marks
@@ -365,6 +372,8 @@ try {
             if (@('present', 'installed') -notcontains $wsl.code) { $result = $wsl }
             else { $result = New-StepResult -Code 'prepared' -MessageKey 'prepare.prepared' -Values @{ restart_needed = $restart; feature = $feature.code; wsl = $wsl.code } }
         }
+        # DEC-0041 (AC-W1): S07 Next, read only; the data folder is made on S12.
+        'data-check' { $result = Test-DataFolderChoice -DataRoot $DataRoot -AllowKept:$UseKept }
         'prepare-data' {
             # S07, and every resume with the background preparation not done (TASK-0097 AC-1).
             $result = Invoke-PrepareData -Layout $layout -DataRoot $DataRoot -ScriptsDir $PSScriptRoot -PayloadDir (Join-Path $helperRoot 'payload') -Version (Read-HelperVersion) -ServiceSid $serviceSid -AllowKept:$UseKept

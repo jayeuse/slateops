@@ -265,12 +265,6 @@ Test-Case 'W8 correction 2 the smtp-test discard goes through the pipe and reach
     Assert-Equal 'input_on_disk' (Test-ExecRequest -RequestText (Get-RequestText -Job 'smtp-test' -RequestId $id) -InputBytes ([System.Text.Encoding]::ASCII.GetBytes($discard))).code
 }
 
-Test-Case 'W8 correction 4 a resume after Continue later runs the background preparation again unless it finished' {
-    Assert-Equal $false (Get-SetupEntry -Progress @{ stage = 'continue_later' }).background_done
-    Assert-Equal $true (Get-SetupEntry -Progress @{ stage = 'continue_later'; background_done = $true }).background_done
-    Assert-Equal 'S08' (Get-SetupEntry -Progress @{ stage = 'continue_later' }).next
-}
-
 Test-Case 'AC-1 (TASK-0097, QA B1, Architect A-B1) a resume prepares the data folder again: this version''s parts and scripts, the recorded disk limit, no receive part of another version' {
     # The owner's PC: rc.22 ran prepare-data at S07 and saved continue_later; the next setup file
     # resumes. Its receive parts and its Exec scripts must be on disk before the background runs.
@@ -338,15 +332,6 @@ Test-Case 'W8 correction 7 Save report before S07 holds the helper logs and name
     $summary = [System.IO.File]::ReadAllText((Join-Path $staging 'report.txt'))
     Assert-True ($summary.Contains('C:\ProgramData\SlateOps (not created yet)')) $summary
     Assert-True (-not $summary.Contains('failed the safety check')) $summary
-}
-
-Test-Case 'W9 review item 1 a resume of a kept reinstall keeps the kept mark' {
-    # QA W9-B1: the kept mark survives "continue later" and a started install, so the resume
-    # knows the data folder holds kept data.
-    Assert-Equal $true ((Get-SetupEntry -Progress @{ stage = 'continue_later'; kept = $true })['kept']) 'continue later'
-    Assert-Equal $true ((Get-SetupEntry -Progress @{ stage = 'install_started'; kept = $true })['kept']) 'install started'
-    Assert-Equal $true ((Get-SetupEntry -Progress @{ stage = 'install_started'; kept = $true; email_discarded = $true })['kept']) 'install started, email discarded'
-    Assert-Equal $false ((Get-SetupEntry -Progress @{ stage = 'continue_later' })['kept'] -eq $true) 'no mark, no kept mode'
 }
 
 Test-Case 'W9 review item 3 a saved key_saved stage with no installed program starts a new setup' {
