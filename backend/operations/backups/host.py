@@ -12,11 +12,14 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from app.core.config.instance import instance_target_for_process
 from app.core.observability import log_event
+
+if TYPE_CHECKING:
+    from operations.backups.fail_open import Clock, Recover
 
 ROOT = Path(__file__).resolve().parents[3]
 SERVICES = frozenset(
@@ -176,7 +179,7 @@ class Host:
             self.config.caddy_config_file,
             self.config.restic_password_file,
         ):
-            physical._private(path, "backup input", directory=False)
+            physical._private_input(path, "backup input", self.config.caddy_inputs)
         for path in (
             self.config.compose_root,
             self.config.tls_directory,
@@ -426,10 +429,7 @@ class Host:
                 self.config.project_name,
                 "--env-file",
                 str(self.config.provider_env_file),
-                "-f",
-                str(self.config.compose_files[0]),
-                "-f",
-                str(self.config.compose_files[1]),
+                *(argument for path in self.config.compose_files for argument in ("-f", str(path))),
                 *tail,
             ],
             failure=failure,
@@ -470,3 +470,8 @@ class Host:
         from operations.backups.docker import resume_existing
 
         resume_existing(self, journal)
+
+    def fail_open(self, journal: Json, now: Clock, recover: Recover) -> dict[str, object]:
+        from operations.backups.fail_open import fail_open
+
+        return fail_open(self, journal, now, recover)

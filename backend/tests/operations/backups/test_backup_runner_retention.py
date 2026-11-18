@@ -17,6 +17,10 @@ from tests.operations.backups.backup_runner_fixtures import (
     private_file,
     runner_config,
 )
+from tests.operations.backups.test_backup_runner_installer_layout import (
+    INSTALLER_SERVICES,
+    _installer,
+)
 from tests.operations.backups.test_backup_runner_recovery import active_journal
 
 
@@ -122,6 +126,40 @@ def test_retention_failure_keeps_verification_and_reconciliation_truth(tmp_path:
     assert commands.claim["run"]["verified_at"] is not None
     assert commands.claim["run"]["reconciled_at"] is not None
     assert oldest["run"]["expired_at"] is None and "1" * 64 in commands.snapshots
+
+
+@pytest.mark.parametrize(
+    ("installer", "present", "outcome", "failure_code"),
+    [
+        # A new repository after an installer target change holds no earlier point.
+        (True, {SNAPSHOT}, "succeeded", None),
+        # A later night: the newest point is here, an older point stays in the old repository.
+        (True, {SNAPSHOT, "2" * 64}, "succeeded", None),
+        # The protected newest point vanished while an older one remains here.
+        (True, {SNAPSHOT, "1" * 64}, "failed", "retention_failed"),
+        # The new point is not in this repository either.
+        (True, set(), "failed", "retention_failed"),
+        # A Linux layout has no target change: every earlier point lost still alerts.
+        (False, {SNAPSHOT}, "failed", "retention_failed"),
+    ],
+)
+def test_retention_after_a_repository_change_expires_nothing(
+    tmp_path: Path, installer: bool, present: set[str], outcome: str, failure_code: str | None
+) -> None:
+    if installer:
+        config, state, commands = _installer(tmp_path, services=INSTALLER_SERVICES)
+    else:
+        config, state = runner_config(tmp_path)
+        commands = SyntheticCommands(config)
+    oldest = candidate(config, state, commands, "1" * 64, 90)
+    newest = candidate(config, state, commands, "2" * 64, 60)
+    commands.snapshots = set(present)
+    result = execute(config, state, commands)
+    assert commands.claim and commands.claim["run"]["failure_code"] == failure_code
+    assert result["state"] == outcome
+    assert oldest["run"]["expired_at"] is None and newest["run"]["expired_at"] is None
+    assert not any(item["op"] == "expire" for item in commands.operations)
+    assert not any(args[1] in {"forget", "prune"} for args, _ in commands.calls)
 
 
 def test_missing_protected_marker_never_deletes_older_snapshots(tmp_path: Path) -> None:

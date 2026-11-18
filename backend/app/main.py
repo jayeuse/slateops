@@ -183,7 +183,7 @@ def create_app() -> FastAPI:
     development = settings.environment in {"development", "test"}
     app = FastAPI(
         title=settings.app_name,
-        version="0.1.0",
+        version=settings.slateops_version,
         lifespan=application_lifespan,
         docs_url="/api/docs" if development else None,
         redoc_url=None,

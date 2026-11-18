@@ -16,6 +16,7 @@ from operations.backups.host import Host, RunnerError, physical_archive
 from tests.operations.backups.backup_runner_fixtures import (
     SNAPSHOT,
     SyntheticCommands,
+    active_journal,
     claim_document,
     execute,
     runner_config,
@@ -23,13 +24,7 @@ from tests.operations.backups.backup_runner_fixtures import (
 )
 
 
-def active_journal(state: Path) -> tuple[Path, dict[str, Any]]:
-    pointer = json.loads((state / "client-a" / "active.json").read_text())
-    path = state / "client-a" / "claims" / pointer["claim_id"] / "journal.json"
-    return path, json.loads(path.read_text())
-
-
-def test_failed_backup_stays_quiescent_until_explicit_recovery_without_new_backup(
+def test_failed_backup_stays_quiescent_until_recovery_without_new_backup(
     tmp_path: Path,
 ) -> None:
     config, state = runner_config(tmp_path)
@@ -47,8 +42,6 @@ def test_failed_backup_stays_quiescent_until_explicit_recovery_without_new_backu
     _, journal = active_journal(state)
     assert journal["outcome"]["state"] == "failed"
     assert journal["outcome"]["reconciled_at"] is None
-    with pytest.raises(RunnerError, match="recovery_required"):
-        execute(config, state, commands)
     result = execute(
         config,
         state,

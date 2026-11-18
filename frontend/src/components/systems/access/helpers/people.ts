@@ -1,6 +1,10 @@
 import { ApiContractError, ApiError } from "@/lib/api";
 import { apiErrorReference, type ApiErrorText } from "@/lib/api-errors";
 import {
+  EMAIL_NOT_CONFIGURED_MESSAGE,
+  isEmailNotConfigured,
+} from "@/lib/email-setup";
+import {
   formatWorkspaceDate,
   formatWorkspaceDateTime,
   type WorkspaceRegion,
@@ -784,6 +788,7 @@ export function presentAccess(
  * written for people; every other failure gets fixed copy.
  */
 export function peopleErrorMessage(error: unknown, fallback: string): string {
+  if (isEmailNotConfigured(error)) return EMAIL_NOT_CONFIGURED_MESSAGE;
   if (error instanceof ApiError) {
     if (error.status === 403)
       return "Only administrators can change people. Reload the page to check your access.";

@@ -14,6 +14,7 @@ from app.systems.access.users.coordination import (
     InvitationError,
     InvitationNotFound,
 )
+from app.systems.access.users.email_setup import EmailNotConfigured, email_not_configured
 from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import Membership, User
 from app.systems.access.users.schemas import UserResponse
@@ -54,6 +55,8 @@ def reconcile_invite(
 ) -> UserResponse:
     try:
         profile = reconcile_invitation(db, user_id, actor_id=admin.id)
+    except EmailNotConfigured as error:
+        raise email_not_configured() from error
     except InvitationError as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

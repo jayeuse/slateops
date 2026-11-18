@@ -26,6 +26,10 @@ from app.core.config.environment import ConfigurationError, read_environment
 # joins JWT_JWKS. Realtime needs its own cookie/session base and a 16-byte AES-128 key.
 REALTIME_KEYS = ("REALTIME_TOKEN_SIGNING_KEY", "REALTIME_SECRET_KEY_BASE", "REALTIME_DB_ENC_KEY")
 _JWKS_LINE = re.compile(r"JWT_JWKS=")
+# Docker's literal env-file format: every reader (docker run --env-file, Compose env_file and
+# --env-file) keeps the value byte for byte only with printable ASCII and none of these.
+_DOCKER_VALUE = re.compile(r"[!-~]+\Z")
+_DOCKER_UNSAFE = frozenset("$#'`\\")
 
 
 def _base64url(value: bytes) -> str:
@@ -99,6 +103,59 @@ def generate_secrets() -> dict[str, str]:
     return values
 
 
+def installer_secrets() -> tuple[dict[str, str], str]:
+    """Return the complete installer set (plan 6.2 step 4) and the separate Restic password.
+
+    The owner and runtime passwords are hex so the templates can place them in URLs as they
+    are. The instance ID matches the Compose project and PostgreSQL cluster name rule.
+    """
+    values = {
+        **generate_secrets(),
+        "SECURITY_EVENT_SERVER_KEY": secrets.token_urlsafe(48),
+        "SLATEOPS_OWNER_DB_PASSWORD": secrets.token_hex(24),
+        "SLATEOPS_RUNTIME_DB_PASSWORD": secrets.token_hex(24),
+        "SLATEOPS_INSTANCE_ID": "slateops-" + secrets.token_hex(5),
+    }
+    return values, secrets.token_urlsafe(32)
+
+
+def _docker_literal(name: str, value: str) -> str:
+    if (
+        _DOCKER_VALUE.match(value) is None
+        or value.startswith('"')
+        or not _DOCKER_UNSAFE.isdisjoint(value)
+    ):
+        raise ConfigurationError(f"{name} is not a literal Docker env value")
+    return f"{name}={value}\n"
+
+
+def _create_private(path: Path, text: str, created: list[Path]) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    created.append(path)
+    with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as output:
+        output.write(text)
+        output.flush()
+        os.fsync(output.fileno())
+
+
+def write_installer_files(env_path: Path, password_path: Path) -> None:
+    """Create the literal Docker env file and the Restic password file; never overwrite.
+
+    On any failure, only the files that this call created are removed.
+    """
+    values, password = installer_secrets()
+    text = "".join(_docker_literal(name, value) for name, value in values.items())
+    _docker_literal("RESTIC_PASSWORD", password)
+    created: list[Path] = []
+    try:
+        _create_private(env_path, text, created)
+        _create_private(password_path, password, created)
+    except BaseException:
+        for path in created:
+            path.unlink(missing_ok=True)
+        raise
+
+
 def write_secret_file(path: Path) -> None:
     """Create a new owner-only dotenv file; never rotate existing installation keys."""
     values = generate_secrets()
@@ -158,7 +215,21 @@ def main() -> None:
         "--add-realtime", type=Path, metavar="ENV_FILE",
         help="existing private installation file that lacks the Realtime keys",
     )
+    parser.add_argument(
+        "--format", choices=("dotenv", "docker"), default="dotenv",
+        help="docker: the complete installer set as literal KEY=value lines (needs --output)",
+    )
+    parser.add_argument(
+        "--restic-password-file", type=Path, metavar="PATH",
+        help="new private Restic password file; required with and only with --format docker",
+    )
     options = parser.parse_args()
+    if options.format == "docker" and (
+        options.output is None or options.restic_password_file is None
+    ):
+        parser.error("--format docker needs --output and --restic-password-file")
+    if options.format != "docker" and options.restic_password_file is not None:
+        parser.error("--restic-password-file needs --format docker")
     if options.add_realtime is not None:
         try:
             add_realtime_secrets(options.add_realtime)
@@ -171,10 +242,13 @@ def main() -> None:
         print("Added Realtime keys; no secret values were printed.")
         return
     try:
-        write_secret_file(options.output)
+        if options.format == "docker":
+            write_installer_files(options.output, options.restic_password_file)
+        else:
+            write_secret_file(options.output)
     except FileExistsError:
         parser.exit(1, "Refusing to overwrite existing installation keys.\n")
-    except OSError:
+    except (OSError, ConfigurationError):
         parser.exit(1, "Could not create the private key file.\n")
     print("Created installation keys; no secret values were printed.")
 

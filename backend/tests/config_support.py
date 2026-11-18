@@ -42,6 +42,11 @@ def settings_values(**overrides: Any) -> dict[str, Any]:
         "backend_port": 8000,
         "server_max_concurrency": 32,
         "server_keep_alive_seconds": 5,
+        # Email is set up, as in the disposable integration stack (tests/supabase_runtime.py);
+        # a test of the no-email state turns it off itself (DEC-0041).
+        "smtp_host": "mailpit",
+        "smtp_port": 1025,
+        "smtp_admin_email": "noreply@slateops.test",
     }
     values.update(overrides)
     return values

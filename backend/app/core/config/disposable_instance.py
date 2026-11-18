@@ -14,39 +14,40 @@ from urllib.parse import urlsplit
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import SQLAlchemyError
 
-SUPABASE_DB_IMAGE = (
-    "supabase/postgres:17.11.0.004@sha256:"
-    "6058a6759ab9268cff8ee70641d61f1bd75953316281b76427cf5a6b4db2eafc"
+# One tag and digest builds every name of the database image (scripts/environment.py).
+SUPABASE_DB_TAG_AND_DIGEST = (
+    "17.11.0.004@sha256:6058a6759ab9268cff8ee70641d61f1bd75953316281b76427cf5a6b4db2eafc"
 )
+SUPABASE_DB_IMAGE = "ghcr.io/supabase/postgres:" + SUPABASE_DB_TAG_AND_DIGEST
 POSTGRES_IMAGE = SUPABASE_DB_IMAGE
 PROVIDER_IMAGES = {
     "db": SUPABASE_DB_IMAGE,
     "auth": (
-        "supabase/gotrue:v2.196.0@sha256:"
+        "ghcr.io/supabase/gotrue:v2.196.0@sha256:"
         "c0c25187a6b835e65a6f6e6c6b39d090e832d40e6de5186f2c038e0411944232"
     ),
     "imgproxy": (
-        "darthsim/imgproxy:v3.31.4@sha256:"
+        "ghcr.io/imgproxy/imgproxy:v3.31.4@sha256:"
         "73c5dda13199745b0d2d00e4149d4a589c5b2e205dbf335ca05eca8276b54712"
     ),
     "provider-volume-init": (
-        "supabase/storage-api:v1.81.0@sha256:"
+        "ghcr.io/supabase/storage-api:v1.81.0@sha256:"
         "98ffec5d0678803783c30e404c27f4ec65e97efbe014088f2a86b4b8b54b9f54"
     ),
     "storage": (
-        "supabase/storage-api:v1.81.0@sha256:"
+        "ghcr.io/supabase/storage-api:v1.81.0@sha256:"
         "98ffec5d0678803783c30e404c27f4ec65e97efbe014088f2a86b4b8b54b9f54"
     ),
     "realtime": (
-        "supabase/realtime:v2.143.3@sha256:"
+        "ghcr.io/supabase/realtime:v2.143.3@sha256:"
         "768b559241dd234c4e8852c5c0f504e598b80f1df2ad4dd78d5486fbed2f17a2"
     ),
     "meta": (
-        "supabase/postgres-meta:v0.100.0@sha256:"
+        "ghcr.io/supabase/postgres-meta:v0.100.0@sha256:"
         "145325b7e39f8ef4931d6e8cfd3f6f4d655de09d72a2ccc96d9513542c2202bd"
     ),
     "studio": (
-        "supabase/studio:2026.10.05-sha-94b8b06@sha256:"
+        "ghcr.io/supabase/studio:2026.10.05-sha-94b8b06@sha256:"
         "d878dcd9dba73b66d1c2c19aeaf53d07704e71604d93013225be1d1c51475237"
     ),
     "api-gw": (

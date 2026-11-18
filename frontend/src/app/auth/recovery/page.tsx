@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/field";
 import { apiErrorReference } from "@/lib/api-errors";
 import { completeRecovery, requestRecovery } from "@/lib/auth-api";
+import { recoveryRequestFailureMessage } from "@/lib/email-setup";
 import {
   consumeRecoveryToken,
   hasValidRecoveryPasswordLength,
@@ -37,6 +38,7 @@ export default function RecoveryPage() {
   const [passwordLengthInvalid, setPasswordLengthInvalid] = useState(false);
   const [mismatch, setMismatch] = useState(false);
   const [requestState, setRequestState] = useState<RequestState>("idle");
+  const [requestFailure, setRequestFailure] = useState("");
   const [completionState, setCompletionState] =
     useState<CompletionState>("idle");
   const [pending, setPending] = useState(false);
@@ -70,6 +72,7 @@ export default function RecoveryPage() {
       setRequestState("sent");
     } catch (failure) {
       setRequestState("error");
+      setRequestFailure(recoveryRequestFailureMessage(failure));
       setFailureReference(apiErrorReference(failure));
     } finally {
       setPending(false);
@@ -233,7 +236,7 @@ export default function RecoveryPage() {
                 variant="destructive"
                 reference={failureReference}
               >
-                We could not process that request. Try again shortly.
+                {requestFailure}
               </Alert>
             ) : null}
             <form className="flex flex-col gap-4" onSubmit={submitRequest}>

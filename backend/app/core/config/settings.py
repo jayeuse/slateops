@@ -11,7 +11,14 @@ from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet
 from jwt import PyJWK, PyJWKError
-from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
+from pydantic import (
+    Field,
+    SecretStr,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -49,10 +56,16 @@ class EnvironmentSettings(BaseSettings):
         # environment_inputs has already selected exactly one source.
         return (init_settings,)
 
+    # Fields where a blank value means "not set" (DEC-0041: the installer's Compose passes an
+    # empty email host and sender until email is set up).
+    BLANK_MEANS_UNSET: ClassVar[frozenset[str]] = frozenset()
+
     @field_validator("*", mode="before")
     @classmethod
-    def reject_blank_values(cls, value: object) -> object:
+    def reject_blank_values(cls, value: object, info: ValidationInfo) -> object:
         if isinstance(value, str) and not value.strip():
+            if info.field_name in cls.BLANK_MEANS_UNSET:
+                return None
             raise ValueError("must not be blank")
         return value
 
@@ -79,6 +92,10 @@ class Settings(EnvironmentSettings):
     """Configuration required to start the FastAPI application process."""
 
     app_name: ClassVar[str] = "Slate Operations API"
+    BLANK_MEANS_UNSET = frozenset({"smtp_host", "smtp_port", "smtp_admin_email"})
+    # The release build argument of the server image (the tag without "v"); local runs
+    # have no release.
+    slateops_version: str = Field(default="0.0.0+dev", validation_alias="SLATEOPS_VERSION")
     environment: str = Field(validation_alias="ENVIRONMENT")
     log_dir: Path = Field(validation_alias="LOG_DIR")
     database_url: str = Field(validation_alias="DATABASE_URL")

@@ -32,7 +32,7 @@ from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession, get_engine
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.seals import read_seal_heads
-from app.systems.manage.backups import exports, service
+from app.systems.manage.backups import exports, policy_default, service
 from app.systems.manage.backups.models import BackupPolicy, UpdateStatus
 from app.systems.manage.backups.schemas import (
     AdoptCommand,
@@ -47,6 +47,7 @@ from app.systems.manage.backups.schemas import (
     HeartbeatCommand,
     InspectCommand,
     OutcomeCommand,
+    PolicyDefaultCommand,
     ReleaseCommand,
 )
 from operations.reset.models import _RESET_ADVISORY_LOCK_KEY
@@ -63,7 +64,8 @@ Command = Annotated[
     | ExportInspectCommand
     | ExportOutcomeCommand
     | ExportCleanedCommand
-    | AuditSealHeadsCommand,
+    | AuditSealHeadsCommand
+    | PolicyDefaultCommand,
     Field(discriminator="op"),
 ]
 COMMAND_ADAPTER: TypeAdapter[Command] = TypeAdapter(Command)
@@ -198,6 +200,12 @@ def execute(db: AuditSession, command: Command) -> dict[str, Any]:
     if isinstance(command, ReleaseCommand):
         service.record_release(db, command)
         return {"recorded": True}
+    if isinstance(command, PolicyDefaultCommand):
+        written = policy_default.write_default_policy(db, instance)
+        return {
+            "written": written,
+            "policy": service.policy_response(db, instance).model_dump(mode="json"),
+        }
     service.adopt_policy(
         db, instance, command.project, command.restore_marker.model_dump(mode="json")
     )

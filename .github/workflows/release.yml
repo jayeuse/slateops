@@ -1,0 +1,820 @@
+name: release
+
+# Release artifacts for a version tag: docs/plans/windows-installer.md sections 5.1 to 5.3,
+# slices W3, W4 (the Linux image, its lists, the notices and the source packages) and W5b
+# (the engine bundle: built first, carried by the Linux image, named in the manifest).
+# W8 adds the installer (the installer job). The release stays a draft.
+#
+# Re-run rule (parent decision D5, TASK-0079): never use "Re-run all jobs" or "Re-run
+# failed jobs" on a failed run. A re-run pushes a new image digest under the same tag.
+# Fix the cause and push a new tag with the next rc number. The release job fails when a
+# release for the tag exists.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    # One step checks the tag (scripts/check_release_version.py rules, through
+    # release_artifacts.py) and gives the validated version that every later job uses,
+    # including the SLATEOPS_VERSION build argument. A stable tag needs LICENSE_WORK_MERGED
+    # (a constant in scripts/release_artifacts.py, False until the license work) and a
+    # commit on origin/main. A test-build tag needs a commit on a pushed branch. Every
+    # other job waits for this one, so a refused tag pushes no image.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+      title: ${{ steps.tag.outputs.title }}
+      image_prefix: ${{ steps.tag.outputs.image_prefix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history of every branch: origin/main and the pushed branches are present.
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - name: Check the tag, its version and its commit
+        id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+          OWNER: ${{ github.repository_owner }}
+        run: >-
+          python3 scripts/release_artifacts.py tag
+          --tag "$TAG" --owner "$OWNER" --commit "$GITHUB_SHA" --main-ref origin/main
+          --github-output "$GITHUB_OUTPUT"
+
+  images:
+    # One linux/amd64 image manifest per image, with OCI media types and no BuildKit
+    # attestations, so the pushed digest is the one that the archive holds, cosign signs,
+    # the attestation names and the manifest lists. No build cache: each release builds
+    # every layer again from the tagged sources and the digest-pinned base images.
+    # Test builds push to private GHCR packages; the setup payload uses the archives.
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      server: ${{ steps.refs.outputs.server }}
+      caddy: ${{ steps.refs.outputs.caddy }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to GHCR
+        # A run step: the repository allows only GitHub-owned actions and three patterns
+        # (run 43884616032). The token comes from env, never from the script text.
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Build and push the server image
+        id: server
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: infra/docker/backend.Dockerfile
+          platforms: linux/amd64
+          push: true
+          outputs: type=image,oci-mediatypes=true
+          provenance: false
+          sbom: false
+          no-cache: true
+          build-args: |
+            SLATEOPS_VERSION=${{ needs.check.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.check.outputs.version }}
+          tags: ${{ needs.check.outputs.image_prefix }}/slateops-server:${{ needs.check.outputs.version }}
+      - name: Build and push the Caddy image
+        id: caddy
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: infra/docker/caddy.Dockerfile
+          platforms: linux/amd64
+          push: true
+          outputs: type=image,oci-mediatypes=true
+          provenance: false
+          sbom: false
+          no-cache: true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.check.outputs.version }}
+          tags: ${{ needs.check.outputs.image_prefix }}/slateops-caddy:${{ needs.check.outputs.version }}
+      - name: Record the image references by digest
+        id: refs
+        env:
+          PREFIX: ${{ needs.check.outputs.image_prefix }}
+          VERSION: ${{ needs.check.outputs.version }}
+          SERVER_DIGEST: ${{ steps.server.outputs.digest }}
+          CADDY_DIGEST: ${{ steps.caddy.outputs.digest }}
+        run: |
+          echo "server=$PREFIX/slateops-server:$VERSION@$SERVER_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "caddy=$PREFIX/slateops-caddy:$VERSION@$CADDY_DIGEST" >> "$GITHUB_OUTPUT"
+      - name: Write and check the image archives (before any signature)
+        # skopeo copies the pushed digest byte for byte (--preserve-digests fails instead of
+        # converting); image-info then checks every blob against the pushed digest.
+        # skopeo 1.13 refuses a source with both a tag and a digest (run 43885232153), so
+        # the source is name@digest; the archive keeps the name:tag reference name.
+        env:
+          SERVER: ${{ steps.refs.outputs.server }}
+          CADDY: ${{ steps.refs.outputs.caddy }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          mkdir -p archives image-info
+          echo "### Image sizes (W3-6)" >> "$GITHUB_STEP_SUMMARY"
+          for pair in "server:$SERVER" "caddy:$CADDY"; do
+            role="${pair%%:*}"
+            reference="${pair#*:}"
+            archive="archives/slateops-$role-$VERSION-amd64.oci.tar"
+            tagged="${reference%@*}"
+            source="${tagged%:*}@${reference#*@}"
+            skopeo copy --preserve-digests --src-authfile "$HOME/.docker/config.json" \
+              "docker://$source" "oci-archive:$archive:$tagged"
+            python3 scripts/release_artifacts.py image-info --reference "$reference" \
+              --archive "$archive" --output "image-info/$role.json" --summary "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Install cosign v3.1.4 (SHA-256 checked)
+        # The SHA-256 is the one in sigstore/cosign-installer 756fe2d2 (v4.1.3) action.yml and
+        # in the release's cosign_checksums.txt (both checked 2026-11-16).
+        run: |
+          bin="$RUNNER_TEMP/cosign-bin"
+          mkdir -p "$bin"
+          curl --fail --silent --show-error --location --retry 5 --output "$bin/cosign" \
+            https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64
+          if ! echo "424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  $bin/cosign" \
+            | sha256sum --check --strict --status -; then
+            rm -f "$bin/cosign"
+            echo "::error::cosign-linux-amd64 v3.1.4 does not match its pinned SHA-256"
+            exit 1
+          fi
+          chmod +x "$bin/cosign"
+          echo "$bin" >> "$GITHUB_PATH"
+      - name: Sign the image digests (keyless, GitHub OIDC)
+        env:
+          SERVER: ${{ steps.refs.outputs.server }}
+          CADDY: ${{ steps.refs.outputs.caddy }}
+        run: |
+          cosign sign --yes "$SERVER"
+          cosign sign --yes "$CADDY"
+      - name: Attest the server image build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ needs.check.outputs.image_prefix }}/slateops-server
+          subject-digest: ${{ steps.server.outputs.digest }}
+          push-to-registry: true
+          # Storage records need artifact-metadata: write and an organization-owned repository.
+          create-storage-record: false
+      - name: Attest the Caddy image build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ needs.check.outputs.image_prefix }}/slateops-caddy
+          subject-digest: ${{ steps.caddy.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-images
+          path: archives/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-info
+          path: image-info/
+          if-no-files-found: error
+          retention-days: 1
+      - name: Log out of GHCR
+        if: always()
+        run: docker logout ghcr.io
+
+  engine-bundle:
+    # W5b: slateops-engine-<version>.tar.gz (scripts/release_engine_bundle.py): the
+    # standard-library engine, its env templates and the Compose files it starts. It holds
+    # no release manifest (TASK-0083 review): the Linux image records the bundle's
+    # SHA-256, the manifest names it, and the engine compares the two (prepare).
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - name: Build the engine bundle
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          REPOSITORY: ${{ github.repository }}
+        run: >-
+          python3 scripts/release_engine_bundle.py build --version "$VERSION"
+          --repository "$REPOSITORY" --output dist --entry engine-info/engine-bundle.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-engine
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: engine-info
+          path: engine-info/
+          if-no-files-found: error
+          retention-days: 1
+
+  linux-image:
+    # W4: our Debian 13 root file system for WSL (packaging/linux-image/, pins.env). The
+    # build runs in a privileged, digest-pinned Debian container. The tarball is hashed
+    # first, then checked as it ships, then a throwaway copy boots with systemd-nspawn;
+    # the tarball itself never boots. It runs beside the image builds, after the engine
+    # bundle that it carries (W5b).
+    needs: [check, engine-bundle]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: asset-engine
+          path: engine-dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine-info
+          path: engine-info
+      - name: Build the Linux image (amd64)
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: packaging/linux-image/build.sh --arch amd64 --version "$VERSION" --output dist --engine-bundle "engine-dist/slateops-engine-$VERSION.tar.gz"
+      - name: Write the package list, the source list and the manifest entry (W4-4)
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: >-
+          python3 scripts/release_linux_image.py outputs
+          --tarball "dist/slateops-linux-$VERSION-amd64.tar.gz" --arch amd64
+          --pins packaging/linux-image/pins.env --output dist
+          --entry linux-info/linux-image.json --files linux-files
+      - name: Check the root file system as it ships (W4-1 to W4-3, W4-6, AC-W4-8)
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: >-
+          python3 scripts/release_linux_image.py check
+          --tarball "dist/slateops-linux-$VERSION-amd64.tar.gz" --arch amd64
+          --pins packaging/linux-image/pins.env --engine-info engine-info/engine-bundle.json
+      - name: Boot a throwaway copy with systemd-nspawn (W4-5, W4-6, AC-W4-8)
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: packaging/linux-image/boot-check.sh --arch amd64 --tarball "dist/slateops-linux-$VERSION-amd64.tar.gz"
+      - name: Record the Linux image size (10.2)
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          size="$(stat -c %s "dist/slateops-linux-$VERSION-amd64.tar.gz")"
+          echo "### Linux image size (10.2)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`slateops-linux-$VERSION-amd64.tar.gz\`: $size bytes, $((size / 1048576)) MiB" \
+            >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-linux
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-info
+          path: linux-info/
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-files
+          path: linux-files/
+          if-no-files-found: error
+          retention-days: 1
+
+  manifest:
+    needs: [check, images, linux-image, engine-bundle]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-info
+          path: image-info
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-info
+          path: linux-info
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine-info
+          path: engine-info
+      - name: Write the release manifest and the release notes
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.check.outputs.version }}
+          PRERELEASE: ${{ needs.check.outputs.prerelease }}
+          SERVER_IMAGE: ${{ needs.images.outputs.server }}
+          CADDY_IMAGE: ${{ needs.images.outputs.caddy }}
+        run: |
+          python3 scripts/release_artifacts.py manifest \
+            --version "$VERSION" \
+            --server-info image-info/server.json --caddy-info image-info/caddy.json \
+            --linux-info linux-info/linux-image.json \
+            --engine-info engine-info/engine-bundle.json \
+            --compose infra/supabase/compose.yaml --output dist/release-manifest.json
+          python3 scripts/release_artifacts.py notes \
+            --tag "$TAG" --prerelease "$PRERELEASE" \
+            --identity "$GITHUB_SERVER_URL/$GITHUB_WORKFLOW_REF" --repository "$GITHUB_REPOSITORY" \
+            --server-image "$SERVER_IMAGE" --caddy-image "$CADDY_IMAGE" \
+            --output notes/release-notes.md
+      - name: Install cosign v3.1.4 (SHA-256 checked)
+        # The SHA-256 is the one in sigstore/cosign-installer 756fe2d2 (v4.1.3) action.yml and
+        # in the release's cosign_checksums.txt (both checked 2026-11-16).
+        run: |
+          bin="$RUNNER_TEMP/cosign-bin"
+          mkdir -p "$bin"
+          curl --fail --silent --show-error --location --retry 5 --output "$bin/cosign" \
+            https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64
+          if ! echo "424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  $bin/cosign" \
+            | sha256sum --check --strict --status -; then
+            rm -f "$bin/cosign"
+            echo "::error::cosign-linux-amd64 v3.1.4 does not match its pinned SHA-256"
+            exit 1
+          fi
+          chmod +x "$bin/cosign"
+          echo "$bin" >> "$GITHUB_PATH"
+      - name: Sign the release manifest (keyless, GitHub OIDC)
+        run: cosign sign-blob --yes --bundle dist/release-manifest.json.sigstore.json dist/release-manifest.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-manifest
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: notes/release-notes.md
+          if-no-files-found: error
+          retention-days: 1
+
+  notices:
+    # License data comes from what the release ships: the locked Python packages without
+    # development packages (as in the server image), the npm production packages
+    # (installed without running their install scripts), the Debian and Alpine package
+    # databases, the Python license and the Caddy program copied out of the pushed images
+    # with docker create and docker cp, so no code from an image runs here, and the
+    # package files of the Linux image (W4-7). packages: read pulls the images while the
+    # GHCR packages are private.
+    needs: [check, images, linux-image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          # The uv of the server image (infra/docker/backend.Dockerfile); bump both together.
+          version: "0.12.13"
+          enable-cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - name: Log in to GHCR
+        # A run step: the repository allows only GitHub-owned actions and three patterns
+        # (run 43884616032). The token comes from env, never from the script text.
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-files
+          path: image-files/linux
+      - name: Copy the package databases out of the pushed images
+        id: files
+        env:
+          SERVER_IMAGE: ${{ needs.images.outputs.server }}
+          CADDY_IMAGE: ${{ needs.images.outputs.caddy }}
+        run: |
+          # The runtime versions come from the image settings; each must have its shape
+          # before it becomes a path or a URL.
+          image_env() {
+            docker pull --quiet "$1" > /dev/null
+            docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$1" \
+              | sed -n "s/^$2=//p"
+          }
+          python_version="$(image_env "$SERVER_IMAGE" PYTHON_VERSION)"
+          caddy_version="$(image_env "$CADDY_IMAGE" CADDY_VERSION)"
+          if ! [[ "$python_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$caddy_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Unexpected PYTHON_VERSION '$python_version' or CADDY_VERSION '$caddy_version'"
+            exit 1
+          fi
+          echo "python_version=$python_version" >> "$GITHUB_OUTPUT"
+          echo "caddy_version=$caddy_version" >> "$GITHUB_OUTPUT"
+          echo "### Unpacked image sizes (W3-6)" >> "$GITHUB_STEP_SUMMARY"
+          extract() {
+            local name="$1" image="$2" container path
+            shift 2
+            docker pull --quiet "$image"
+            echo "- $name (unpacked): $(docker image inspect --format '{{.Size}}' "$image") bytes" \
+              >> "$GITHUB_STEP_SUMMARY"
+            container="$(docker create "$image")"
+            for path in "$@"; do
+              mkdir -p "image-files/$name$(dirname "$path")"
+              docker cp "$container:$path" "image-files/$name$path"
+            done
+            docker rm "$container"
+          }
+          extract server "$SERVER_IMAGE" /var/lib/dpkg/status /usr/share/doc \
+            "/usr/local/lib/python${python_version%.*}/LICENSE.txt"
+          extract caddy "$CADDY_IMAGE" /lib/apk/db/installed /etc/alpine-release /usr/bin/caddy
+      - name: Download the Caddy license of the image's release tag
+        # The Caddy image ships no license file (checked 2026-11-16). The version and the
+        # SHA-256 are pinned next to the image pin in infra/docker/caddy.Dockerfile (S83-2).
+        env:
+          CADDY_VERSION: ${{ steps.files.outputs.caddy_version }}
+        run: |
+          read -r _ _ pinned_version pinned_sha256 < <(grep '^# caddy-license: ' infra/docker/caddy.Dockerfile)
+          if [ "$CADDY_VERSION" != "$pinned_version" ]; then
+            echo "::error::The Caddy image is $CADDY_VERSION; caddy.Dockerfile pins the license of $pinned_version"
+            exit 1
+          fi
+          curl --fail --silent --show-error --location --retry 5 \
+            --output image-files/caddy-LICENSE.download \
+            "https://raw.githubusercontent.com/caddyserver/caddy/$CADDY_VERSION/LICENSE"
+          if ! echo "$pinned_sha256  image-files/caddy-LICENSE.download" | sha256sum --check --strict --status -; then
+            rm -f image-files/caddy-LICENSE.download
+            echo "::error::The Caddy $CADDY_VERSION LICENSE does not match its pinned SHA-256"
+            exit 1
+          fi
+          mv image-files/caddy-LICENSE.download image-files/caddy-LICENSE
+      - name: Install the Python packages that the server image ships
+        working-directory: backend
+        # The same lock flag as the image (infra/docker/backend.Dockerfile).
+        run: uv sync --frozen --no-dev --no-install-project
+      - name: Install the npm production packages
+        working-directory: frontend
+        run: npm ci --omit=dev --ignore-scripts
+      - name: Write the third-party notices
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          PYTHON_VERSION: ${{ steps.files.outputs.python_version }}
+          CADDY_VERSION: ${{ steps.files.outputs.caddy_version }}
+        run: |
+          site_packages="$(backend/.venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+          python3 scripts/release_artifacts.py notices \
+            --version "$VERSION" --python-site-packages "$site_packages" --npm-root frontend \
+            --server-files image-files/server --caddy-files image-files/caddy \
+            --linux-files image-files/linux \
+            --python-version "$PYTHON_VERSION" \
+            --python-license "image-files/server/usr/local/lib/python${PYTHON_VERSION%.*}/LICENSE.txt" \
+            --caddy-version "$CADDY_VERSION" --caddy-binary image-files/caddy/usr/bin/caddy \
+            --caddy-license image-files/caddy-LICENSE \
+            --compose infra/supabase/compose.yaml --output dist/THIRD-PARTY-NOTICES.txt \
+            --source-offer dist/SOURCE-OFFER.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-notices
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          # The package databases of the three images, for the source-packages job.
+          name: package-databases
+          path: |
+            image-files/linux/var/lib/dpkg/status
+            image-files/server/var/lib/dpkg/status
+            image-files/caddy/lib/apk/db/installed
+            image-files/caddy/etc/alpine-release
+          if-no-files-found: error
+          retention-days: 1
+      - name: Log out of GHCR
+        if: always()
+        run: docker logout ghcr.io
+
+  source-packages:
+    # Decision H4 and W4-7: the source files of every Debian package of the Linux image
+    # and the server image, and of every Alpine package of the Caddy image, each checked
+    # against its published hash, packed into assets below 2 GiB
+    # (scripts/release_sources.py). Docker, cosign, Python and Caddy are named with their
+    # upstream source in SOURCE-OFFER.txt.
+    needs: [check, notices]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package-databases
+          path: databases
+      - name: Download, check and pack the source packages
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: >-
+          python3 scripts/release_sources.py fetch --version "$VERSION"
+          --debian-status databases/linux/var/lib/dpkg/status
+          --debian-status databases/server/var/lib/dpkg/status
+          --apk-installed databases/caddy/lib/apk/db/installed
+          --alpine-release databases/caddy/etc/alpine-release
+          --staging "$RUNNER_TEMP/sources" --output dist --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-sources
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  install-proof:
+    # W5b-1 (TASK-0086): every test build installs itself on a Linux host from its own
+    # artifacts. Our Linux image boots systemd in a privileged container, so its Docker,
+    # Compose, cosign and engine run as in WSL; receive, prefetch, install with no email
+    # and the administrator's password (DEC-0041), HTTPS /api/ready, sign-in, an install
+    # rerun (W5b-2) and set-email with a password reset mail in a test Mailpit
+    # (packaging/linux-image/install-proof.sh). The W2 env-file reader
+    # test also runs here, with the image's own Docker CLI and Compose binaries. The
+    # release waits for this job. Windows and WSL themselves are W14.
+    needs: [check, images, linux-image, engine-bundle, manifest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          # The uv of the server image (infra/docker/backend.Dockerfile); bump both together.
+          version: "0.12.13"
+          enable-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: asset-images
+          path: payload
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: asset-engine
+          path: payload
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: asset-manifest
+          path: payload
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: asset-linux
+          path: linux
+      - name: Read the env files with the image's Docker CLI and Compose (W2-2)
+        # Every env-file reader parses in the client (the Docker CLI's --env-file, Compose's
+        # env_file and --env-file), so the image's own binaries read the rendered files here.
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          extract="$RUNNER_TEMP/image-cli"
+          bin="$RUNNER_TEMP/image-bin"
+          config="$RUNNER_TEMP/image-docker-config"
+          mkdir -p "$extract" "$bin" "$config/cli-plugins"
+          tar -xzf "linux/slateops-linux-$VERSION-amd64.tar.gz" -C "$extract" --wildcards \
+            '*usr/bin/docker' '*usr/libexec/docker/cli-plugins/docker-compose'
+          cp "$(find "$extract" -path '*usr/bin/docker' -type f)" "$bin/docker"
+          cp "$(find "$extract" -path '*cli-plugins/docker-compose' -type f)" "$config/cli-plugins/"
+          export PATH="$bin:$PATH" DOCKER_CONFIG="$config"
+          docker version --format 'image Docker CLI {{.Client.Version}}'
+          docker compose version
+          cd backend
+          uv run pytest tests/operations/test_installer_env_docker_readers.py -m integration --no-cov
+      - name: Free disk space for the installation
+        # The provider images, our two images and the archives need about 20 GB.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Install from this build's artifacts and check it (W5b-1, W5b-2)
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: >-
+          packaging/linux-image/install-proof.sh --version "$VERSION"
+          --tarball "linux/slateops-linux-$VERSION-amd64.tar.gz" --payload payload --output proof
+      - name: Keep the redacted diagnostics of a failed proof
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: install-proof-diagnostics
+          path: |
+            proof/log-bundle.tar.gz
+            proof/console.log
+            proof/journal.txt
+            proof/containers.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  installer:
+    # W8 (TASK-0094): the one setup file SlateOpsSetup-<version>.exe (plan 5.2). Built with
+    # the pinned Inno Setup on Windows from this run's own artifacts: the Linux image, the
+    # five receive parts (engine bundle, signed manifest and its bundle, our two image
+    # archives), the notices and the source offer, plus the pinned WSL package (the newest
+    # stable WSL at the W8 build, checked by its GitHub asset digest). version.json carries
+    # the version and both SHA-256 values. W8-7: the file stays below 2 GiB.
+    needs: [check, images, engine-bundle, linux-image, manifest, notices]
+    runs-on: windows-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: asset-images
+          path: payload
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: asset-engine
+          path: payload
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: asset-linux
+          path: payload
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: asset-manifest
+          path: payload
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: asset-notices
+          path: payload
+      - name: Download the pinned WSL package and write version.json
+        shell: powershell
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          WSL_VERSION: 3.0.5.0
+          WSL_URL: https://github.com/microsoft/WSL/releases/download/3.0.5/wsl.3.0.5.0.x64.msi
+          WSL_SHA256: 2313efc5873e3f8552f42e77f950fabd913c0289078fa89d2100f3421a525eaa
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $msi = Join-Path 'payload' ('wsl.{0}.x64.msi' -f $env:WSL_VERSION)
+          Invoke-WebRequest -Uri $env:WSL_URL -OutFile $msi -UseBasicParsing
+          $hash = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $env:WSL_SHA256) { throw "WSL package SHA-256 $hash does not match the pin." }
+          $image = Join-Path 'payload' ('slateops-linux-{0}-amd64.tar.gz' -f $env:VERSION)
+          $imageHash = (Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash.ToLowerInvariant()
+          $json = '{{"schema_version":1,"version":"{0}","wsl_version":"{1}","wsl_msi_sha256":"{2}","linux_image_sha256":"{3}"}}' -f $env:VERSION, $env:WSL_VERSION, $hash, $imageHash
+          [System.IO.File]::WriteAllText((Join-Path (Resolve-Path 'payload') 'version.json'), $json, (New-Object System.Text.UTF8Encoding($false)))
+          Get-Content -LiteralPath 'payload\version.json'
+      - name: Install the pinned Inno Setup and build the setup file
+        shell: powershell
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          INNO_URL: https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe
+          INNO_SHA256: a549929319f9120716677c685535ca4671e4b937b5fdc87e2585f32d8eb30e8c
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $installer = Join-Path $env:RUNNER_TEMP 'innosetup-6.7.4.exe'
+          Invoke-WebRequest -Uri $env:INNO_URL -OutFile $installer -UseBasicParsing
+          $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $env:INNO_SHA256) { throw "Inno Setup SHA-256 $hash does not match the pin." }
+          $dir = Join-Path $env:RUNNER_TEMP 'innosetup'
+          $process = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=`"$dir`"") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "The Inno Setup install ended with exit code $($process.ExitCode)." }
+          $payload = (Resolve-Path 'payload').Path
+          $dist = Join-Path (Get-Location) 'dist'
+          $settingsDir = Join-Path $env:RUNNER_TEMP 'settings'
+          Set-Location infra\windows\installer
+          # W9: the maintenance program, carried inside the setup file (not a release asset).
+          & (Join-Path $dir 'ISCC.exe') /Qp "/DAppVersion=$env:VERSION" /DSettingsBuild "/O$settingsDir" SlateOpsSetup.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $settings = Join-Path $settingsDir 'SlateOpsSettings.exe'
+          & (Join-Path $dir 'ISCC.exe') /Qp "/DAppVersion=$env:VERSION" "/DPayloadDir=$payload" "/DSettingsExe=$settings" "/O$dist" SlateOpsSetup.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # W8-7: one file below 2 GiB (the release job checks every asset again).
+          $setup = Get-Item -LiteralPath (Join-Path $dist ('SlateOpsSetup-{0}.exe' -f $env:VERSION))
+          if ($setup.Length -ge 2147483648) { throw "The setup file has $($setup.Length) bytes: 2 GiB or more." }
+          "- ``$($setup.Name)``: $($setup.Length) bytes, $([math]::Floor($setup.Length / 1048576)) MiB" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-installer
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    # The only job that writes to the repository. It checks out nothing and runs no
+    # repository code; it downloads the assets, writes SHA256SUMS and creates the draft.
+    needs: [check, images, linux-image, manifest, notices, source-packages, install-proof, installer]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Refuse a tag that already has a release (re-run rule)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          tags="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[].tag_name')"
+          if printf '%s\n' "$tags" | grep -Fxq -- "$TAG"; then
+            echo "::error::A release for $TAG exists. Do not re-run; push the next rc number."
+            exit 1
+          fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: asset-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+          path: notes
+      - name: Refuse an asset of 2 GiB or more
+        # GitHub refuses a release asset of 2 GiB or more (plan 5.2); stop before the draft.
+        working-directory: dist
+        run: |
+          too_big="$(find . -maxdepth 1 -type f -size +2147483647c)"
+          if [ -n "$too_big" ]; then
+            echo "::error::Release assets of 2 GiB or more: $too_big"
+            exit 1
+          fi
+      - name: Write SHA256SUMS for every asset
+        working-directory: dist
+        run: |
+          find . -maxdepth 1 -type f -printf '%P\n' \
+            | LC_ALL=C sort | xargs -d '\n' sha256sum -- > "$RUNNER_TEMP/SHA256SUMS"
+          mv "$RUNNER_TEMP/SHA256SUMS" SHA256SUMS
+          cat SHA256SUMS
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          TITLE: ${{ needs.check.outputs.title }}
+          PRERELEASE: ${{ needs.check.outputs.prerelease }}
+        run: |
+          flags=(--draft --verify-tag --title "$TITLE" --notes-file notes/release-notes.md)
+          if [ "$PRERELEASE" = "true" ]; then
+            flags+=(--prerelease --latest=false)
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}" dist/*
+          cat notes/release-notes.md >> "$GITHUB_STEP_SUMMARY"

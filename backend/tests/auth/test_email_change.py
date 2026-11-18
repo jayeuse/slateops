@@ -186,6 +186,33 @@ def test_email_request_requires_password_and_never_changes_saved_email(email_bou
     assert all("old@example.test" not in e.model_dump_json() for e in state["events"])
 
 
+def test_ac_b7_an_email_change_without_email_setup_answers_email_not_configured(
+    email_boundary, monkeypatch
+):
+    # DEC-0041: Auth with no SMTP host accepts the change and sends no confirmation, so the
+    # person would wait for a mail that never comes; the request stops first.
+    from app.systems.access.users import email_setup
+
+    browser, _, user, _, _, access, state = email_boundary
+    monkeypatch.setattr(email_setup, "email_configured", lambda: False)
+
+    response = browser.post(
+        "/api/auth/me/email",
+        headers={"Authorization": f"Bearer {access}"},
+        json={"email": "new@example.test", "current_password": "correct-password"},
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": {
+        "code": "email_not_configured",
+        "message": (
+            "Email is not set up yet. Set it up in Slate Operations settings on the server PC."
+        ),
+    }}
+    assert [r for r in state["seen"] if r.method in {"PUT", "POST"}] == []
+    assert state["events"] == [] and user.email == "old@example.test"
+
+
 @pytest.mark.parametrize("organizations", ["zero", "multiple", "restricted"])
 def test_global_email_request_does_not_depend_on_organization_policy(
     email_boundary, unit_workspace_policy, organizations

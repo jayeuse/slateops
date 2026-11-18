@@ -210,9 +210,10 @@ def _probe_components(
 
 
 def _smtp_component(settings: Settings) -> ComponentReadiness:
+    # DEC-0041: an installation runs before email is set up, so email never blocks readiness.
     configured = bool(settings.smtp_host and settings.smtp_port and settings.smtp_admin_email)
     if not configured:
-        return _not_configured(required=True)
+        return _not_configured(required=False)
     return _component(True)
 
 

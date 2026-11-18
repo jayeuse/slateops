@@ -6,6 +6,7 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthClient,
     SupabaseAuthUnavailable,
 )
+from app.systems.access.users import email_setup
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import Membership, User
 from app.systems.manage.health import signals
@@ -61,6 +62,7 @@ def prepare_invitation_user(
     so an explicit retry can inspect the provider's authoritative state.
     """
 
+    email_setup.require_email_configured()  # before any provider change (DEC-0041)
     old_id = profile.supabase_user_id
     if old_id is not None:
         try:

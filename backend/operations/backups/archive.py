@@ -229,6 +229,13 @@ def retention(
     try:
         candidate_marker(host, newest)
         present = snapshot_ids(host)
+        if (
+            host.config.compose_layout == "installer"
+            and facts["snapshot_id"] in present
+            and not any(value.run.snapshot_id in present for value in owned)
+        ):
+            # An installer target change gives a new repository with no earlier point.
+            return
         if facts["snapshot_id"] not in present or newest.run.snapshot_id not in present:
             raise RunnerError("retention_failed")
         keep = {facts["snapshot_id"], newest.run.snapshot_id}

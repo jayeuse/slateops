@@ -11,6 +11,7 @@ from uuid6 import uuid7
 import app.systems.access.users.acceptance as invitation_acceptance
 import app.systems.access.users.service as user_service
 from app.core.integrations.supabase_auth import ProviderUser, SupabaseAuthUnavailable
+from app.systems.access.users import email_setup
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.manage.audit.models import SecurityEventOutcome
@@ -86,6 +87,27 @@ def test_provider_resend_failure_records_failure_without_advancing_local_deliver
         SecurityEventOutcome.FAILURE,
     ]
     assert events[0]["operation_id"] == events[1]["operation_id"]
+    assert membership.invitation_sent_at == original_delivery
+    db.rollback.assert_called_once()
+    db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("action", ["resend", "reconcile"])
+def test_ac_b3_no_invitation_is_sent_again_while_email_is_not_set_up(monkeypatch, action):
+    db, actor, profile, membership, client, events = _resend(monkeypatch)
+    original_delivery = membership.invitation_sent_at
+    monkeypatch.setattr(email_setup, "email_configured", lambda: False)
+    if action == "resend":
+        call = user_service.resend_invitation
+    else:
+        monkeypatch.setattr(user_service, "_lock_administrator_changes", Mock())
+        call = user_service.reconcile_invitation
+
+    with pytest.raises(email_setup.EmailNotConfigured):
+        call(db, profile.id, actor_id=actor, client=client)
+
+    client.get_admin_user.assert_not_called()
+    client.admin_send_invitation.assert_not_called()
     assert membership.invitation_sent_at == original_delivery
     db.rollback.assert_called_once()
     db.commit.assert_not_called()
