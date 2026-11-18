@@ -37,6 +37,7 @@ s01_state_unsafe=Setup cannot use the folder C:\ProgramData\SlateOps, because a 
 ; ---- S02 Check this PC
 s02_title=Check this PC
 s02_subtitle=Setup checks whether this PC can be your Slate Operations server. It changes nothing.
+s02_welcome_back=Welcome back. Setup checks this PC again.
 s02_checking=Checking this PC… (about 1 minute)
 s02_ready=This PC is ready to be your Slate Operations server.
 s02_ready_restart=Setup will restart this PC once.

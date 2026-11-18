@@ -165,7 +165,7 @@ function GetVolumeInformation(Root, Name: String; NameSize: Longword; Serial, Ma
 var
   HelperScript, StateCheckCode, RunId, SetupVersion, ServiceSid, HostName: String;
   EntryScreen, EntryNext: String;
-  StateUnsafe, ForceClose, ModalOpen, Ticking, KeyTicking: Boolean;
+  EntryWelcomeBack, StateUnsafe, ForceClose, ModalOpen, Ticking, KeyTicking: Boolean;
   { DEC-0041 (AC-W4): the state-check found an earlier run that did not finish; setup removes
     it before S01. }
   EntryCleanup: Boolean;
@@ -1712,7 +1712,6 @@ begin
   if OrgPassword <> nil then
     DropFilesHolding(Staging, OrgPassword.Text);
 end;
-end;
 
 { W14-D9: Save report runs from the timer (7.6 "Save report", one line beside its button):
   2 of 4 the server part's logs (the log-bundle job, when the server part answers and no other
@@ -2210,11 +2209,19 @@ begin
     RenderPage(-1);
 end;
 
+{ The check restart (S02, the S11 recheck, the C04 firmware restart): the progress and the
+  resume entries first. AC-W9: after S05 (in this run, or after its restart) the mark prepared
+  lets the resume go on after S05, so nothing that S05 turned on is removed. }
 procedure CheckRestart(Firmware: Boolean; Index: Integer);
+var
+  Extra: String;
 begin
   RestartFirmware := Firmware;
   RestartIndex := Index;
-  if RunStep('save-progress', '-Stage check_restart -SetupPath ' + AddQuotes(ExpandConstant('{srcexe}')), 'cr-save', CM('later_saving'), 0, 0, HELPER_LIMIT_MS) then
+  Extra := '-Stage check_restart -SetupPath ' + AddQuotes(ExpandConstant('{srcexe}'));
+  if (PrepState <> '') or (EntryNext = 'S07') then
+    Extra := Extra + ' -Prepared';
+  if RunStep('save-progress', Extra, 'cr-save', CM('later_saving'), 0, 0, HELPER_LIMIT_MS) then
     RenderPage(-1);
 end;
 
@@ -2513,6 +2520,9 @@ begin
   SetNextCaption(CM('btn_next'));
   SetCancelCaption(SetupMessage(msgButtonCancel));
   AddStageLine(1);
+  { AC-W9: a check restart that setup asked for before S05 goes on here. }
+  if EntryWelcomeBack then
+    AddText(CM('s02_welcome_back'), False);
   if StateUnsafe then
   begin
     { Spec 4.1: setup reads nothing from an unsafe state folder; Next stays off. }
@@ -5360,11 +5370,11 @@ begin
   SetTimer(0, 0, 1000, CreateCallback(@TimerTick));
 end;
 
-{ DEC-0041 (AC-W3): setup changed this PC once S05 ran its helper, after the S05 restart, and
-  once Install was selected. }
+{ DEC-0041 (AC-W3): setup changed this PC once S05 ran its helper, after a restart that setup
+  asked for (AC-W9: its progress and resume entries go too), and once Install was selected. }
 function SetupChangedPc: Boolean;
 begin
-  Result := (PrepState <> '') or (EntryNext <> '') or InstallStarted;
+  Result := (PrepState <> '') or (EntryNext <> '') or EntryWelcomeBack or InstallStarted;
 end;
 
 procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);
@@ -5454,6 +5464,8 @@ begin
   StateUnsafe := (StateCheckCode = 'unsafe_owner') or (StateCheckCode = 'unsafe');
   EntryScreen := JsonValue(Text, 'screen');
   EntryNext := JsonValue(Text, 'next');
+  { AC-W9: a check restart that setup asked for before S05 goes on at S02. }
+  EntryWelcomeBack := Pos('"welcome_back":true', Text) > 0;
   { DEC-0041 (AC-W4): an earlier run that did not finish; CurPageChanged removes it before S01. }
   EntryCleanup := (Pos('"cleanup":true', Text) > 0) and not StateUnsafe and not SETTINGS_BUILD;
   if (EntryScreen = '') or StateUnsafe then
@@ -5595,7 +5607,8 @@ begin
     (MaintSkip above). Only the S05 restart (S06, then S07) and a finished install (S06, then
     S14) start past S01. }
   if (PageID = Pages[P_MAINT].ID) or (PageID = Pages[P_EMAIL].ID) then Result := True
-  else if (PageID = wpWelcome) or (PageID = Pages[P_CHECK].ID) or (PageID = wpLicense) then Result := Resumed
+  else if PageID = wpWelcome then Result := Resumed or EntryWelcomeBack
+  else if (PageID = Pages[P_CHECK].ID) or (PageID = wpLicense) then Result := Resumed
   else if PageID = Pages[P_RESTART].ID then Result := Resumed or not NeedPrepare
   else if PageID = Pages[P_BACK].ID then Result := not Resumed
   else if (PageID = Pages[P_DATA].ID) or (PageID = Pages[P_ORG].ID) or (PageID = Pages[P_BACKUP].ID) or (PageID = Pages[P_READY].ID) or (PageID = Pages[P_INSTALL].ID) then

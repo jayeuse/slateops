@@ -1835,3 +1835,68 @@ class Dec0041Test(unittest.TestCase):
         for gone in ("StartBgPrep", "PollBgPrep", "'resume-unpack'"):
             with self.subTest(gone=gone):
                 self.assertNotIn(gone, self.raw)
+
+    def test_ac_w9_a_restart_that_setup_asked_for_continues_and_removes_nothing(self) -> None:
+        windows = (SCRIPTS / "lib/Windows.ps1").read_text(encoding="ascii")
+        entry = windows.split("function Get-SetupEntry {", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("if ($stage -eq 'check_restart') {", entry)
+        self.assertIn("return @{ screen = 'S02'; next = ''; welcome_back = $true }", entry)
+        self.assertLess(
+            entry.index("if ($stage -eq 'check_restart') {"), entry.index("cleanup = $true")
+        )
+        self.assertIn("if ($Prepared) { $marks.prepared = $true }", self.helper)
+        restart = self.part("procedure CheckRestart(Firmware: Boolean; Index: Integer);")
+        self.assertIn("if (PrepState <> '') or (EntryNext = 'S07') then", restart)
+        self.assertIn("Extra := Extra + ' -Prepared';", restart)
+        start = self.part("function InitializeSetup(): Boolean;")
+        self.assertIn("EntryWelcomeBack := Pos('\"welcome_back\":true', Text) > 0;", start)
+        skip = self.part("function ShouldSkipPage(PageID: Integer): Boolean;")
+        self.assertIn("Result := Resumed or EntryWelcomeBack", skip)
+        self.assertIn("EntryWelcomeBack", self.part("function SetupChangedPc: Boolean;"))
+        self.assertIn("Test-Case 'AC-W9 a restart that setup asked for continues", self.removal)
+
+
+def block_balance_problems(text: str) -> list[str]:
+    """Routine-level block balance of Pascal [Code]: every begin, case, try and record has its
+    end, no end comes without an opener, and each routine heading at the start of a line starts
+    at depth 0. Comments and strings are removed first (code_only); ISPP lines (#) and the
+    ; comment lines before [Code] are skipped, so line numbers are the file's."""
+    problems: list[str] = []
+    depth = 0
+    for number, line in enumerate(code_only(text).splitlines(), start=1):
+        if line.lstrip().startswith(("#", ";")):
+            continue
+        if re.match(r"(procedure|function) ", line) and depth != 0:
+            problems.append(f"line {number}: routine starts at depth {depth}")
+            depth = 0
+        for word in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", line):
+            lower = word.lower()
+            if lower in ("begin", "case", "try", "record"):
+                depth += 1
+            elif lower == "end":
+                depth -= 1
+                if depth < 0:
+                    problems.append(f"line {number}: end without an opener")
+                    depth = 0
+    if depth != 0:
+        problems.append(f"end of file at depth {depth}")
+    return problems
+
+
+class PascalBlockBalanceTest(unittest.TestCase):
+    """Windows CI on 4dcbfada: "Error on line 1715 in Wizard.iss: Column 4: period ('.')
+    expected", a stray end; after DropFilesWithPassword. The strict scan checked names, not
+    blocks; this holds the blocks of every [Code] file."""
+
+    def test_every_code_file_has_balanced_blocks(self) -> None:
+        for path in (*CODE_FILES, SELFTEST):
+            with self.subTest(path=path.name):
+                self.assertEqual(block_balance_problems(path.read_text(encoding="ascii")), [])
+
+    def test_the_balance_check_finds_a_stray_end_and_a_missing_end(self) -> None:
+        good = "[Code]\nprocedure A;\nbegin\n  case X of\n    1: begin end;\n  end;\nend;\n"
+        self.assertEqual(block_balance_problems(good), [])
+        stray = good + "end;\nprocedure B;\nbegin\nend;\n"
+        self.assertEqual(block_balance_problems(stray), ["line 8: end without an opener"])
+        missing = "[Code]\nprocedure A;\nbegin\n  try\n  finally\nend;\nprocedure B;\n"
+        self.assertEqual(block_balance_problems(missing), ["line 7: routine starts at depth 1"])

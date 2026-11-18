@@ -41,6 +41,7 @@ param(
     [switch]$DeleteBackups,
     [switch]$UseKept,
     [switch]$KeptMark,
+    [switch]$Prepared,
     [switch]$DataLeft,
     [switch]$Restored
 )
@@ -349,6 +350,8 @@ try {
             $marks = @{}
             # W9 review item 1: a kept reinstall stays kept on resume.
             if ($KeptMark) { $marks.kept = $true }
+            # AC-W9: S05 ran before this check restart, so the resume goes on after S05.
+            if ($Prepared) { $marks.prepared = $true }
             Save-SetupProgress -Layout $layout -Stage $Stage -RunId $RunId -Marks $marks
             if (@('check_restart', 'feature_restart') -contains $Stage) { $result = Register-SetupResume -SetupPath $SetupPath }
             else { $result = New-StepResult -Code 'saved' -MessageKey 'setup.progress.saved' }

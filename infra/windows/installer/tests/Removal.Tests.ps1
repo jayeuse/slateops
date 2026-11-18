@@ -13,13 +13,13 @@ function New-RemovalLayout {
     return $layout
 }
 
-Test-Case 'AC-W4 an earlier run that did not finish is removed at start; only the S05 restart continues' {
+Test-Case 'AC-W4 an earlier run that did not finish is removed at start; only a restart that setup asked for continues' {
     # Rows: stage ('' = no progress file), Windows records left, installed version, expected
     # "screen next cleanup".
     $rows = @(
         @('continue_later', $true, '', 'S01  cleanup'),
         @('install_started', $true, '', 'S01  cleanup'),
-        @('check_restart', $true, '', 'S01  cleanup'),
+        @('check_restart', $true, '', 'S02  '),
         @('key_saved', $true, '', 'S01  cleanup'),
         @('', $true, '', 'S01  cleanup'),
         @('feature_restart', $true, '', 'S06 S07 '),
@@ -51,6 +51,29 @@ Test-Case 'AC-W4 the records of an earlier run are the progress file, install.js
     Remove-Item -LiteralPath (Join-Path $layout.State 'windows-changes.json')
     Write-JsonFile -Path $layout.StateFile -Value ([ordered]@{ schema_version = 1; data_root = 'D:\SlateOps' })
     Assert-Equal $true (Test-SetupLeftover -Layout $layout) 'install.json'
+}
+
+Test-Case 'AC-W9 a restart that setup asked for continues and removes nothing; a run that stopped without one is removed' {
+    # Rows: saved progress (with its marks), expected "screen next cleanup". prepared: S05 ran in
+    # this run before the restart was asked (S11 "Restart now", the C04 firmware restart), so
+    # WSL and Virtual Machine Platform stay and setup continues after S05.
+    $rows = @(
+        @(@{ stage = 'check_restart'; prepared = $true }, 'S06 S07 ', 'restart asked at S11 after S05: continues, WSL kept'),
+        @(@{ stage = 'check_restart' }, 'S02  ', 'restart asked at S02 before S05: continues at S02'),
+        @(@{ stage = 'feature_restart' }, 'S06 S07 ', 'the S05 restart'),
+        @(@{ stage = 'install_started' }, 'S01  cleanup', 'any run after Install started'),
+        @($null, 'S01  cleanup', 'stopped with no asked restart (S05 records only)')
+    )
+    foreach ($row in $rows) {
+        $entry = Get-SetupEntry -Progress $row[0] -Leftover -SetupVersion '0.2.0'
+        $cleanup = $(if ($entry['cleanup'] -eq $true) { 'cleanup' } else { '' })
+        Assert-Equal $row[1] ('{0} {1} {2}' -f $entry.screen, $entry.next, $cleanup) $row[2]
+    }
+    Assert-Equal $true ((Get-SetupEntry -Progress @{ stage = 'check_restart' } -Leftover)['welcome_back']) 'S02 says Welcome back'
+    # The mark is saved as a true or false mark only.
+    $layout = New-RemovalLayout 'ac-w9-mark'
+    Save-SetupProgress -Layout $layout -Stage 'check_restart' -RunId 'install-20261118T090700Z-abc123' -Marks @{ prepared = $true }
+    Assert-Equal $true ((Read-SetupProgress -Layout $layout)['prepared'])
 }
 
 # The WSL guard (parent addition to AC-W3). Run records the commands instead of running them.

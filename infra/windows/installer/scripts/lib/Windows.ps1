@@ -335,10 +335,13 @@ function Test-SetupLeftover {
 function Get-SetupEntry {
     # Spec 4.1: the first screen from Windows-side records only: the saved progress, then the
     # installed version (W8): this setup newer gives M05 (W13b), the same or older gives M01.
-    # DEC-0041 (AC-W4): setup is a complete installation or nothing. Only the restart after S05
-    # continues (S06, S07), and a finished install shows its recovery key (S14); any other
-    # record of an earlier run is removed at start (cleanup), then setup starts at S01. An
-    # installed program is never removed here.
+    # DEC-0041 (AC-W4): setup is a complete installation or nothing. A finished install shows its
+    # recovery key (S14). AC-W9: a restart that setup asked for before Install continues and
+    # removes nothing: the S05 restart and a check restart after S05 (mark prepared: S11 "Restart
+    # now", the C04 firmware restart) go on at S06, then S07, with S05 done; a check restart
+    # before S05 goes on at S02 ("Welcome back"). Any other record of an earlier run (a run that
+    # stopped without such a restart, or any run after Install started) is removed at start
+    # (cleanup), then setup starts at S01. An installed program is never removed here.
     param([AllowNull()][System.Collections.IDictionary]$Progress, [string]$Installed = '', [string]$SetupVersion = '', [switch]$Leftover)
     $stage = ''
     if ($null -ne $Progress) { $stage = [string](Get-DictValue $Progress 'stage') }
@@ -348,6 +351,10 @@ function Get-SetupEntry {
         return @{ screen = 'M01'; next = ''; installed = $Installed }
     }
     if ($stage -eq 'feature_restart') { return @{ screen = 'S06'; next = 'S07' } }
+    if ($stage -eq 'check_restart') {
+        if ((Get-DictValue $Progress 'prepared') -eq $true) { return @{ screen = 'S06'; next = 'S07' } }
+        return @{ screen = 'S02'; next = ''; welcome_back = $true }
+    }
     if ($Leftover -or $stage) { return @{ screen = 'S01'; next = ''; cleanup = $true } }
     return @{ screen = 'S01'; next = '' }
 }
