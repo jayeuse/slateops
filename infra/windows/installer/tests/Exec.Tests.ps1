@@ -171,6 +171,16 @@ Test-Case 'AC-2 an engine job gets its input bytes on standard input and nothing
     Assert-Equal '48c09f216dd9c823a6e5785d243dd13445734a950889ad8bbd917b8003163406' $output['sha256']
 }
 
+Test-Case 'W14-D8 a submitted job keeps the request ID that the wizard passed' {
+    # PowerShell names ignore case: a local $requestId once replaced the parameter $RequestId, so
+    # every job ran under a new random ID that the wizard never found.
+    $layout = New-ExecLayout 'exec-submit-id'
+    $given = [guid]::NewGuid().ToString('D')
+    $returned = Submit-ExecRequest -Layout $layout -Job 'status' -RunId $script:RunId -RequestId $given -NoStart
+    Assert-Equal $given $returned
+    Assert-Equal $given (Read-JsonFile -Path $layout.RequestFile)['request_id']
+}
+
 Test-Case 'AC-2 an unknown job is refused before any program starts' {
     $layout = New-ExecLayout 'exec-unknown'
     Set-ExecRequest -Layout $layout -RequestText (Get-RequestText 'powershell') -InputBytes $script:StatusInput

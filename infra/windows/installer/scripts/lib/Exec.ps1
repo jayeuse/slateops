@@ -1012,18 +1012,21 @@ function Submit-ExecRequest {
         $task = Get-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.ExecTaskName -ErrorAction Stop
         if ($task.State -eq 'Running') { throw 'exec_busy' }
     }
-    $requestId = [guid]::NewGuid().ToString('D')
+    # W14-D8: PowerShell variable names ignore case, so a local $requestId would overwrite the
+    # parameter $RequestId and every job would run under a new random ID that the wizard never
+    # sees (and its pipe would never connect). The local name differs from every parameter.
+    $submitId = [guid]::NewGuid().ToString('D')
     if ($RequestId) {
         $parsed = [guid]::Empty
         if (-not [guid]::TryParseExact($RequestId, 'D', [ref]$parsed)) { throw 'request_id_invalid' }
-        $requestId = $parsed.ToString('D')
+        $submitId = $parsed.ToString('D')
     }
     foreach ($path in @($Layout.RequestFile, $Layout.InputFile)) { if (Test-Path -LiteralPath $path) { Remove-PathNoFollow -Path $path } }
     [System.IO.File]::WriteAllBytes($Layout.InputFile, $InputBytes)
-    Write-JsonFile -Path $Layout.RequestFile -Value ([ordered]@{ request_id = $requestId; job = $Job; run_id = $RunId })
-    Write-RunLog ('exec.submit.{0}' -f $Job) 'INFO' ('request {0}, input {1} bytes' -f $requestId, $InputBytes.Length)
+    Write-JsonFile -Path $Layout.RequestFile -Value ([ordered]@{ request_id = $submitId; job = $Job; run_id = $RunId })
+    Write-RunLog ('exec.submit.{0}' -f $Job) 'INFO' ('request {0}, input {1} bytes' -f $submitId, $InputBytes.Length)
     if (-not $NoStart) { Start-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.ExecTaskName }
-    return $requestId
+    return $submitId
 }
 
 function Test-TaskLogonFailure {
