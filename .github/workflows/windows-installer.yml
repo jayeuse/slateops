@@ -106,10 +106,14 @@ jobs:
           exit $LASTEXITCODE
 
   exec-path:
-    # TASK-0097 W14-D8: the real job path of setup on a fresh runner. The helper creates the
-    # account slateops-svc and the task \SlateOps\Exec as setup does, then wslconfig jobs go
-    # through the task and are collected as the wizard collects them (exec-path.ps1). Its own
-    # job, because it changes C:\ProgramData\SlateOps, which the self-test also uses.
+    # TASK-0097 W14-D8 and the QA review: the real job path of setup on a fresh runner. The helper
+    # creates the account slateops-svc and the tasks \SlateOps\Exec and \SlateOps\Start as setup
+    # does; wslconfig jobs go through the task and are collected as the wizard collects them;
+    # start-boot runs start.ps1, whose product mDNS responder must answer <label>.local with the
+    # runner's IPv4 (DEC-0039); windows-steps runs with a CA made in the job; then the removal runs
+    # as the wizard runs it, and everything setup recorded must be gone with nothing else changed
+    # (exec-path.ps1). Its own job, because it changes C:\ProgramData\SlateOps, which the
+    # self-test also uses.
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -117,7 +121,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Run wslconfig jobs through the real account, Exec task and helper (W14-D8)
+      - name: Run the real Exec jobs, the product mDNS responder and the removal (W14-D8, DEC-0039)
         shell: powershell
         run: |
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File infra\windows\installer\tests\exec-path.ps1
