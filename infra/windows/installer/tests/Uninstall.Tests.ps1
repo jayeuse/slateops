@@ -79,6 +79,65 @@ Test-Case 'W9-6 an item that cannot be removed is a leftover in the result and i
     Assert-True ($log -match 'FAIL leftover: state_folder:state') $log
 }
 
+Test-Case 'R-9 the service profile goes after the account processes end; a fake profile that stays loaded is kept at the limit and logged' {
+    $logDir = New-TestDirectory 'r9-log'
+    Start-RunLog -RunId 'uninstall-20261118T170000Z-r9prof' -Directory $logDir -NoConsole
+    $sid = 'S-1-5-21-1000-2000-3000-1003'
+    # A profile that unloads once the account's processes end: stop first, then the delete.
+    $fake = @{ loaded = $true; gone = $false; calls = (New-Object System.Collections.Generic.List[string]) }
+    $removed = Remove-ServiceProfile -Sid $sid -LimitSeconds 5 -WaitMilliseconds 50 `
+        -StopProcesses { param([string]$Sid) $fake.calls.Add('stop'); $fake.loaded = $false } `
+        -FindProfile { param([string]$Sid) if (-not $fake.gone) { [pscustomobject]@{ SID = $Sid; LocalPath = 'C:\Users\slateops-svc'; Loaded = $fake.loaded } } } `
+        -DeleteProfile { param($UserProfile) $fake.calls.Add('delete'); if ($UserProfile.Loaded) { throw 'loaded' }; $fake.gone = $true }
+    Assert-Equal $true $removed
+    Assert-Equal @('stop', 'delete') @($fake.calls) 'the processes end before the delete'
+    # A fake loaded profile that never unloads: tried again until the limit, never deleted.
+    $held = @{ stops = 0; deletes = 0 }
+    $started = [DateTime]::UtcNow
+    $removed = Remove-ServiceProfile -Sid $sid -LimitSeconds 1 -WaitMilliseconds 100 `
+        -StopProcesses { param([string]$Sid) $held.stops++ } `
+        -FindProfile { param([string]$Sid) [pscustomobject]@{ SID = $Sid; LocalPath = 'C:\Users\slateops-svc.PC1'; Loaded = $true } } `
+        -DeleteProfile { param($UserProfile) $held.deletes++ }
+    Assert-Equal $false $removed
+    Assert-Equal 0 $held.deletes 'a loaded profile is never deleted'
+    Assert-True ($held.stops -ge 2) ('tried again: {0} stops' -f $held.stops)
+    Assert-True (([DateTime]::UtcNow - $started).TotalSeconds -lt 5) 'it ends at its limit'
+    $log = [System.IO.File]::ReadAllText((Join-Path $logDir 'uninstall-20261118T170000Z-r9prof.log'))
+    Assert-True ($log -match 'WARN profile of S-1-5-21-1000-2000-3000-1003 not removed in 1 s \(it is still loaded\); the record stays') $log
+    # Another profile under that SID is never ended or deleted.
+    $other = @{ stops = 0; deletes = 0 }
+    $removed = Remove-ServiceProfile -Sid $sid -LimitSeconds 1 -WaitMilliseconds 100 `
+        -StopProcesses { param([string]$Sid) $other.stops++ } `
+        -FindProfile { param([string]$Sid) [pscustomobject]@{ SID = $Sid; LocalPath = 'C:\Users\someone'; Loaded = $true } } `
+        -DeleteProfile { param($UserProfile) $other.deletes++ }
+    Assert-Equal '0 0' ('{0} {1}' -f $other.stops, $other.deletes) 'not the service account profile'
+    # Only an S-1-5-21- account: a system or Entra ID SID ends no process.
+    Assert-Equal 0 (Stop-AccountProcesses -Sid 'S-1-5-18')
+    Assert-Equal 0 (Stop-AccountProcesses -Sid 'S-1-12-1-1-2-3-4')
+}
+
+Test-Case 'R-9 a service profile that stays loaded keeps only the account SID in the record, and the next start removes it' {
+    $layout = New-UninstallLayout 'r9-record'
+    $hosts = Join-Path (New-TestDirectory 'r9-hosts') 'hosts'
+    [System.IO.File]::WriteAllText($hosts, "127.0.0.1 localhost`r`n")
+    $names = Get-TestNames -Tag 'R9' -HostsPath $hosts
+    $sid = 'S-1-5-21-1000-2000-3000-1003'
+    Write-JsonFile -Path (Join-Path $layout.State 'windows-changes.json') -Value ([ordered]@{ account_sid = $sid; firewall_rules = @('SlateOpsR9Gone'); ca_thumbprint = '' })
+    [System.IO.File]::WriteAllText((Join-Path $layout.State 'install.json'), '{}')
+    [void][System.IO.Directory]::CreateDirectory($layout.Scripts)
+    $result = Remove-WindowsParts -Layout $layout -Names $names -RemoveProfile { param([string]$Sid) $false }
+    Assert-Equal 'leftovers' $result.code (ConvertTo-JsonText $result)
+    Assert-Equal @('windows-changes.json') @(Get-ChildItem -LiteralPath $layout.State -Force | ForEach-Object { $_.Name }) 'only the record stays'
+    $record = Read-WindowsChanges -Layout $layout
+    Assert-Equal @('account_sid') @($record.Keys)
+    Assert-Equal $sid ([string]$record['account_sid'])
+    Assert-Equal $true (Test-Path -LiteralPath $layout.Scripts) 'the scripts stay for Save report'
+    # The next start: the profile goes, then the record.
+    $result = Remove-WindowsParts -Layout $layout -Names $names -RemoveProfile { param([string]$Sid) $true }
+    Assert-Equal 'removed' $result.code (ConvertTo-JsonText $result)
+    Assert-Equal $false (Test-Path -LiteralPath $layout.State) 'the record goes'
+}
+
 Test-Case 'W9-1 F3 Keep my data moves the disk with kept.json, checks it, and refuses an engine value of the wrong shape' {
     $layout = New-UninstallLayout 'w9-keep'
     $null = Initialize-ProtectedTree -Tree $layout.DataTree

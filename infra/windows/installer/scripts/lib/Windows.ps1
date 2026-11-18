@@ -334,12 +334,30 @@ function Compare-ReleaseVersion {
     return 0
 }
 
-function Get-InstalledVersion {
-    # The installed program's version (its version.json in the folder that this setup's
-    # uninstall key names), or '' when none is installed (spec 4.1).
-    if (-not (Test-InstalledProgram)) { return '' }
+function Get-InstalledProgramState {
+    # R-1 (Security S97-3): the installed program's record: 'none' (no uninstall entry), 'ok'
+    # with its version, or 'unreadable' when the entry exists but its install location, its
+    # version.json or that file's schema cannot be read. 'unreadable' is never "not installed".
+    param([AllowNull()][AllowEmptyString()][string]$InstallLocation, [switch]$KeyFound)
+    if (-not $KeyFound) { return @{ state = 'none'; version = '' } }
+    if (-not $InstallLocation) { return @{ state = 'unreadable'; version = '' } }
+    try { $version = (Read-SetupVersion -Path (Join-Path $InstallLocation 'version.json')).version }
+    catch { return @{ state = 'unreadable'; version = '' } }
+    return @{ state = 'ok'; version = $version }
+}
+
+function Get-InstalledProgram {
+    # The record of this setup's uninstall key (spec 4.1).
     $key = Get-ItemProperty -LiteralPath $SlateOpsCheck.UninstallKey -ErrorAction SilentlyContinue
-    try { return (Read-SetupVersion -Path (Join-Path ([string]$key.InstallLocation) 'version.json')).version } catch { return '' }
+    if (-not $key) { return Get-InstalledProgramState -InstallLocation $null }
+    $location = ''
+    if ($key.PSObject.Properties['InstallLocation']) { $location = [string]$key.InstallLocation }
+    return Get-InstalledProgramState -InstallLocation $location -KeyFound
+}
+
+function Get-InstalledVersion {
+    # The installed program's version, or '' when none is installed or its record cannot be read.
+    return [string](Get-InstalledProgram).version
 }
 
 function Test-SetupLeftover {
@@ -363,7 +381,10 @@ function Get-SetupEntry {
     # before S05 goes on at S02 ("Welcome back"). Any other record of an earlier run (a run that
     # stopped without such a restart, or any run after Install started) is removed at start
     # (cleanup), then setup starts at S01. An installed program is never removed here.
-    param([AllowNull()][System.Collections.IDictionary]$Progress, [string]$Installed = '', [string]$SetupVersion = '', [switch]$Leftover)
+    param([AllowNull()][System.Collections.IDictionary]$Progress, [string]$Installed = '', [string]$SetupVersion = '', [switch]$Leftover, [switch]$ProgramUnreadable)
+    # R-1 (Security S97-3): an installed program whose record cannot be read is never taken for a
+    # leftover: setup stops on S01 with Save report and removes nothing.
+    if ($ProgramUnreadable) { return @{ screen = 'S01'; next = ''; program_unreadable = $true } }
     $stage = ''
     if ($null -ne $Progress) { $stage = [string](Get-DictValue $Progress 'stage') }
     if ($stage -eq 'install_finished') { return @{ screen = 'S06'; next = 'S14'; new_recovery_key = $true } }
@@ -380,6 +401,9 @@ function Get-SetupEntry {
         if ((Get-DictValue $Progress 'prepared') -eq $true) { return @{ screen = 'S06'; next = 'S07' } }
         return @{ screen = 'S02'; next = ''; welcome_back = $true }
     }
+    # R-1: a finished install (key_saved) is never removed automatically, also with no program
+    # record (an uninstall that left parts behind); the PC check offers their removal (C29).
+    if ($stage -eq 'key_saved') { return @{ screen = 'S01'; next = '' } }
     if ($Leftover -or $stage) { return @{ screen = 'S01'; next = ''; cleanup = $true } }
     return @{ screen = 'S01'; next = '' }
 }

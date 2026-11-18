@@ -286,6 +286,9 @@ function Install-ServiceAccountAndTasks {
     $stale = Get-RecordedServiceSid -Layout $Layout
     if ($stale) {
         Write-RunLog $step 'INFO' ('remove the entries of the earlier account {0}' -f $stale)
+        # R-9: a profile that an earlier removal left (it was still loaded then) goes first, so
+        # the SID is not dropped from the record with its profile still on the PC.
+        $null = Remove-ServiceProfile -Sid $stale
         Remove-ServiceAccess -Tree $Layout.StateTree -Sid $stale
         if ($Layout.DataRoot) { Remove-ServiceAccess -Tree $Layout.DataTree -Sid $stale }
         $record = Read-WindowsChanges -Layout $Layout

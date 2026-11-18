@@ -9,11 +9,10 @@
 # Windows PowerShell 5.1, ASCII only.
 
 $SlateOpsExec = @{
-    # Plan 6.2 allow-list plus resend-invitation (wizard spec section 12 item 11; Security
-    # Engineer accepted it, TASK-0080). The engine refuses a job that it does not have yet.
+    # Plan 6.2 allow-list. The engine refuses a job that it does not have yet. R-8 (DEC-0041):
+    # resend-invitation is gone with the invitation of the first administrator.
     EngineJobs  = @('receive', 'prepare', 'prefetch', 'smtp-test', 'install', 'status', 'update', 'set-email',
-        'set-backup-target', 'new-recovery-key', 'export-trust', 'log-bundle', 'prepare-uninstall', 'restore',
-        'resend-invitation')
+        'set-backup-target', 'new-recovery-key', 'export-trust', 'log-bundle', 'prepare-uninstall', 'restore')
     # Windows-side work that must run as slateops-svc, because WSL distributions and .wslconfig
     # belong to the account that runs wsl.exe (kit design notes). Their paths come from the
     # administrator-only state file, never from the request.

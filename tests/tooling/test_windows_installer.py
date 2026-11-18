@@ -892,7 +892,7 @@ class W14DefectTest(unittest.TestCase):
             "procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);",
         )
         self.assertIn("RunRemoval('close');", cancel)
-        self.assertIn("StartCloseFlow('remove', Why);", self.raw)
+        self.assertIn("StartCloseFlow('remove', RemoveWhy);", self.raw)
 
     def test_w14_d8_the_job_poll_asks_the_helper_and_has_limits(self) -> None:
         # W14-D8: the poll never collected a finished Windows-side result on the owner's PC. The
@@ -1309,7 +1309,10 @@ class W14Part3Test(unittest.TestCase):
         )
         spec = (ROOT / "docs/specs/windows-installer-wizard.md").read_text(encoding="utf-8")
         rule = spec.split("  9. **Forms (S08, S09, M02, M03).**", 1)[1].split("\n", 1)[0]
-        self.assertIn("The only exception to the full width: S09 with Other selected", rule)
+        # R-3 (Product Designer): the pin names the two row exceptions, not one exact sentence,
+        # so the rule can say that S08 and S09 Other both have one.
+        self.assertIn("S09 with Other selected shows Server and Port in one row", rule)
+        self.assertIn('Password and "Type the password again" share one row', rule)
         self.assertIn('"Show" sits at the right end of the Password label\'s line', rule)
         selftest = (INSTALLER / "wizard/SelfTest.iss").read_text(encoding="ascii")
         forms = routine(selftest, "procedure SelfFormPages;")
@@ -1609,14 +1612,16 @@ class Dec0041Test(unittest.TestCase):
         self.assertIn("OrgShow.OnClick := @OrgShowClick;", build)
         check = self.part("function CheckOrg: Boolean;")
         self.assertIn("if not ValidEmail(Trim(OrgEmail.Text)) then", check)
-        self.assertIn("if not PasswordLengthOk(OrgPassword.Text) then", check)
+        self.assertIn("if PasswordProblem(OrgPassword.Text) <> '' then", check)
         self.assertIn("if OrgConfirm.Text <> OrgPassword.Text then", check)
-        length = self.part("function PasswordLengthOk(S: String): Boolean;")
-        self.assertIn("(Length(S) >= 12) and (Length(S) <= 128)", length)
-        # The app's own rule (backend validate_password): at least 12, at most 128.
-        policy = (ROOT / "backend/app/systems/manage/workspace/security_policy.py").read_text()
-        self.assertIn("minimum = max(12, profile.password_min_length)", policy)
-        self.assertIn("len(password) > 128", policy)
+        # R-2: the rule of the install job and bootstrap (engine invitation.valid_password):
+        # 12 characters (code points) to 72 UTF-8 bytes, no control character.
+        rule = self.part("function PasswordProblem(S: String): String;")
+        self.assertIn("if (Chars < 12) or (Chars > 72) then", rule)
+        self.assertIn("else if Bytes > 72 then", rule)
+        self.assertIn("(Code >= $D800) and (Code <= $DBFF) then Bytes := Bytes + 4", rule)
+        engine = (ROOT / "packaging/engine/invitation.py").read_text()
+        self.assertIn("PASSWORD_MIN_CHARACTERS, PASSWORD_MAX_BYTES = 12, 72", engine)
         copy = read_copy()
         self.assertEqual(copy.get("s11_admin"), "Administrator: %1. You sign in with this address.")
         self.assertNotIn("s11_mail", self.part("procedure RenderReady;"))
@@ -1796,7 +1801,8 @@ class Dec0041Test(unittest.TestCase):
             "or the mail server of another email provider.",
         )
         self.assertEqual(
-            copy.get("m02_test_sent"), "Test email sent to %1. Check its inbox and Spam folder."
+            copy.get("m02_test_sent"),
+            "Slate Operations sent a test email to %1. Check that inbox and its Spam folder.",
         )
         mail = self.part("procedure PollMail;")
         self.assertRegex(
@@ -1817,7 +1823,11 @@ class Dec0041Test(unittest.TestCase):
             "PipeOutputJobs = @('install', 'new-recovery-key', 'pipe-test', 'smtp-test')", exec_lib
         )
         # M01: "Email: not set up" from the status flag only; the admin address stays out.
-        self.assertEqual(copy.get("m01_email_not_set"), "Email: not set up")
+        self.assertEqual(
+            copy.get("m01_email_not_set"),
+            "Email is not set up, so Slate Operations cannot send invitations or password resets. "
+            "Select Set up email.",
+        )
         render = self.part("procedure RenderMaint;\nvar")
         self.assertRegex(
             render,
@@ -2117,7 +2127,10 @@ class Dec0039Test(unittest.TestCase):
         copy = read_copy()
         for key in ("s15_step1", "s15_step1_no_address"):
             with self.subTest(key=key):
-                self.assertIn("Sign in to Slate Operations at https://%1", copy.get(key, ""))
+                self.assertIn(
+                    "1. Open Slate Operations on this PC at https://%1. Sign in with",
+                    copy.get(key, ""),
+                )
                 self.assertNotIn("invitation", copy.get(key, ""))
         finished = self.part("procedure RenderFinishedPage;")
         self.assertIn("FM2('s15_step1', AddressHost(''), Trim(OrgEmail.Text))", finished)
@@ -2144,3 +2157,216 @@ class Dec0039Test(unittest.TestCase):
         self.assertIn(
             "Test-Case 'QA N4 a restart continues only when the same setup version", removal
         )
+
+
+class ReviewFixTest(unittest.TestCase):
+    """Review fix round R-1 to R-8 (TASK-0097): Security Engineer S97-3, S97-4, S97-8, S97-9;
+    Software Architect N-1, N-5, N-6, N-8; Product Designer copy rulings. Behavior: the Pester
+    cases in Removal.Tests.ps1 and the [Code] self-test."""
+
+    def setUp(self) -> None:
+        self.raw = pascal_code()
+        self.selftest = SELFTEST.read_text(encoding="ascii")
+        self.helper = (SCRIPTS / "setup-helper.ps1").read_text(encoding="ascii")
+        self.windows = (SCRIPTS / "lib/Windows.ps1").read_text(encoding="ascii")
+        self.uninstall = (SCRIPTS / "lib/Uninstall.ps1").read_text(encoding="ascii")
+        self.removal = (PS_TESTS / "Removal.Tests.ps1").read_text(encoding="ascii")
+        self.copy = read_copy()
+
+    def part(self, head: str) -> str:
+        self.assertIn(head, self.raw)
+        return routine(self.raw, head)
+
+    def test_r1_a_finished_install_or_an_unreadable_program_is_never_removed(self) -> None:
+        entry = self.windows.split("function Get-SetupEntry {", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn(
+            "if ($ProgramUnreadable) { return @{ screen = 'S01'; next = '';"
+            " program_unreadable = $true } }",
+            entry,
+        )
+        self.assertLess(entry.index("$ProgramUnreadable) { return"), entry.index("$stage = ''"))
+        self.assertLess(
+            entry.index("if ($stage -eq 'key_saved') { return @{ screen = 'S01'; next = '' } }"),
+            entry.rindex("cleanup = $true"),
+        )
+        self.assertIn("-ProgramUnreadable:$unreadable", self.helper)
+        self.assertIn(
+            "ProgramUnreadable := Pos('\"program_unreadable\":true', Text) > 0;", self.raw
+        )
+        self.assertIn("CM('s01_program_unreadable')", self.raw)
+        self.assertIn("@('key_saved', $true, '', 'S01  '),", self.removal)
+        self.assertIn(
+            "Test-Case 'R-1 a program record that exists but cannot be read", self.removal
+        )
+
+    def test_r2_s08_takes_the_password_rule_of_the_install_job(self) -> None:
+        self.assertEqual(
+            self.copy.get("s08_password_help"),
+            "Use 12 to 72 characters. You sign in with this password.",
+        )
+        self.assertEqual(self.copy.get("s08_err_password"), "Use 12 to 72 characters.")
+        self.assertEqual(
+            self.copy.get("s08_err_password_long"),
+            "This password is too long. Use a shorter password.",
+        )
+        install = self.part("procedure PollInstall;")
+        self.assertIn(
+            "else if Code = 'invalid_input' then InstallFail(6, CM('s12_invalid_input'))", install
+        )
+        self.assertIn(
+            "SelfRecord('R-2 S08 password rule (12 characters to 72 UTF-8 bytes)'", self.selftest
+        )
+
+    def test_r3_the_designer_strings(self) -> None:
+        expected = {
+            "s08_email_help": "You sign in to Slate Operations with this address.",
+            "s08_slug": "Address name",
+            "s08_err_label_in_use": "Another device on this network already uses %1. "
+            "Choose another address name.",
+            "s12_step_limit": "This step took longer than setup allows.",
+            "m02_test_sent_admin": "Slate Operations sent a test email to the administrator's "
+            "address. Check that inbox and its Spam folder.",
+            "m02_sending": "Sending a test email to the administrator's address.",
+            "remove_limit": "A step took too long, so setup stopped the removal. The next time you "
+            "start setup, it removes the rest.",
+            "s15_step2": "2. Set up email, so Slate Operations can send invitations and password "
+            "resets. Open Slate Operations settings in the Start menu and select Set up email.",
+            "step_install_admin": "Creating your administrator account for %2.",
+            "m01_email": "Set up email",
+            "m02_title": "Set up email",
+            "m02_done": "Slate Operations sends email from %1 now.",
+            "step_smtp_test_stage": "Saving the email settings for Slate Operations.",
+        }
+        for key, value in expected.items():
+            with self.subTest(key=key):
+                self.assertEqual(self.copy.get(key), value)
+        self.assertTrue(
+            self.copy["s01_text"].endswith("%n%nHave ready: a USB drive for backups (recommended).")
+        )
+        self.assertTrue(
+            self.copy["remove_stages"].startswith("Stop the install step that is running|")
+        )
+        finished = self.part("procedure RenderFinishedPage;")
+        self.assertLess(
+            finished.index("PlaceFinishedText(0, Step1, Y);"), finished.index("S15Open.SetBounds(")
+        )
+        self.assertLess(
+            finished.index("S15Open.SetBounds("),
+            finished.index("PlaceFinishedText(1, CM('s15_step2'), Y);"),
+        )
+        self.assertIn("PlaceFinishedText(1, '', Y)", finished)
+        self.assertIn(
+            "else if MailSaved then MailStatus.Caption := CM('m02_test_sent_admin')", self.raw
+        )
+        self.assertIn("AddText(CM('s07_av_blocked'), False)", self.raw)
+        for record in (
+            "'R-3 S15 Open under step 1, then step 2'",
+            "'R-3 M02 with no sent_to names the administrator'",
+            "'R-3 the stopped removal lines fit the form'",
+            "'R-3 S07 security program line'",
+        ):
+            with self.subTest(record=record):
+                self.assertIn(record, self.selftest)
+
+    def test_r4_cancel_during_s05_waits_for_its_step(self) -> None:
+        start = self.part("procedure StartCloseFlow(Flow, After: String);\nbegin")
+        self.assertIn("if PrepState = 'working' then", start)
+        self.assertLess(
+            start.index("if PrepState = 'working' then"), start.index("CloseStep(1, 'job'")
+        )
+        self.assertIn("CloseOut := PrepOut;", start)
+        self.assertIn("CloseLimitMs := DATA_LIMIT_MS - Elapsed(PrepStartedAt)", start)
+        poll = self.part("procedure PollCloseFlow;\nvar")
+        self.assertRegex(
+            poll,
+            r"if ClosePhase = 'prep' then\s+begin\s+PrepState := 'done';\s+CloseStep\(1, 'job'",
+        )
+
+    def test_r5_a_failed_data_step_keeps_the_records(self) -> None:
+        poll = self.part("procedure PollCloseFlow;\nvar")
+        self.assertRegex(
+            poll,
+            r"if \(Code <> 'removed'\) and \(Code <> 'returned'\) and \(Code <> 'nothing'\) then"
+            r"\s+begin\s+EndCloseFlow\('data'\);",
+        )
+        self.assertLess(poll.index("EndCloseFlow('data');"), poll.index("'remove-windows'"))
+        kept = self.uninstall.split("function Remove-SetupData {", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("} catch {", kept)
+        self.assertEqual(kept.count("-Code 'keep_failed'"), 3)
+        self.assertIn(
+            "Test-Case 'R-5 any failure in the kept branch returns keep_failed", self.removal
+        )
+
+    def test_r6_the_removal_window_shows_before_its_work(self) -> None:
+        run = self.part("function RunRemoval(Why: String): Boolean;\nbegin")
+        self.assertIn("RemoveStartPending := True;", run)
+        self.assertLess(
+            run.index("RemoveStartPending := True;"), run.index("RemoveForm.ShowModal;")
+        )
+        self.assertNotIn("StartCloseFlow(", run)
+        tick = self.part("procedure TimerTick(H, Msg, Id, Tick: Longword);")
+        self.assertRegex(
+            tick,
+            r"if RemoveStartPending then\s+begin\s+RemoveStartPending := False;\s+"
+            r"StartCloseFlow\('remove', RemoveWhy\);",
+        )
+
+    def test_r7_entra_id_accounts_count_in_the_distribution_check(self) -> None:
+        names = self.uninstall.split("function Get-WslDistroNames {", 1)[1].split("\nfunction ", 1)[
+            0
+        ]
+        self.assertEqual(names.count("Test-UserSid $sid"), 2)
+        self.assertIn("'^S-1-(5-21|12-1)(-[0-9]+)+$'", self.uninstall)
+        self.assertIn(
+            "Test-Case 'R-7 the distribution check reads local and Microsoft Entra ID", self.removal
+        )
+
+    def test_r8_no_invitation_resend_and_no_unused_email_keys(self) -> None:
+        exec_lib = (SCRIPTS / "lib/Exec.ps1").read_text(encoding="ascii")
+        jobs = exec_lib.split("EngineJobs  = @(", 1)[1].split(")", 1)[0]
+        self.assertNotIn("resend-invitation", jobs)
+        for key in ("step_resend_invitation_resend", "s09_waiting", "s09_sending"):
+            with self.subTest(key=key):
+                self.assertNotIn(key, self.copy)
+
+    def test_r9_the_service_profile_goes_after_its_processes_or_its_record_stays(self) -> None:
+        # R-9 (exec-path CI on 7ff565a1): the profile was loaded, so remove-windows skipped it.
+        def body(name: str) -> str:
+            self.assertIn(f"function {name} {{", self.uninstall)
+            return self.uninstall.split(f"function {name} {{", 1)[1].split("\nfunction ", 1)[0]
+
+        self.assertNotIn("if ($userProfile -and -not $userProfile.Loaded)", self.uninstall)
+        stop = body("Stop-AccountProcesses")
+        self.assertIn("if ($Sid -notmatch '^S-1-5-21(-[0-9]+)+$') { return 0 }", stop)
+        self.assertIn("GetCurrent().User.Value) { return 0 }", stop)
+        profile = body("Remove-ServiceProfile")
+        self.assertIn("if (-not $userProfile.Loaded) {", profile)
+        self.assertLess(
+            profile.index("$null = & $StopProcesses $Sid"),
+            profile.index("& $DeleteProfile $userProfile"),
+        )
+        self.assertIn("if ([DateTime]::UtcNow -ge $deadline) {", profile)
+        self.assertLess(
+            profile.index("[regex]::Escape($AccountName)"), profile.index("& $StopProcesses $Sid")
+        )
+        service = (SCRIPTS / "lib/Service.ps1").read_text(encoding="ascii")
+        self.assertLess(
+            service.index("$null = Remove-ServiceProfile -Sid $stale"),
+            service.index("$record.Remove('account_sid')"),
+        )
+        parts = body("Remove-WindowsParts")
+        self.assertLess(
+            parts.index("$outcome.profile_left = -not (& $RemoveProfile $sid)"),
+            parts.index("Remove-LocalUser -SID $sid"),
+        )
+        self.assertIn(
+            "Write-JsonFile -Path $keepRecord -Value ([ordered]@{ account_sid = $sid })", parts
+        )
+        self.assertIn("$left.Add('profile')", body("Get-UninstallLeftovers"))
+        tests = (PS_TESTS / "Uninstall.Tests.ps1").read_text(encoding="ascii")
+        for case in (
+            "Test-Case 'R-9 the service profile goes after the account processes end;",
+            "Test-Case 'R-9 a service profile that stays loaded keeps only the account SID",
+        ):
+            with self.subTest(case=case):
+                self.assertIn(case, tests)

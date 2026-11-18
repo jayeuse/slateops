@@ -870,6 +870,7 @@ begin
       AddProgress('remove', CM('remove_stages'), CloseNumber, '', 0, '');
     if CloseEnd = 'limit' then AddText(CM('remove_limit'), False)
     else if CloseEnd = 'kept' then AddText(CM('remove_kept_failed'), False)
+    else if CloseEnd = 'data' then AddText(CM('remove_data_failed'), False)
     else if RemoveFeaturesCode = 'removed' then AddText(CM('remove_restart_line'), False);
   end;
 end;
@@ -910,6 +911,24 @@ begin
   ExtractFor := '';
   JobState := JOB_IDLE;
   ClosePipe;
+  { R-4 (Architect N-5): while S05 turns features on, the removal waits for that step, within
+    S05's own limit; the step records what setup turned on before it does it, so the removal then
+    reads a complete record. }
+  if PrepState = 'working' then
+  begin
+    ClosePhase := 'prep';
+    CloseNumber := 1;
+    CloseAt := GetTickCount;
+    CloseOut := PrepOut;
+    CloseLine := CM('remove_wait_prep');
+    if Elapsed(PrepStartedAt) < DATA_LIMIT_MS then
+      CloseLimitMs := DATA_LIMIT_MS - Elapsed(PrepStartedAt)
+    else
+      CloseLimitMs := REMOVE_STEP_MS;
+    Log('Removal 1 of 5: waiting for the S05 step (limit ' + IntToStr(CloseLimitMs div 1000) + ' s).');
+    RenderRemove;
+    Exit;
+  end;
   CloseStep(1, 'job', CM('remove_job'), 'job-stop', '', REMOVE_STEP_MS);
 end;
 
@@ -952,7 +971,12 @@ begin
     Exit;
   end;
   Log('Removal: ' + ClosePhase + ': ' + Code + '.');
-  if ClosePhase = 'job' then
+  if ClosePhase = 'prep' then
+  begin
+    PrepState := 'done';
+    CloseStep(1, 'job', CM('remove_job'), 'job-stop', '', REMOVE_STEP_MS);
+  end
+  else if ClosePhase = 'job' then
     CloseStep(2, 'stop', CM('remove_stopping'), 'uninstall-stop', '', REMOVE_STEP_MS)
   else if ClosePhase = 'stop' then
     CloseStep(3, 'data', CM('remove_data_line'), 'setup-remove-data', '', REMOVE_DATA_MS)
@@ -963,6 +987,14 @@ begin
     if Code = 'keep_failed' then
     begin
       EndCloseFlow('kept');
+      Exit;
+    end;
+    { R-5 (Architect N-6, Security S97-8): any other data step that did not finish stops the
+      removal before the Windows settings and the state record go, so the next start finds the
+      records and finishes it. }
+    if (Code <> 'removed') and (Code <> 'returned') and (Code <> 'nothing') then
+    begin
+      EndCloseFlow('data');
       Exit;
     end;
     RemoveDataCode := Code;
@@ -1019,8 +1051,11 @@ begin
   Result := False;
   BuildRemoveForm(Why);
   try
-    StartCloseFlow('remove', Why);
+    { R-6 (Architect N-8): the window shows first; the first timer tick starts the work. }
+    RemoveWhy := Why;
+    RemoveStartPending := True;
     RemoveForm.ShowModal;
+    RemoveStartPending := False;
     if ClosePhase <> '' then
     begin
       Log('The removal was closed during ' + ClosePhase + '; the next setup run removes the rest.');

@@ -403,6 +403,7 @@ function Get-UninstallLeftovers {
     foreach ($name in @(Get-DictValue $Record 'firewall_rules')) { if ($name -and (Get-NetFirewallRule -Name $name -ErrorAction SilentlyContinue)) { $left.Add(('firewall_rule:{0}' -f $name)) } }
     foreach ($name in @(Get-DictValue $Record 'hyperv_rules')) { if ($name -and (Get-NetFirewallHyperVRule -Name $name -ErrorAction SilentlyContinue)) { $left.Add(('hyperv_rule:{0}' -f $name)) } }
     if ((Test-Path -LiteralPath $Names.HostsPath) -and (@([System.IO.File]::ReadAllLines($Names.HostsPath) | Where-Object { $_.EndsWith($SlateOps.HostsMarker) }).Count -gt 0)) { $left.Add('hosts') }
+    if ($sid -and (Get-CimInstance -ClassName Win32_UserProfile -Filter ("SID='{0}'" -f $sid) -ErrorAction SilentlyContinue)) { $left.Add('profile') }
     $thumbprint = [string](Get-DictValue $Record 'ca_thumbprint')
     if ($thumbprint -and (Test-Path -LiteralPath ('Cert:\{0}\Root\{1}' -f $Names.StoreLocation, $thumbprint))) { $left.Add('ca') }
     foreach ($folder in @('state', 'requests', 'svc-out', 'scripts', 'settings')) {
@@ -420,16 +421,87 @@ function Invoke-UninstallPart {
     try { & $Body } catch { Write-RunLog 'uninstall.windows' 'WARN' ('{0}: {1}' -f $Name, $_.Exception.Message) }
 }
 
+function Stop-AccountProcesses {
+    # R-9 (exec-path CI): ends every process that runs as the service account, so its profile
+    # can unload. Its scheduled tasks are already stopped and removed. Only an S-1-5-21- SID (a
+    # local or domain account; Remove-ServiceProfile calls it only for the profile folder of the
+    # service account), never the account of this process. Returns the number of ended processes.
+    param([Parameter(Mandatory = $true)][string]$Sid)
+    if ($Sid -notmatch '^S-1-5-21(-[0-9]+)+$') { return 0 }
+    if ($Sid -eq [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { return 0 }
+    $count = 0
+    foreach ($process in @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue)) {
+        try {
+            $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop
+            if (($owner.ReturnValue -ne 0) -or ($owner.Sid -ne $Sid)) { continue }
+            Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
+            Write-RunLog 'uninstall.windows' 'INFO' ('ended {0} ({1}) of the service account' -f $process.Name, $process.ProcessId)
+            $count++
+        } catch { $null = $_ }
+    }
+    return $count
+}
+
+function Remove-ServiceProfile {
+    # R-9 (exec-path CI): the profile of the service account, its record and its C:\Users folder.
+    # The start task and the last job ran as the account, so the profile can still be loaded:
+    # the account's processes end first, and a loaded profile is tried again until the limit.
+    # True when no profile is left. At the limit the profile stays, the log says so, and the
+    # caller keeps the record, so the next start removes it.
+    param(
+        [Parameter(Mandatory = $true)][string]$Sid,
+        [int]$LimitSeconds = 30,
+        [int]$WaitMilliseconds = 1000,
+        [string]$AccountName = $SlateOps.AccountName,
+        [scriptblock]$StopProcesses = { param([string]$Sid) Stop-AccountProcesses -Sid $Sid },
+        [scriptblock]$FindProfile = { param([string]$Sid) Get-CimInstance -ClassName Win32_UserProfile -Filter ("SID='{0}'" -f $Sid) -ErrorAction SilentlyContinue },
+        [scriptblock]$DeleteProfile = { param($UserProfile) Remove-CimInstance -InputObject $UserProfile -ErrorAction Stop }
+    )
+    $deadline = [DateTime]::UtcNow.AddSeconds($LimitSeconds)
+    $problem = 'it is still loaded'
+    $userProfile = & $FindProfile $Sid
+    if (-not $userProfile) { return $true }
+    # Only the profile folder of the service account (slateops-svc, or slateops-svc.<suffix>
+    # when Windows had to pick another name): any other profile is never ended or deleted.
+    $leaf = ([string]$userProfile.LocalPath) -replace '^.*[\\/]', ''
+    if ($leaf -notmatch ('^{0}(\..+)?$' -f [regex]::Escape($AccountName))) {
+        Write-RunLog 'uninstall.windows' 'WARN' ('the profile of {0} is not the service account profile; setup leaves it' -f $Sid)
+        return $true
+    }
+    while ($true) {
+        $null = & $StopProcesses $Sid
+        $userProfile = & $FindProfile $Sid
+        if (-not $userProfile) { return $true }
+        if (-not $userProfile.Loaded) {
+            try {
+                & $DeleteProfile $userProfile
+                if (-not (& $FindProfile $Sid)) {
+                    Write-RunLog 'uninstall.windows' 'INFO' ('profile of {0} removed' -f $Sid)
+                    return $true
+                }
+                $problem = 'its record is still there after the delete'
+            } catch { $problem = $_.Exception.Message }
+        }
+        if ([DateTime]::UtcNow -ge $deadline) {
+            Write-RunLog 'uninstall.windows' 'WARN' ('profile of {0} not removed in {1} s ({2}); the record stays, so the next start removes it' -f $Sid, $LimitSeconds, $problem)
+            return $false
+        }
+        Start-Sleep -Milliseconds $WaitMilliseconds
+    }
+}
+
 function Remove-WindowsParts {
     # Both answers: removes what the record names, restores the power values, then checks each
     # item and logs every leftover (W9-1, W9-6). WSL and VirtualMachinePlatform stay.
     param(
         [Parameter(Mandatory = $true)][hashtable]$Layout,
         [hashtable]$Names = (Get-UninstallNames),
-        [switch]$DataLeft
+        [switch]$DataLeft,
+        [scriptblock]$RemoveProfile = { param([string]$Sid) Remove-ServiceProfile -Sid $Sid }
     )
     $step = 'uninstall.windows'
     $record = Read-WindowsChanges -Layout $Layout
+    $outcome = @{ profile_left = $false }
     Invoke-UninstallPart 'tasks' {
         foreach ($task in @(Get-ScheduledTask -TaskPath $Names.TaskPath -ErrorAction SilentlyContinue)) {
             Stop-ScheduledTask -TaskPath $Names.TaskPath -TaskName $task.TaskName -ErrorAction SilentlyContinue
@@ -442,11 +514,12 @@ function Remove-WindowsParts {
     $sid = [string](Get-DictValue $record 'account_sid')
     Invoke-UninstallPart 'account' {
         if ($sid) {
+            # R-9: the profile first, after the account's processes end; it needs no account, so
+            # a next start removes a profile that stayed loaded here.
+            $outcome.profile_left = -not (& $RemoveProfile $sid)
             $account = Get-LocalUser -SID $sid -ErrorAction SilentlyContinue
             if ($account) {
                 Remove-ItemProperty -LiteralPath $Names.UserList -Name $account.Name -ErrorAction SilentlyContinue
-                $userProfile = Get-CimInstance -ClassName Win32_UserProfile -Filter ("SID='{0}'" -f $sid) -ErrorAction SilentlyContinue
-                if ($userProfile -and -not $userProfile.Loaded) { Remove-CimInstance -InputObject $userProfile }
                 Remove-LocalUser -SID $sid
                 Write-RunLog $step 'INFO' ('account {0} removed' -f $sid)
             }
@@ -495,9 +568,18 @@ function Remove-WindowsParts {
     # with no leftover, so U04 can still save a report (and the next setup run removes the rest,
     # plan 10.7).
     Invoke-UninstallPart 'resume' { $null = Clear-SetupResume -Layout $Layout }
+    # R-9: with the profile left, the record keeps only the account SID; the next start sees it,
+    # runs the removal again and removes the profile, and nothing else.
+    $keepRecord = Join-Path $Layout.State 'windows-changes.json'
+    if ($outcome.profile_left) { Invoke-UninstallPart 'record' { Write-JsonFile -Path $keepRecord -Value ([ordered]@{ account_sid = $sid }) } }
     foreach ($folder in @('state', 'requests', 'svc-out', 'settings')) {
         $path = Join-Path $Layout.StateRoot $folder
-        Invoke-UninstallPart ('state_folder:{0}' -f $folder) { if (Test-Path -LiteralPath $path) { Remove-PathNoFollow -Path $path } }
+        Invoke-UninstallPart ('state_folder:{0}' -f $folder) {
+            if (-not (Test-Path -LiteralPath $path)) { return }
+            if ($outcome.profile_left -and ($folder -eq 'state')) {
+                foreach ($item in @(Get-ChildItem -LiteralPath $path -Force)) { if ($item.Name -ne 'windows-changes.json') { Remove-PathNoFollow -Path $item.FullName } }
+            } else { Remove-PathNoFollow -Path $path }
+        }
     }
     $left = @(Get-UninstallLeftovers -Record $record -Names $Names -Layout $Layout | Where-Object { $_ -ne 'state_folder:scripts' })
     # W9 review item 4: a data folder that is left over keeps the scripts too.
@@ -535,6 +617,13 @@ function Invoke-LimitedProcess {
     return [int]$process.ExitCode
 }
 
+function Test-UserSid {
+    # R-7 (Security S97-9): a person's account: a local or domain user (S-1-5-21-) or a
+    # Microsoft Entra ID user (S-1-12-1-); not a service or a hive's _Classes key.
+    param([AllowNull()][AllowEmptyString()][string]$Sid)
+    return [bool]($Sid -match '^S-1-(5-21|12-1)(-[0-9]+)+$')
+}
+
 function Get-WslDistroNames {
     # Every WSL distribution of every user whose registry hive is loaded (the per-user Lxss key
     # that "wsl --list" reads, read here for all users at once and without the UTF-16 output of
@@ -545,7 +634,7 @@ function Get-WslDistroNames {
     $loaded = @{}
     foreach ($key in @(Get-ChildItem -LiteralPath 'Registry::HKEY_USERS' -ErrorAction Stop)) {
         $sid = [string]$key.PSChildName
-        if ($sid -notmatch '^S-1-5-21-[0-9-]+$') { continue }
+        if (-not (Test-UserSid $sid)) { continue }
         $loaded[$sid] = $true
         $lxss = 'Registry::HKEY_USERS\{0}\Software\Microsoft\Windows\CurrentVersion\Lxss' -f $sid
         if (-not (Test-Path -LiteralPath $lxss)) { continue }
@@ -557,7 +646,7 @@ function Get-WslDistroNames {
     $ok = $true
     foreach ($userProfile in @(Get-CimInstance -ClassName Win32_UserProfile -ErrorAction Stop)) {
         $sid = [string]$userProfile.SID
-        if (($sid -notmatch '^S-1-5-21-') -or $userProfile.Special -or $loaded.ContainsKey($sid) -or ($ServiceSid -and ($sid -eq $ServiceSid))) { continue }
+        if ((-not (Test-UserSid $sid)) -or $userProfile.Special -or $loaded.ContainsKey($sid) -or ($ServiceSid -and ($sid -eq $ServiceSid))) { continue }
         Write-RunLog 'setup.remove' 'INFO' ('the distributions of {0} cannot be read (its profile is not loaded)' -f $sid)
         $ok = $false
     }
@@ -627,17 +716,29 @@ function Remove-SetupData {
     Set-LayoutDataRoot -Layout $Layout -DataRoot $state.data_root
     $paths = Get-KeptPaths -Layout $Layout
     if (Test-Path -LiteralPath $paths.Folder) {
-        if (Test-Path -LiteralPath $paths.Live -PathType Leaf) {
-            $null = & $ExecJob 'terminate-distro'
-            $moved = Move-KeptDisk -Layout $Layout
-            if ($moved.code -ne 'kept') {
-                Write-RunLog 'setup.remove' 'FAIL' 'the kept disk could not go back to kept\; nothing is deleted'
-                return $moved
+        # R-5 (Architect N-6, Security S97-8): any failure here returns keep_failed and deletes
+        # nothing more; the wizard then stops the removal and keeps the state record, so the
+        # next start tries again. Kept data is never deleted.
+        try {
+            if (Test-Path -LiteralPath $paths.Live -PathType Leaf) {
+                $null = & $ExecJob 'terminate-distro'
+                $moved = Move-KeptDisk -Layout $Layout
+                if ($moved.code -ne 'kept') {
+                    Write-RunLog 'setup.remove' 'FAIL' 'the kept disk could not go back to kept\; nothing is deleted'
+                    return New-StepResult -Code 'keep_failed' -MessageKey 'uninstall.keep_failed' -Values @{ reason = 'move' }
+                }
             }
+            $job = & $ExecJob 'unregister-distro'
+            Write-RunLog 'setup.remove' 'INFO' ('unregister: {0}' -f (Get-DictValue $job 'code'))
+            if ((Get-DictValue $job 'exit_code') -ne 0) {
+                Write-RunLog 'setup.remove' 'FAIL' 'the distribution was not unregistered; distro and payload stay'
+                return New-StepResult -Code 'keep_failed' -MessageKey 'uninstall.keep_failed' -Values @{ reason = 'unregister' }
+            }
+            foreach ($path in @($Layout.Distro, $Layout.Payload)) { if (Test-Path -LiteralPath $path) { Remove-PathNoFollow -Path $path } }
+        } catch {
+            Write-RunLog 'setup.remove' 'FAIL' ('kept branch: {0}; nothing more is deleted' -f $_.Exception.Message)
+            return New-StepResult -Code 'keep_failed' -MessageKey 'uninstall.keep_failed' -Values @{ reason = 'error' }
         }
-        $job = & $ExecJob 'unregister-distro'
-        Write-RunLog 'setup.remove' 'INFO' ('unregister: {0}' -f (Get-DictValue $job 'code'))
-        foreach ($path in @($Layout.Distro, $Layout.Payload)) { if (Test-Path -LiteralPath $path) { Remove-PathNoFollow -Path $path } }
         Write-RunLog 'setup.remove' 'INFO' ('kept data stays in {0}' -f $paths.Folder)
         return New-StepResult -Code 'returned' -MessageKey 'setup.kept.returned'
     }

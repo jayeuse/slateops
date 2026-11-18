@@ -169,6 +169,9 @@ var
   HelperScript, StateCheckCode, RunId, SetupVersion, ServiceSid, HostName: String;
   EntryScreen, EntryNext: String;
   EntryWelcomeBack, StateUnsafe, ForceClose, ModalOpen, Ticking, KeyTicking: Boolean;
+  { R-1 (Security S97-3): Slate Operations is installed but its record cannot be read; setup
+    stops on S01 like an unsafe state folder (Save report, nothing removed). }
+  ProgramUnreadable: Boolean;
   { DEC-0041 (AC-W4): the state-check found an earlier run that did not finish; setup removes
     it before S01. }
   EntryCleanup: Boolean;
@@ -357,6 +360,9 @@ var
   RemoveForm: TSetupForm;
   RemovePanel: TPanel;
   RemoveTicking: Boolean;
+  { R-6 (Architect N-8): the removal starts at the first tick after its window shows. }
+  RemoveStartPending: Boolean;
+  RemoveWhy: String;
 
   { W13b part 2: M05 Update (Maintenance.iss). JobRaw is the job-result text of the last job. }
   InstalledVersion, UpdPhase, UpdNext, UpdOut, UpdState, UpdNeedsGb, UpdFailText, UpdFailStage, JobRaw: String;
@@ -3165,7 +3171,7 @@ begin
   else if (DataError = 'start_failed') or (DataError = 'helper_timeout') then
   begin
     { In place, never from the timer as a dialog (spec 12 item 1). }
-    if DataError = 'helper_timeout' then AddText(CM('av_blocked'), False) else AddText(CM('s07_start_failed'), False);
+    if DataError = 'helper_timeout' then AddText(CM('s07_av_blocked'), False) else AddText(CM('s07_start_failed'), False);
     AddReportControls;
   end;
   RefreshKept;
@@ -3628,11 +3634,36 @@ begin
   Result := Copy(Result, 1, 100);
 end;
 
-{ DEC-0041 (AC-W1): the length rule of the app's password policy (backend validate_password:
-  at least 12 characters, at most 128). }
-function PasswordLengthOk(S: String): Boolean;
+{ R-2 (Product Designer, Security S97-4, Architect N-1): the rule of the install job and of
+  bootstrap_admin (engine invitation.valid_password): at least 12 characters (code points), at
+  most 72 UTF-8 bytes (bcrypt), no line break or control character. A string is UTF-16 here: a
+  surrogate pair is one character of 4 bytes. Returns the copy key of the error, or ''. }
+function PasswordProblem(S: String): String;
+var
+  I, Code, Chars, Bytes: Integer;
 begin
-  Result := (Length(S) >= 12) and (Length(S) <= 128);
+  Result := '';
+  Chars := 0;
+  Bytes := 0;
+  for I := 1 to Length(S) do
+  begin
+    Code := Ord(S[I]);
+    if (Code < 32) or ((Code >= 127) and (Code <= 159)) then
+      Result := 's08_err_password_chars';
+    if (Code >= $DC00) and (Code <= $DFFF) then
+      Continue;
+    Chars := Chars + 1;
+    if Code < $80 then Bytes := Bytes + 1
+    else if Code < $800 then Bytes := Bytes + 2
+    else if (Code >= $D800) and (Code <= $DBFF) then Bytes := Bytes + 4
+    else Bytes := Bytes + 3;
+  end;
+  if Result <> '' then
+    Exit;
+  if (Chars < 12) or (Chars > 72) then
+    Result := 's08_err_password'
+  else if Bytes > 72 then
+    Result := 's08_err_password_long';
 end;
 
 { The width of a radio button or check box that shows S: its text and the box. The measuring
@@ -3753,9 +3784,9 @@ begin
   OrgEmail := NewEditAt(Surface, 0); OrgEmail.MaxLength := 254;
   OrgPasswordLabel := AddTextTo(Surface, 0, CM('s08_password'), True);
   OrgPasswordHelp := AddTextTo(Surface, 0, CM('s08_password_help'), False);
-  OrgPassword := NewEditAt(Surface, 0); OrgPassword.MaxLength := 128; OrgPassword.PasswordChar := '*';
+  OrgPassword := NewEditAt(Surface, 0); OrgPassword.MaxLength := 144; OrgPassword.PasswordChar := '*';
   OrgConfirmLabel := AddTextTo(Surface, 0, CM('s08_confirm'), True);
-  OrgConfirm := NewEditAt(Surface, 0); OrgConfirm.MaxLength := 128; OrgConfirm.PasswordChar := '*';
+  OrgConfirm := NewEditAt(Surface, 0); OrgConfirm.MaxLength := 144; OrgConfirm.PasswordChar := '*';
   OrgShow := TNewCheckBox.Create(WizardForm);
   OrgShow.Parent := Surface;
   OrgShow.Caption := CM('s08_show');
@@ -3799,7 +3830,7 @@ begin
   if Length(Trim(OrgName.Text)) > 100 then begin OrgFail('s08_err_name_long', OrgName); Exit; end;
   if Trim(OrgYourName.Text) = '' then begin OrgFail('s08_err_your_name', OrgYourName); Exit; end;
   if not ValidEmail(Trim(OrgEmail.Text)) then begin OrgFail('s08_err_email', OrgEmail); Exit; end;
-  if not PasswordLengthOk(OrgPassword.Text) then begin OrgFail('s08_err_password', OrgPassword); Exit; end;
+  if PasswordProblem(OrgPassword.Text) <> '' then begin OrgFail(PasswordProblem(OrgPassword.Text), OrgPassword); Exit; end;
   if OrgConfirm.Text <> OrgPassword.Text then begin OrgFail('s08_err_confirm', OrgConfirm); Exit; end;
   if not ValidLabel(OrgSlug.Text) then
   begin
@@ -4317,7 +4348,9 @@ begin
   end
   { DEC-0041 (AC-W6): after set-email, the test email's address and where to look. }
   else if MailSaved and (MailSentTo <> '') then MailStatus.Caption := FM1('m02_test_sent', MailSentTo)
-  else if MailSaved then MailStatus.Caption := FM1('m02_test_sent', Trim(MailFrom.Text))
+  { R-3 (Product Designer): the engine did not name the address; the email went to the
+    administrator, not to the sending address. }
+  else if MailSaved then MailStatus.Caption := CM('m02_test_sent_admin')
   else MailStatus.Caption := '';
   if MailShowReport and ((ReportLine <> '') or (ReportPhase <> '')) then
   begin
@@ -4382,7 +4415,7 @@ begin
   else if Code = 'smtp_no_tls' then SetMailError(CM('s09_err_no_tls'), MailSsl)
   else if Code = 'smtp_tls_certificate' then SetMailError(FM1('s09_err_certificate', MailHost), MailServer)
   else if Code = 'smtp_sender_refused' then SetMailError(FM1('s09_err_sender', Trim(MailFrom.Text)), MailFrom)
-  else if Code = 'smtp_recipient_refused' then SetMailError(FM1('s09_err_recipient', Trim(OrgEmail.Text)), MailFrom)
+  else if Code = 'smtp_recipient_refused' then SetMailError(CM('s09_err_recipient'), MailFrom)
   else
   begin
     MailShowReport := True;
@@ -4929,6 +4962,8 @@ begin
     if Code <> 'installed' then
     begin
       if Code = 'insufficient_space' then InstallFail(0, CM('s12_disk_full'))
+      { R-2: the engine refused an answer (the S08 rule above matches it, so this is rare). }
+      else if Code = 'invalid_input' then InstallFail(6, CM('s12_invalid_input'))
       else if Code = 'service_logon_failed' then InstallFail(0, CM('s12_logon_failed'))
       else if Code = 'job_timeout' then InstallFail(0, CM('s12_step_limit'))
       else if Code = 'helper_timeout' then InstallFail(0, CM('s12_av_blocked'))
@@ -5404,7 +5439,13 @@ begin
     begin
       RemoveTicking := True;
       try
-        PollCloseFlow;
+        if RemoveStartPending then
+        begin
+          RemoveStartPending := False;
+          StartCloseFlow('remove', RemoveWhy);
+        end
+        else
+          PollCloseFlow;
         RefreshWaitLabels;
       finally
         RemoveTicking := False;
@@ -5635,6 +5676,8 @@ begin
   Log('State folder check: ' + StateCheckCode);
   Text := ReadText(OutFile);
   StateUnsafe := (StateCheckCode = 'unsafe_owner') or (StateCheckCode = 'unsafe');
+  ProgramUnreadable := Pos('"program_unreadable":true', Text) > 0;
+  StateUnsafe := StateUnsafe or ProgramUnreadable;
   EntryScreen := JsonValue(Text, 'screen');
   EntryNext := JsonValue(Text, 'next');
   { AC-W9: a check restart that setup asked for before S05 goes on at S02. }
@@ -5840,9 +5883,10 @@ begin
   WizardForm.FinishedLabel.Visible := False;
   if GetArrayLength(S15Steps) = 0 then
     SetArrayLength(S15Steps, 5);
+  { R-3 (Product Designer): "Open Slate Operations" sits under step 1 (sign in); step 2 (set up
+    email) follows; a kept reinstall shows neither step, its accounts and email stay. }
   Y := WizardForm.FinishedLabel.Top;
   PlaceFinishedText(0, Step1, Y);
-  PlaceFinishedText(1, CM('s15_step2'), Y);
   if S15Open = nil then
   begin
     S15Open := TNewButton.Create(WizardForm);
@@ -5852,6 +5896,10 @@ begin
   S15Open.Caption := CM('s15_open');
   S15Open.SetBounds(WizardForm.FinishedLabel.Left, Y - ScaleY(8), WizardForm.CalculateButtonWidth([CM('s15_open')]), WizardForm.NextButton.Height);
   Y := S15Open.Top + S15Open.Height + ScaleY(12);
+  if KeptMode then
+    PlaceFinishedText(1, '', Y)
+  else
+    PlaceFinishedText(1, CM('s15_step2'), Y);
   PlaceFinishedText(2, Step3, Y);
   PlaceFinishedText(3, CM('s15_desk'), Y);
   PlaceFinishedText(4, CM('s15_starts'), Y);
@@ -5893,7 +5941,10 @@ begin
     SetNextCaption(CM('s01_next'));
     if StateUnsafe then
     begin
-      WizardForm.WelcomeLabel2.Caption := CM('s01_state_unsafe');
+      if ProgramUnreadable then
+        WizardForm.WelcomeLabel2.Caption := CM('s01_program_unreadable')
+      else
+        WizardForm.WelcomeLabel2.Caption := CM('s01_state_unsafe');
       WizardForm.NextButton.Enabled := False;
       { W14-D3 (6.1 L6): Save report sits on the page under the message, not in the row. }
       WizardForm.AdjustLabelHeight(WizardForm.WelcomeLabel2);

@@ -20,7 +20,9 @@ Test-Case 'AC-W4 an earlier run that did not finish is removed at start; only a 
         @('continue_later', $true, '', 'S01  cleanup'),
         @('install_started', $true, '', 'S01  cleanup'),
         @('check_restart', $true, '', 'S02  '),
-        @('key_saved', $true, '', 'S01  cleanup'),
+        # R-1 (Security S97-3): a finished install is never removed at start, even when its program
+        # record is gone (an uninstall that left parts behind).
+        @('key_saved', $true, '', 'S01  '),
         @('', $true, '', 'S01  cleanup'),
         @('feature_restart', $true, '', 'S06 S07 '),
         @('install_finished', $true, '', 'S06 S14 '),
@@ -93,6 +95,25 @@ Test-Case 'QA N4 a restart continues only when the same setup version asked for 
     $layout = New-RemovalLayout 'qa-n4-version'
     Save-SetupProgress -Layout $layout -Stage 'feature_restart' -RunId 'install-20261118T120000Z-abc123' -SetupVersion '0.2.0'
     Assert-Equal '0.2.0' ([string](Read-SetupProgress -Layout $layout)['setup_version']) 'the saved progress names its setup version'
+}
+
+Test-Case 'R-1 a program record that exists but cannot be read stops setup with Save report and removes nothing' {
+    # Security S97-3: the uninstall entry is there, but its version.json is missing, unreadable or
+    # of an unknown schema; whatever progress is saved, nothing is removed.
+    foreach ($stage in @('', 'install_started', 'key_saved', 'install_finished', 'feature_restart')) {
+        $progress = $null
+        if ($stage) { $progress = @{ stage = $stage; setup_version = '0.2.0' } }
+        $entry = Get-SetupEntry -Progress $progress -Leftover -ProgramUnreadable -SetupVersion '0.2.0'
+        Assert-Equal 'S01 True False' ('{0} {1} {2}' -f $entry.screen, ($entry['program_unreadable'] -eq $true), ($entry['cleanup'] -eq $true)) $stage
+    }
+    $root = New-TestDirectory 'r-1-program'
+    Assert-Equal 'none' (Get-InstalledProgramState -InstallLocation $null -KeyFound:$false).state 'no uninstall entry'
+    Assert-Equal 'unreadable' (Get-InstalledProgramState -InstallLocation '' -KeyFound).state 'an entry with no install location'
+    Assert-Equal 'unreadable' (Get-InstalledProgramState -InstallLocation $root -KeyFound).state 'no version.json'
+    [System.IO.File]::WriteAllText((Join-Path $root 'version.json'), '{"schema_version":2,"version":"0.3.0"}')
+    Assert-Equal 'unreadable' (Get-InstalledProgramState -InstallLocation $root -KeyFound).state 'an unknown schema'
+    [System.IO.File]::WriteAllText((Join-Path $root 'version.json'), '{not json')
+    Assert-Equal 'unreadable' (Get-InstalledProgramState -InstallLocation $root -KeyFound).state 'not JSON'
 }
 
 # The WSL guard (parent addition to AC-W3). Run records the commands instead of running them.
@@ -168,6 +189,32 @@ Test-Case 'AC-W3 the setup removal never deletes kept data: a kept reinstall ret
     Assert-Equal 'returned' $again.code (ConvertTo-JsonText $again)
     Assert-Equal 'the kept data' ([System.IO.File]::ReadAllText((Join-Path $dataRoot 'kept\ext4.vhdx')))
     Assert-Equal @('unregister-distro') @($jobs)
+}
+
+Test-Case 'R-5 any failure in the kept branch returns keep_failed and deletes nothing' {
+    # Architect N-6, Security S97-8: an exception (a locked disk) or a failed unregister keeps
+    # the state record, so the next start tries again; kept\ and distro\ stay.
+    $layout = New-RemovalLayout 'r-5-kept'
+    $dataRoot = Join-Path (Split-Path -Parent (Split-Path -Parent $layout.StateRoot)) 'Data\SlateOps'
+    Write-JsonFile -Path $layout.StateFile -Value ([ordered]@{ schema_version = 1; data_root = $dataRoot; vhd_size_gb = 30 })
+    foreach ($folder in @('distro', 'payload', 'kept')) { [void][System.IO.Directory]::CreateDirectory((Join-Path $dataRoot $folder)) }
+    [System.IO.File]::WriteAllText((Join-Path $dataRoot 'kept\kept.json'), '{"version":"0.2.0"}')
+    [System.IO.File]::WriteAllText((Join-Path $dataRoot 'kept\ext4.vhdx'), 'the kept data')
+    $throws = Remove-SetupData -Layout $layout -ExecJob { param([string]$Job) throw 'exec_busy' }
+    Assert-Equal 'keep_failed' $throws.code 'an exception'
+    $refused = Remove-SetupData -Layout $layout -ExecJob { param([string]$Job) @{ code = 'failed'; exit_code = 1 } }
+    Assert-Equal 'keep_failed' $refused.code 'unregister failed'
+    Assert-Equal $true (Test-Path -LiteralPath (Join-Path $dataRoot 'distro')) 'distro stays while the distribution may still be registered'
+    Assert-Equal 'the kept data' ([System.IO.File]::ReadAllText((Join-Path $dataRoot 'kept\ext4.vhdx')))
+}
+
+Test-Case 'R-7 the distribution check reads local and Microsoft Entra ID accounts' {
+    # Security S97-9: S-1-12-1- is a Microsoft Entra ID user; its distributions count too.
+    $rows = @(
+        @('S-1-5-21-1004336348-1177238915-682003330-1001', $true), @('S-1-12-1-3570523188-1192226446-1520862853-1592452722', $true),
+        @('S-1-5-18', $false), @('S-1-5-21-1004336348-1177238915-682003330-1001_Classes', $false), @('S-1-5-80-123', $false)
+    )
+    foreach ($row in $rows) { Assert-Equal $row[1] (Test-UserSid $row[0]) $row[0] }
 }
 
 Test-Case 'AC-W3 the setup removal has nothing to remove before the data folder step' {

@@ -267,8 +267,8 @@ end;
 procedure SelfFormPages;
 var
   Ok: Boolean;
-  ErrorHeight: Integer;
-  Masked: String;
+  ErrorHeight, I: Integer;
+  Masked, Emoji: String;
 begin
   try
     { AC-W1 and the parent's S08 decision: the fields in order, Password and its second entry in
@@ -318,10 +318,19 @@ begin
       + ', refused 0 0 0 0 0 0 = ' + IntToStr(Ord(ValidEmail('maria@example'))) + ' ' + IntToStr(Ord(ValidEmail('maria@-example.com')))
       + ' ' + IntToStr(Ord(ValidEmail('maria@example-.com'))) + ' ' + IntToStr(Ord(ValidEmail('ma ria@example.com')))
       + ' ' + IntToStr(Ord(ValidEmail('@example.com'))) + ' ' + IntToStr(Ord(ValidEmail('maria@example..com'))));
-    SelfRecord('AC-W1 S08 password length rule (12 to 128)', (not PasswordLengthOk('elevenchars')) and PasswordLengthOk('twelve chars')
-      and PasswordLengthOk(StringOfChar('a', 128)) and not PasswordLengthOk(StringOfChar('a', 129)),
-      '11, 12, 128, 129 characters = ' + IntToStr(Ord(PasswordLengthOk('elevenchars'))) + ' ' + IntToStr(Ord(PasswordLengthOk('twelve chars')))
-      + ' ' + IntToStr(Ord(PasswordLengthOk(StringOfChar('a', 128)))) + ' ' + IntToStr(Ord(PasswordLengthOk(StringOfChar('a', 129)))) + ' (want 0 1 1 0)');
+    { R-2: the rule of the install job: 12 characters to 72 UTF-8 bytes, no control character. }
+    Emoji := '';
+    for I := 1 to 6 do
+      Emoji := Emoji + #$D83D + #$DE00;
+    Ok := (PasswordProblem('elevenchars') = 's08_err_password') and (PasswordProblem('twelve chars') = '')
+      and (PasswordProblem(StringOfChar('a', 72)) = '') and (PasswordProblem(StringOfChar('a', 73)) = 's08_err_password')
+      and (PasswordProblem(StringOfChar(#233, 36)) = '') and (PasswordProblem(StringOfChar(#233, 40)) = 's08_err_password_long')
+      and (PasswordProblem(Emoji) = 's08_err_password') and (PasswordProblem('twelve' + #9 + 'chars!') = 's08_err_password_chars');
+    SelfRecord('R-2 S08 password rule (12 characters to 72 UTF-8 bytes)', Ok,
+      '11 ASCII "' + PasswordProblem('elevenchars') + '", 12 "' + PasswordProblem('twelve chars') + '", 72 "' + PasswordProblem(StringOfChar('a', 72))
+      + '", 73 "' + PasswordProblem(StringOfChar('a', 73)) + '", 36 e-acute "' + PasswordProblem(StringOfChar(#233, 36))
+      + '", 40 e-acute "' + PasswordProblem(StringOfChar(#233, 40)) + '", 6 emoji "' + PasswordProblem(Emoji)
+      + '", tab "' + PasswordProblem('twelve' + #9 + 'chars!') + '"');
     SelfRecord('AC-W5 the user name from the name on S08', (UserFromName('Maria Santos', 'maria@example.com') = 'maria-santos')
       and (UserFromName('  ', 'jo@example.com') = 'jo_') and (UserFromName('Al', 'al@example.com') = 'al_'),
       UserFromName('Maria Santos', 'maria@example.com') + ', ' + UserFromName('  ', 'jo@example.com'));
@@ -341,7 +350,8 @@ begin
       and not ValidLabel('river--side') and not ValidLabel('-river') and not ValidLabel('12345') and not ValidLabel(StringOfChar('a', 64));
     SelfRecord('AC-A1 label rules (cut at 30, no all digits, DNS label)', Ok, LabelFromName('Riverside Learning Center for the Arts and Sciences'));
     OrgAddressClick(nil, '', sltID);
-    OrgError.Caption := FM1('s08_err_label_in_use', 'riverside-learning-center.local');
+    { R-3: the longest address name error (the designer's s08_err_label). }
+    OrgError.Caption := CM('s08_err_label');
     OrgErrorAfter := OrgSlug;
     LayoutOrg;
     Ok := OrgSlug.Visible and OrgSlugLabel.Visible and (OrgSlug.Top > OrgAddressLink.Top) and (Pos('<a', OrgAddressLink.Caption) = 0)
@@ -419,8 +429,10 @@ begin
     MailSentTo := 'admin@example.com';
     RenderMailStatus;
     SelfRecord('AC-W6 M02 says where the test email went', MailStatus.Caption = FM1('m02_test_sent', 'admin@example.com'), MailStatus.Caption);
-    MailSaved := False;
     MailSentTo := '';
+    RenderMailStatus;
+    SelfRecord('R-3 M02 with no sent_to names the administrator', MailStatus.Caption = CM('m02_test_sent_admin'), MailStatus.Caption);
+    MailSaved := False;
     RenderMailStatus;
   except
     SelfRecord('AC-W1 S08 and AC-W6 M02 forms', False, GetExceptionMessage);
@@ -619,6 +631,16 @@ var
   Text: String;
 begin
   try
+    { R-3: S07's own security program line (no Try again on S07). }
+    DataRoot := 'D:\SlateOps';
+    DataError := 'helper_timeout';
+    RenderData;
+    SelfFits('R-3 S07 security program line', P_DATA);
+    DataError := '';
+  except
+    SelfRecord('R-3 S07 security program line', False, GetExceptionMessage);
+  end;
+  try
     Text := '{"code":"listed","message_key":"setup.drives.listed","values":{"drives":[' +
       '{"letter":"C:","drive_type":"Fixed","file_system":"NTFS","free_bytes":30064771072,"compressed":false,"encrypted":false},' +
       '{"letter":"D:","drive_type":"Fixed","file_system":"NTFS","free_bytes":256624295936,"compressed":false,"encrypted":false},' +
@@ -756,8 +778,8 @@ end;
 procedure SelfCloseFlow;
 var
   Start, Call, Longest, MaxLimit: Cardinal;
-  Created, LimitsOk: Boolean;
-  Phases: String;
+  Created, LimitsOk, Ok: Boolean;
+  Phases, Detail: String;
 begin
   Created := not DirExists(ExpandConstant('{commonappdata}\SlateOps'));
   try
@@ -813,6 +835,17 @@ begin
         RenderRemove;
         SelfRecord('AC-W3 the last line says Windows finishes at the next restart', (CurY <= RemovePanel.Height)
           and (WaitDrawn = 6), 'content ends at ' + IntToStr(CurY) + ', panel ' + IntToStr(RemovePanel.Height));
+        { R-3, R-5: the longest stopped lines fit too. }
+        CloseNumber := 3;
+        CloseEnd := 'data';
+        RenderRemove;
+        Ok := CurY <= RemovePanel.Height;
+        Detail := 'data stop ends at ' + IntToStr(CurY);
+        CloseEnd := 'limit';
+        RenderRemove;
+        Ok := Ok and (CurY <= RemovePanel.Height);
+        Detail := Detail + ', limit stop ends at ' + IntToStr(CurY) + ', panel ' + IntToStr(RemovePanel.Height);
+        SelfRecord('R-3 the stopped removal lines fit the form', Ok, Detail);
       finally
         ClosePhase := '';
         CloseEnd := '';
@@ -1087,10 +1120,12 @@ begin
   SelfDraw('S14', P_KEY);
   SelfDraw('S15', -1);
   { DEC-0041 (QA N1): step 1 is to sign in at the address with the S08 email address and the
-    setup password; no invitation email. }
+    setup password; no invitation email. R-3: the button sits under step 1, then step 2. }
   try
     SelfRecord('QA N1 S15 step 1 signs in at the address with the S08 email', (Pos('https://' + HostName + '.local', S15Steps[0].Caption) > 0)
       and (Pos(Trim(OrgEmail.Text), S15Steps[0].Caption) > 0) and (Pos('invitation', S15Steps[0].Caption) = 0), S15Steps[0].Caption);
+    SelfRecord('R-3 S15 Open under step 1, then step 2', (S15Open.Top > S15Steps[0].Top) and (S15Steps[1].Top > S15Open.Top) and S15Steps[1].Visible,
+      'step 1 ' + IntToStr(S15Steps[0].Top) + ', button ' + IntToStr(S15Open.Top) + ', step 2 ' + IntToStr(S15Steps[1].Top));
   except
     SelfRecord('QA N1 S15 step 1 signs in at the address with the S08 email', False, GetExceptionMessage);
   end;

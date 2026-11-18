@@ -110,15 +110,18 @@ try {
             # W8: the installed version decides M01 or M05 (spec 4.1).
             $setupVersion = ''
             try { $setupVersion = (Read-HelperVersion).version } catch { $setupVersion = '' }
-            $installed = Get-InstalledVersion
+            $program = Get-InstalledProgram
+            $installed = [string]$program.version
+            $unreadable = ($program.state -eq 'unreadable')
+            if ($unreadable) { Write-RunLog 'setup.entry' 'WARN' 'the installed program record cannot be read; setup removes nothing' }
             if ($step.code -eq 'safe') {
                 # DEC-0041 (AC-W4): a progress file that cannot be read still counts as a record of
                 # an earlier run (Test-SetupLeftover), so it is removed, not resumed.
                 $progress = $null
                 try { $progress = Read-SetupProgress -Layout $layout } catch { Write-RunLog 'setup.progress' 'WARN' ('progress not readable: {0}' -f $_.Exception.Message) }
-                $result.values = @{ entry = (Get-SetupEntry -Progress $progress -Installed $installed -SetupVersion $setupVersion -Leftover:(Test-SetupLeftover -Layout $layout)) }
+                $result.values = @{ entry = (Get-SetupEntry -Progress $progress -Installed $installed -SetupVersion $setupVersion -Leftover:(Test-SetupLeftover -Layout $layout) -ProgramUnreadable:$unreadable) }
             }
-            elseif ($step.code -eq 'absent') { $result.values = @{ entry = (Get-SetupEntry -Progress $null -Installed $installed -SetupVersion $setupVersion) } }
+            elseif ($step.code -eq 'absent') { $result.values = @{ entry = (Get-SetupEntry -Progress $null -Installed $installed -SetupVersion $setupVersion -ProgramUnreadable:$unreadable) } }
         }
         { $_ -in @('check', 'recheck') } {
             $pinned = [version]'0.0.0.0'
