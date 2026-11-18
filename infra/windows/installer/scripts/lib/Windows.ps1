@@ -78,6 +78,14 @@ function Initialize-DataFolder {
         return New-StepResult -Code 'unsafe' -MessageKey 'setup.data.unsafe'
     }
     $size = Get-VhdSizeGB -FreeBytes ([long]$disk.FreeSpace)
+    # TASK-0097 AC-1: a run again on the same folder (every resume before the background
+    # preparation finished) keeps the recorded disk limit; a disk already imported has that size.
+    if (Test-Path -LiteralPath $Layout.StateFile -PathType Leaf) {
+        try {
+            $recorded = Read-InstallState -Layout $Layout
+            if ($recorded.data_root -eq $DataRoot) { $size = $recorded.vhd_size_gb }
+        } catch { Write-RunLog 'setup.data' 'WARN' ('recorded disk limit not read: {0}' -f $_.Exception.Message) }
+    }
     Write-JsonFile -Path $Layout.StateFile -Value ([ordered]@{ schema_version = 1; data_root = $DataRoot; vhd_size_gb = $size })
     Write-RunLog 'setup.data' 'INFO' ('data folder {0}, disk limit {1} GB' -f $DataRoot, $size)
     return New-StepResult -Code 'ready' -MessageKey 'setup.data.ready' -Values @{ vhd_size_gb = $size }
@@ -148,6 +156,35 @@ function Test-NetworkChanged {
     if ($current -eq $recorded) { return $false }
     Write-RunLog 'maintenance.network' 'WARN' ('network {0}, rules for {1}' -f $current, $recorded)
     return $true
+}
+
+function Invoke-PrepareData {
+    # prepare-data (S07, and every resume with the background preparation not done; TASK-0097
+    # AC-1, QA B1, Architect A-B1): the state folder, the data folder, the scripts that the tasks
+    # run and this version's parts, so a resume with a newer setup file finds its own parts and
+    # Exec scripts. Then the receive parts of other versions leave the payload folder, as after
+    # an update (DEC-0036); a failure there is logged only.
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Layout,
+        [Parameter(Mandatory = $true)][string]$DataRoot,
+        [Parameter(Mandatory = $true)][string]$ScriptsDir,
+        [Parameter(Mandatory = $true)][string]$PayloadDir,
+        [Parameter(Mandatory = $true)][hashtable]$Version,
+        [string]$ServiceSid = '',
+        [switch]$AllowKept
+    )
+    $ready = Initialize-StateFolder -Layout $Layout -ServiceSid $ServiceSid
+    if ($ready.code -ne 'ready') { return $ready }
+    $data = Initialize-DataFolder -Layout $Layout -DataRoot $DataRoot -ServiceSid $ServiceSid -AllowKept:$AllowKept
+    if ($data.code -ne 'ready') { return $data }
+    $copy = Install-ScriptsCopy -Layout $Layout -SourceDir $ScriptsDir
+    if ($copy.code -ne 'copied') { return $copy }
+    $parts = @($Version.linux_image_name) + @(Get-ReceivePartNames -Version $Version.version)
+    $copied = Copy-PayloadPart -Layout $Layout -SourceDir $PayloadDir -Names $parts -ServiceSid $ServiceSid
+    if ($copied.code -ne 'copied') { return $copied }
+    try { $null = Remove-OldPayloadParts -Layout $Layout -Version $Version.version -ServiceSid $ServiceSid }
+    catch { Write-RunLog 'setup.payload' 'WARN' ('old parts not removed: {0}' -f $_.Exception.Message) }
+    return New-StepResult -Code 'ready' -MessageKey 'setup.data.ready' -Values $data.values
 }
 
 function Remove-OldPayloadParts {

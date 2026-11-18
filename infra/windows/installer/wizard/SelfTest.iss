@@ -236,6 +236,7 @@ end;
 procedure SelfFormPages;
 var
   Ok: Boolean;
+  ErrorHeight: Integer;
 begin
   try
     OrgMoreClick(nil, '', sltID);
@@ -289,6 +290,23 @@ begin
       + ', page ' + IntToStr(Pages[P_EMAIL].SurfaceHeight));
     SelfInfo('S09 Other height', 'content ends at ' + IntToStr(MailLater.Top + MailLater.Height) + ', limit '
       + IntToStr(StatusBandTop - ScaleY(12)) + ', page ' + IntToStr(Pages[P_EMAIL].SurfaceHeight));
+    { TASK-0097 AC-4 (Designer B1): Other with the server error. Only the password's error goes
+      to the password column; this one starts at the left edge under Server and Port, full
+      width, and is as tall as its text needs at that width. }
+    MailError.Caption := FM1('s09_err_unreachable', 'smtp.example.com');
+    MailErrorAfter := MailServer;
+    LayoutMail;
+    ErrorHeight := MailError.Height;
+    WizardForm.AdjustLabelHeight(MailError);
+    Ok := MailError.Visible and (MailError.Left = 0) and (MailError.Width = MailFrom.Width)
+      and (MailError.Top > MailServer.Top) and (MailError.Top < MailSecurityLabel.Top)
+      and (MailError.Height = ErrorHeight) and (MailError.Top + MailError.Height <= MailSecurityLabel.Top)
+      and (MailLater.Top + MailLater.Height <= StatusBandTop - ScaleY(12));
+    SelfRecord('AC-4 S09 Other: the server error is under its field, full width', Ok,
+      'left ' + IntToStr(MailError.Left) + ', width ' + IntToStr(MailError.Width) + ' of ' + IntToStr(MailFrom.Width)
+      + ', height ' + IntToStr(ErrorHeight) + ' needs ' + IntToStr(MailError.Height) + ', top ' + IntToStr(MailError.Top)
+      + ', next label ' + IntToStr(MailSecurityLabel.Top));
+    MailErrorAfter := MailPassword;
     ShowStatusLine('');
     MailGmail.Checked := True;
     MailError.Caption := '';
@@ -396,6 +414,157 @@ begin
 end;
 
 
+
+{ TASK-0097 AC-8 (Designer 9): every text that the status line shows fits on its one line (18 px
+  high, so a second line is cut off): the background line with each step, the close flows and
+  their notices. Each text is measured at the status line's own font with no wrapping; the time
+  gets one more digit (10:00). One INFO line per text gives its width and the limit. }
+procedure SelfLineFits(Key: String; Measure: TNewStaticText; Limit: Integer; var Ok: Boolean; var Bad: String);
+var
+  Text: String;
+begin
+  if Copy(Key, 1, 5) = 'step_' then
+    Text := BgLineText(FM1(Key, 'D:\SlateOps'))
+  else if (Key = 'later_save_failed') or (Key = 'later_restart_failed') or (Copy(Key, 1, 4) = 's07_') then
+    Text := CM(Key)
+  else
+    Text := OneLine(4, 4, FM1(Key, 'D:\SlateOps\kept'), GetTickCount);
+  Measure.Caption := Text + '0';
+  SelfInfo('AC-8 status line ' + Key, 'width ' + IntToStr(Measure.Width) + ', limit ' + IntToStr(Limit));
+  if Measure.Width > Limit then
+  begin
+    Ok := False;
+    Bad := Bad + ' ' + Key + ' (' + IntToStr(Measure.Width) + ')';
+  end;
+end;
+
+procedure SelfStatusLine;
+var
+  Measure: TNewStaticText;
+  Bad: String;
+  L: Integer;
+  Ok: Boolean;
+begin
+  try
+    ShowStatusLine('x');
+    L := StatusLine.Width;
+    ShowStatusLine('');
+    Measure := TNewStaticText.Create(WizardForm);
+    Measure.Parent := WizardForm;
+    Measure.Visible := False;
+    Measure.AutoSize := True;
+    Measure.WordWrap := False;
+    Measure.ShowAccelChar := False;
+    BgIndex := 7;
+    BgBeganAt := GetTickCount;
+    Ok := True;
+    Bad := '';
+    SelfLineFits('step_data_unpack', Measure, L, Ok, Bad);
+    SelfLineFits('step_data_folder', Measure, L, Ok, Bad);
+    SelfLineFits('step_bg_service', Measure, L, Ok, Bad);
+    SelfLineFits('step_bg_wslconfig', Measure, L, Ok, Bad);
+    SelfLineFits('step_bg_import', Measure, L, Ok, Bad);
+    SelfLineFits('step_bg_restore_kept', Measure, L, Ok, Bad);
+    SelfLineFits('step_bg_import_kept', Measure, L, Ok, Bad);
+    SelfLineFits('step_bg_start', Measure, L, Ok, Bad);
+    SelfLineFits('step_bg_kept_status', Measure, L, Ok, Bad);
+    SelfLineFits('step_receive_space', Measure, L, Ok, Bad);
+    SelfLineFits('step_receive_stage', Measure, L, Ok, Bad);
+    SelfLineFits('step_receive_signature', Measure, L, Ok, Bad);
+    SelfLineFits('step_receive_check', Measure, L, Ok, Bad);
+    SelfLineFits('step_receive_load', Measure, L, Ok, Bad);
+    SelfLineFits('step_receive_keep', Measure, L, Ok, Bad);
+    SelfLineFits('step_prepare_systemd', Measure, L, Ok, Bad);
+    SelfLineFits('step_prepare_docker', Measure, L, Ok, Bad);
+    SelfLineFits('step_prepare_container', Measure, L, Ok, Bad);
+    SelfLineFits('step_prepare_networking', Measure, L, Ok, Bad);
+    SelfLineFits('step_prepare_time', Measure, L, Ok, Bad);
+    SelfLineFits('step_prepare_listeners', Measure, L, Ok, Bad);
+    SelfLineFits('step_prepare_interop', Measure, L, Ok, Bad);
+    SelfLineFits('step_prepare_mounts', Measure, L, Ok, Bad);
+    SelfLineFits('step_prepare_shells', Measure, L, Ok, Bad);
+    SelfLineFits('step_prepare_bundle', Measure, L, Ok, Bad);
+    SelfLineFits('step_prefetch_start_pull', Measure, L, Ok, Bad);
+    SelfLineFits('later_waiting', Measure, L, Ok, Bad);
+    SelfLineFits('later_discarding', Measure, L, Ok, Bad);
+    SelfLineFits('later_saving', Measure, L, Ok, Bad);
+    SelfLineFits('later_restarting', Measure, L, Ok, Bad);
+    SelfLineFits('cancel_closing', Measure, L, Ok, Bad);
+    SelfLineFits('remove_stopping', Measure, L, Ok, Bad);
+    SelfLineFits('remove_data', Measure, L, Ok, Bad);
+    SelfLineFits('remove_moving_kept', Measure, L, Ok, Bad);
+    SelfLineFits('remove_windows', Measure, L, Ok, Bad);
+    SelfLineFits('later_save_failed', Measure, L, Ok, Bad);
+    SelfLineFits('later_restart_failed', Measure, L, Ok, Bad);
+    SelfLineFits('s07_prep_failed', Measure, L, Ok, Bad);
+    SelfLineFits('s07_prepared', Measure, L, Ok, Bad);
+    BgIndex := 0;
+    BgBeganAt := 0;
+    Measure.Free;
+    SelfRecord('AC-8 every status line text fits on one line', Ok, 'wider than ' + IntToStr(L) + ':' + Bad);
+  except
+    SelfRecord('AC-8 every status line text fits on one line', False, GetExceptionMessage);
+  end;
+end;
+
+{ TASK-0097 AC-6 (Designer 1 to 3): S05 says what setup did. The verdict and the subtitle come
+  from the helper's codes (before the work: from the C26 values); a WSL already on the PC shows
+  its own version; the state with no restart has no restart stage and stands at Your details.
+  The owner's check result: Virtual Machine Platform off, WSL 3.0.5.0 present. }
+procedure SelfS05;
+var
+  Stages, Saved: String;
+  Count, I: Integer;
+begin
+  try
+    ParseCheck(ReadText(ExpandConstant('{tmp}\check-owner.json')));
+    SelfRecord('AC-6 S05 verdict enabled_now installed', S05VerdictKey('enabled_now', 'installed') = 's05_done', S05VerdictKey('enabled_now', 'installed'));
+    SelfRecord('AC-6 S05 verdict enabled_now present', S05VerdictKey('enabled_now', 'present') = 's05_done_vmp', S05VerdictKey('enabled_now', 'present'));
+    SelfRecord('AC-6 S05 verdict enabled installed', (S05VerdictKey('enabled', 'installed') = 's05_done_wsl') and (S05VerdictKey('pending', 'installed') = 's05_done_wsl'),
+      S05VerdictKey('enabled', 'installed') + ', ' + S05VerdictKey('pending', 'installed'));
+    SelfRecord('AC-6 S05 verdict pending present', S05VerdictKey('pending', 'present') = 's05_done_pending', S05VerdictKey('pending', 'present'));
+    PrepFeature := '';
+    PrepWsl := '';
+    SelfRecord('AC-6 S05 subtitle before the work', S05SubtitleKey = 's05_subtitle_vmp', S05SubtitleKey);
+    PrepFeature := 'enabled';
+    PrepWsl := 'installed';
+    Saved := S05SubtitleKey;
+    PrepFeature := 'enabled_now';
+    PrepWsl := 'installed';
+    SelfRecord('AC-6 S05 subtitle after the work', (Saved = 's05_subtitle_wsl') and (S05SubtitleKey = 's05_subtitle'), Saved + ', ' + S05SubtitleKey);
+    PrepFeature := 'enabled';
+    PrepWsl := 'present';
+    SelfRecord('AC-6 S05 subtitle with no restart', S05SubtitleKey = 's05_subtitle_ready', S05SubtitleKey);
+    Saved := WslVersion;
+    WslVersion := '2.6.1.0';
+    PrepFeature := '';
+    PrepWsl := '';
+    Stages := S05WslVersion;
+    PrepWsl := 'present';
+    SelfRecord('AC-6 S05 installed WSL version', (Stages = '3.0.5.0') and (S05WslVersion = '3.0.5.0'), Stages + ', ' + S05WslVersion);
+    WslVersion := Saved;
+    PrepState := 'done';
+    PrepFeature := 'enabled';
+    PrepWsl := 'present';
+    RenderRestart;
+    Stages := S05NoRestartStages;
+    Count := 1;
+    for I := 1 to Length(Stages) do
+      if Stages[I] = '|' then
+        Count := Count + 1;
+    SelfRecord('AC-6 S05 no restart: 4 stages, at 3', (Count = 4) and (WaitDrawn = 3) and (Pos(CM('s05_stage_restart'), Stages) = 0),
+      IntToStr(Count) + ' stages, at ' + IntToStr(WaitDrawn));
+    SelfFits('AC-6 S05 no restart', P_RESTART);
+  except
+    SelfRecord('AC-6 S05', False, GetExceptionMessage);
+  end;
+  PrepState := '';
+  PrepFeature := '';
+  PrepWsl := '';
+  { The draws after this one ran with the state that the S06 block left. }
+  SetArrayLength(Items, 0);
+  CheckVerdict := 'ready';
+end;
 
 { W14-D7 (closed; the part-1 reset is reverted): S07 on the owner's three fixed drives (C: 28 GB,
   D: 239 GB, E: 896 GB, in that order). The first entry, with no folder chosen, selects the
@@ -742,6 +911,8 @@ begin
   SelfCheck('ready layout', 'check-ready.json', 'ready', 0);
   SelfFits('S02 ready', P_CHECK);
   SelfPageStates;
+  SelfS05;
+  SelfStatusLine;
 
   { Sample state for the other pages. }
   OrgName.Text := 'Riverside Learning Center';
@@ -786,6 +957,14 @@ begin
   SelfDraw('M01 backup drive missing', P_MAINT);
   MaintNetwork := True;
   SelfDraw('M01 network changed', P_MAINT);
+  { TASK-0097 AC-5 (Designer B2): Repair running in the tallest M01 state (the backup drive
+    sentence): its full form in place of the actions, inside the page (SelfFits, FAIL level). }
+  MaintNetwork := False;
+  StepFor := 'repair';
+  StepOut := '';
+  StepAt := GetTickCount;
+  SelfDraw('AC-5 M01 Repair running', P_MAINT);
+  StepFor := '';
   InstalledVersion := '0.1.0-rc.20';
   UpdPhase := '';
   SelfDraw('M05', P_UPDATE);

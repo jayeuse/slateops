@@ -317,21 +317,25 @@ begin
   { W14-D5 (7.6 "M01 status"): full form, one stage; the sentence above names the action. }
   if MaintStatus = 'checking' then
     AddProgress('maint', '', 1, '', MaintStatusAt, '');
-  CurY := CurY + ScaleY(4);
-  for I := 0 to 3 do
-  begin
-    Bottom := CurY;
-    if I = 0 then begin AddMaintAction(0, 0, CM('m01_open'), CM('m01_open_hint'), Bottom); AddMaintAction(1, 1, CM('m01_invite'), CM('m01_invite_hint'), Bottom); end;
-    if I = 1 then begin AddMaintAction(2, 0, CM('m01_code'), CM('m01_code_hint'), Bottom); AddMaintAction(3, 1, CM('m01_email'), CM('m01_email_hint'), Bottom); end;
-    if I = 2 then begin AddMaintAction(4, 0, CM('m01_backup'), CM('m01_backup_hint'), Bottom); AddMaintAction(5, 1, CM('m01_key'), CM('m01_key_hint'), Bottom); end;
-    if I = 3 then begin AddMaintAction(6, 0, CM('m01_repair'), CM('m01_repair_hint'), Bottom); AddMaintAction(7, 1, CM('btn_save_report'), CM('m01_report_hint'), Bottom); end;
-    CurY := Bottom + ScaleY(4);
-  end;
-  { 7.6 "M01 Repair": full form under the actions; the other M01 waits: one line. }
+  { 7.6 "M01 Repair" (TASK-0097 AC-5, Designer B2 option a): while Repair runs, its full form
+    takes the place of the actions, so the page ends inside its frame; the actions come back
+    with the result. The other M01 waits: one line under the actions. }
   if StepFor = 'repair' then
     AddProgress('repair', CM('repair_stages'), WaitStage('repair'), WaitActionText('repair'), StepAt, '')
   else
+  begin
+    CurY := CurY + ScaleY(4);
+    for I := 0 to 3 do
+    begin
+      Bottom := CurY;
+      if I = 0 then begin AddMaintAction(0, 0, CM('m01_open'), CM('m01_open_hint'), Bottom); AddMaintAction(1, 1, CM('m01_invite'), CM('m01_invite_hint'), Bottom); end;
+      if I = 1 then begin AddMaintAction(2, 0, CM('m01_code'), CM('m01_code_hint'), Bottom); AddMaintAction(3, 1, CM('m01_email'), CM('m01_email_hint'), Bottom); end;
+      if I = 2 then begin AddMaintAction(4, 0, CM('m01_backup'), CM('m01_backup_hint'), Bottom); AddMaintAction(5, 1, CM('m01_key'), CM('m01_key_hint'), Bottom); end;
+      if I = 3 then begin AddMaintAction(6, 0, CM('m01_repair'), CM('m01_repair_hint'), Bottom); AddMaintAction(7, 1, CM('btn_save_report'), CM('m01_report_hint'), Bottom); end;
+      CurY := Bottom + ScaleY(4);
+    end;
     AddStepLine;
+  end;
   if MaintLine <> '' then
     AddText(MaintLine, False);
   if (ReportLine <> '') or (ReportPhase <> '') then
@@ -963,6 +967,8 @@ begin
   WizardForm.NextButton.Enabled := True;
   WizardForm.BackButton.Enabled := True;
   WizardForm.CancelButton.Enabled := True;
+  { TASK-0097 AC-3: the background goes on. }
+  RestartBackgroundStep;
 end;
 
 { From the timer. }
@@ -1116,6 +1122,8 @@ begin
   end
   else if ForTag = 'data-unpack' then
     StartDataFolder
+  else if ForTag = 'resume-unpack' then
+    StartBgPrepData
   else if ForTag = 'provider' then
   begin
     MailDetected := Code;
@@ -1414,7 +1422,7 @@ begin
     begin
       HelperStep(PrepOut, Job, Key, Number, Total);
       if Key = 'busy' then Result := StepText('pc', 'busy', IntToStr(Number), IntToStr(Total), '')
-      else if Key <> '' then Result := StepText('pc', Key, WslVersion, '', '')
+      else if Key <> '' then Result := StepText('pc', Key, S05WslVersion, '', '')
       else Result := StepText('pc', 'vmp', '', '', '');
     end;
   end

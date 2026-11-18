@@ -72,6 +72,8 @@ function New-ExecLayout {
     $root = New-TestDirectory $Name
     $layout = New-SlateOpsLayout -StateRoot (Join-Path $root 'ProgramData\SlateOps') -DataRoot (Join-Path $root 'Data\SlateOps')
     foreach ($path in @($layout.Requests, $layout.SvcOut, $layout.Payload, $layout.Scripts, $layout.State)) { [void][System.IO.Directory]::CreateDirectory($path) }
+    # The record that prepare-data writes; receive reads the data folder from it (AC-2 U-1).
+    Write-JsonFile -Path $layout.StateFile -Value ([ordered]@{ schema_version = 1; data_root = $layout.DataRoot; vhd_size_gb = 32 })
     return $layout
 }
 
@@ -189,6 +191,25 @@ Test-Case 'AC-2 receive streams the whole payload through the raw input stream' 
     Assert-Equal $false $result.pipe_closed
     $output = Read-EngineOutput -Layout $layout -Result (Read-JsonFile -Path $layout.ResultFile)
     Assert-Equal 9728 $output['bytes'] '512+512 request, 5 x (512+1024), 1024 end'
+}
+
+Test-Case 'AC-2 U-1 (TASK-0097) receive through the layout that exec.ps1 builds reads the data folder from install.json' {
+    # exec.ps1 calls New-SlateOpsLayout with no data root, so the layout's Payload is empty.
+    $root = New-TestDirectory 'exec-receive-task-layout'
+    $layout = New-SlateOpsLayout -StateRoot (Join-Path $root 'ProgramData\SlateOps')
+    foreach ($path in @($layout.Requests, $layout.SvcOut, $layout.Scripts, $layout.State)) { [void][System.IO.Directory]::CreateDirectory($path) }
+    Assert-Equal '' $layout.Payload 'precondition: the Exec task layout has no data root'
+    $dataRoot = Join-Path $root 'Data\SlateOps'
+    $payload = Join-Path $dataRoot 'payload'
+    [void][System.IO.Directory]::CreateDirectory($payload)
+    foreach ($name in @(Get-ReceivePartNames -Version '0.2.0')) { [System.IO.File]::WriteAllBytes((Join-Path $payload $name), (New-Object byte[] 1000)) }
+    Write-JsonFile -Path $layout.StateFile -Value ([ordered]@{ schema_version = 1; data_root = $dataRoot; vhd_size_gb = 32 })
+    $request = [System.Text.Encoding]::UTF8.GetBytes('{"run_id":"install-20261117T032000Z-abc123","setup_version":"0.2.0"}')
+    Set-ExecRequest -Layout $layout -RequestText (Get-RequestText 'receive') -InputBytes $request
+    $result = Invoke-ExecRequest -Layout $layout -WslPath $script:StandIn
+    Assert-Equal 'ok 0' ('{0} {1}' -f $result.code, $result.exit_code)
+    $output = Read-EngineOutput -Layout $layout -Result (Read-JsonFile -Path $layout.ResultFile)
+    Assert-Equal 9728 $output['bytes'] 'the whole payload from the data folder of install.json'
 }
 
 Test-Case 'AC-2 a receive that closes its input early is a refusal, with the engine code' {

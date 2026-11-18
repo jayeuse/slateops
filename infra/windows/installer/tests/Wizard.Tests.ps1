@@ -271,6 +271,54 @@ Test-Case 'W8 correction 4 a resume after Continue later runs the background pre
     Assert-Equal 'S08' (Get-SetupEntry -Progress @{ stage = 'continue_later' }).next
 }
 
+Test-Case 'AC-1 (TASK-0097, QA B1, Architect A-B1) a resume prepares the data folder again: this version''s parts and scripts, the recorded disk limit, no receive part of another version' {
+    # The owner's PC: rc.22 ran prepare-data at S07 and saved continue_later; the next setup file
+    # resumes. Its receive parts and its Exec scripts must be on disk before the background runs.
+    $root = New-AdminOnlyFolder 'SlateOpsAc1Resume'
+    try {
+        [void][System.IO.Directory]::CreateDirectory((Join-Path $root 'ProgramData'))
+        $dataRoot = Join-Path $root 'SlateOps'
+        $sources = @{}
+        foreach ($v in @('0.1.0-rc.22', '0.1.0-rc.24')) {
+            $scripts = New-TestDirectory ('ac-1-scripts-{0}' -f $v)
+            [void][System.IO.Directory]::CreateDirectory((Join-Path $scripts 'lib'))
+            foreach ($name in @('exec.ps1', 'start.ps1', 'setup-helper.ps1', 'version.json', 'lib\Common.ps1')) { [System.IO.File]::WriteAllText((Join-Path $scripts $name), $v) }
+            $payload = New-TestDirectory ('ac-1-payload-{0}' -f $v)
+            $version = @{ version = $v; linux_image_name = ('slateops-linux-{0}-amd64.tar.gz' -f $v) }
+            foreach ($name in (@($version.linux_image_name) + @(Get-ReceivePartNames -Version $v))) { [System.IO.File]::WriteAllText((Join-Path $payload $name), $v) }
+            $sources[$v] = @{ scripts = $scripts; payload = $payload; version = $version }
+        }
+        $old = $sources['0.1.0-rc.22']
+        $layout = New-SlateOpsLayout -StateRoot (Join-Path $root 'ProgramData\SlateOps')
+        $first = Invoke-PrepareData -Layout $layout -DataRoot $dataRoot -ScriptsDir $old.scripts -PayloadDir $old.payload -Version $old.version
+        Assert-Equal 'ready' $first.code (ConvertTo-JsonText $first)
+        # The disk limit that the first run recorded (free space shrinks once the parts are copied).
+        Write-JsonFile -Path $layout.StateFile -Value ([ordered]@{ schema_version = 1; data_root = $dataRoot; vhd_size_gb = 77 })
+        # The service step ran before Continue later: the account exists, is recorded, and has its
+        # entries in both trees (as Install-ServiceAccountAndTasks gives them).
+        $sid = New-TestUser 'slateops-ac1res'
+        Write-JsonFile -Path (Join-Path $layout.State 'windows-changes.json') -Value ([ordered]@{ account_sid = $sid })
+        Set-LayoutDataRoot -Layout $layout -DataRoot $dataRoot
+        $granted = @(Grant-ServiceAccess -Tree $layout.StateTree -ServiceSid $sid) + @(Grant-ServiceAccess -Tree $layout.DataTree -ServiceSid $sid)
+        Assert-Equal 0 $granted.Count ('grant: ' + ($granted -join '; '))
+        Assert-Equal $sid (Get-RecordedServiceSid -Layout $layout)
+        $new = $sources['0.1.0-rc.24']
+        $resume = New-SlateOpsLayout -StateRoot (Join-Path $root 'ProgramData\SlateOps')
+        $again = Invoke-PrepareData -Layout $resume -DataRoot $dataRoot -ScriptsDir $new.scripts -PayloadDir $new.payload -Version $new.version -ServiceSid $sid
+        Assert-Equal 'ready' $again.code (ConvertTo-JsonText $again)
+        $left = @(Get-ChildItem -LiteralPath (Join-Path $dataRoot 'payload') -Force | ForEach-Object { $_.Name })
+        Assert-Equal (Get-OrdinalSorted @('release-manifest.json', 'release-manifest.json.sigstore.json', 'slateops-caddy-0.1.0-rc.24-amd64.oci.tar',
+            'slateops-engine-0.1.0-rc.24.tar.gz', 'slateops-linux-0.1.0-rc.22-amd64.tar.gz', 'slateops-linux-0.1.0-rc.24-amd64.tar.gz',
+            'slateops-server-0.1.0-rc.24-amd64.oci.tar')) (Get-OrdinalSorted $left) 'the receive parts of rc.22 go; the Linux images stay (DEC-0036 rule)'
+        Assert-Equal '0.1.0-rc.24' ([System.IO.File]::ReadAllText((Join-Path (Join-Path $dataRoot 'payload') 'release-manifest.json'))) 'the shared manifest is this version''s'
+        Assert-Equal '0.1.0-rc.24' ([System.IO.File]::ReadAllText((Join-Path $resume.Scripts 'exec.ps1'))) 'the Exec task runs this version''s scripts'
+        Assert-Equal '0.1.0-rc.24' ([System.IO.File]::ReadAllText((Join-Path $resume.Scripts 'lib\Common.ps1')))
+        $state = Read-InstallState -Layout $resume
+        Assert-Equal $dataRoot $state.data_root
+        Assert-Equal 77 $state.vhd_size_gb 'the recorded disk limit stays'
+    } finally { Remove-PathNoFollow -Path $root }
+}
+
 Test-Case 'W8 correction 5 a task that could not sign in the account is named by its last result' {
     Assert-Equal $true (Test-TaskLogonFailure -LastResult 2147943727) '0x8007052F'
     Assert-Equal $true (Test-TaskLogonFailure -LastResult 2147943785) '0x80070569'

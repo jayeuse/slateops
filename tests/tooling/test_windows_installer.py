@@ -1393,3 +1393,269 @@ class W14Part3Test(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+SCRIPTS = INSTALLER / "scripts"
+PS_TESTS = INSTALLER / "tests"
+SELFTEST = INSTALLER / "wizard/SelfTest.iss"
+# Product Designer, W14 re-check round (TASK-0097, run 2026-11-18-w14-fix-round-design-review):
+# the exact strings that AC-6 and AC-7 name.
+RECHECK_COPY = {
+    "later_save_failed": "Setup could not save your progress, so it stays open. To try again, "
+    "select the same action again.",
+    "later_restart_failed": "Setup saved your progress but could not restart this PC. Restart it "
+    "from the Start menu.",
+    "report_failed": "Setup could not save the report. Select Save report again.",
+    "s05_done_no_restart": "Virtual Machine Platform and Windows Subsystem for Linux (WSL) are "
+    "ready on this PC. This PC does not need a restart.",
+    "s12_fail1": "load the Slate Operations programs",
+    "s12_fail2": "create the settings and passwords",
+    "s05_done_vmp": "Setup turned on Virtual Machine Platform. Windows finishes it when this PC "
+    "restarts.",
+    "s05_done_wsl": "Setup installed Windows Subsystem for Linux (WSL). Windows finishes it when "
+    "this PC restarts.",
+    "s05_done_pending": "Virtual Machine Platform is already turned on. Windows finishes it when "
+    "this PC restarts.",
+    "s05_subtitle_vmp": "Windows finishes Virtual Machine Platform when this PC restarts.",
+    "s05_subtitle_wsl": "Windows finishes Windows Subsystem for Linux (WSL) when this PC restarts.",
+    "s05_subtitle_ready": "This PC does not need a restart.",
+}
+
+
+class W14RecheckTest(unittest.TestCase):
+    """W14 re-check round (TASK-0097, AC-1 to AC-9): the BLOCKING findings of the QA, Software
+    Architect, Product Designer and Security Engineer reviews of b8d55ffe..2a6d5762. The
+    PowerShell cases and the [Code] self-test prove the behavior on the Windows runner; these
+    checks hold the wiring that a static read can see."""
+
+    def setUp(self) -> None:
+        self.raw = pascal_code()
+        self.selftest = SELFTEST.read_text(encoding="ascii")
+
+    def part(self, head: str) -> str:
+        self.assertIn(head, self.raw)
+        return routine(self.raw, head)
+
+    def test_ac_1_a_resume_unpacks_and_prepares_the_data_folder_before_the_background(
+        self,
+    ) -> None:
+        # QA B1, Architect A-B1: rc.22's continue_later resumes at background step 1 with rc.22's
+        # parts and Exec scripts on disk; this build's receive then finds no part of its version.
+        # Every resume with the background not done prepares the data folder again (one path).
+        self.assertIn("BgPrepNeeded := True;", self.raw)
+        start = self.part("function InitializeSetup(")
+        branch = start.split("BgResume := True;", 1)[1].split("end;", 1)[0]
+        self.assertIn("BgPrepNeeded := True;", branch)
+        self.assertNotRegex(branch, r"InstalledVersion|SetupVersion|Compare")
+        step = self.part("procedure StartBgStep;")
+        self.assertLess(step.index("if BgPrepNeeded then"), step.index("BgStepName(BgIndex)"))
+        prep = self.part("procedure StartBgPrep;")
+        data = self.part("procedure StartDataPrepare;")
+        patterns = re.search(r"QueueExtract\('([^']+)', 'data-unpack'\)", data)
+        if patterns is None:
+            self.fail("StartDataPrepare queues no data-unpack")
+        self.assertIn(f"QueueExtract('{patterns.group(1)}', 'resume-unpack');", prep)
+        finished = self.part("procedure StepFinished(ForTag, Code: String);\nvar")
+        self.assertRegex(finished, r"ForTag = 'resume-unpack' then\s+StartBgPrepData")
+        helper = self.part("procedure StartBgPrepData;")
+        self.assertIn(
+            "StartHelper('prepare-data', RunId, BgOut, '-DataRoot ' + AddQuotes(DataRoot)"
+            " + ' -UseKept')",
+            helper,
+        )
+        self.assertIn(
+            "StartHelper('prepare-data', RunId, BgOut, '-DataRoot ' + AddQuotes(DataRoot))", helper
+        )
+        poll = self.part("procedure PollBgPrep;")
+        ready = poll.split("if Code = 'ready' then", 1)[1]
+        self.assertLess(ready.index("BgPrepNeeded := False;"), ready.index("StartBgStep;"))
+        self.assertIn("BgFailed := True;", poll)
+        self.assertIn("DATA_LIMIT_MS", poll)
+        self.assertIn("PollBgPrep", self.part("procedure PollBackground;"))
+        # The helper action and the script function: this version's parts, then the receive
+        # parts of other versions go (as after an update, 7bf1c939).
+        helper_script = (SCRIPTS / "setup-helper.ps1").read_text(encoding="ascii")
+        action = helper_script.split("'prepare-data' {", 1)[1].split("\n        }\n", 1)[0]
+        self.assertIn("Invoke-PrepareData", action)
+        windows = (SCRIPTS / "lib/Windows.ps1").read_text(encoding="ascii")
+        self.assertIn("function Invoke-PrepareData {", windows)
+        body = windows.split("function Invoke-PrepareData {", 1)[1].split("\n}\n", 1)[0]
+        self.assertLess(body.index("Copy-PayloadPart"), body.index("Remove-OldPayloadParts"))
+        tests = (PS_TESTS / "Wizard.Tests.ps1").read_text(encoding="ascii")
+        self.assertIn("Test-Case 'AC-1 ", tests)
+
+    def test_ac_1_a_server_part_from_another_setup_file_stops_without_try_again(self) -> None:
+        # A resume after an older build imported its Linux image: import-distro answers
+        # already_imported and prepare refuses the image (engine_bundle_mismatch). Try again
+        # can never pass, so setup stops and names Remove everything.
+        check = self.part("function CheckBackground: Boolean;")
+        self.assertRegex(
+            check,
+            r"\(BgCode = 'engine_bundle_mismatch'\) or \(BgCode = 'image_record_missing'\)"
+            r"[^;]*then\s+begin\s+FailureForm\(CM\('s07_title'\), "
+            r"CM\('s07_other_version'\), False\);",
+        )
+        self.assertIn("s07_other_version", read_copy())
+
+    def test_ac_2_receive_through_the_task_layout_reads_the_data_folder(self) -> None:
+        # Architect U-1: exec.ps1 builds the layout with no data root, so receive joined an
+        # empty payload path. receive now sets the data root as the Windows-side jobs do.
+        exec_lib = (SCRIPTS / "lib/Exec.ps1").read_text(encoding="ascii")
+        receive = exec_lib.split("if ($job -eq 'receive') {", 1)[1].split("foreach ($name", 1)[0]
+        self.assertIn("$state = Read-InstallState -Layout $Layout", receive)
+        self.assertIn("Set-LayoutDataRoot -Layout $Layout -DataRoot $state.data_root", receive)
+        tests = (PS_TESTS / "Exec.Tests.ps1").read_text(encoding="ascii")
+        self.assertIn("Test-Case 'AC-2 U-1 ", tests)
+        case = tests.split("Test-Case 'AC-2 U-1 ", 1)[1].split("\nTest-Case ", 1)[0]
+        self.assertRegex(case, r"New-SlateOpsLayout -StateRoot [^\n]*\)\n")
+        self.assertNotIn(
+            "New-SlateOpsLayout -StateRoot (Join-Path $root 'ProgramData\\SlateOps') -DataRoot",
+            case,
+        )
+        self.assertIn("'receive'", case)
+
+    def test_ac_3_no_background_step_starts_during_a_close_flow(self) -> None:
+        # Architect N-1: Continue later and Remove everything never meet a new background job.
+        # Comments removed: the gate is the first statement.
+        poll = code_only(self.part("procedure PollBackground;"))
+        self.assertRegex(
+            poll, r"(?s)begin\s+if CloseFlowRunning then\s+Exit;\s+if PollBgPending then"
+        )
+        mail = code_only(self.part("procedure PollMail;"))
+        self.assertRegex(
+            mail,
+            # code_only empties strings: the first branch is MailPhase = 'waiting'.
+            r"(?s)begin\s+if MailPhase = '' then\s+begin\s+"
+            r"if CloseFlowRunning then\s+Exit;\s+if BgDone then",
+        )
+        tick = self.part("procedure TimerTick(H, Msg, Id, Tick: Longword);")
+        self.assertIn(
+            "if DataStarted and not DataPrepared and (BgOut <> '') and not CloseFlowRunning then",
+            tick,
+        )
+        # A failed save leaves setup open: the background step that the flow took over runs
+        # again (the server part steps repeat safely).
+        self.assertIn("RestartBackgroundStep;", self.part("procedure FailCloseFlow(Text: String);"))
+        again = self.part("procedure RestartBackgroundStep;")
+        self.assertIn("(BgBeganAt = 0)", again)
+        self.assertIn("IsHelperStep(", again)
+
+    def test_ac_4_only_the_password_error_moves_into_the_password_column(self) -> None:
+        # Designer B1: every error moved to the right half and lost its last lines.
+        layout = self.part("procedure LayoutMail;\nvar")
+        self.assertRegex(
+            layout,
+            r"if MailErrorAfter = MailPassword then\s+MailError\.SetBounds\(Half \+ ScaleX\(16\)",
+        )
+        self.assertIn(
+            "SelfRecord('AC-4 S09 Other: the server error is under its field, full width'",
+            self.selftest,
+        )
+
+    def test_ac_5_m01_repair_shows_its_progress_in_place_of_the_actions(self) -> None:
+        # Designer B2 (option a): the 7-stage block replaced the 8-action grid while Repair runs.
+        render = self.part("procedure RenderMaint;\nvar")
+        self.assertRegex(
+            render,
+            r"if StepFor = 'repair' then\s+AddProgress\('repair'[^\n]*\n\s+else\s+begin\s+"
+            r"CurY := CurY \+ ScaleY\(4\);\s+for I := 0 to 3 do",
+        )
+        self.assertIn("SelfDraw('AC-5 M01 Repair running', P_MAINT);", self.selftest)
+
+    def test_ac_6_s05_says_what_setup_did_and_shows_the_installed_wsl(self) -> None:
+        # Designer non-blocking 1 to 3 (parent: blocking): the verdict and subtitle follow the
+        # helper codes; the no-restart state has no restart stage; a present WSL shows its own
+        # version.
+        copy = read_copy()
+        for key in (
+            "s05_done_vmp",
+            "s05_done_wsl",
+            "s05_done_pending",
+            "s05_subtitle_vmp",
+            "s05_subtitle_wsl",
+            "s05_subtitle_ready",
+        ):
+            with self.subTest(key=key):
+                self.assertEqual(copy.get(key), RECHECK_COPY[key])
+        render = self.part("procedure RenderRestart;")
+        self.assertIn("AddVerdict(CM(S05VerdictKey(PrepFeature, PrepWsl)));", render)
+        self.assertIn("WizardForm.PageDescriptionLabel.Caption := CM(S05SubtitleKey);", render)
+        self.assertIn("else if not Vmp and not Wsl then Result := 's05_subtitle_ready'", self.raw)
+        self.assertIn("'AC-6 S05 subtitle with no restart'", self.selftest)
+        self.assertIn("AddProgress('', S05NoRestartStages, 3, '', 0, '');", render)
+        self.assertIn("FM3('s05_details', S05WslVersion, PrepFeature, PrepWsl)", render)
+        self.assertIn("StepText('pc', Key, S05WslVersion, '', '')", self.raw)
+        for check in (
+            "'AC-6 S05 verdict enabled_now installed'",
+            "'AC-6 S05 verdict enabled_now present'",
+            "'AC-6 S05 verdict enabled installed'",
+            "'AC-6 S05 verdict pending present'",
+            "'AC-6 S05 subtitle before the work'",
+            "'AC-6 S05 subtitle after the work'",
+            "'AC-6 S05 installed WSL version'",
+            "'AC-6 S05 no restart: 4 stages, at 3'",
+        ):
+            with self.subTest(check=check):
+                self.assertIn(f"SelfRecord({check}", self.selftest)
+
+    def test_ac_7_copy_strings_and_no_bitlocker_suggestion(self) -> None:
+        copy = read_copy()
+        for key in (
+            "later_save_failed",
+            "later_restart_failed",
+            "report_failed",
+            "s05_done_no_restart",
+            "s12_fail1",
+            "s12_fail2",
+        ):
+            with self.subTest(key=key):
+                self.assertEqual(copy.get(key), RECHECK_COPY[key])
+        # DEC-0037: setup never suggests BitLocker; C24 "off" has no message to look up.
+        self.assertNotIn("c24_off", copy)
+        message = self.part("function ItemMessage(Item: TCheckItem): String;")
+        self.assertLess(
+            message.index("(Item.Id = 'C24') and (Item.Code = 'off')"),
+            message.index("Key := Lowercase(Item.Id) + '_' + Item.Code;"),
+        )
+
+    def test_ac_8_one_line_texts_have_one_full_stop_and_fit_the_status_line(self) -> None:
+        # Designer 4 and 9: "D:. · 2:10", and a status line of 18 px that a long step wraps.
+        self.assertIn("function NoStop(Text: String): String;", self.raw)
+        self.assertIn(
+            "NoStop(Action)",
+            self.part(
+                "function OneLine(Number, Total: Integer; Action: String; Since: Cardinal): String;"
+            ),
+        )
+        self.assertIn("NoStop(Action)", self.part("function BgLineText(Action: String): String;"))
+        self.assertIn(
+            "ShowStatusLine(BgLineText(BgAction));", self.part("procedure UpdateBgStatus;")
+        )
+        self.assertIn("SelfStatusLine;", routine(self.selftest, "procedure RunSelfTest;"))
+        fits = routine(self.selftest, "procedure SelfStatusLine;")
+        self.assertIn("SelfRecord('AC-8 every status line text fits on one line'", fits)
+        listed = set(re.findall(r"SelfLineFits\('(step_[a-z_]+)'", fits))
+        steps = {
+            key for key in read_copy() if re.match(r"step_(bg|receive|prepare|prefetch|data)_", key)
+        }
+        self.assertEqual(steps - listed, set())
+        for key in (
+            "later_save_failed",
+            "later_restart_failed",
+            "remove_data",
+            "remove_moving_kept",
+            "s07_prep_failed",
+        ):
+            with self.subTest(key=key):
+                self.assertIn(f"SelfLineFits('{key}'", fits)
+
+    def test_ac_9_the_report_zips_only_a_collected_report(self) -> None:
+        # Security S97-1: after the collect limit, the password drop and the zip ran while
+        # report-collect could still write.
+        poll = self.part("procedure PollReport;")
+        collect = poll.split("if ReportPhase = 'collect' then", 1)[1]
+        self.assertRegex(collect, r"(?s)if Code <> 'collected' then.*DropFilesWithPassword\(")
+        failed = collect.split("if Code <> 'collected' then", 1)[1].split("end;", 1)[0]
+        self.assertIn("EndReport", failed)
+        self.assertNotIn("report-zip", failed)
+        self.assertIn("ReportLine := CM('report_failed');", self.part("procedure EndReport;"))

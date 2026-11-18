@@ -366,17 +366,8 @@ try {
             else { $result = New-StepResult -Code 'prepared' -MessageKey 'prepare.prepared' -Values @{ restart_needed = $restart; feature = $feature.code; wsl = $wsl.code } }
         }
         'prepare-data' {
-            $version = Read-HelperVersion
-            $ready = Initialize-StateFolder -Layout $layout -ServiceSid $serviceSid
-            if ($ready.code -ne 'ready') { $result = $ready; break }
-            $data = Initialize-DataFolder -Layout $layout -DataRoot $DataRoot -ServiceSid $serviceSid -AllowKept:$UseKept
-            if ($data.code -ne 'ready') { $result = $data; break }
-            $copy = Install-ScriptsCopy -Layout $layout -SourceDir $PSScriptRoot
-            if ($copy.code -ne 'copied') { $result = $copy; break }
-            $parts = @($version.linux_image_name) + @(Get-ReceivePartNames -Version $version.version)
-            $copied = Copy-PayloadPart -Layout $layout -SourceDir (Join-Path $helperRoot 'payload') -Names $parts -ServiceSid $serviceSid
-            if ($copied.code -ne 'copied') { $result = $copied; break }
-            $result = New-StepResult -Code 'ready' -MessageKey 'setup.data.ready' -Values $data.values
+            # S07, and every resume with the background preparation not done (TASK-0097 AC-1).
+            $result = Invoke-PrepareData -Layout $layout -DataRoot $DataRoot -ScriptsDir $PSScriptRoot -PayloadDir (Join-Path $helperRoot 'payload') -Version (Read-HelperVersion) -ServiceSid $serviceSid -AllowKept:$UseKept
         }
         'service' {
             $state = Read-InstallState -Layout $layout

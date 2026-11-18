@@ -189,6 +189,10 @@ var
   DataPrepared, DataStarted, BgFailed: Boolean;
   BgIndex: Integer;
   BgOut, BgCode: String;
+  { TASK-0097 AC-1: a resume with the background not done prepares the data folder again before
+    its first step; BgPrep is the part that runs ('unpack', then 'data'). }
+  BgPrepNeeded: Boolean;
+  BgPrep: String;
 
   { S08 }
   OrgName, OrgEmail, OrgUser, OrgSlug: TNewEdit;
@@ -845,14 +849,23 @@ begin
     Result := FM1('wait_time', TimeText(WaitSince));
 end;
 
+{ TASK-0097 AC-8 (Designer 4): an action inside a one-line text loses its own full stop, so the
+  line reads "... to drive D:" and then the time, not "D:." and then the time. }
+function NoStop(Text: String): String;
+begin
+  Result := Text;
+  if (Length(Result) > 0) and (Copy(Result, Length(Result), 1) = '.') then
+    Result := Copy(Result, 1, Length(Result) - 1);
+end;
+
 { The one-line form: "3 of 7: <action>, then the time"; with one stage only the action and the
   time (copy wait_line, wait_line_one). }
 function OneLine(Number, Total: Integer; Action: String; Since: Cardinal): String;
 begin
   if (Total > 1) and (Number > 0) then
-    Result := FM4('wait_line', IntToStr(Number), IntToStr(Total), Action, TimeText(Since))
+    Result := FM4('wait_line', IntToStr(Number), IntToStr(Total), NoStop(Action), TimeText(Since))
   else
-    Result := FM2('wait_line_one', Action, TimeText(Since));
+    Result := FM2('wait_line_one', NoStop(Action), TimeText(Since));
 end;
 
 { The full form. Stages: names split by "|" ('' for a wait with one stage, which shows no list);
@@ -1802,6 +1815,24 @@ begin
     RenderPage(-1);
 end;
 
+{ The end of Save report: the result line, saved or not. }
+procedure EndReport;
+begin
+  ReportPhase := '';
+  if ReportPath <> '' then
+    ReportLine := FM1('report_saved', ExtractFileName(ReportPath))
+  else
+    ReportLine := CM('report_failed');
+  ShowReportLine;
+  { The settings program's report form closes by itself (TForm.Close ends its modal loop; the
+    script classes give a form no ModalResult). }
+  if ReportForm <> nil then
+    ReportForm.Close;
+  { Design B2: the page draws the result line with "Show in folder". }
+  if WizardReady and not ModalOpen then
+    RenderPage(-1);
+end;
+
 { From the timer, also while a modal form is open (the S13 form). }
 procedure PollReport;
 var
@@ -1833,6 +1864,18 @@ begin
   end;
   if ReportPhase = 'collect' then
   begin
+    { TASK-0097 AC-9 (Security S97-1): only a finished collect goes on. After the time limit, or
+      with any other code, report-collect may still write its staging folder, so no password
+      check and no zip run; the report is not saved. }
+    if Code <> 'collected' then
+    begin
+      if Code = '' then
+        Code := 'helper_timeout';
+      Log('Save report: the collect step ended with ' + Code + '; no report is saved.');
+      ReportPath := '';
+      EndReport;
+      Exit;
+    end;
     DropFilesWithPassword(ExpandConstant('{tmp}\report-') + ReportRun);
     ReportPhase := 'zip';
     ReportStepAt := GetTickCount;
@@ -1842,19 +1885,7 @@ begin
     Exit;
   end;
   ReportPath := JsonValue(ReadText(ReportOut), 'path');
-  ReportPhase := '';
-  if ReportPath <> '' then
-    ReportLine := FM1('report_saved', ExtractFileName(ReportPath))
-  else
-    ReportLine := CM('report_failed');
-  ShowReportLine;
-  { The settings program's report form closes by itself (TForm.Close ends its modal loop; the
-    script classes give a form no ModalResult). }
-  if ReportForm <> nil then
-    ReportForm.Close;
-  { Design B2: the page draws the result line with "Show in folder". }
-  if WizardReady and not ModalOpen then
-    RenderPage(-1);
+  EndReport;
 end;
 
 procedure ShowReportClick(Sender: TObject; const Link: String; LinkType: TSysLinkType);
@@ -2063,6 +2094,13 @@ function ItemMessage(Item: TCheckItem): String;
 var
   Key, V: String;
 begin
+  { DEC-0037 (TASK-0097 AC-7): setup never suggests BitLocker, so C24 "off" has no message and
+    no key is looked up for it (older check results gave it as Advice). }
+  if (Item.Id = 'C24') and (Item.Code = 'off') then
+  begin
+    Result := '';
+    Exit;
+  end;
   Key := Lowercase(Item.Id) + '_' + Item.Code;
   if not HasMessage(Key) then
   begin
@@ -2454,12 +2492,11 @@ end;
 
 { W14-D3 (rule 2.8, spec 5.2 item 3, C26): the ready verdict's second line names only the
   components that are missing. }
-function PrepLine: String;
+{ The C26 values: what S05 has to do (also S05's subtitle before the work, TASK-0097 AC-6). }
+procedure C26Needs(var Vmp, Wsl: Boolean);
 var
   I: Integer;
-  Vmp, Wsl: Boolean;
 begin
-  Result := '';
   Vmp := False;
   Wsl := False;
   for I := 0 to GetArrayLength(Items) - 1 do
@@ -2468,6 +2505,25 @@ begin
       Vmp := JsonValue(Items[I].Raw, 'vmp_state') <> 'Enabled';
       Wsl := JsonLiteral(Items[I].Raw, 'wsl_install_needed') = 'true';
     end;
+end;
+
+{ The WSL version that C26 read on this PC ('' when none is installed). }
+function C26WslVersion: String;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 0 to GetArrayLength(Items) - 1 do
+    if Items[I].Id = 'C26' then
+      Result := JsonValue(Items[I].Raw, 'wsl_version');
+end;
+
+function PrepLine: String;
+var
+  Vmp, Wsl: Boolean;
+begin
+  Result := '';
+  C26Needs(Vmp, Wsl);
   if Vmp and Wsl then Result := CM('s02_ready_prep_both')
   else if Vmp then Result := CM('s02_ready_prep_vmp')
   else if Wsl then Result := CM('s02_ready_prep_wsl');
@@ -2621,7 +2677,7 @@ end;
 
 { W14-D3 (rule 2.8, spec S05): the stage list that stays after the work, with "(already on this
   PC)" for a component that was there. }
-function S05DoneStages: String;
+function S05ComponentStages: String;
 var
   Vmp, Wsl: String;
 begin
@@ -2631,7 +2687,60 @@ begin
   Wsl := CM('s05_stage_wsl');
   if PrepWsl = 'present' then
     Wsl := Wsl + ' ' + CM('s05_already');
-  Result := Vmp + '|' + Wsl + '|' + CM('s05_stage_restart') + '|' + CM('s05_stage_details') + '|' + CM('s05_stage_install');
+  Result := Vmp + '|' + Wsl;
+end;
+
+function S05DoneStages: String;
+begin
+  Result := S05ComponentStages + '|' + CM('s05_stage_restart') + '|' + CM('s05_stage_details') + '|' + CM('s05_stage_install');
+end;
+
+{ TASK-0097 AC-6 (Designer 2): no restart happened, so no restart stage; Your details is next. }
+function S05NoRestartStages: String;
+begin
+  Result := S05ComponentStages + '|' + CM('s05_stage_details') + '|' + CM('s05_stage_install');
+end;
+
+{ TASK-0097 AC-6 (Designer 1): the verdict says what setup did, from the helper's codes
+  (Virtual Machine Platform: enabled, pending or enabled_now; WSL: present or installed). }
+function S05VerdictKey(Feature, Wsl: String): String;
+begin
+  if (Feature = 'enabled_now') and (Wsl = 'installed') then Result := 's05_done'
+  else if Feature = 'enabled_now' then Result := 's05_done_vmp'
+  else if Wsl = 'installed' then Result := 's05_done_wsl'
+  else if Feature = 'pending' then Result := 's05_done_pending'
+  else Result := 's05_done_no_restart';
+end;
+
+{ The subtitle names what Windows finishes at the restart: from the helper's codes after the
+  work, from the C26 values that PrepLine reads before it. }
+function S05SubtitleKey: String;
+var
+  Vmp, Wsl: Boolean;
+begin
+  if PrepFeature <> '' then
+  begin
+    Vmp := (PrepFeature = 'enabled_now') or (PrepFeature = 'pending');
+    Wsl := PrepWsl = 'installed';
+  end
+  else
+    C26Needs(Vmp, Wsl);
+  if Vmp and not Wsl then Result := 's05_subtitle_vmp'
+  else if Wsl and not Vmp then Result := 's05_subtitle_wsl'
+  else if not Vmp and not Wsl then Result := 's05_subtitle_ready'
+  else Result := 's05_subtitle';
+end;
+
+{ TASK-0097 AC-6 (Designer 3): a WSL that is already on this PC shows its own version (C26) in
+  Details and on the "Now:" line; otherwise the version in this setup file. }
+function S05WslVersion: String;
+var
+  Vmp, Wsl: Boolean;
+begin
+  Result := WslVersion;
+  C26Needs(Vmp, Wsl);
+  if ((PrepWsl = 'present') or ((PrepWsl = '') and not Wsl)) and (C26WslVersion <> '') then
+    Result := C26WslVersion;
 end;
 
 procedure RenderRestart;
@@ -2642,7 +2751,7 @@ begin
   BeginBody(P_RESTART);
   { Design B8: the header comes back after a failure and Try again. }
   WizardForm.PageNameLabel.Caption := CM('s05_title');
-  WizardForm.PageDescriptionLabel.Caption := CM('s05_subtitle');
+  WizardForm.PageDescriptionLabel.Caption := CM(S05SubtitleKey);
   AddStageLine(1);
   SetNextCaption(CM('btn_next'));
   if ExtraButton <> nil then
@@ -2669,7 +2778,7 @@ begin
       one line of why for each; the steps; Details holds only the version and the codes. }
     AddProgress('', S05DoneStages, 3, '', 0, '');
     BlockGap;
-    AddVerdict(CM('s05_done'));
+    AddVerdict(CM(S05VerdictKey(PrepFeature, PrepWsl)));
     AddText(CM('s05_why_vmp'), False);
     AddText(CM('s05_why_wsl'), False);
     BlockGap;
@@ -2680,7 +2789,7 @@ begin
     Link := AddLink(CM('btn_details'), 0);
     Link.OnLinkClick := @PrepDetailsClick;
     if PrepDetails then
-      AddText(FM3('s05_details', WslVersion, PrepFeature, PrepWsl), False);
+      AddText(FM3('s05_details', S05WslVersion, PrepFeature, PrepWsl), False);
     SetNextCaption(CM('s05_next'));
     WizardForm.NextButton.Enabled := not StepRunning;
     { 7.6: "Restarting this PC..." after Restart now. }
@@ -2694,7 +2803,7 @@ begin
   end
   else
   begin
-    AddProgress('', S05DoneStages, 4, '', 0, '');
+    AddProgress('', S05NoRestartStages, 3, '', 0, '');
     BlockGap;
     AddVerdict(CM('s05_done_no_restart'));
     WizardForm.NextButton.Enabled := True;
@@ -3200,7 +3309,9 @@ begin
   Result := '';
   Name := BgStepName(BgIndex);
   Drive := Copy(DataRoot, 1, 2);
-  if (BgPending = 'return') or (Name = 'kept-status') then
+  if BgPrep = 'unpack' then Result := StepText('data', 'unpack', '', '', '')
+  else if BgPrep = 'data' then Result := StepText('data', 'folder', DataRoot, '', '')
+  else if (BgPending = 'return') or (Name = 'kept-status') then
     Result := StepText('bg', 'kept_status', '', '', '')
   else if Name = 'service' then Result := StepText('bg', 'service', '', '', '')
   else if Name = 'wslconfig' then Result := StepText('bg', 'wslconfig', '', '', '')
@@ -3215,6 +3326,12 @@ begin
     StringChangeEx(Name, '-', '_', True);
     Result := CM('bg_stage_' + Name);
   end;
+end;
+
+{ The background's status line text (7.6 background row); the self-test measures it (AC-8). }
+function BgLineText(Action: String): String;
+begin
+  Result := FM4('bg_line', IntToStr(BgIndex + 1), IntToStr(BgCount), NoStop(Action), TimeText(BgBeganAt));
 end;
 
 { 7.6 background row, one-line form above the button row on S08 to S10 (and S11 of a kept
@@ -3235,13 +3352,42 @@ begin
   else if BgDone then
     ShowStatusLine(CM('s07_prepared'))
   else
-    ShowStatusLine(FM4('bg_line', IntToStr(BgIndex + 1), IntToStr(BgCount), BgAction, TimeText(BgBeganAt)));
+    ShowStatusLine(BgLineText(BgAction));
+end;
+
+{ TASK-0097 AC-1 (QA B1, Architect A-B1): on a resume with the background not done, the parts
+  come out of this setup file one per tick (as on S07), then prepare-data runs with the saved
+  data folder: it copies this version's parts and the Exec scripts and removes the receive parts
+  of other versions. Only "ready" goes on to the saved step (PollBgPrep). }
+procedure StartBgPrep;
+begin
+  BgCode := '';
+  BgPrep := 'unpack';
+  QueueExtract('slateops-linux-*|slateops-engine-*|slateops-server-*|slateops-caddy-*|release-manifest.json|release-manifest.json.sigstore.json', 'resume-unpack');
+end;
+
+{ StepFinished 'resume-unpack' (Maintenance.iss). }
+procedure StartBgPrepData;
+begin
+  BgPrep := 'data';
+  BgOut := NewOut('prepare-data');
+  BgStartedAt := GetTickCount;
+  if KeptMode then
+    StartHelper('prepare-data', RunId, BgOut, '-DataRoot ' + AddQuotes(DataRoot) + ' -UseKept')
+  else
+    StartHelper('prepare-data', RunId, BgOut, '-DataRoot ' + AddQuotes(DataRoot));
 end;
 
 procedure StartBgStep;
 var
   Name, Input: String;
 begin
+  { AC-1: the data folder first, on a resume (also after Try again). }
+  if BgPrepNeeded then
+  begin
+    StartBgPrep;
+    Exit;
+  end;
   Name := BgStepName(BgIndex);
   if Name = '' then
     Exit;
@@ -3322,12 +3468,46 @@ begin
   StartHelper(Action, RunId, BgPendingOut, '');
 end;
 
+{ From PollBackground: the resume's prepare-data (AC-1). }
+procedure PollBgPrep;
+var
+  Code: String;
+begin
+  if BgPrep = 'unpack' then
+    Exit;
+  Code := ReadResultCode(BgOut);
+  if (Code = '') and (Elapsed(BgStartedAt) > DATA_LIMIT_MS) then
+    Code := 'helper_timeout';
+  if Code = '' then
+    Exit;
+  BgPrep := '';
+  if Code = 'ready' then
+  begin
+    BgPrepNeeded := False;
+    StartBgStep;
+    Exit;
+  end;
+  BgFailed := True;
+  BgCode := Code;
+  UpdateBgStatus;
+  RedrawKeptReady;
+end;
+
 procedure PollBackground;
 var
   Code, Name: String;
 begin
+  { TASK-0097 AC-3 (Architect N-1): no background step starts or ends while Continue later,
+    Cancel or Remove everything runs; the flow waits for the running job itself. }
+  if CloseFlowRunning then
+    Exit;
   if PollBgPending then
     Exit;
+  if BgPrep <> '' then
+  begin
+    PollBgPrep;
+    Exit;
+  end;
   if (not DataPrepared) or BgFailed or (BgIndex >= BgCount) then
     Exit;
   Name := BgStepName(BgIndex);
@@ -3403,6 +3583,15 @@ begin
     Result := False;
     Exit;
   end;
+  { TASK-0097 AC-1: a resume after an older setup file imported its Linux image. import-distro
+    keeps that distribution (already_imported) and prepare refuses it, so Try again can never
+    pass; nothing is removed here. }
+  if (BgCode = 'engine_bundle_mismatch') or (BgCode = 'image_record_missing') then
+  begin
+    FailureForm(CM('s07_title'), CM('s07_other_version'), False);
+    Result := False;
+    Exit;
+  end;
   if (BgCode = 'data_folder_parent_unsafe') or (BgCode = 'payload_part_missing') then
   begin
     { Parent decision: a folder above changed after the check; no Try again. }
@@ -3421,6 +3610,24 @@ begin
     StartBgStep;
   end;
   Result := False;
+end;
+
+{ TASK-0097 AC-3: a failed save keeps setup open (FailCloseFlow). The background step whose job
+  the close flow took over runs again (the server part steps repeat safely); a helper step keeps
+  its result file and goes on by itself. Nothing runs before the background started. }
+procedure RestartBackgroundStep;
+begin
+  if (not DataPrepared) or (BgBeganAt = 0) or BgFailed or (BgIndex >= BgCount) or (BgPending <> '') then
+    Exit;
+  if BgPrep = 'unpack' then
+  begin
+    if not ExtractRunning then
+      StartBgPrep;
+    Exit;
+  end;
+  if (BgPrep <> '') or IsHelperStep(BgStepName(BgIndex)) or JobRunning then
+    Exit;
+  StartBgStep;
 end;
 
 { ------------------------------------------------------------------------------------------- }
@@ -3847,8 +4054,10 @@ begin
       MailUser.Visible := True;
       MailPassword.Visible := True;
       Y := Y + MailPassword.Height + ScaleY(4);
-      { The password's error in the password column. }
-      MailError.SetBounds(Half + ScaleX(16), MailError.Top, Half, MailError.Height);
+      { The password's error in the password column; every other error stays under its own
+        field at full width (TASK-0097 AC-4, Designer B1). }
+      if MailErrorAfter = MailPassword then
+        MailError.SetBounds(Half + ScaleX(16), MailError.Top, Half, MailError.Height);
       PlaceError(MailPassword, Y);
       MailHelpLink.Visible := False;
       Y := Y + ScaleY(8);
@@ -4122,6 +4331,9 @@ var
 begin
   if MailPhase = 'waiting' then
   begin
+    { TASK-0097 AC-3: no mail test job starts during a close flow. }
+    if CloseFlowRunning then
+      Exit;
     if BgDone then
       StartMailTest
     else if BgFailed then
@@ -5308,7 +5520,9 @@ begin
         RenderPage(P_RESTART);
       end;
     end;
-    if DataStarted and not DataPrepared and (BgOut <> '') then
+    { TASK-0097 AC-3: the S07 data folder step does not start the background during a close
+      flow. }
+    if DataStarted and not DataPrepared and (BgOut <> '') and not CloseFlowRunning then
     begin
       Code := ReadResultCode(BgOut);
       if Code = 'ready' then
@@ -5526,6 +5740,9 @@ begin
     if (EntryNext = 'S08') and (Pos('"background_done":true', StateText) = 0) then
     begin
       BgResume := True;
+      { TASK-0097 AC-1 (QA B1, Architect A-B1): this setup file's parts and Exec scripts reach
+        the data folder first, on every such resume, whatever version saved the progress. }
+      BgPrepNeeded := True;
       { W9 review item 1: no second restore; with the disk back in distro the kept steps go on
         from import-kept. }
       if KeptMode then

@@ -621,6 +621,10 @@ function Invoke-EngineJob {
             $Result.code = 'input_invalid'; $Result.message_key = 'exec.input_invalid'; $Result.exit_code = 2
             return $Result
         }
+        # TASK-0097 AC-2 (Architect U-1): exec.ps1 builds the layout with no data root; the data
+        # folder comes from the administrator-only state file, as for the Windows-side jobs.
+        $state = Read-InstallState -Layout $Layout
+        Set-LayoutDataRoot -Layout $Layout -DataRoot $state.data_root
         # Every part must exist before the engine starts (no half stream for a missing file).
         foreach ($name in (Get-ReceivePartNames -Version $version)) {
             $path = Join-Path $Layout.Payload $name
