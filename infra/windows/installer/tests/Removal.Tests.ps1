@@ -33,7 +33,7 @@ Test-Case 'AC-W4 an earlier run that did not finish is removed at start; only a 
     )
     foreach ($row in $rows) {
         $progress = $null
-        if ($row[0]) { $progress = @{ stage = $row[0] } }
+        if ($row[0]) { $progress = @{ stage = $row[0]; setup_version = '0.2.0' } }
         $entry = Get-SetupEntry -Progress $progress -Leftover:$row[1] -Installed $row[2] -SetupVersion '0.2.0'
         $cleanup = $(if ($entry['cleanup'] -eq $true) { 'cleanup' } else { '' })
         Assert-Equal $row[3] ('{0} {1} {2}' -f $entry.screen, $entry.next, $cleanup) ('{0}, records {1}, installed "{2}"' -f $row[0], $row[1], $row[2])
@@ -58,9 +58,9 @@ Test-Case 'AC-W9 a restart that setup asked for continues and removes nothing; a
     # this run before the restart was asked (S11 "Restart now", the C04 firmware restart), so
     # WSL and Virtual Machine Platform stay and setup continues after S05.
     $rows = @(
-        @(@{ stage = 'check_restart'; prepared = $true }, 'S06 S07 ', 'restart asked at S11 after S05: continues, WSL kept'),
-        @(@{ stage = 'check_restart' }, 'S02  ', 'restart asked at S02 before S05: continues at S02'),
-        @(@{ stage = 'feature_restart' }, 'S06 S07 ', 'the S05 restart'),
+        @(@{ stage = 'check_restart'; prepared = $true; setup_version = '0.2.0' }, 'S06 S07 ', 'restart asked at S11 after S05: continues, WSL kept'),
+        @(@{ stage = 'check_restart'; setup_version = '0.2.0' }, 'S02  ', 'restart asked at S02 before S05: continues at S02'),
+        @(@{ stage = 'feature_restart'; setup_version = '0.2.0' }, 'S06 S07 ', 'the S05 restart'),
         @(@{ stage = 'install_started' }, 'S01  cleanup', 'any run after Install started'),
         @($null, 'S01  cleanup', 'stopped with no asked restart (S05 records only)')
     )
@@ -69,11 +69,30 @@ Test-Case 'AC-W9 a restart that setup asked for continues and removes nothing; a
         $cleanup = $(if ($entry['cleanup'] -eq $true) { 'cleanup' } else { '' })
         Assert-Equal $row[1] ('{0} {1} {2}' -f $entry.screen, $entry.next, $cleanup) $row[2]
     }
-    Assert-Equal $true ((Get-SetupEntry -Progress @{ stage = 'check_restart' } -Leftover)['welcome_back']) 'S02 says Welcome back'
+    Assert-Equal $true ((Get-SetupEntry -Progress @{ stage = 'check_restart'; setup_version = '0.2.0' } -Leftover -SetupVersion '0.2.0')['welcome_back']) 'S02 says Welcome back'
     # The mark is saved as a true or false mark only.
     $layout = New-RemovalLayout 'ac-w9-mark'
     Save-SetupProgress -Layout $layout -Stage 'check_restart' -RunId 'install-20261118T090700Z-abc123' -Marks @{ prepared = $true }
     Assert-Equal $true ((Read-SetupProgress -Layout $layout)['prepared'])
+}
+
+Test-Case 'QA N4 a restart continues only when the same setup version asked for it; progress of another setup file is removed' {
+    # DEC-0038: rows: saved progress, this setup's version, expected "screen next cleanup".
+    $rows = @(
+        @(@{ stage = 'feature_restart'; setup_version = '0.2.0' }, '0.2.0', 'S06 S07 ', 'same version'),
+        @(@{ stage = 'feature_restart'; setup_version = '0.2.0-rc.24' }, '0.2.0', 'S01  cleanup', 'another setup file'),
+        @(@{ stage = 'feature_restart' }, '0.2.0', 'S01  cleanup', 'a setup file that saved no version'),
+        @(@{ stage = 'check_restart'; prepared = $true; setup_version = '0.2.0-rc.24' }, '0.2.0', 'S01  cleanup', 'a check restart of another setup file'),
+        @(@{ stage = 'feature_restart'; setup_version = '0.2.0' }, '', 'S01  cleanup', 'this setup cannot read its own version')
+    )
+    foreach ($row in $rows) {
+        $entry = Get-SetupEntry -Progress $row[0] -Leftover -SetupVersion $row[1]
+        $cleanup = $(if ($entry['cleanup'] -eq $true) { 'cleanup' } else { '' })
+        Assert-Equal $row[2] ('{0} {1} {2}' -f $entry.screen, $entry.next, $cleanup) $row[3]
+    }
+    $layout = New-RemovalLayout 'qa-n4-version'
+    Save-SetupProgress -Layout $layout -Stage 'feature_restart' -RunId 'install-20261118T120000Z-abc123' -SetupVersion '0.2.0'
+    Assert-Equal '0.2.0' ([string](Read-SetupProgress -Layout $layout)['setup_version']) 'the saved progress names its setup version'
 }
 
 # The WSL guard (parent addition to AC-W3). Run records the commands instead of running them.

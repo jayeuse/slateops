@@ -347,8 +347,8 @@ s14_key_failed=Setup could not make the recovery key.
 
 ; ---- S15 Slate Operations is ready
 s15_title=Slate Operations is ready
-s15_step1=1. Set your password. Open the email from Slate Operations sent to %1 and select the link. It can take a few minutes; look in Spam too.%nNo email after 10 minutes? Open Slate Operations settings in the Start menu and select Send my invitation again.
-s15_step1_no_address=1. Set your password. Open the email from Slate Operations and select the link. It can take a few minutes; look in Spam too.%nNo email after 10 minutes? Open Slate Operations settings in the Start menu and select Send my invitation again.
+s15_step1=1. Sign in to Slate Operations at https://%1 with %2 and the password that you typed in setup. Phones and other PCs use the same address.
+s15_step1_no_address=1. Sign in to Slate Operations at https://%1 with the email address and the password that you typed in setup. Phones and other PCs use the same address.
 s15_step2=2. Open Slate Operations on this PC.
 s15_open=&Open Slate Operations
 s15_step3=3. Connect phones and other PCs. Connect the phone to the same Wi-Fi as this PC. In the phone's browser, type the address below exactly, with http://. The page shows the one-time steps that let the phone open Slate Operations.
@@ -364,14 +364,7 @@ cancel_remove_all=Stop setup? Setup removes everything it added to this PC, so n
 ; ---- M01 Slate Operations on this PC (W8 part: spec 12 item 11)
 m01_title=Slate Operations on this PC
 m01_subtitle=Version %1 · %2
-m01_invite=Send my invitation again
-m01_invite_hint=Use this only before you set your password.
-m01_sending=Sending your invitation… (about 1 minute)
 m01_report_hint=A file for Slate Operations support.
-m01_sent=Slate Operations sent your invitation again. Look in your inbox and in Spam.
-m01_already_active=Your account is already set up. Sign in with your password. If you forgot it, reset it from the sign-in page.
-m01_rate_limited=Slate Operations sent several emails a short time ago. Wait a few minutes, then try again.
-m01_failed=Slate Operations could not send the invitation. Check the email account with Change email account, then try again.
 m01_footer=To uninstall, open Settings → Apps.
 
 ; ---- W9: uninstall (spec U01 to U04, plan 9.1, F3, F4c)
@@ -605,7 +598,6 @@ step_log_bundle_facts=Collecting facts about the server part
 step_log_bundle_snapshot=Collecting the server part's logs
 step_log_bundle_bundle=Packing the server part's logs
 m01_reading_code=Reading the security code…
-step_resend_invitation_resend=Sending your invitation again.
 repair_stages=Check the security policy|Set a new password for the hidden account|Set up the start tasks|Set up Windows Firewall|Set the address on this PC|Start Slate Operations|Set the backup folder rights
 step_repair_r7=Checking the security policy of this PC.
 step_repair_account=Setting a new password for the hidden Windows account.
@@ -616,6 +608,7 @@ step_repair_backup=Setting the rights of the backup folder on %2.
 step_repair_start=Starting Slate Operations.
 step_set_email_write=Saving the new email account in Slate Operations.
 step_set_email_auth=Restarting sign-ins with the new email account (about 1 minute).
+step_resend_invitation_resend=Sending your invitation again.
 m05_stage_back=Go back to version %1
 step_upd_idle=Waiting until Slate Operations is free (a backup or another task runs).
 step_upd_unpack=Unpacking version %1 from this setup file.

@@ -326,9 +326,9 @@ class WizardJobRunnerTest(unittest.TestCase):
         self.assertNotIn("JobPipeOut :=", routine(self.code, "procedure PollPipe;"))
 
     def test_f1_no_blocking_job_names_a_pipe_input_job(self) -> None:
-        # Security F-1: a job input file is refused by Exec for a pipe-input job (input_on_disk);
-        # the smtp-test discard must go through the pipe. W14-D9: RunJobBlocking is gone, so every
-        # job starts through StartJob, and a pipe-input job always passes PipeIn True.
+        # Security F-1: a job input file is refused by Exec for a pipe-input job (input_on_disk).
+        # W14-D9: RunJobBlocking is gone, so every job starts through StartJob, and a pipe-input
+        # job always passes PipeIn True. (DEC-0041: no discard is sent any more.)
         exec_source = (INSTALLER / "scripts/lib/Exec.ps1").read_text(encoding="ascii")
         listed = re.search(r"PipeInputJobs\s*=\s*@\(([^)]*)\)", exec_source)
         self.assertIsNotNone(listed)
@@ -1888,7 +1888,7 @@ class Dec0041Test(unittest.TestCase):
         self.assertIn("if ($stage -eq 'check_restart') {", entry)
         self.assertIn("return @{ screen = 'S02'; next = ''; welcome_back = $true }", entry)
         self.assertLess(
-            entry.index("if ($stage -eq 'check_restart') {"), entry.index("cleanup = $true")
+            entry.index("if ($stage -eq 'check_restart') {"), entry.rindex("cleanup = $true")
         )
         self.assertIn("if ($Prepared) { $marks.prepared = $true }", self.helper)
         restart = self.part("procedure CheckRestart(Firmware: Boolean; Index: Integer);")
@@ -2108,3 +2108,39 @@ class Dec0039Test(unittest.TestCase):
         stage = self.part("function CheckStage(Number: Integer): Integer;")
         self.assertIn("else if Number <= 15 then Result := 3", stage)
         self.assertIn("Test-Case 'AC-A5 the PC check has no C15 and no C30", self.tests)
+
+    def test_qa_n1_the_admin_signs_in_with_the_setup_password_and_m01_sends_no_invitation(
+        self,
+    ) -> None:
+        # DEC-0041: no invitation email; S15 step 1 is to sign in at the address with the S08
+        # email address and password, and M01 has no "Send my invitation again".
+        copy = read_copy()
+        for key in ("s15_step1", "s15_step1_no_address"):
+            with self.subTest(key=key):
+                self.assertIn("Sign in to Slate Operations at https://%1", copy.get(key, ""))
+                self.assertNotIn("invitation", copy.get(key, ""))
+        finished = self.part("procedure RenderFinishedPage;")
+        self.assertIn("FM2('s15_step1', AddressHost(''), Trim(OrgEmail.Text))", finished)
+        for gone in ("InviteClick", "InviteDone", "'invite'", "m01_invite", "'resend-invitation'"):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, self.raw)
+        self.assertFalse([key for key in copy if key.startswith("m01_invite")])
+        self.assertIn("SelfRecord('QA N1 S15 step 1 signs in at the address", self.selftest)
+
+    def test_qa_n4_a_restart_continues_only_for_the_setup_version_that_asked(self) -> None:
+        # DEC-0038: progress of another setup file is an unfinished run.
+        entry = self.windows.split("function Get-SetupEntry {", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn(
+            "$sameVersion = [bool]($SetupVersion -and ([string](Get-DictValue $Progress "
+            "'setup_version') -ceq $SetupVersion))",
+            entry,
+        )
+        self.assertLess(
+            entry.index("-not $sameVersion"), entry.index("'feature_restart') { return")
+        )
+        self.assertIn("-SetupVersion $saverVersion", self.helper)
+        self.assertIn("$record['setup_version'] = $SetupVersion", self.windows)
+        removal = (PS_TESTS / "Removal.Tests.ps1").read_text(encoding="ascii")
+        self.assertIn(
+            "Test-Case 'QA N4 a restart continues only when the same setup version", removal
+        )

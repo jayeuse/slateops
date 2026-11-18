@@ -251,7 +251,6 @@ begin
     Exit;
   case TNewButton(Sender).Tag of
     0: OpenAsUser(AddressUrl, '');
-    1: InviteClick(nil);
     2: begin
          { 7.6 "M01 phone code": "Reading the security code..." from the timer. }
          if RunStep('security-code', '', 'code', CM('m01_reading_code'), 0, 0, HELPER_LIMIT_MS) then
@@ -331,10 +330,12 @@ begin
     for I := 0 to 3 do
     begin
       Bottom := CurY;
-      if I = 0 then begin AddMaintAction(0, 0, CM('m01_open'), CM('m01_open_hint'), Bottom); AddMaintAction(1, 1, CM('m01_invite'), CM('m01_invite_hint'), Bottom); end;
-      if I = 1 then begin AddMaintAction(2, 0, CM('m01_code'), CM('m01_code_hint'), Bottom); AddMaintAction(3, 1, CM('m01_email'), CM('m01_email_hint'), Bottom); end;
-      if I = 2 then begin AddMaintAction(4, 0, CM('m01_backup'), CM('m01_backup_hint'), Bottom); AddMaintAction(5, 1, CM('m01_key'), CM('m01_key_hint'), Bottom); end;
-      if I = 3 then begin AddMaintAction(6, 0, CM('m01_repair'), CM('m01_repair_hint'), Bottom); AddMaintAction(7, 1, CM('btn_save_report'), CM('m01_report_hint'), Bottom); end;
+      { DEC-0041 (QA N1): no "Send my invitation again": the administrator has a password from
+        setup. The tags stay (MaintActionClick); seven actions in four rows. }
+      if I = 0 then begin AddMaintAction(0, 0, CM('m01_open'), CM('m01_open_hint'), Bottom); AddMaintAction(2, 1, CM('m01_code'), CM('m01_code_hint'), Bottom); end;
+      if I = 1 then begin AddMaintAction(3, 0, CM('m01_email'), CM('m01_email_hint'), Bottom); AddMaintAction(4, 1, CM('m01_backup'), CM('m01_backup_hint'), Bottom); end;
+      if I = 2 then begin AddMaintAction(5, 0, CM('m01_key'), CM('m01_key_hint'), Bottom); AddMaintAction(6, 1, CM('m01_repair'), CM('m01_repair_hint'), Bottom); end;
+      if I = 3 then AddMaintAction(7, 0, CM('btn_save_report'), CM('m01_report_hint'), Bottom);
       CurY := Bottom + ScaleY(4);
     end;
     AddStepLine;
@@ -433,12 +434,7 @@ begin
   if not ((JobPurpose = MaintPhase) or ((JobPurpose = 'maintkey') and ((MaintPhase = 'key3') or (MaintPhase = 'key4')))) then
     Exit;
   JobState := JOB_IDLE;
-  if MaintPhase = 'invite' then
-  begin
-    MaintPhase := '';
-    InviteDone(JobCode);
-  end
-  else if MaintPhase = 'setemail' then
+  if MaintPhase = 'setemail' then
   begin
     { The page says where the test email went (m02_test_sent) and Next becomes Done. }
     MaintPhase := '';
@@ -1584,9 +1580,7 @@ begin
     if Action = '' then
       Action := CM('m04_key_line');
     Result := OneLine(0, 0, Action, MaintAt);
-  end
-  else if MaintPhase = 'invite' then
-    Result := OneLine(0, 0, StepText('resend-invitation', 'resend', '', '', ''), MaintAt);
+  end;
 end;
 
 { ------------------------------------------------------------------------------------------- }

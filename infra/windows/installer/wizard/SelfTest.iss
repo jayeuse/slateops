@@ -1086,6 +1086,14 @@ begin
   KeyState := 'shown';
   SelfDraw('S14', P_KEY);
   SelfDraw('S15', -1);
+  { DEC-0041 (QA N1): step 1 is to sign in at the address with the S08 email address and the
+    setup password; no invitation email. }
+  try
+    SelfRecord('QA N1 S15 step 1 signs in at the address with the S08 email', (Pos('https://' + HostName + '.local', S15Steps[0].Caption) > 0)
+      and (Pos(Trim(OrgEmail.Text), S15Steps[0].Caption) > 0) and (Pos('invitation', S15Steps[0].Caption) = 0), S15Steps[0].Caption);
+  except
+    SelfRecord('QA N1 S15 step 1 signs in at the address with the S08 email', False, GetExceptionMessage);
+  end;
   { 6.1 L8: the last S15 line ends inside the finished page. }
   try
     SelfRecord('S15 layout', S15Steps[4].Top + S15Steps[4].Height <= WizardForm.FinishedPage.Height,

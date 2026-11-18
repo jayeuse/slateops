@@ -290,11 +290,15 @@ function Save-SetupProgress {
         [Parameter(Mandatory = $true)][hashtable]$Layout,
         [Parameter(Mandatory = $true)][string]$Stage,
         [Parameter(Mandatory = $true)][string]$RunId,
-        [hashtable]$Marks = @{}
+        [hashtable]$Marks = @{},
+        # DEC-0038 (QA N4): the setup version that saved the progress; a restart continues only
+        # in the same version.
+        [string]$SetupVersion = ''
     )
     if ($SlateOpsResume.Stages -notcontains $Stage) { throw 'Unknown stage.' }
     if (-not (Test-RunId $RunId)) { throw 'Not a run ID.' }
     $record = [ordered]@{ schema_version = 1; stage = $Stage; run_id = $RunId; saved_at = (Get-UtcStamp) }
+    if ($SetupVersion -and (Test-ReleaseVersion $SetupVersion)) { $record['setup_version'] = $SetupVersion }
     foreach ($key in @($Marks.Keys | Sort-Object)) {
         if ($key -notmatch '^[a-z_]{1,32}$') { throw 'Not a mark name.' }
         if (-not ($Marks[$key] -is [bool])) { throw 'A mark is true or false.' }
@@ -367,6 +371,10 @@ function Get-SetupEntry {
         if ($SetupVersion -and ((Compare-ReleaseVersion -Left $SetupVersion -Right $Installed) -gt 0)) { return @{ screen = 'M05'; next = ''; installed = $Installed } }
         return @{ screen = 'M01'; next = ''; installed = $Installed }
     }
+    # DEC-0038 (QA N4): a restart continues only when this setup version asked for it; progress
+    # that another setup file (or one with no version) wrote is an unfinished run.
+    $sameVersion = [bool]($SetupVersion -and ([string](Get-DictValue $Progress 'setup_version') -ceq $SetupVersion))
+    if ((@('feature_restart', 'check_restart') -contains $stage) -and -not $sameVersion) { return @{ screen = 'S01'; next = ''; cleanup = $true } }
     if ($stage -eq 'feature_restart') { return @{ screen = 'S06'; next = 'S07' } }
     if ($stage -eq 'check_restart') {
         if ((Get-DictValue $Progress 'prepared') -eq $true) { return @{ screen = 'S06'; next = 'S07' } }

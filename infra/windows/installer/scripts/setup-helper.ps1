@@ -354,7 +354,9 @@ try {
             if ($KeptMark) { $marks.kept = $true }
             # AC-W9: S05 ran before this check restart, so the resume goes on after S05.
             if ($Prepared) { $marks.prepared = $true }
-            Save-SetupProgress -Layout $layout -Stage $Stage -RunId $RunId -Marks $marks
+            $saverVersion = ''
+            try { $saverVersion = (Read-HelperVersion).version } catch { $saverVersion = '' }
+            Save-SetupProgress -Layout $layout -Stage $Stage -RunId $RunId -Marks $marks -SetupVersion $saverVersion
             if (@('check_restart', 'feature_restart') -contains $Stage) { $result = Register-SetupResume -SetupPath $SetupPath }
             else { $result = New-StepResult -Code 'saved' -MessageKey 'setup.progress.saved' }
         }

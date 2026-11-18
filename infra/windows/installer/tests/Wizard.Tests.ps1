@@ -244,23 +244,6 @@ Test-Case 'W8-1 C17 (plan F1) decides from the mDNS facts; an unreadable value i
 
 # --- W8 correction 1 (TASK-0094): one test per fix that a Windows runner can show ---
 
-Test-Case 'W8 correction 2 the smtp-test discard goes through the pipe and reaches the engine; an input file stays refused' {
-    $layout = New-ExecLayout 'w8c-discard'
-    $id = '7b3e4c1a-5d9f-4e82-a043-9c6d1e2f8a57'
-    $discard = '{"run_id":"' + $script:RunId + '","mode":"discard"}'
-    $server = [TestPipeServer]::Start(('SlateOps-{0}' -f $id), @('S-1-5-32-544', $script:SelfSid), $discard, $false)
-    Set-ExecRequest -Layout $layout -RequestText (Get-RequestText -Job 'smtp-test' -RequestId $id) -InputBytes $null
-    $result = Invoke-ExecRequest -Layout $layout -WslPath $script:StandIn
-    try { $null = $server.Wait(5000) } catch { $null = $_ }
-    $sha = New-Object System.Security.Cryptography.SHA256Managed
-    $expected = -join ($sha.ComputeHash([System.Text.Encoding]::ASCII.GetBytes($discard)) | ForEach-Object { $_.ToString('x2') })
-    Assert-Equal 'ok' $result.code
-    Assert-Equal ([long]$discard.Length) $result.pipe_input_bytes
-    $output = Read-EngineOutput -Layout $layout -Result $result
-    Assert-Equal $expected ([string]$output['sha256']) 'the engine read exactly the discard request'
-    Assert-Equal 'input_on_disk' (Test-ExecRequest -RequestText (Get-RequestText -Job 'smtp-test' -RequestId $id) -InputBytes ([System.Text.Encoding]::ASCII.GetBytes($discard))).code
-}
-
 Test-Case 'AC-1 (TASK-0097, QA B1, Architect A-B1) a resume prepares the data folder again: this version''s parts and scripts, the recorded disk limit, no receive part of another version' {
     # The owner's PC: rc.22 ran prepare-data at S07 and saved continue_later; the next setup file
     # resumes. Its receive parts and its Exec scripts must be on disk before the background runs.

@@ -5319,33 +5319,6 @@ begin
 end;
 
 { ------------------------------------------------------------------------------------------- }
-{ M01 Slate Operations on this PC (W8: "Send my invitation again" and Save report)              }
-{ ------------------------------------------------------------------------------------------- }
-
-{ Design B7: the wait says what happens. W14-D9 (7.6 "M01 Send my invitation again"): the job
-  runs from the timer (PollMaint, phase invite) with its one line under the actions. }
-procedure InviteClick(Sender: TObject);
-begin
-  if JobRunning or StepRunning or (MaintPhase <> '') then
-    Exit;
-  MaintLine := '';
-  MaintPhase := 'invite';
-  MaintAt := GetTickCount;
-  StartJob('resend-invitation', '{"run_id":"' + RunId + '"}', 'invite', False, False, 2);
-  RenderPage(P_MAINT);
-end;
-
-procedure InviteDone(Code: String);
-begin
-  if Code = 'sent' then MaintLine := CM('m01_sent')
-  else if Code = 'already_active' then MaintLine := CM('m01_already_active')
-  else if Code = 'rate_limited' then MaintLine := CM('m01_rate_limited')
-  else MaintLine := CM('m01_failed');
-  RenderPage(P_MAINT);
-end;
-
-
-{ ------------------------------------------------------------------------------------------- }
 { Rendering and the timer                                                                       }
 { ------------------------------------------------------------------------------------------- }
 
@@ -5851,13 +5824,15 @@ var
   Y: Integer;
 begin
   WizardForm.FinishedHeadingLabel.Caption := CM('s15_title');
-  { Design B9: after a resume the email address and the security code can be unknown. }
+  { DEC-0041 (QA N1): the administrator signs in with the S08 email address and password; no
+    invitation email. Design B9: after a resume the address can be unknown. A kept reinstall
+    keeps its accounts. }
   if KeptMode then
     Step1 := ''
   else if Trim(OrgEmail.Text) = '' then
-    Step1 := CM('s15_step1_no_address')
+    Step1 := FM1('s15_step1_no_address', AddressHost(''))
   else
-    Step1 := FM1('s15_step1', Trim(OrgEmail.Text));
+    Step1 := FM2('s15_step1', AddressHost(''), Trim(OrgEmail.Text));
   Step3 := CM('s15_step3') + #13#10 + 'http://' + HostName + '.local/trust';
   if SecurityCode <> '' then
     Step3 := Step3 + #13#10 + FM1('s15_security', SecurityCode);
