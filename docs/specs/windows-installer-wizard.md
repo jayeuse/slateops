@@ -38,10 +38,11 @@ A person with no technical knowledge installs Slate Operations on a Windows 11 P
 1. **Verdict first.** Each result screen starts with one sentence that says the result. Details come after it.
 2. **One main action.** The Next button always does the main action of the page, and its caption names the result: "Check this PC", "Install", "Send test email", "Try again".
 3. **Plain words.** No technical term shows on a default screen (section 3). Technical names show only in "Details", in Save report and in the logs.
-4. **Name the time.** Each wait says what happens and about how long it takes. A wait never shows only a spinner.
+4. **Show the work.** Each wait shows what setup does now in plain words, the stages done and still to come, and the time so far when the wait can pass 10 seconds (6.1, progress block; copy in 7.6). A wait never shows only a spinner or a moving bar (W14-D5).
 5. **Never a dead end.** Each problem has a fix, a guided step, or a polite stop with what to do instead. Each failure has Try again and Save report.
 6. **One fixed page size.** An Inno Setup page does not scroll. A page shows only what fits. Longer lists go into a "Show all" dialog.
 7. **Nothing changes without a select.** The check is read-only. A "Fix it for me" action changes only what its caption says, and only after a select.
+8. **Name things.** Each page names what setup did and what comes next, on the page, by the real name, with one plain line of why. Never "a feature", "the Windows feature", "something" or "a part". "Details" holds only technical extras, such as versions and codes (W14, owner on S05).
 
 Correct: `This PC is ready to be your Slate Operations server.` then two recommendations.
 Wrong: `Requirements: R1 pass, R2 pass, R3 pass, R4 pass, R5 pending, R6 warning ...`
@@ -57,7 +58,7 @@ Each technical term is replaced on default screens. Where a person must meet the
 |---|---|---|
 | Server, host machine | "the server", "this PC" | "This PC becomes the server: the other PCs and phones in your office use Slate Operations from it." |
 | WSL, Linux distribution, Linux part, engine, Docker | "the server part of Slate Operations" | None. Technical names show only in Details. |
-| `VirtualMachinePlatform`, Windows features, WSL MSI | "a Windows feature that Slate Operations needs" | "Windows finishes turning it on with one restart." |
+| `VirtualMachinePlatform`, WSL package | "Virtual Machine Platform" and "Windows Subsystem for Linux (WSL)", the names that Windows shows in Settings | Virtual Machine Platform: "Lets this PC run the server part of Slate Operations." WSL: "Runs the server part of Slate Operations inside Windows." |
 | Virtualization, VT-x, AMD-V, SVM, SLAT | "virtualization" | "A processor setting that lets this PC run the server part." |
 | BIOS, UEFI, firmware | "the PC's startup settings (BIOS)" | "A settings screen that opens before Windows starts." |
 | RAM | "memory" | None |
@@ -83,7 +84,7 @@ Each technical term is replaced on default screens. Where a person must meet the
 | Edition, Desk | "Desk, the free edition" | None |
 | Run ID, log bundle | "report" | None |
 
-Words that never show on a default screen: WSL, Linux, Docker, engine, distribution, VHD, SMTP, TLS, STARTTLS, port numbers, mDNS, CA, root certificate, Hyper-V, PowerShell, registry, exit code. Exceptions, each because the person must match a word that they see elsewhere: the "Other" email form (server, port, SSL/TLS, STARTTLS, as email providers write them); "Authenticated SMTP" (row above); the name of a program that the person installed (for example "Docker Desktop", C25); "CA certificate" in the Android steps of T01, because the person types it into the Android Settings search; a value that the person typed (for example a server name). "Details" and Save report are not default screens.
+Words that never show on a default screen: WSL, Linux, Docker, engine, distribution, VHD, SMTP, TLS, STARTTLS, port numbers, mDNS, CA, root certificate, Hyper-V, PowerShell, registry, exit code. Exceptions, each because the person must match a word that they see elsewhere: the "Other" email form (server, port, SSL/TLS, STARTTLS, as email providers write them); "Authenticated SMTP" (row above); the name of a program that the person installed (for example "Docker Desktop", C25); "CA certificate" in the Android steps of T01, because the person types it into the Android Settings search; a value that the person typed (for example a server name); the two Windows component names "Virtual Machine Platform" and "Windows Subsystem for Linux (WSL)", because Windows shows them by these names (rule 8). "Details" and Save report are not default screens.
 
 ## 4. Flow (AC-1)
 
@@ -196,7 +197,7 @@ The plan's rule "Cancel after page 4a" maps to "Cancel after S07", because the s
 | Point | What setup has added to this PC | Cancel asks | Cancel does |
 |---|---|---|---|
 | S01 to S04 | Nothing, unless the person selected a change on S02. These changes stay, because each was the person's choice: the network type (C10), the built-in rule for phones (C17), and the removal of the earlier test's parts (C29). After a restart from the check (C08, C04): the state folder `C:\ProgramData\SlateOps` with the saved progress only, the RunOnce entry and the desktop shortcut; both point at the original setup file (plan F4a). | "Stop setup? Nothing was installed." Stop setup / Go back | Closes. Lists the changes that stay. Removes the saved progress, the RunOnce entry and the shortcut. |
-| S05 before Restart now | The Windows feature and the WSL package may be on (plan 3a). | "Stop setup? The Windows feature that setup turned on stays on. Other programs can use it." Stop setup / Go back | Closes. Removes the saved progress and the desktop shortcut. |
+| S05 before Restart now | The Windows feature and the WSL package may be on (plan 3a). | "Stop setup? Virtual Machine Platform and Windows Subsystem for Linux (WSL) stay on this PC. Other programs can use them." Stop setup / Go back | Closes. Removes the saved progress and the desktop shortcut. |
 | S05 "Restart later" | Same, plus the saved progress and the desktop shortcut "Continue Slate Operations setup". | None. "Restart later" is not Cancel. | Closes. The shortcut and the resume stay. |
 | S06, S07 | Same as S05. | Same as S05 | Same as S05 |
 | S06 when the next page is S14 (the install finished, the key is not saved) | Slate Operations is installed. | No Cancel, as on S14. | Closing the window keeps the saved stage, so the next start opens S06, then S14 again. |
@@ -222,7 +223,7 @@ The plan's rule "Cancel after page 4a" maps to "Cancel after S07", because the s
 
 1. Any Stop item: **"This PC cannot be the Slate Operations server."** The S02 page changes in place to the S03 stop (header and content; no other page opens).
 2. Else any Fix item: **"Fix N things, then setup can continue."** Next shows "Next" and stays off.
-3. Else: **"This PC is ready to be your Slate Operations server."** When the Windows feature is off, a second line says: "Setup will restart this PC once."
+3. Else: **"This PC is ready to be your Slate Operations server."** When Virtual Machine Platform or WSL is missing, a second line says: "Setup will turn on Virtual Machine Platform and install Windows Subsystem for Linux (WSL), then restart this PC once." (only the missing ones are named)
 
 Rules for running the checks:
 
@@ -262,12 +263,12 @@ ID: this spec. Source: the plan requirement (R1 to R9), the plan section, or the
 | C21 | Plugged in | Power | Advice | `Win32_Battery` (R9, precheck) | None | Laptop on mains power: "This PC is a laptop. Keep it plugged in, open and in the office. Phones cannot use Slate Operations while it is away or asleep." On battery: "This laptop runs on battery now. Plug it in." |
 | C22 | Closing the lid does not stop a plugged-in laptop | Laptop lid | Advice (laptops only) | Lid close action on mains power (`powercfg` setting name is an Assumption that W7 checks) | "Change it during the install": the select only records the choice. Setup sets "When the lid is closed and the laptop is plugged in: do nothing" during the Windows-side steps of S12, beside the sleep setting. Uninstall restores it. After the select: "Setup changes this during the install." with "Undo". | "This laptop goes to sleep when you close the lid. Then Slate Operations stops for everyone." |
 | C23 | Wired network | Network cable | Advice (on Wi-Fi only) | Media type of the adapter with the default route (Assumption) | None | "This PC uses Wi-Fi. A network cable is more reliable for a server." |
-| C24 | Drive encryption | Drive encryption | Advice | Status only (`ProtectionStatus`) of C: and of the data drive candidate; setup never reads key protectors and never suspends BitLocker (plan 10.4; plan 12 risk row; decision H5) | "Show me how" opens the BitLocker settings | Data drive not encrypted: "Drive encryption (BitLocker) is off. Turn it on, so your data stays private if this PC is stolen." Data drive is not C: and is encrypted: "Drive D: is encrypted. Turn on automatic unlock for D: in the BitLocker settings, so Slate Operations can start after a restart when nobody is signed in." |
+| C24 | Drive encryption | Drive encryption | Log when the data drive is not encrypted (DEC-0037: setup never suggests turning BitLocker on). Advice only when the data drive is not C: and is encrypted. | Status only (`ProtectionStatus`) of C: and of the data drive candidate; setup never reads key protectors and never suspends BitLocker (plan 10.4; plan 12 risk row; decision H5, changed by DEC-0037) | Advice: "Show me how" opens the BitLocker settings | Not encrypted: none (Log). Data drive is not C: and is encrypted: "Drive D: is encrypted. Turn on automatic unlock for D: in the BitLocker settings, so Slate Operations can start after a restart when nobody is signed in." |
 | C25 | Docker Desktop | Docker Desktop | Advice | Program file or service (precheck) | None | "Docker Desktop is on this PC. Quit it while Slate Operations runs, so the two do not compete for memory." |
-| C26 | The Windows feature and WSL | — | Auto | Feature state and WSL version (precheck; plan 3a) | Setup turns it on in S05. | Verdict line: "Setup will restart this PC once." |
+| C26 | Virtual Machine Platform and Windows Subsystem for Linux (WSL) | — | Auto | Feature state and WSL version (precheck; plan 3a) | Setup turns them on in S05. | Verdict line: section 5.2 item 3 (names only the missing ones). |
 | C27 | Sleep and hibernate on mains power | — | Auto | Power settings (precheck; plan 6.2 Windows steps) | Setup sets Never; uninstall restores it (plan 9.1). | S11 Details: "Keep this PC awake when it is plugged in." |
 | C28 | Fast Startup, network adapters, WSL distributions of the account, `.wslconfig`, time zone | — | Log | precheck; plan 10.4 | — | — |
-| C29 | No parts of an earlier test or an earlier uninstall | Parts of an earlier test | Fix; Stop for unknown parts | Each part found: the account `slateops-svc`, the distribution `SlateOpsBootTest`, the tasks `\SlateOpsBootTest\*`, the rules `SlateOpsBootTest-*`, the folder `C:\ProgramData\SlateOpsBootTest` (plan 10.7, boot-test kit row). Parts of Slate Operations itself (tasks `\SlateOps\*`, the distribution `SlateOps`) with no `version.json`: unknown parts. | "Remove them" opens a modal form: title "Remove the parts of the earlier test?", text "Setup removes the earlier test's server part and its data, its hidden account, its start tasks and its firewall rules. The test's log files stay. Your other programs and files do not change. If the normal removal does not work, setup stops the Windows feature that runs the server part for a moment, for every user of this PC." Buttons Continue and Cancel (default). Only Continue removes them, as the kit's cleanup does (the old disk is deleted, the logs stay). Then the item shows "Removing…", then "Removed". Setup never reuses an existing `slateops-svc`: it removes it and creates its own only after the removal (plan 10.7). The technical names show in "Details". Unknown parts: no removal; Save report. Parts of Slate Operations with no installed program but with an uninstall log are leftovers of an earlier uninstall (`uninstall_leftovers`, Fix): "Remove them" runs the uninstall's removal of the Windows parts. This item removes no data, so it runs without the C29 confirmation form. | Test parts: "This PC has parts of an earlier Slate Operations test. Setup removes them before it continues." Only the account found: "This PC has a leftover of an earlier Slate Operations uninstall. Setup removes it before it continues." Leftovers of an earlier uninstall: "This PC has parts left by an earlier Slate Operations uninstall. Setup removes them before it continues. Your data and backups do not change." Unknown parts (Stop): "This PC has parts of Slate Operations that setup cannot identify. Setup changes nothing. Select Save report and send the file to Slate Operations support." |
+| C29 | No parts of an earlier test or an earlier uninstall | Parts of an earlier test | Fix; Stop for unknown parts | Each part found: the account `slateops-svc`, the distribution `SlateOpsBootTest`, the tasks `\SlateOpsBootTest\*`, the rules `SlateOpsBootTest-*`, the folder `C:\ProgramData\SlateOpsBootTest` (plan 10.7, boot-test kit row). Parts of Slate Operations itself (tasks `\SlateOps\*`, the distribution `SlateOps`) with no `version.json`: unknown parts. | "Remove them" opens a modal form: title "Remove the parts of the earlier test?", text "Setup removes the earlier test's server part and its data, its hidden account, its start tasks and its firewall rules. The test's log files stay. Your other programs and files do not change. If the normal removal does not work, setup stops Windows Subsystem for Linux (WSL) for a moment, for every user of this PC." Buttons Continue and Cancel (default). Only Continue removes them, as the kit's cleanup does (the old disk is deleted, the logs stay). Then the item shows "Removing…", then "Removed". Setup never reuses an existing `slateops-svc`: it removes it and creates its own only after the removal (plan 10.7). The technical names show in "Details". Unknown parts: no removal; Save report. Parts of Slate Operations with no installed program but with an uninstall log are leftovers of an earlier uninstall (`uninstall_leftovers`, Fix): "Remove them" runs the uninstall's removal of the Windows parts. This item removes no data, so it runs without the C29 confirmation form. | Test parts: "This PC has parts of an earlier Slate Operations test. Setup removes them before it continues." Only the account found: "This PC has a leftover of an earlier Slate Operations uninstall. Setup removes it before it continues." Leftovers of an earlier uninstall: "This PC has parts left by an earlier Slate Operations uninstall. Setup removes them before it continues. Your data and backups do not change." Unknown parts (Stop): "This PC has parts of Slate Operations that setup cannot identify. Setup changes nothing. Select Save report and send the file to Slate Operations support." |
 | C30 | The address is easy to use | Address | Advice | The computer name looks like a factory name: `DESKTOP-` or `LAPTOP-` followed by random letters and numbers (pattern is an Assumption that W7 checks) | "Open About settings". Never a required step (parent decision on WZ-D1). | "The address of Slate Operations will be desktop-7gh2k1.local, from this PC's name. It cannot change after setup without every phone and PC trusting Slate Operations again. If you want a short address, rename this PC in Windows Settings before setup, restart it, then run setup again." |
 
 The check never shows passed items one by one on S02. They collapse into one line: "21 checks passed. Show all checks" (the number is an example). "Show all checks" opens a dialog with every check, its name, its result word (Ready, Needs a fix, Recommended, Not suitable) and its value, for example "Memory: 16 GB. Ready."
@@ -302,13 +303,71 @@ The check never shows passed items one by one on S02. They collapse into one lin
   | Drive lists | `TNewCheckListBox` radio rows with the free space as a sub-item, or one `TNewRadioButton` for each drive |
   | Link-style buttons ("Details", "More options", "Change", "Show all checks") | `TNewLinkLabel` (focusable) |
   | M01 actions with one line each | `TNewButton` in command-link style with a hint line |
-  | Small progress in an item | `TNewProgressBar`, marquee style |
+  | Progress of a wait | The progress block (below): `TNewStaticText` lines; no marquee bar |
   | Numbered steps on S01 and S15 | Plain "1." text |
   | Recovery key | `TNewStaticText` in a monospaced font on a panel; not a selectable field |
   | QR code | `TBitmapImage` drawn by the setup program, in whole-pixel modules |
   | "Show all checks", help dialogs, the C29 form, U01, U02 | A modal form (`CreateCustomForm`) |
 - Stage line under the header on S02 to S12: "1 Check this PC · 2 Your details · 3 Install", with the current stage in bold. It tells the person where they are in three words, not twelve page numbers.
 - Text uses the Windows system font and system colors. Status uses a word and an icon shape, and color only as an extra (section 9).
+- **Layout rules (W14-D3).** Every page, form and message follows these rules. Sizes are at 100% display scale (`ScaleY`).
+  1. **Plain text on the page.** Text, verdicts and result lines look like labels on the page background: no box, no grey band, no border. Acceptance: on S02, nothing grey shows between the header and the button row. (Assumption on the cause: the body panel and the text controls paint a grey color while the page surface is white; the fix takes one color from the page surface for the body panel, every text control and the verdict memo, and never `WizardForm.Color`. The engineer checks it in the Inno Setup 6.7.4 help.) The read-only verdict memo shows no caret.
+  2. **One heading level.** A check item has one bold heading, "<result word>: <check name>" (for example "Recommended: Network cable"), and no separate group line ("Recommended" alone does not show). Bold is used only for the verdict sentence, item headings and field labels. Field errors, result lines and help text are regular.
+  3. **Text under its heading.** An item's text sits directly under its heading, then the item's buttons.
+  4. **Vertical rhythm.** 4 px inside a block (heading to text, text to its button row or link, field label to help to field, a result line under its button row); 12 px between items and between fields; 16 px between blocks (stage line, verdict block, the item list, the bottom block).
+  5. **Buttons in one row.** The buttons of one item, or of one block, sit in one row from left to right in reading order, 8 px apart, left aligned.
+  6. **The main action only in the button row.** Next, Install, Try again, Restart now and Finish are only in Inno's button row; the page holds the other actions. One exception: "Restart later" on S05 stays in the button row beside Back, because it closes setup like Cancel. On S01, Save report sits on the page under the message. On S15, "Open Slate Operations" sits on the page under step 2.
+  7. **Links inline.** A link that belongs to a line ends that line ("23 checks passed. Show all checks"; "Report saved to your desktop: <file>. Show in folder"; "Folder: D:\SlateOps  Change folder"). A link that shows more content ("More options", "Details", "What setup changes on this PC") is on its own line, 4 px under the block it opens.
+  8. **What fits.** A page never scrolls (rule 2.6). S02, S06 and S11 show items while they fit above the bottom block, at most four, Fix items first; the others go behind "Show N more".
+  9. **Forms (S08, S09, M02, M03).** A field block is: label (bold), 4 px, help line (regular, only when the spec gives one; a help link ends that line, for example "Gmail needs an app password, not your normal password. How to make an app password"), 4 px, the field at full width, 4 px, the field's error or its "Show" check box. 12 px to the next field block. A radio group (Provider, Security) is one row of radio buttons at their own widths, 16 px apart, under its label. "More options" is a link on its own line 12 px under the last field; it hides once open, and the fields it opens follow the same blocks. "Continue later" is the last line of the form, 16 px under the last block, never pinned to the page bottom.
+  10. **Choice rows (S07, S10).** One radio button per drive: "<drive name> (D:) · 239 GB free", with "· Most space" after the free space on the largest drive and "(USB drive)" after the name of a removable drive. The drive name is the name that Windows shows ("Local Disk" when the drive has none). 4 px between rows.
+  11. **Button row.** Each of Inno's buttons is as wide as its caption needs ("Send test email", "Restart now", "Update now", "Try again" are never cut), never narrower than Inno's default; the row stays right aligned, and the buttons left of a wider button move left. The engineer checks the width call in the Inno Setup 6.7.4 help.
+  12. **Status inside the page.** The background preparation on S08 to S10 shows in the page area, as the last line above the button row (one-line form of the progress block, 12 px under the page content), never in Inno's bottom-left line over the bevel. While the person waits on S07 after Next, and on S11 of a kept-data reinstall, the same preparation shows in the full form. (A seven-row list does not fit beside the S09 fields; the one-line form keeps "3 of 7".)
+- **Progress block (W14-D5).** Every wait follows rule 2.4 in one of two forms.
+  - Full form, for a page whose main content is the wait (S02 checking, S05, S12, S14 making the key, M05, the U03 form): the stage list, one row per stage with its state word in a fixed left column ("Done", "Now", "Next"; the "Now" row bold), then 4 px under it the current action in plain words ("Now: Setting up the database."), then the time line ("Time so far: 4:12. This can take up to 30 minutes."). A wait with one stage shows no list.
+  - One-line form, for a wait beside other content (the status line at the bottom of S08 to S10, S09 sending, M01 results, Save report, modal forms): "<n> of <total>: <current action> · <time so far>", for example "Preparing the server part, 3 of 7: Copying the server part to drive D: · 2:10".
+  - The time line counts in minutes and seconds from the start of the wait and updates once a second by changing that one label only; the page is not drawn again. Every wait runs from the wizard's timer and never holds the window (parent decision, 2026-11-18).
+  - The current action comes from the step key that the engine or the helper reports (7.6). A key that has no copy shows the stage name, never the key.
+  - No marquee bar or spinner, alone or under the block. Inno's own file-copy bar (after S12) and the uninstall bar (U03) stay.
+- **Target layouts.** S02, ready, with two Recommended items (100% scale; one line per row):
+
+  ```text
+  1 Check this PC · 2 Your details · 3 Install
+                                                         16 px
+  This PC is ready to be your Slate Operations server.   (bold verdict)
+  Setup will turn on Virtual Machine Platform and ...     4 px
+                                                         16 px
+  Recommended: Network cable                             (bold)
+  This PC uses Wi-Fi. A network cable is more ...         4 px
+                                                         12 px
+  Recommended: Laptop lid                                (bold)
+  This laptop goes to sleep when you close the lid. ...   4 px
+  [Change it during the install]                          4 px
+                                                         16 px
+  23 checks passed. Show all checks
+  [Check again] [Save report]                             4 px
+  ```
+
+  S02, needs fixes, with two Fix items:
+
+  ```text
+  1 Check this PC · 2 Your details · 3 Install
+                                                         16 px
+  Fix 2 things, then setup can continue.                 (bold verdict)
+                                                         16 px
+  Needs a fix: Virtualization                            (bold)
+  Virtualization is off. Turn it on in this PC's ...      4 px
+  [Show me how] [Restart to startup settings]             4 px
+                                                         12 px
+  Needs a fix: Network type                              (bold)
+  Windows treats this network as Public. ...              4 px
+  [Make this network private]                             4 px
+                                                         16 px
+  21 checks passed. Show all checks
+  [Check again] [Save report]                             4 px
+  ```
+
+  The bottom block (the passed line with "Show all checks", then the Check again and Save report row) is what the S02 Controls mean by "Check again beside Show all checks".
 
 Each screen below lists: purpose, content and copy, controls, states and messages. Copy in quotes is final unless it holds an example value.
 
@@ -332,12 +391,12 @@ Each screen below lists: purpose, content and copy, controls, states and message
 - **Content, in order.** The verdict (one bold sentence; a second line only in the ready state). Then at most four items in total: Fix items first, then "Recommended" items (Advice). Each item has the result word, the name, one or two lines, and its buttons. Then one line: "21 checks passed. Show all checks".
 - **Controls.** Per item: "Fix it for me", "Remove them", "Change it during the install", "Show me how", "Open … settings", "Restart now", "Restart to startup settings" (section 5.3). Page: "Check again" (beside "Show all checks"). Next: "Next" (off while a Fix item is open). Back. Cancel.
 - **States.**
-  - Checking: the verdict area says "Checking this PC… (about 1 minute)" with a progress bar, then one line: "Checking: Internet (12 of 23)". Below it: "Found so far: nothing that needs you." or the items found so far. Passed checks never show one by one. Next is off.
+  - Checking: the progress block, full form, with the four check groups of 7.6, the current check by name and count ("Checking: Internet (12 of 30)"), and "Time so far: 0:24. This takes about 1 minute." Below it: "Found so far: nothing that needs you." or the items found so far. Passed checks never show one by one. Next is off.
   - Ready: "This PC is ready to be your Slate Operations server." Optional second line: "Setup will restart this PC once." Recommended items show below. Next is on.
   - Needs fixes: "Fix 2 things, then setup can continue." The Fix items show first.
-  - Fixing: the item that the person selected shows "Fixing…" with a small progress bar; its buttons are off. After the fix, the item checks again by itself and shows "Fixed" or the message.
+  - Fixing: the item that the person selected shows its action line (7.6, for example "Making this network Private…"); its buttons are off. After the fix, the item checks again by itself and shows "Fixed" or the message.
   - Not suitable: the page changes in place to the S03 stop.
-  - Removing (C29): after Continue in the C29 form, the item shows "Removing…" with a small progress bar, then "Removed".
+  - Removing (C29): after Continue in the C29 form, the item shows its action line with the time so far (7.6), then "Removed".
   - Welcome back (after a restart from the check): one line above the verdict, "Welcome back. Setup checks this PC again."
   - Waiting for the person (after "Show me how"): the item keeps its message and shows "Check again".
 - **Focus.** When the check ends, focus moves to the verdict sentence (a read-only, borderless edit field), so a screen reader reads it first (Assumption: Narrator reads it; WZ-11).
@@ -368,12 +427,14 @@ Each screen below lists: purpose, content and copy, controls, states and message
 
 ### S05 Restart this PC once (plan page 3a; only when C26 needs it)
 
-- **Purpose.** Turn on the Windows feature and restart, before any secret is typed.
-- **Title.** "Restart this PC once". Subtitle: "Windows needs one restart to finish a feature that Slate Operations needs."
+- **Purpose.** Turn on Virtual Machine Platform and install Windows Subsystem for Linux (WSL), then restart, before any secret is typed.
+- **Title.** "Restart this PC once". Subtitle: "Windows finishes Virtual Machine Platform and WSL when this PC restarts."
 - **Content.**
-  - While it works: "Turning on the Windows feature… (about 2 minutes)" with a progress bar. Then the verdict: "The Windows feature is turned on. Windows finishes it when this PC restarts."
-  - Then: 1. "Save your work and close your other programs." 2. "Select Restart now." 3. "Sign in again. Setup opens by itself and continues." "If setup does not open, double-click Continue Slate Operations setup on the desktop."
-  - "Details" (link-style button) shows: "Virtual Machine Platform, Windows Subsystem for Linux."
+  - While it works: the progress block, full form (7.6, S05), with "This takes about 2 minutes."
+  - Then the stage list stays, with its states: "Done: Turn on Virtual Machine Platform", "Done: Install Windows Subsystem for Linux (WSL)", "Now: Restart this PC", "Next: Your details", "Next: Install" (in the order the helper ran them; a component that was already on this PC shows "Done" with "(already on this PC)").
+  - The verdict: "Setup turned on Virtual Machine Platform and installed Windows Subsystem for Linux (WSL). Windows finishes them when this PC restarts." Under it, one line each: "Virtual Machine Platform: lets this PC run the server part of Slate Operations." "Windows Subsystem for Linux (WSL): runs the server part of Slate Operations inside Windows."
+  - Then: 1. "Save your work and close your other programs." 2. "Select Restart now." 3. "Sign in again. Setup opens by itself, checks this PC again (about 1 minute) and continues with Where to keep your data." "If setup does not open, double-click Continue Slate Operations setup on the desktop."
+  - "Details" (link-style button) shows only technical extras: the WSL version and the result codes of the two steps.
 - **Controls.** Next: "Restart now". "Restart later" (closes setup; the shortcut stays). Cancel.
 - **States.** Working; ready to restart; waiting ("Another installation is running on this PC. Setup waits and tries again." for plan code 1618, three tries); failed (in place, in the S13 layout: "Setup could not turn on a Windows feature.").
 
@@ -424,7 +485,7 @@ Each screen below lists: purpose, content and copy, controls, states and message
 - **States.**
   - Idle.
   - Waiting for the server part: "Getting ready to send… (about 1 minute)". The test starts by itself when the server part is ready.
-  - Sending: "Sending a test email to maria@example.com…" with a progress bar. Fields are off.
+  - Sending: the progress block, one-line form (7.6, S09), for example "2 of 3: Sending a test email to maria@example.com · 0:08". Fields are off.
   - Passed: "Test email sent to maria@example.com. It can take a few minutes to arrive. Look in Spam too." Next: "Next".
   - Failed: the message by class (section 7.3), under the field that it is about, and focus moves to it. A changed field turns the caption back to "Send test email".
   - Channel self-test failed (plan F4d): in place, in the S13 layout: "Setup cannot pass the password safely to the server part. Nothing was sent."
@@ -463,10 +524,10 @@ Each screen below lists: purpose, content and copy, controls, states and message
 ### S12 Installing (plan page 10)
 
 - **Purpose.** Show progress in plain stages, give a time, say what the person can do.
-- **Title.** "Installing Slate Operations". Subtitle: "About 25 minutes left." (from the download speed and the stage times; "This can take up to 30 minutes" until it is known).
-- **Stages** (plan 6.2 steps in brackets). Each has a state: done, now (with a progress bar for downloads: "1.2 GB of 3.4 GB"), waiting.
-  1. "Download the parts" (1, 3)
-  2. "Prepare the settings" (2, 4, 5)
+- **Title.** "Installing Slate Operations". Subtitle: "This can take up to 30 minutes."
+- **Stages** (plan 6.2 steps in brackets), in the progress block, full form, with the current action from the engine step key and the time so far (7.6, S12). This replaces the coarse progress accepted for v1 (W14-D5). Each stage is "Done", "Now" or "Next".
+  1. "Load the Slate Operations programs" (1, 3)
+  2. "Create the settings and passwords" (2, 4, 5)
   3. "Set up the secure connection" (6)
   4. "Set up the database" (7, 8)
   5. "Start Slate Operations" (9, 10)
@@ -480,7 +541,7 @@ Each screen below lists: purpose, content and copy, controls, states and message
   - Automatic retry: "The download server is busy. Setup tries again at 14:32." (plan 10.7: time-outs and HTTP 429, three tries.)
   - Slow (plan F4b): "This step takes longer than expected." Buttons: "Wait", "Try again", "Save report".
   - Failed: in place, in the S13 layout.
-- **Numbers.** "1.2 GB of 3.4 GB", the step number and the time left come from whole numbers that the engine writes to its progress file (bytes done, bytes total, step number). The Windows side reads them as integers and uses them only for display (plan 3.2 rule 2).
+- **Numbers.** The step key and, while images download, "1.2 GB of 3.4 GB" come from the engine's progress lines (a fixed step key and whole numbers). The Windows side reads them as integers and uses them only for display (plan 3.2 rule 2).
 
 ### S13 Setup stopped (one layout for every failure, shown in place)
 
@@ -548,7 +609,7 @@ Each screen below lists: purpose, content and copy, controls, states and message
 - **Title.** "Update Slate Operations". Subtitle: "Version 0.2.0 is installed. This setup installs version 0.2.1."
 - **Content.** "Setup makes a backup before it changes anything. If the update fails, Slate Operations goes back to version 0.2.0 by itself." Then: "People cannot use Slate Operations while it updates. This can take up to 1 hour. Tell your people before you start." (1 hour is a planning value; it matches the slow line at 60 minutes.)
 - **Controls.** Next: "Update now". Cancel.
-- **Progress.** In the order the steps run: "Prepare the update" (the idle check, the parts from this setup file, the Windows feature), "Make a backup", "Update", "Check that it works". Stages 2 to 4 show "Now" together while the engine job runs. Result: "Slate Operations is updated to version 0.2.1." or "The update did not work. Slate Operations went back to version 0.2.0. Everybody must sign in again." (plan 7.5 revokes sessions) with "Save report".
+- **Progress.** The progress block, full form, in the order the steps run: "Prepare the update" (the wait for a free moment, the new version from this setup file, the WSL update), "Make a backup", "Update", "Check that it works", with the current action from the step key and the time so far (7.6, M05). Result: "Slate Operations is updated to version 0.2.1." or "The update did not work. Slate Operations went back to version 0.2.0. Everybody must sign in again." (plan 7.5 revokes sessions) with "Save report".
 - **Messages** (S13 layout in place, with Save report; Try again unless the line says otherwise):
   - Busy: "Slate Operations is busy with a backup or another task. Setup waits and tries again by itself." (a waiting line, not a failure)
   - A failure before the update changed anything: "The update did not work. Slate Operations still runs version 0.2.0. Nothing changed."
@@ -563,7 +624,7 @@ Each screen below lists: purpose, content and copy, controls, states and message
 - **U01 Keep your data?** Title "Uninstall Slate Operations". ( ) "Keep my data (recommended). Slate Operations is removed. Your records, files and settings stay in D:\SlateOps\kept (14 GB). Install Slate Operations again to continue where you stopped." ( ) "Delete everything. Removes all records, files and settings from this PC." Under "Delete everything" only: [ ] "Also delete the backups on E:". Buttons: "Uninstall", "Cancel". Closing the window cancels; nothing is removed (plan F4c).
 - **U02 Confirm delete.** Title "Delete all Slate Operations data?". "This deletes all your records, files and settings in Slate Operations on this PC. It cannot be undone. The backups on E: are kept." (Windows does not keep the organization name.) (or "are deleted too."). [ ] "I understand that this cannot be undone". Buttons: "Delete everything" (off until checked), "Go back" (default).
 - **U03 Removing.** "Removing Slate Operations… (about 2 minutes)" with three stages: "Stop Slate Operations", "Moving your data to D:\SlateOps\kept…" (only with "Keep my data"), "Remove the program and its Windows settings".
-- **U04 Result.** "Slate Operations is removed. Your data is kept in D:\SlateOps\kept." or "Slate Operations and its data are removed." One line: "The Windows feature that Slate Operations used stays on, because other programs can use it." Leftovers state: "Uninstall finished. Some items could not be removed. Setup removes them the next time it runs." with "Save report". Keep-data failure (plan F3): "Setup could not keep your data safely. Nothing was removed." with "Save report".
+- **U04 Result.** "Slate Operations is removed. Your data is kept in D:\SlateOps\kept." or "Slate Operations and its data are removed." One line: "Virtual Machine Platform and Windows Subsystem for Linux (WSL) stay on this PC, because other programs can use them." Leftovers state: "Uninstall finished. Some items could not be removed. Setup removes them the next time it runs." with "Save report". Keep-data failure (plan F3): "Setup could not keep your data safely. Nothing was removed." with "Save report".
 
 ### T01 Trust page on a phone (web page, built in W6b; not a wizard screen)
 
@@ -671,7 +732,7 @@ Each message shows under the field it is about.
 | F4d | "Setup cannot pass the password safely to the server part. Nothing was sent." | S13 |
 | F5 | "Slate Operations cannot save backups to E:." | S12 in place (S13 layout) with "Choose another drive" (a modal form with the S10 drive list) |
 | F6 | Same as F2 | S13 |
-| F10 | "The server part did not start again after a Windows update of one of its parts." | S13 |
+| F10 | "The server part did not start again after Windows updated Windows Subsystem for Linux (WSL)." | S13 |
 | W4-5 | "Setup could not start the server part of Slate Operations." | S13 |
 | W7-6 | M01: "Not ready since 09:12. Select Repair. If that does not help, select Save report." | M01 |
 
@@ -682,7 +743,7 @@ Each message shows under the field it is about.
 | Virtualization off | C04 | S02 |
 | Windows too old, or Home | C01, C02 | S02, S03 |
 | Restart pending | C08 | S02; in place on S06 and S11 |
-| WSL or Windows feature install fails | "Setup could not turn on a Windows feature that Slate Operations needs." Code 1618: "Another installation is running on this PC. Setup waits and tries again." | S05 waiting state; then S13 |
+| WSL or Windows feature install fails | "Setup could not turn on Virtual Machine Platform." or "Setup could not install Windows Subsystem for Linux (WSL)." Code 1618: "Another installation is running on this PC. Setup waits and tries again." | S05 waiting state; then S13 |
 | Resume does not start | S05 content | Desktop shortcut |
 | Antivirus or Smart App Control blocks a file | Antivirus: "A security program on this PC blocked part of Slate Operations setup. Allow the folder C:\Program Files\Slate Operations in the security program, then select Try again." The blocked file name shows only in Details and Save report; the advice names only the program folder, which only administrators can change. Smart App Control: "Windows blocked part of Slate Operations setup. Select Save report and send the file to Slate Operations support." No advice to turn Smart App Control off (plan 10.7; C19 is Log only). If Windows blocks the setup file itself, no screen shows; `README.txt` and the release notes describe this case. | In place (S13 layout) |
 | Import fails | "Setup could not start the server part of Slate Operations." When the cause is space: "The data drive is full. Free 8 GB on D:, then select Try again." | S13 |
@@ -711,6 +772,49 @@ Each message shows under the field it is about.
 | `C:\ProgramData\SlateOps` owned by a user who is not an administrator | "Setup cannot use the folder C:\ProgramData\SlateOps, because a user who is not an administrator owns it. Select Save report and ask the person who manages this PC." | S01 in place; setup reads nothing from the folder |
 | A folder above the chosen data folder fails the safety check (`setup.data.data_folder_parent_unsafe`; TASK-0091 S91-2) | "Setup cannot keep your data in D:\Office\SlateOps, because it cannot protect a folder above it. This is common for folders made in File Explorer. Setup can protect D:\SlateOps for you." Button: "Use D:\SlateOps". One message for every value of `reason`; the value never shows on screen and goes only to the log and Save report. | S07 in place, under the Folder line; "Change folder" stays. On Next, setup stays on S07 until the data folder step answers; only then does the rest of the preparation continue in the background and S08 open. "Use D:\SlateOps" sets the folder to `\SlateOps` on the drive of the chosen folder when the drive list holds that drive, else on the drive selected in the list; then the S07 checks run again. Setup never changes a folder above. |
 | Setup was approved with another administrator account, so it cannot add its automatic restart entries (`setup.resume.resume_other_user`; TASK-0091 S91-7) | In place of S05 step 3 and the line "If setup does not open…": "3. Sign in again, then open the setup file again. Setup cannot open by itself after this restart, because it runs with another administrator account." Under the steps: "The setup file: C:\Users\maria\Downloads\SlateOpsSetup-0.2.0.exe. When you open it, Windows asks for the administrator account again." | S05 "ready to restart" state, before the person selects Restart now: setup saves its progress when this state opens, and this code means the progress is saved. The same sentences, without the step number, show in the confirmation before C08 "Restart now" and C04 "Restart to startup settings" on S02. Not a failure: no S13 layout, Next stays "Restart now", and "Restart later" closes setup with no shortcut. The saved progress stays, so the setup file continues as section 4.1 says. |
+
+### 7.6 Waits and progress lines (W14-D5)
+
+Every wait in setup, the settings program and the uninstaller, with its form (6.1, progress block), its stages and one action line per step. Every wait runs from the wizard's timer, so its time counts (parent decision, 2026-11-18). Example values: office-pc.local, D:, E:, F:, 0.2.0, 0.2.1, maria@example.com, WSL 2.6.1.
+
+Where the current step comes from:
+
+- **Engine** keys (`job.key`) are the fixed step keys of `packaging/engine/progress.py` `STEPS` (`8fd301f0`): the engine writes `progress <job> <n>/<total> <key> <state>` on standard error as each step starts, and the wizard reads only lines of that shape. A `done` state (an install rerun) shows the stage as "Done". A step that does not run writes no line.
+- **Windows** keys are the wizard's own sequence or the helper's steps. The helper keys (`pc.*`, `bg.*`, `win.*`, `repair.*`, `upd.*`, the check counts) are new and Proposed; the helper writes them to its progress file (plan F4b).
+- A key with no line here shows its stage name, never the key.
+
+| Wait | Form | Stages ("Done", "Now", "Next") | Action lines (key: line) | Side |
+|---|---|---|---|---|
+| S02 PC check | Full; "This takes about 1 minute." | 1 Windows and processor (C01 to C06); 2 Space and updates (C07, C08); 3 Network and address (C09 to C17); 4 Security, power and earlier tests (C18 to C30) | "Checking: <check name> (12 of 30)." (name and count from the helper) | Windows (helper) |
+| S02 fixes | One line in the item | — | C10: "Making this network Private…" C17: "Turning on the Windows rule that lets phones find this PC…" C29 test parts: "1 of 3: Stopping the earlier test's server part", "2 of 3: Removing its data", "3 of 3: Removing its account, tasks and firewall rules". C29 uninstall leftovers: "Removing the tasks, account and firewall rules of the earlier uninstall…" Then "Checking again…" | Windows (helper) |
+| S02 and S06 restart (C08, C04) | One line | — | "Saving your progress…", then "Restarting this PC…" | Windows |
+| S05 prepare | Full; "This takes about 2 minutes." | 1 Turn on Virtual Machine Platform; 2 Install Windows Subsystem for Linux (WSL); 3 Restart this PC; then "Next: Your details", "Next: Install" | pc.unpack: "Unpacking Windows Subsystem for Linux (WSL) from this setup file." pc.vmp: "Turning on Virtual Machine Platform." pc.wsl: "Installing Windows Subsystem for Linux (WSL) 2.6.1." pc.busy: "Another installation is running on this PC. Setup waits and tries again (2 of 3)." pc.check: "Checking whether Windows needs a restart." | Windows (helper) |
+| S06 and S11 recheck | Full on S06; one line on S11 | — | "Checking this PC again: <check name> (3 of 7)." | Windows (helper) |
+| S07 drives, kept data | One line | — | "Looking for drives…"; "Reading the kept data in D:\SlateOps\kept…" | Windows |
+| S07 after Next | Full, on S07 | 1 Unpack the server part; 2 Prepare the data folder; then the background stages below | data.unpack: "Unpacking the server part from this setup file." data.folder: "Preparing the data folder D:\SlateOps." | Windows |
+| Background preparation (S08 to S10: one line in the page, "Preparing the server part, 3 of 7: <action> · 2:10", and "The server part is ready." at the end; full on S07 after Next and on S11 of a kept-data reinstall) | One line or full | 1 Add the hidden Windows account; 2 Set the memory of the server part; 3 Copy the server part to drive D: (kept data: Move your kept data back; Open your kept data); 4 Start the server part; 5 Receive the Slate Operations programs; 6 Check the server part; 7 Download the database and sign-in programs; kept data adds 8 Check the kept data | Windows: bg.service: "Adding the hidden Windows account that runs Slate Operations." bg.wslconfig: "Setting the memory of the server part to 6 GB." bg.import: "Copying the server part to drive D:." bg.restore_kept: "Moving your kept data back into D:\SlateOps." bg.import_kept: "Opening your kept data." bg.start: "Starting the server part." bg.kept_status: "Checking that the kept data belongs to this installation." Engine, stage 5: receive.space: "Checking the free space for the new programs." receive.stage: "Copying the Slate Operations programs into the server part." receive.signature: "Checking the signature of the Slate Operations programs." receive.check: "Checking each program against its signature." receive.load: "Loading the Slate Operations programs." receive.keep: "Keeping the checked programs for the install." Stage 6: prepare.systemd: "Checking that the server part has started." prepare.docker: "Checking that the server part can run services." prepare.container: "Starting a test service in the server part." prepare.networking: "Checking the network of the server part." prepare.time: "Checking the clock of the server part." prepare.listeners: "Checking that no other program in the server part uses the web connection." prepare.interop: "Checking that the server part cannot start Windows programs." prepare.mounts: "Checking that the server part cannot open your Windows drives." prepare.shells: "Checking the user accounts of the server part." prepare.bundle: "Checking the Slate Operations program files." Stage 7: prefetch.start_pull: "Downloading the database and sign-in programs (1.2 GB of 3.4 GB)." (the numbers from `status`) | Windows (stages 1 to 4, 8); engine (stages 5 to 7) |
+| S09 provider lookup | One line under Provider | — | "Looking up the email provider of example.com…" | Windows |
+| S09 Send test email (also M02) | One line under the form | 1 Get the server part ready (while the background runs); 2 Check the password channel; 3 Check the security policy; 4 Send the test email | "Getting ready to send: <background action>"; "Checking that setup can pass the password safely."; "Checking the security policy of this PC."; smtp-test.send: "Sending a test email to maria@example.com." smtp-test.stage: "Keeping the email settings for the install." | Windows (1 to 3); engine (4) |
+| S09 Continue later, Cancel "Keep it and continue later" | One line | 1 Wait for the current step to end; 2 Delete the staged email settings; 3 Save your progress | "Waiting for the current step to end…"; "Deleting the email settings that setup kept…"; "Saving your progress…" | Windows (the discard is an smtp-test job that writes no step line) |
+| S10 Next | One line under the list | — | "Checking drive E:…" | Windows |
+| S12 install | Full; subtitle "This can take up to 30 minutes." | The eight S12 stages | Stage 1: backup.check (Windows): "Checking the backup drive E:." install.release: "Checking the signature of the Slate Operations programs." install.images: "Loading the Slate Operations programs." Stage 2: install.folders: "Creating the folders for the settings." install.secrets: "Creating the passwords that Slate Operations uses inside the server part." install.env: "Writing the settings." Stage 3: install.tls: "Creating the security certificate for office-pc.local." Stage 4: install.providers: "Starting the database, sign-in and file storage." install.provision: "Setting up the database." Stage 5: install.api: "Starting Slate Operations." install.caddy: "Starting the secure web connection." Stage 6: install.admin: "Creating your administrator account and sending your invitation to maria@example.com." Stage 7: install.backup: "Making the first backup on E:." install.finish: "Saving the installation details." Stage 8 (Windows): win.firewall: "Allowing Slate Operations through Windows Firewall on Private networks." win.hosts: "Making office-pc.local open Slate Operations on this PC." win.trust: "Making this PC trust the security certificate of Slate Operations." win.power: "Keeping this PC awake when it is plugged in." win.lid: "Keeping this laptop running when the lid is closed." win.https: "Checking that https://office-pc.local opens on this PC." | Engine (stages 1 to 7, except backup.check); Windows (backup.check, stage 8) |
+| S12 Choose another drive (also M03) | One line on the S13 page | 1 Check drive F:; 2 Prepare drive F: for backups; 3 Set F: as the backup drive | Windows: "Checking drive F:…"; "Preparing drive F: for backups…". Engine: set-backup-target.unmount: "Disconnecting the backup drive E:." set-backup-target.mount: "Connecting drive F:." set-backup-target.repository: "Preparing the backup store on F:." | Windows (1, 2); engine (3) |
+| After S12 (Inno file copy) | Inno's own page and bar | — | "Copying the Slate Operations settings program to this PC." | Inno |
+| S14 key and M04 | Full on S14; one line on M01 | — | new-recovery-key.mount: "Connecting the backup drive E:." new-recovery-key.key: "Making your recovery key." (M04: "Making your new recovery key and removing the old one."); print: "Sending the key to <printer name>…"; USB: "Saving the key to F:…" | Engine (key); Windows (print, USB) |
+| Save report (S01, S02, S03, S09, S13, M01, U04, Start menu) | One line beside the Save report button or in the S13 form; in the settings program a small form with the one line | 1 Collect the setup logs; 2 Collect the server part's logs; 3 Remove passwords and personal details; 4 Save the file to your desktop | "1 of 4: Collecting the setup logs"; stage 2: log-bundle.facts: "2 of 4: Collecting facts about the server part" log-bundle.snapshot: "2 of 4: Collecting the server part's logs" log-bundle.bundle: "2 of 4: Packing the server part's logs" (or "The server part is busy, so its logs are left out."); "3 of 4: Removing passwords and personal details"; "4 of 4: Saving SlateOps-report-….zip to your desktop" | Windows (1, 3, 4); engine (2) |
+| Cancel "Remove everything" | One line in a small form | 1 Wait for the current step to end; 2 Stop Slate Operations; 3 Remove the server part and its data (kept data: Move your data back to D:\SlateOps\kept); 4 Remove the Windows settings | "Waiting for the current step to end…"; "Stopping Slate Operations…"; "Removing the server part and the data in D:\SlateOps…" or "Moving your data back to D:\SlateOps\kept…"; "Removing the Windows settings: <item>…" | Windows (helper) |
+| M01 status | Full, one stage | — | "Checking Slate Operations…" | Windows |
+| M01 Send my invitation again | One line under the actions | — | resend-invitation.resend: "Sending your invitation again." | Engine |
+| M01 Repair | Full, under the actions | 1 Check the security policy; 2 Set a new password for the hidden account; 3 Set up the start tasks; 4 Set up Windows Firewall; 5 Set the address on this PC; 6 Set the backup folder rights on E:; 7 Start Slate Operations | repair.r7: "Checking the security policy of this PC." repair.account: "Setting a new password for the hidden Windows account." repair.tasks: "Setting up the tasks that start Slate Operations." repair.firewall: "Allowing Slate Operations through Windows Firewall on Private networks." repair.hosts: "Making office-pc.local open Slate Operations on this PC." repair.backup: "Setting the rights of the backup folder on E:." repair.start: "Starting Slate Operations." | Windows (helper) |
+| M01 phone code | One line | — | "Reading the security code…" | Windows |
+| M02 save | One line under the form | 1 Send a test email (the S09 row); 2 Save the email account; 3 Restart sign-ins | set-email.write: "Saving the new email account in Slate Operations." set-email.auth: "Restarting sign-ins with the new email account (about 1 minute)." | Engine |
+| M03 | One line under the list | 1 Check drive F:; 2 Prepare drive F: for backups; 3 Set F: as the backup drive; 4 Make the recovery key for F: | The S12 Choose another drive row, then new-recovery-key.mount: "Connecting drive F:." new-recovery-key.key: "Making the recovery key for F:." | Windows (1, 2); engine (3, 4) |
+| M05 update | Full; "This can take up to 1 hour." | 1 Prepare the update; 2 Make a backup; 3 Update; 4 Check that it works; when it fails after the backup: "Go back to version 0.2.0" | Stage 1, Windows: upd.idle: "Waiting until Slate Operations is free (a backup or another task runs)." upd.unpack: "Unpacking version 0.2.1 from this setup file." upd.copy: "Copying version 0.2.1 to drive D:." Engine: the receive lines of the background row, for version 0.2.1. Windows: upd.wsl: "Updating Windows Subsystem for Linux (WSL) to 2.6.1." Engine: update.lock: "Making sure no backup runs during the update." update.release: "Checking version 0.2.1." update.space: "Checking the free space in the server part." update.images: "Loading the programs of version 0.2.1." Stage 2: update.backup: "Stopping Slate Operations and making a backup." Stage 3: update.env: "Writing the settings of version 0.2.1." update.providers: "Starting the database, sign-in and file storage on version 0.2.1." update.health: "Waiting until the database, sign-in and file storage are ready." update.provision: "Updating the database." Stage 4: update.api: "Starting Slate Operations 0.2.1 and checking its version." update.caddy: "Starting the secure web connection." update.switch: "Finishing the update." Windows: upd.scripts: "Finishing the update on this PC." Going back (stage "Go back to version 0.2.0", under the line "The update did not work. Setup goes back to version 0.2.0."): recover.recover: "Starting version 0.2.0 again with its settings." rollback.down: "Stopping version 0.2.1." rollback.restore: "Restoring the backup made before the update." rollback.rebind: "Connecting Slate Operations to the restored data." rollback.finalize: "Checking the restored data." rollback.start: "Starting version 0.2.0." rollback.adopt: "Making version 0.2.0 the running version again." | Windows and engine, as marked |
+| U03 uninstall | One line in Inno's uninstall form ("Removing Slate Operations… (about 2 minutes)" first) | 1 Stop Slate Operations; 2 Move your data to D:\SlateOps\kept (or Delete the data in D:\SlateOps); 3 Remove the program and its Windows settings | Engine, stage 1 with "Keep my data": prepare-uninstall.stop_timer: "1 of 3: Stopping the nightly backups" prepare-uninstall.stop_docker: "1 of 3: Stopping Slate Operations". Windows: "2 of 3: Moving your data to D:\SlateOps\kept" or "2 of 3: Deleting the data in D:\SlateOps"; "3 of 3: Removing <item>" | Engine (stage 1, keep path); Windows (the rest) |
+
+The engine job `renew-certificate` runs from the nightly runner, not from a wizard page, so the wizard shows no line for it. If a later page runs it: renew-certificate.renew: "Making a new security certificate." renew-certificate.check: "Checking the new certificate." renew-certificate.trust: "Updating the phone page with the new certificate." renew-certificate.reload: "Starting the secure web connection with the new certificate."
+
+Waits before any window exists, so no progress shows: the start of setup (the state folder check and the entry), the start after a restart (the administrator prompt, then the same check) and the start of the uninstaller (the state check and the uninstall information before U01). Each must stay short; a slow start goes to Save report.
 
 ## 8. What the person decides and what is automatic (AC-3)
 
@@ -754,7 +858,7 @@ No accessibility conformance is claimed (`PRODUCT.md`: no certification target).
 4. **Color and contrast.** Text uses the Windows system colors, so high-contrast themes work. Status colors are an extra beside the word and the icon shape.
 5. **Plain language.** One instruction per sentence, at most 20 words. The full name "Slate Operations" in every sentence that names the product (`PRODUCT.md`). "Organization", never "business", because the users are schools, clinics, shops and offices too. No term from the "never" list in section 3 on a default screen.
 6. **Time.** No page moves on by itself. No message disappears by itself. Only the background preparation and the install run on their own, and both show their state.
-7. **Motion.** Only progress bars move. No animation.
+7. **Motion.** During a wait only the time so far changes (6.1, progress block). Inno's own file-copy and uninstall bars move. No other animation.
 
 ## 10. Changes from plan section 4 (AC-5)
 
@@ -762,7 +866,7 @@ No accessibility conformance is claimed (`PRODUCT.md`: no certification target).
 |---|---|---|---|---|
 | 1 | Page 2 License, then page 3 Requirements | S02 PC check right after Welcome; S04 License after a pass | The person knows in about a minute whether this PC can work, before reading a license or changing anything. This is the owner's request. | Nothing. The license is still accepted before the first install change. |
 | 2 | Requirements as a list of R1 to R9 with pass or fail per line | One verdict first, then only the items that need the person; passed items collapse into one line | A non-technical person reads one sentence, not nine technical lines. | The full list moves into "Show all checks". |
-| 3 | R1 to R9 | C01 to C30: adds processor type, early free space, pending restart, clock, ports and address checks (from page 8), earlier test parts (plan 10.7), antivirus, laptop lid, Wi-Fi, drive encryption, Docker Desktop, the address advice; Smart App Control is logged only | Problems that the plan finds late (page 4, page 8, the install) show before any change. | More detection code on the Windows side (section 12 item 8). |
+| 3 | R1 to R9 | C01 to C30: adds processor type, early free space, pending restart, clock, ports and address checks (from page 8), earlier test parts (plan 10.7), antivirus, laptop lid, Wi-Fi, drive encryption (the automatic-unlock advice only; DEC-0037), Docker Desktop, the address advice; Smart App Control is logged only | Problems that the plan finds late (page 4, page 8, the install) show before any change. | More detection code on the Windows side (section 12 item 8). |
 | 4 | "Next stays off until every blocking line passes" | Fix it for me, Show me how, Open … settings, Restart now, Check again per item | Each problem has a way forward on the same page. | Five Windows changes can happen before the license, each selected by name: C10, C08, C04, C17, C29 (section 5.4). |
 | 5 | No screen for an unsuitable PC | S03, a polite stop with what to do instead and Save report (a state of the S02 page) | The person is not left with a disabled Next button. | — |
 | 6 | Page 3a message | S05 with numbered steps, "Restart later", Details | The person can choose when to restart, and knows how setup comes back. | — |
@@ -774,7 +878,7 @@ No accessibility conformance is claimed (`PRODUCT.md`: no certification target).
 | 12 | Page 7 a choice of two | S10: second drive selected by itself; "Plug in a USB drive now" with live detection; check box for the data drive | The safe choice is the easy choice. | — |
 | 13 | Page 8 Network name | Removed as a page. The checks move to S02 (C10, C14 to C17); C30 advises a rename before setup when the name looks like a factory name; the address shows on S11 and S15. | One page fewer; problems found before any change. | The address is never a choice (as in the plan). |
 | 14 | Page 9 Ready, a summary | S11 with Change links, "What setup changes on this PC" and the time | The person sees what changes on the PC before it changes. | — |
-| 15 | Page 10 step list of engine steps | S12: eight stages in plain words, time left, "While you wait", automatic retry and slow states | The person knows what happens and what to do. | — |
+| 15 | Page 10 step list of engine steps | S12: eight stages in plain words, the current action, the time so far, "While you wait", automatic retry and slow states | The person knows what happens and what to do. | — |
 | 16 | Failure messages per page | S13, one failure layout for every failure, shown in place on its page or in a modal form | The same "what happened, what to do, Try again, Save report" every time. | — |
 | 17 | Page 11 the key, Print, Save to USB, check box | S14 with an explanation and the backup-drive warning; no Cancel, as in the plan | The person understands why the key matters. | — |
 | 18 | Page 12 four lines of text and a QR code | S15: three numbered steps in order (password first), the QR code, Desk line, how to come back | The owner does the steps in the right order. | — |
@@ -796,7 +900,7 @@ These criteria add to the plan's W6b, W7, W8 and W9 criteria. Each is checked on
 - **WZ-5.** Every failure shows S13 with a "what happened" sentence from section 7, Try again and Save report, and Try again continues from the failed step.
 - **WZ-6.** On S09, a refused Gmail password shows the Gmail message under the password field; the Microsoft 365 note shows before the password; "Continue later" opens S06, then S08, at the next start.
 - **WZ-7.** The background preparation shows its state at the bottom of S08 to S10, and the test send waits for it with "Getting ready to send…". (Fallback build: the plan's page 4a.)
-- **WZ-8.** S12 shows the eight stages, the time left and the "While you wait" box. A busy download server shows the retry time.
+- **WZ-8.** S12 shows the eight stages with their states, the current action in plain words, the time so far and the "While you wait" box. A busy download server shows the retry time.
 - **WZ-9.** S15 lists the password step first, the "Open Slate Operations" button second and the QR code third. The QR code opens the trust page on a phone on the same Wi-Fi.
 - **WZ-10.** M01 shows one status sentence first, then the actions. U01 defaults to "Keep my data"; "Delete everything" needs U02 with its check box.
 - **WZ-11.** With the keyboard only, the person completes the whole install; with Narrator on, each verdict and result sentence is read when it appears.
