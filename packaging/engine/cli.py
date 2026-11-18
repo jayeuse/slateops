@@ -24,7 +24,6 @@ from typing import Any, BinaryIO, TextIO
 from engine import (
     backups,
     install,
-    invitation,
     log_bundle,
     maintenance,
     packages,
@@ -72,7 +71,6 @@ JOBS: dict[str, Job] = {
     "smtp-test": Job(smtp.handle, smtp.KEYS, smtp.REQUIRED),
     "log-bundle": Job(log_bundle.handle, log_bundle.KEYS, log_bundle.REQUIRED, locked=False),
     "install": Job(install.handle, install.KEYS, install.REQUIRED),
-    "resend-invitation": Job(invitation.handle, invitation.KEYS, invitation.REQUIRED),
     # Run by the tick once a day (plan 6.3) and by support; not a Windows Exec job.
     "renew-certificate": Job(renewal.handle, renewal.KEYS, renewal.REQUIRED),
     # W10b (TASK-0093). On the Windows Exec allow-list: set-backup-target, new-recovery-key.

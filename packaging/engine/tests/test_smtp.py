@@ -341,20 +341,18 @@ def test_ac_m4_a_failed_test_keeps_the_earlier_staged_values(
     assert paths.staged_smtp.read_bytes() == before
 
 
-def test_ac_m6_discard_deletes_the_staged_values_and_needs_only_the_run_id(
+def test_dec_0041_discard_is_refused_and_the_staged_values_stay(
     paths: Paths, certificates: dict[str, Path], serve: Callable[..., SmtpServer]
 ) -> None:
+    # Nothing stages email before the install any more, so nothing discards it (DEC-0041).
     server = serve()
     _run(paths, certificates, _request(server.port))
+    staged = paths.staged_smtp.read_bytes()
 
-    first = _run(paths, certificates, {"run_id": RUN_ID, "mode": "discard"})
-    again = _run(paths, certificates, {"run_id": RUN_ID, "mode": "discard"})
-    extra = _run(paths, certificates, {"run_id": RUN_ID, "mode": "discard", "password": "x" * 9})
+    refused = _run(paths, certificates, {"run_id": RUN_ID, "mode": "discard"})
 
-    assert first == (0, {"code": "smtp_discarded"})
-    assert again == (0, {"code": "smtp_discarded"})
-    assert extra == (2, {"code": "invalid_input", "message_key": "smtp-test.invalid_input"})
-    assert not paths.staged_smtp.exists()
+    assert refused == (2, {"code": "invalid_input", "message_key": "smtp-test.invalid_input"})
+    assert paths.staged_smtp.read_bytes() == staged
 
 
 @pytest.mark.parametrize("value", ["plain", "$HOME and $$", '"quoted" \\ back', " edge ", "a#b c"])

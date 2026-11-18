@@ -1,4 +1,4 @@
-"""``install`` and ``resend-invitation`` (TASK-0086; plan 6.1, 6.2; W5b-1 logic, W5b-2, W5b-7).
+"""``install`` (TASK-0086; plan 6.1, 6.2; W5b-1 logic, W5b-2, W5b-7).
 
 A fake world stands in for Docker: the one-shot containers write what the real commands
 write (the W2 generator, ``local_ca.py init``), Compose keeps per-project volumes and
@@ -86,7 +86,6 @@ class World:
         self.started: set[str] = set()
         self.records: dict[str, int] = {}
         self.sent = 0
-        self.active = False
         self.admin_created = False
         self.admin_stdin: list[bytes | None] = []
         self.bootstrap_exit: tuple[int, str] | None = None
@@ -270,18 +269,13 @@ class World:
         if self.bootstrap_exit is not None:
             code, output = self.bootstrap_exit
             return Result(code, output.encode() + b"\n", b"")
-        email = env["ADMIN_EMAIL"]
-        if "--password-stdin" in argv:  # DEC-0041: the account with its password, no email
-            self.admin_stdin.append(stdin)
-            self.records[email] = 1
-            created, self.admin_created = not self.admin_created, True
-            answer = b"created" if created else b"already_active"
-            return Result(0, b'{"result":"%s"}\n' % answer, b"")
-        if self.active:
-            return Result(0, b'{"result":"already_active"}\n', b"")
-        self.records[email] = 1  # the same record on every rerun (W5a resume path)
-        self.sent += 1
-        return Result(0, b'{"result":"sent"}\n', b"")
+        # DEC-0041: the account with its password; no invitation, no email (``sent`` stays 0).
+        assert "--password-stdin" in argv
+        self.admin_stdin.append(stdin)
+        self.records[env["ADMIN_EMAIL"]] = 1  # the same record on every rerun
+        created, self.admin_created = not self.admin_created, True
+        answer = b"created" if created else b"already_active"
+        return Result(0, b'{"result":"%s"}\n' % answer, b"")
 
     # The Docker API and HTTPS --------------------------------------------------------------
 
@@ -1113,40 +1107,6 @@ def test_ac_i14_a_failed_install_snapshot_has_the_compose_states_and_the_api_rea
     assert ps
 
 
-# AC-V1: resend-invitation ------------------------------------------------------------------------
-
-
-def test_ac_v1_resend_before_the_install_is_refused(world: tuple[Paths, World]) -> None:
-    paths, fake = world
-
-    code, result = run(paths, fake, {"run_id": RUN_ID}, job="resend-invitation")
-
-    assert (code, result["code"]) == (2, "not_installed")
-    assert fake.calls == []
-
-
-def test_ac_v1_resend_sends_again_or_reports_an_active_administrator(
-    world: tuple[Paths, World],
-) -> None:
-    paths, fake = world
-    run(paths, fake)
-    request = {"run_id": "maintenance-20261118T080000Z-mm11nn"}
-
-    pending = run(paths, fake, request, job="resend-invitation")
-    fake.active = True
-    active = run(paths, fake, request, job="resend-invitation")
-    fake.bootstrap_exit = (3, '{"code":"bootstrap_failed"}')
-    failure = run(paths, fake, request, job="resend-invitation")
-
-    assert pending == (0, {"code": "sent"})
-    assert active == (0, {"code": "already_active"})
-    assert failure[0] == 3 and failure[1]["code"] == "bootstrap_failed"
-    assert fake.records == {EMAIL: 1} and fake.sent == 1  # the install sends no email
-    first, resent = _commands(fake, "bootstrap_admin.py")[:2]
-    # The same fixed arguments from the stored answers; only the install passes a password.
-    assert resent[-5:] == first[-6:-1] and "--password-stdin" not in resent
-
-
 # TASK-0089 (W6a): the trust files, the chain check, the key that Caddy owns, renewal ---------
 
 
@@ -1409,7 +1369,7 @@ def test_w14_d5_install_reports_each_step_and_a_rerun_reports_finished_steps_as_
     ]
 
 
-def test_w14_d5_resend_and_renewal_report_their_steps(
+def test_w14_d5_renewal_reports_its_steps(
     world: tuple[Paths, World], capsys: pytest.CaptureFixture[str]
 ) -> None:
     paths, fake = world
@@ -1417,12 +1377,9 @@ def test_w14_d5_resend_and_renewal_report_their_steps(
     fake.renew_due = True
     capsys.readouterr()
 
-    assert run(paths, fake, {"run_id": "maintenance-20261118T080000Z-mm11nn"},
-               job="resend-invitation")[0] == 0  # fmt: skip
     assert renew(paths, fake)[0] == 0
 
     assert progress_lines(capsys.readouterr().err) == [
-        "progress resend-invitation 1/1 resend start",
         "progress renew-certificate 1/4 renew start",
         "progress renew-certificate 2/4 check start",
         "progress renew-certificate 3/4 trust start",

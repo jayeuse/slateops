@@ -26,7 +26,10 @@ LINE = re.compile(
 )
 
 
-@pytest.mark.parametrize("argv", [["rm"], ["upgrade"], ["status", "extra"], [], ["STATUS"]])
+# DEC-0041: resend-invitation is gone (the first administrator gets a password, no invitation).
+@pytest.mark.parametrize(
+    "argv", [["rm"], ["upgrade"], ["status", "extra"], [], ["STATUS"], ["resend-invitation"]]
+)
 def test_ac_j1_only_allow_listed_jobs_run(tmp_path: Path, argv: list[str]) -> None:
     paths = make_paths(tmp_path)
 
@@ -93,7 +96,7 @@ def test_ac_j4_an_unexpected_error_is_one_safe_json_and_the_trace_is_redacted(
         cli.JOBS, "smtp-test", cli.Job(boom, cli.JOBS["smtp-test"].keys, frozenset())
     )
 
-    code, payload, raw = call(["smtp-test"], {"run_id": RUN_ID, "mode": "discard"}, deps(paths))
+    code, payload, raw = call(["smtp-test"], {"run_id": RUN_ID}, deps(paths))
 
     assert (code, payload) == (
         3,

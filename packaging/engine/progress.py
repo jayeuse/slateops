@@ -47,7 +47,6 @@ STEPS: dict[str, tuple[str, ...]] = {
     "new-recovery-key": ("mount", "key"),
     "log-bundle": ("facts", "snapshot", "bundle"),
     "prepare-uninstall": ("stop_timer", "stop_docker"),
-    "resend-invitation": ("resend",),
     "renew-certificate": ("renew", "check", "trust", "reload"),
 }  # fmt: skip
 STATES = ("start", "done")

@@ -414,7 +414,7 @@ def _switch(ctx: Context, record: dict[str, Any]) -> None:
     write_private(backups.config_path(paths), backups.config_bytes(paths, project, root))
     _link(paths, root)
     _write_json(paths.installation, {**_installed(paths), "version": version})
-    state = journal.load(paths)  # renewal and resend-invitation read the server image here
+    state = journal.load(paths)  # renewal reads the server image here
     if not isinstance(state, dict) or state.get("schema") != journal.SCHEMA:
         raise failed("install_state_mismatch", part="journal")
     state.update(version=version, server_image=images["server"], caddy_image=images["caddy"])

@@ -1,8 +1,8 @@
 """The install answers (plan 6.1, TASK-0086 AC-I1) and their stored copy.
 
 The wizard sends them once, on the first ``install`` run, through the secret channel. The
-engine keeps them in ``/var/lib/slateops/install-answers.json`` (0600) for a resume and for
-``resend-invitation`` (TASK-0080 N-3: the Windows side keeps no answers). They hold personal
+engine keeps them in ``/var/lib/slateops/install-answers.json`` (0600) for a resume, the
+email test and ``status`` (TASK-0080 N-3: the Windows side keeps no answers). They hold personal
 data (the administrator email and user name): ``held.load_held`` masks both in every log.
 
 The engine cannot import ``backend/``, so two rules are copies, each with a drift test:

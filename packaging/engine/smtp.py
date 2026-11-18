@@ -15,7 +15,8 @@ Every value is checked before any network use: CR, LF, NUL, every other line bou
 control character are refused (W2 rule), host and port must be literal env values. The
 password arrives only in the standard input JSON; it is never echoed, logged or traced
 (no ``set_debuglevel``). The log keeps the class, the reply code, the host, the port and
-the TLS mode. ``mode: discard`` (run ID only) deletes the staged values.
+the TLS mode. ``mode`` may be given only as ``test`` (DEC-0041: nothing stages email before the
+install, so nothing discards it).
 
 The test email goes to the administrator (DEC-0041: email is set up after the install): the
 address in the stored install answers. ``admin_email`` in the request is used only when no
@@ -65,7 +66,7 @@ def _email(value: Any) -> bool:
 
 KEYS = {
     "run_id": is_run_id,
-    "mode": lambda value: value in ("test", "discard"),
+    "mode": lambda value: value == "test",
     "host": lambda value: isinstance(value, str) and _HOST.match(value) is not None,
     "port": lambda value: (
         isinstance(value, int) and not isinstance(value, bool) and 0 < value < 65536
@@ -82,12 +83,6 @@ REQUIRED = frozenset({"run_id"})
 
 
 def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
-    if request.get("mode") == "discard":
-        if set(request) - {"run_id", "mode"}:
-            raise refused("invalid_input")
-        ctx.paths.staged_smtp.unlink(missing_ok=True)
-        ctx.log.line(ctx.step(1, "discard"), "INFO", "staged email settings removed")
-        return {"code": "smtp_discarded"}
     if not TEST_FIELDS <= request.keys():
         raise refused("invalid_input")
     if bool(request["user"]) != bool(request["password"]):

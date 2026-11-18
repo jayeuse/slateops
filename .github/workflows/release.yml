@@ -589,8 +589,8 @@ jobs:
     # artifacts. Our Linux image boots systemd in a privileged container, so its Docker,
     # Compose, cosign and engine run as in WSL; receive, prefetch, install with no email
     # and the administrator's password (DEC-0041), HTTPS /api/ready, sign-in, an install
-    # rerun (W5b-2), set-email with a password reset mail in a test Mailpit and
-    # resend-invitation (packaging/linux-image/install-proof.sh). The W2 env-file reader
+    # rerun (W5b-2) and set-email with a password reset mail in a test Mailpit
+    # (packaging/linux-image/install-proof.sh). The W2 env-file reader
     # test also runs here, with the image's own Docker CLI and Compose binaries. The
     # release waits for this job. Windows and WSL themselves are W14.
     needs: [check, images, linux-image, engine-bundle, manifest]

@@ -24,7 +24,7 @@
 #    administrator's password (DEC-0041); an independent HTTPS /api/ready with the
 #    installation's CA; sign-in with that password; a password reset refused with
 #    email_not_configured; install again (nothing changes); set-email, then a password reset
-#    reaches Mailpit; resend-invitation reports the active administrator (no mail).
+#    reaches Mailpit.
 # 4. Backups (W10b, TASK-0093 AC-13): a test-only /sbin/mount.drvfs stands in for WSL's drvfs
 #    and bind-mounts a stand-in drive folder. Install step 12 takes the first backup; the
 #    timer runs a tick; then the proof stops the timer and runs ticks by hand: one scheduled
@@ -313,13 +313,6 @@ for _ in $(seq 1 30); do [ "$(mails)" -ge 1 ] && break; sleep 2; done
 [ "$(mails)" -eq 1 ] || fail "expected one password reset email in Mailpit, found $(mails)"
 log "the password reset email reached Mailpit"
 
-log "resend-invitation reports the active administrator and sends nothing"
-resend="$(printf '{"run_id":"maintenance-%s-proof3"}' "$(date -u +%Y%m%dT%H%M%SZ)" | "${engine[@]}" resend-invitation)" \
-    || fail "resend-invitation: $resend"
-echo "$resend"
-[ "$(field code <<<"$resend")" = already_active ] || fail "resend-invitation: $resend"
-sleep 5
-[ "$(mails)" -eq 1 ] || fail "resend-invitation sent mail to the active administrator"
 log "renewal (W6a-4): delete the leaf pair, renew, Caddy reloads, requests keep answering"
 served_leaf() {
     docker exec -i "$machine" python3 -I - "$host" <<'PY'
@@ -577,4 +570,4 @@ night="$(printf '{"run_id":"package-night-%s-proof0"}' "$(now)" | "${engine[@]}"
 echo "$night"
 [ "$(field result <<<"$night")" = ok ] || fail "the package night did not finish: $night"
 ready || fail "the services are not ready after the package night"
-log "passed: receive, prefetch, install without email, HTTPS /api/ready, trust routes, WebSocket, password sign-in, email_not_configured, rerun without change, set-email, password reset mail, resend, renewal, backups, update refusal, rollback, recover after a restart, update, package night"
+log "passed: receive, prefetch, install without email, HTTPS /api/ready, trust routes, WebSocket, password sign-in, email_not_configured, rerun without change, set-email, password reset mail, renewal, backups, update refusal, rollback, recover after a restart, update, package night"
