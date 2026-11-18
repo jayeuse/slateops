@@ -130,14 +130,15 @@ Test-Case 'AC-1 C20 to C25 advice items' {
     Assert-Equal 'installed' (Get-Check C25 @{ docker_desktop = $true }).code
 }
 
-Test-Case 'AC-1 C24 reads BitLocker status of the data drive only and advises automatic unlock on another drive' {
+Test-Case 'AC-1 C24 reads BitLocker status of the data drive only, records off without a suggestion, and advises automatic unlock on another drive' {
     $drives = @(
         @{ letter = 'C:'; drive_type = 'Fixed'; file_system = 'NTFS'; free_bytes = [long]40 * 1GB; compressed = $false; encrypted = $false },
         @{ letter = 'D:'; drive_type = 'Fixed'; file_system = 'NTFS'; free_bytes = [long]400 * 1GB; compressed = $false; encrypted = $false }
     )
     $other = Get-Check C24 @{ drives = $drives; bitlocker = @{ 'C:' = 'On'; 'D:' = 'On' } }
     Assert-Equal 'advice auto_unlock D:' ('{0} {1} {2}' -f $other.class, $other.code, $other.values.letter)
-    Assert-Equal 'off' (Get-Check C24 @{ drives = $drives; bitlocker = @{ 'C:' = 'On'; 'D:' = 'Off' } }).code
+    $off = Get-Check C24 @{ drives = $drives; bitlocker = @{ 'C:' = 'On'; 'D:' = 'Off' } }
+    Assert-Equal 'off log' ('{0} {1}' -f $off.code, $off.class) 'BitLocker off is recorded, never suggested'
     Assert-Equal 'log' (Get-Check C24 @{ drives = $drives }).class
 }
 

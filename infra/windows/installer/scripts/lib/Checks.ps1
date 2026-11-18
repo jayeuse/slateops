@@ -413,7 +413,9 @@ function Test-C24 {
     $state = $null
     if ($status.ContainsKey($letter)) { $state = [string]$status[$letter] }
     if (-not $state) { return New-UnreadableResult 'C24' }
-    if ($state -eq 'Off') { return New-CheckResult 'C24' 'advice' 'off' @{ letter = $letter } }
+    # Owner decision (2026-11-18): setup never suggests turning BitLocker on; the state is recorded
+    # for support only. An encrypted data drive still needs automatic unlock (below).
+    if ($state -eq 'Off') { return New-CheckResult 'C24' 'log' 'off' @{ letter = $letter } }
     if ($letter -ne 'C:') { return New-CheckResult 'C24' 'advice' 'auto_unlock' @{ letter = $letter } }
     return New-CheckResult 'C24' 'pass' 'ok' @{ letter = $letter }
 }
