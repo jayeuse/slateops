@@ -155,10 +155,16 @@ def test_w2_1_provider_env_sets_every_required_compose_variable(rendered) -> Non
 
 
 def test_w2_2_only_provider_smtp_text_is_quoted(rendered) -> None:
-    quoted = {
-        name for name, value in literal_lines(rendered["provider.env"]).items()
-        if value.startswith('"')
-    }
+    # DEC-0041: the install writes no email line; set-email adds the six (smtp_env.lines),
+    # and only their customer text is quoted.
+    provider = literal_lines(rendered["provider.env"])
+    assert not [name for name in provider if name.startswith("SMTP_")]
+    assert not [value for value in provider.values() if value.startswith('"')]
+    smtp_env = importlib.import_module("engine.smtp_env")
+    email = literal_lines("\n".join(smtp_env.lines(
+        {name: value for name, value in ANSWERS.items() if name.startswith("SMTP_")}
+    )))
+    quoted = {name for name, value in email.items() if value.startswith('"')}
     assert quoted == {"SMTP_ADMIN_EMAIL", "SMTP_USER", "SMTP_PASS", "SMTP_SENDER_NAME"}
     for name in ("app.env", "provision.env"):
         values = literal_lines(rendered[name]).values()

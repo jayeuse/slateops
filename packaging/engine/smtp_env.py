@@ -23,19 +23,25 @@ FIELDS = (
 LITERAL = frozenset({"SMTP_HOST", "SMTP_PORT"})
 
 
-def render(values: Mapping[str, str]) -> str:
+def lines(values: Mapping[str, str]) -> list[str]:
+    """The six ``NAME=value`` lines, in ``FIELDS`` order (also the ``provider.env`` form)."""
     if set(values) != set(FIELDS):
         raise TemplateError("the staged email settings need exactly the six SMTP values")
-    lines = ["# Staged by slateops-engine smtp-test after a passing test (plan 3.2)."]
+    written = []
     for name in FIELDS:
         value = values[name]
         if name in LITERAL:
             if not is_literal(value):
                 raise TemplateError(f"{name} is not a literal env value")
-            lines.append(f"{name}={value}")
+            written.append(f"{name}={value}")
         else:
-            lines.append(f"{name}={compose_quoted(value)}")
-    return "\n".join(lines) + "\n"
+            written.append(f"{name}={compose_quoted(value)}")
+    return written
+
+
+def render(values: Mapping[str, str]) -> str:
+    header = "# Staged by slateops-engine smtp-test after a passing test (plan 3.2)."
+    return "\n".join([header, *lines(values)]) + "\n"
 
 
 def unquote(value: str) -> str:
@@ -69,3 +75,18 @@ def parse(text: str) -> dict[str, str]:
     if set(values) != set(FIELDS):
         raise TemplateError("the staged email settings are incomplete")
     return values
+
+
+def configured(text: str) -> bool:
+    """Whether a ``provider.env`` text has the email settings that the API counts as set up
+    (host, port and sender; backend ``email_setup.email_configured``). DEC-0041: an install
+    writes none; ``set-email`` adds them."""
+    found: dict[str, str] = {}
+    for line in text.splitlines():
+        name, separator, value = line.partition("=")
+        if separator and name in ("SMTP_HOST", "SMTP_PORT", "SMTP_ADMIN_EMAIL"):
+            try:
+                found[name] = value if name in LITERAL else unquote(value)
+            except TemplateError:
+                return False
+    return all(found.get(name) for name in ("SMTP_HOST", "SMTP_PORT", "SMTP_ADMIN_EMAIL"))

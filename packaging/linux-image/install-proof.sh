@@ -17,11 +17,14 @@
 #    upstream resolvers, and /var is a volume (overlay on overlay cannot hold images).
 # 2. Mailpit (the development pin in infra/supabase/compose.dev.yaml) catches the mail.
 #    Auth checks TLS against its own image's roots, which stay unmodified (DEC-0034), so
-#    the proof uses plain SMTP: the email settings are staged with the engine's own writer,
-#    in place of the page-6 `smtp-test` (unit-proved, TASK-0085).
-# 3. receive, prefetch (status until done), install; an independent HTTPS /api/ready with
-#    the installation's CA; the invitation in Mailpit; install again (nothing changes, no
-#    mail); resend-invitation after Auth's 60 s send interval (one more mail).
+#    the proof uses plain SMTP: after the install the email settings are staged with the
+#    engine's own writer, in place of `smtp-test` (unit-proved, TASK-0085), and `set-email`
+#    applies them.
+# 3. receive, prefetch (status until done), install with no email settings and the first
+#    administrator's password (DEC-0041); an independent HTTPS /api/ready with the
+#    installation's CA; sign-in with that password; a password reset refused with
+#    email_not_configured; install again (nothing changes); set-email, then a password reset
+#    reaches Mailpit; resend-invitation reports the active administrator (no mail).
 # 4. Backups (W10b, TASK-0093 AC-13): a test-only /sbin/mount.drvfs stands in for WSL's drvfs
 #    and bind-mounts a stand-in drive folder. Install step 12 takes the first backup; the
 #    timer runs a tick; then the proof stops the timer and runs ticks by hand: one scheduled
@@ -51,6 +54,7 @@ output="$(cd "$output" && pwd)"
 machine=slateops-proof
 host=slateops-proof.local
 admin="admin@proof.test"
+admin_password="proof-only-admin-password"  # a test value, not a secret
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_id="install-$stamp-proof1"
 mail_ip=10.250.0.10
@@ -165,31 +169,18 @@ done
 [ "$code" = prefetch_done ] || fail "prefetch did not finish in 20 minutes"
 status_json
 
-# 3. The email settings (in place of page 6) and install ---------------------------------
-docker exec -i "$machine" /usr/bin/python3 -I - "$version" "$mail_ip" <<'PY'
-import sys
-from pathlib import Path
-sys.path.insert(0, f"/opt/slateops/engine/{sys.argv[1]}")
-from engine import smtp_env
-from engine.core import Paths, private_dir, write_private
-paths = Paths()
-private_dir(paths.staged_smtp.parent)
-values = {"SMTP_HOST": sys.argv[2], "SMTP_PORT": "1025", "SMTP_ADMIN_EMAIL": "noreply@proof.test",
-          "SMTP_USER": "proof-mailer", "SMTP_PASS": "proof-only-mail-password",
-          "SMTP_SENDER_NAME": "Slate Operations proof"}
-write_private(paths.staged_smtp, smtp_env.render(values).encode())
-print("staged the email settings for the proof's Mailpit")
-PY
+# 3. Install with no email settings and the administrator's password (DEC-0041) -----------
 docker exec "$machine" install -d -m 0700 /srv/proof-drives/E/SlateOps/Backups
 answers="$(printf '{"business_name":"Proof Clinic","slug":"proof-clinic","admin_email":"%s","admin_username":"proofadmin","public_host":"%s","backup_target":"E:\\\\SlateOps\\\\Backups","data_vhd_max_gb":64,"time_zone":"Asia/Manila"}' "$admin" "$host")"
 log "install"
 started=$SECONDS
-result="$(printf '{"run_id":"%s","version":"%s","answers":%s}' "$run_id" "$version" "$answers" | "${engine[@]}" install)" \
+result="$(printf '{"run_id":"%s","version":"%s","answers":%s,"admin_password":"%s"}' "$run_id" "$version" "$answers" "$admin_password" | "${engine[@]}" install)" \
     || fail "install: $result"
 log "install took $((SECONDS - started)) s"
 python3 -c 'import json,sys; r=json.loads(sys.argv[1]); r.pop("ca_certificate_pem"); r.pop("recovery_key", None); print(r)' "$result"
 [ "$(field code <<<"$result")" = installed ] || fail "install: $result"
 [ "$(field backup_setup <<<"$result")" = ready ] || fail "install step 12 did not set up the backup"
+[ "$(field admin <<<"$result")" = created ] || fail "install step 11 did not create the administrator"
 
 log "the runner timer is on and has run a tick (W10b-1); then it stops, and ticks run by hand"
 [ "$(docker exec "$machine" systemctl is-enabled slateops-runner.timer)" = enabled ] \
@@ -275,9 +266,20 @@ upgrade="$(docker exec "$machine" curl --http1.1 --silent --max-time 5 -o /dev/n
     "https://$host/realtime/v1/websocket?vsn=1.0.0" || true)"
 [ "$upgrade" = 101 ] || fail "the Realtime WebSocket upgrade answered '$upgrade'"
 docker exec "$machine" docker compose ls
-for _ in $(seq 1 30); do [ "$(mails)" -ge 1 ] && break; sleep 2; done
-[ "$(mails)" -eq 1 ] || fail "expected one invitation in Mailpit, found $(mails)"
-log "the invitation reached Mailpit"
+api_post() {  # path, JSON body: the body, then the HTTP code as the last 3 characters
+    docker exec "$machine" curl --silent --max-time 20 "${tls[@]}" -w '\n%{http_code}' \
+        -H "Origin: https://$host" -H "Content-Type: application/json" --data "$2" \
+        "https://$host$1"
+}
+log "the administrator signs in with the password from setup (DEC-0041, AC-B1)"
+signin="$(api_post /api/auth/login "$(printf '{"email":"%s","password":"%s"}' "$admin" "$admin_password")")"
+[ "${signin: -3}" = 200 ] || fail "sign-in with the setup password answered ${signin: -3}"
+log "a password reset before email is set up ends with email_not_configured (AC-B3)"
+reset="$(api_post /api/auth/recovery/request "$(printf '{"email":"%s"}' "$admin")")"
+[ "${reset: -3}" = 503 ] && grep -q email_not_configured <<<"$reset" \
+    || fail "the password reset without email answered '$reset'"
+sleep 5
+[ "$(mails)" -eq 0 ] || fail "mail was sent before email was set up"
 
 log "install again (W5b-2): every step done, nothing changes, no mail"
 before="$(docker exec "$machine" sh -c 'sha256sum /etc/slateops/*.env /etc/slateops/Caddyfile /etc/slateops/ca/current/*')"
@@ -286,16 +288,38 @@ again="$(printf '{"run_id":"install-%s-proof2","version":"%s"}' "$(date -u +%Y%m
 after="$(docker exec "$machine" sh -c 'sha256sum /etc/slateops/*.env /etc/slateops/Caddyfile /etc/slateops/ca/current/*')"
 [ "$before" = "$after" ] || fail "the second install changed a file"
 sleep 5
-[ "$(mails)" -eq 1 ] || fail "the second install sent mail"
+[ "$(mails)" -eq 0 ] || fail "the second install sent mail"
 
-log "resend-invitation after Auth's send interval"
-sleep 65
+log "set-email applies the email settings after the install (AC-B4)"
+docker exec -i "$machine" /usr/bin/python3 -I - "$version" "$mail_ip" <<'PY'
+import sys
+sys.path.insert(0, f"/opt/slateops/engine/{sys.argv[1]}")
+from engine import smtp_env
+from engine.core import Paths, private_dir, write_private
+paths = Paths()
+private_dir(paths.staged_smtp.parent)
+values = {"SMTP_HOST": sys.argv[2], "SMTP_PORT": "1025", "SMTP_ADMIN_EMAIL": "noreply@proof.test",
+          "SMTP_USER": "proof-mailer", "SMTP_PASS": "proof-only-mail-password",
+          "SMTP_SENDER_NAME": "Slate Operations proof"}
+write_private(paths.staged_smtp, smtp_env.render(values).encode())
+print("staged the email settings for the proof's Mailpit")
+PY
+email="$(printf '{"run_id":"maintenance-%s-proof4"}' "$(date -u +%Y%m%dT%H%M%SZ)" | "${engine[@]}" set-email)" \
+    || fail "set-email: $email"
+[ "$(field code <<<"$email")" = email_set ] || fail "set-email: $email"
+reset="$(api_post /api/auth/recovery/request "$(printf '{"email":"%s"}' "$admin")")"
+[ "${reset: -3}" = 204 ] || fail "the password reset after set-email answered '$reset'"
+for _ in $(seq 1 30); do [ "$(mails)" -ge 1 ] && break; sleep 2; done
+[ "$(mails)" -eq 1 ] || fail "expected one password reset email in Mailpit, found $(mails)"
+log "the password reset email reached Mailpit"
+
+log "resend-invitation reports the active administrator and sends nothing"
 resend="$(printf '{"run_id":"maintenance-%s-proof3"}' "$(date -u +%Y%m%dT%H%M%SZ)" | "${engine[@]}" resend-invitation)" \
     || fail "resend-invitation: $resend"
 echo "$resend"
-[ "$(field code <<<"$resend")" = sent ] || fail "resend-invitation: $resend"
-for _ in $(seq 1 30); do [ "$(mails)" -ge 2 ] && break; sleep 2; done
-[ "$(mails)" -eq 2 ] || fail "expected a second invitation, found $(mails)"
+[ "$(field code <<<"$resend")" = already_active ] || fail "resend-invitation: $resend"
+sleep 5
+[ "$(mails)" -eq 1 ] || fail "resend-invitation sent mail to the active administrator"
 log "renewal (W6a-4): delete the leaf pair, renew, Caddy reloads, requests keep answering"
 served_leaf() {
     docker exec -i "$machine" python3 -I - "$host" <<'PY'
@@ -553,4 +577,4 @@ night="$(printf '{"run_id":"package-night-%s-proof0"}' "$(now)" | "${engine[@]}"
 echo "$night"
 [ "$(field result <<<"$night")" = ok ] || fail "the package night did not finish: $night"
 ready || fail "the services are not ready after the package night"
-log "passed: receive, prefetch, install, HTTPS /api/ready, trust routes, WebSocket, invitation, rerun without change, resend, renewal, backups, update refusal, rollback, recover after a restart, update, package night"
+log "passed: receive, prefetch, install without email, HTTPS /api/ready, trust routes, WebSocket, password sign-in, email_not_configured, rerun without change, set-email, password reset mail, resend, renewal, backups, update refusal, rollback, recover after a restart, update, package night"

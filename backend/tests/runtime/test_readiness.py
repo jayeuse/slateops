@@ -122,16 +122,19 @@ def test_readiness_provider_outage_is_component_specific_and_redacted(monkeypatc
 
 
 @pytest.mark.parametrize(
-    "missing_fact",
+    ("missing_fact", "value"),
     [
-        "smtp_host",
-        "smtp_port",
-        "smtp_admin_email",
+        ("smtp_host", None),
+        ("smtp_host", ""),  # the installer's Compose passes an empty host (DEC-0041)
+        ("smtp_port", None),
+        ("smtp_admin_email", None),
+        ("smtp_admin_email", ""),
     ],
 )
-def test_smtp_readiness_requires_configuration_without_sending_mail(
+def test_ac_b2_ready_without_email_settings_reports_email_not_set_up(
     monkeypatch,
     missing_fact: str,
+    value: str | None,
 ) -> None:
     requests: list[tuple[str, str]] = []
 
@@ -141,14 +144,22 @@ def test_smtp_readiness_requires_configuration_without_sending_mail(
 
     install_readiness_settings(
         monkeypatch,
-        readiness_settings(**{missing_fact: None}),
+        readiness_settings(**{missing_fact: value}),
     )
     install_provider_transport(monkeypatch, provider)
 
     response = TestClient(create_app()).get("/api/ready")
 
-    assert response.status_code == 503
-    assert response.json()["components"]["smtp"] == component("not_configured")
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ready",
+        "components": {
+            "database": component("ready"),
+            "auth": component("ready"),
+            "storage": component("ready"),
+            "smtp": component("not_configured", required=False),
+        },
+    }
     assert requests == [
         ("GET", "/auth/v1/health"),
         ("GET", "/storage/v1/status"),

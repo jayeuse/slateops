@@ -286,3 +286,125 @@ def test_n6_argument_errors_follow_the_output_mode(
     output = capsys.readouterr()
     assert output.out.splitlines() == stdout
     assert stderr_has in output.err
+
+
+# AC-B1 (DEC-0041): the installer's first administrator with the password from setup -------
+
+SETUP_PASSWORD = "Front desk " + 'pa$$ "q" #x'
+
+
+class _Stdin(io.StringIO):
+    """The password on standard input, with no terminal (``docker run --interactive``)."""
+
+    def isatty(self) -> bool:
+        return False
+
+
+@pytest.fixture
+def password_job(
+    monkeypatch: pytest.MonkeyPatch, engine_job: list[dict[str, object]]
+) -> tuple[list[dict[str, object]], Mock]:
+    """``--password-stdin``: the Auth calls stubbed, no account in the database yet."""
+    monkeypatch.setattr(bootstrap.sys, "stdin", _Stdin(SETUP_PASSWORD + "\n"))
+    monkeypatch.setattr(bootstrap, "_active_provider_id", lambda _invitation: None)
+    account = SimpleNamespace(id=uuid7())
+    accounts = Mock()
+    accounts.create_confirmed_user.return_value = account
+    monkeypatch.setattr(bootstrap, "admin_accounts", accounts)
+    monkeypatch.setattr(bootstrap, "get_supabase_auth_client", lambda: "client")
+    monkeypatch.setattr(bootstrap, "_provision", lambda _settings, invitation, **kwargs: (
+        engine_job.append({"invitation": invitation, **kwargs}) or _result("active")
+    ))
+    return engine_job, accounts
+
+
+def test_ac_b1_password_stdin_creates_a_confirmed_account_and_binds_the_administrator(
+    capsys: pytest.CaptureFixture[str], password_job: tuple[list[dict[str, object]], Mock],
+) -> None:
+    calls, accounts = password_job
+
+    bootstrap.main(["--confirm", "--json", "--name=Harbor Supply", "--slug=harbor-supply",
+                    "--time-zone=Asia/Manila", "--password-stdin"])
+
+    accounts.create_confirmed_user.assert_called_once_with("client", ADMIN_EMAIL, SETUP_PASSWORD)
+    (call,) = calls
+    assert call["invitation"] == InvitationCreate(email=ADMIN_EMAIL, username=ADMIN_USERNAME)
+    assert call["provider_user_id"] == accounts.create_confirmed_user.return_value.id
+    assert (call["name"], call["slug"], call["time_zone"]) == (
+        "Harbor Supply", "harbor-supply", "Asia/Manila"
+    )
+    output = capsys.readouterr()
+    assert output.out.splitlines() == ['{"result":"created"}']
+    for private in (SETUP_PASSWORD, ADMIN_EMAIL, ADMIN_USERNAME):
+        assert private not in output.out + output.err
+
+
+def test_ac_b1_a_rerun_gives_the_marked_account_of_an_interrupted_run_the_password(
+    capsys: pytest.CaptureFixture[str], password_job: tuple[list[dict[str, object]], Mock],
+) -> None:
+    calls, accounts = password_job
+    accounts.ProviderEmailTaken = ValueError
+    accounts.create_confirmed_user.side_effect = ValueError("taken")
+    marked = SimpleNamespace(id=uuid7())
+    accounts.find_first_administrator.return_value = marked
+    accounts.set_password.return_value = marked
+
+    bootstrap.main(["--confirm", "--json", "--password-stdin"])
+
+    accounts.set_password.assert_called_once_with("client", marked, SETUP_PASSWORD)
+    assert calls[0]["provider_user_id"] == marked.id
+    assert capsys.readouterr().out.splitlines() == ['{"result":"created"}']
+
+
+def test_ac_b1_an_email_that_belongs_to_another_account_is_refused(
+    capsys: pytest.CaptureFixture[str], password_job: tuple[list[dict[str, object]], Mock],
+) -> None:
+    calls, accounts = password_job
+    accounts.ProviderEmailTaken = ValueError
+    accounts.create_confirmed_user.side_effect = ValueError("taken")
+    accounts.find_first_administrator.return_value = None
+
+    with pytest.raises(SystemExit) as exited:
+        bootstrap.main(["--confirm", "--json", "--password-stdin"])
+
+    assert exited.value.code == 2
+    assert capsys.readouterr().out.splitlines() == ['{"code":"bootstrap_refused"}']
+    accounts.set_password.assert_not_called()
+    assert calls == []
+
+
+def test_ac_b1_an_active_administrator_is_kept_and_auth_is_not_called(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    password_job: tuple[list[dict[str, object]], Mock],
+) -> None:
+    calls, accounts = password_job
+    bound = uuid7()
+    monkeypatch.setattr(bootstrap, "_active_provider_id", lambda _invitation: bound)
+
+    bootstrap.main(["--confirm", "--json", "--password-stdin"])
+
+    assert accounts.mock_calls == []
+    assert calls[0]["provider_user_id"] == bound
+    assert capsys.readouterr().out.splitlines() == ['{"result":"already_active"}']
+
+
+@pytest.mark.parametrize("stdin", [
+    pytest.param("", id="empty"),
+    pytest.param("eleven-char\n", id="shorter-than-12"),
+    pytest.param("x" * 73 + "\n", id="longer-than-72-bytes"),
+    pytest.param("first line\nsecond line\n", id="two-lines"),
+    pytest.param("tab\tinside-password\n", id="control-character"),
+])
+def test_ac_b1_a_password_outside_the_rule_is_refused_before_auth(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    password_job: tuple[list[dict[str, object]], Mock], stdin: str,
+) -> None:
+    calls, accounts = password_job
+    monkeypatch.setattr(bootstrap.sys, "stdin", _Stdin(stdin))
+
+    with pytest.raises(SystemExit) as exited:
+        bootstrap.main(["--confirm", "--json", "--password-stdin"])
+
+    assert exited.value.code == 2
+    assert capsys.readouterr().out.splitlines() == ['{"code":"bootstrap_refused"}']
+    assert accounts.mock_calls == [] and calls == []

@@ -16,6 +16,11 @@ control character are refused (W2 rule), host and port must be literal env value
 password arrives only in the standard input JSON; it is never echoed, logged or traced
 (no ``set_debuglevel``). The log keeps the class, the reply code, the host, the port and
 the TLS mode. ``mode: discard`` (run ID only) deletes the staged values.
+
+The test email goes to the administrator (DEC-0041: email is set up after the install): the
+address in the stored install answers. ``admin_email`` in the request is used only when no
+installation's answers exist (the old pre-install page); with neither, the job refuses
+``not_installed`` before any connection.
 """
 
 from __future__ import annotations
@@ -29,7 +34,7 @@ from email.message import EmailMessage
 from email.utils import format_datetime, formataddr, make_msgid
 from typing import Any
 
-from engine import progress, smtp_env
+from engine import answers, progress, smtp_env
 from engine.context import Context
 from engine.core import failed, is_run_id, private_dir, refused, write_private
 from engine.env_templates import TemplateError, compose_quoted, is_literal
@@ -72,7 +77,7 @@ KEYS = {
     "sender_name": _text(100),
     "admin_email": _email,
 }
-TEST_FIELDS = frozenset(KEYS) - {"mode"}
+TEST_FIELDS = frozenset(KEYS) - {"mode", "admin_email"}
 REQUIRED = frozenset({"run_id"})
 
 
@@ -87,6 +92,11 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
         raise refused("invalid_input")
     if bool(request["user"]) != bool(request["password"]):
         raise refused("invalid_input")
+    stored = answers.load(ctx.paths)
+    if stored is not None:
+        request = {**request, "admin_email": stored["admin_email"]}
+    elif "admin_email" not in request:
+        raise refused("not_installed")
     values = {
         "SMTP_HOST": request["host"],
         "SMTP_PORT": str(request["port"]),
@@ -110,7 +120,8 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     folder = private_dir(ctx.paths.staged_smtp.parent)
     write_private(folder / ctx.paths.staged_smtp.name, smtp_env.render(values).encode())
     ctx.log.line(ctx.step(3, "stage"), "INFO", "staged email settings written")
-    return {"code": "smtp_passed"}
+    # AC-B6: M02 names the address; personal data, on standard output only (never logged).
+    return {"code": "smtp_passed", "sent_to": request["admin_email"]}
 
 
 def _message(request: dict[str, Any]) -> EmailMessage:

@@ -638,7 +638,15 @@ class InstallProofTests(unittest.TestCase):
             "prefetch_done",
             '"${engine[@]}" install)',
             "--cacert /etc/slateops/ca/current/root.crt",
-            'fail "expected one invitation in Mailpit',
+            # DEC-0041 (AC-B1, AC-B3, AC-B4): no email at install, the setup password signs
+            # in, a reset is refused until set-email, then its mail reaches Mailpit.
+            '"admin_password":"%s"',
+            "sign-in with the setup password answered",
+            "email_not_configured",
+            "mail was sent before email was set up",
+            '"${engine[@]}" set-email)',
+            'fail "expected one password reset email in Mailpit',
+            "resend-invitation sent mail to the active administrator",
             "the second install changed a file",
             "the second install sent mail",
             "resend-invitation",

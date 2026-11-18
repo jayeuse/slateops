@@ -77,9 +77,12 @@ services:
       GOTRUE_JWT_SECRET: ${JWT_SECRET:?Generate JWT_SECRET}
       GOTRUE_JWT_KEYS: ${JWT_KEYS:?Generate the private Auth signing key set}
       GOTRUE_JWT_ISSUER: ${API_EXTERNAL_URL:?Set the external Auth issuer URL}
-      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:?Set the invitation sender email}
-      GOTRUE_SMTP_HOST: ${SMTP_HOST:?Set an SMTP host}
-      GOTRUE_SMTP_PORT: ${SMTP_PORT:?Set an SMTP port}
+      # Email is optional (DEC-0041): with no host, Auth starts and sends nothing; the API
+      # refuses invitations and recovery first (email_not_configured). GoTrue needs an
+      # integer port even then, so the port has GoTrue's own default.
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:-}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:-}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-587}
       GOTRUE_SMTP_USER: ${SMTP_USER:-}
       GOTRUE_SMTP_PASS: ${SMTP_PASS:-}
       GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-Slate Operations}

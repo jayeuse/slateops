@@ -7,7 +7,7 @@ import json
 import os
 from pathlib import Path
 
-from engine import prefetch, report
+from engine import answers, prefetch, report, smtp_env
 from engine.core import Paths, private_dir
 
 from .helpers import RUN_ID, VERSION, call, deps, make_paths
@@ -68,6 +68,9 @@ def test_ac_s1_status_returns_only_safe_codes_booleans_and_whole_numbers(tmp_pat
         "backup": "not_set_up",  # TASK-0093: added fields, safe codes or None only
         "linux_start": None,
         "instance_id": None,  # TASK-0096 E-2: added field, None before the install
+        # TASK-0097 AC-B6: added fields; before the install, no email and no address.
+        "email_configured": False,
+        "admin_email": None,
     }
     assert not paths.logs.exists()
 
@@ -139,3 +142,31 @@ def test_architect_4_only_four_part_known_bad_wsl_versions_count(tmp_path: Path)
 
     assert (bad[0], bad[1]["code"]) == (2, "invalid_input")
     assert known["state"] == "needs_support"
+
+
+def test_ac_b6_status_reports_whether_email_is_set_up_and_the_administrator_address(
+    tmp_path: Path,
+) -> None:
+    # DEC-0041: M01 shows "Email: not set up" until set-email wrote the SMTP lines, and M02
+    # names the address that the test email goes to.
+    from .test_install import ANSWERS
+
+    paths = make_paths(tmp_path)
+    _engine(paths)
+    answers.store(paths, ANSWERS)
+    private_dir(paths.etc)
+    provider = paths.etc / "provider.env"
+    provider.write_text("POSTGRES_PASSWORD=x\nSLATEOPS_INSTANCE_ID=front-desk\n")
+
+    before = call(["status"], REQUEST, deps(paths))[1]
+    values = {
+        "SMTP_HOST": "smtp.gmail.test", "SMTP_PORT": "465",
+        "SMTP_ADMIN_EMAIL": "office" + "@gmail.test", "SMTP_USER": "office" + "@gmail.test",
+        "SMTP_PASS": "app pass 2026", "SMTP_SENDER_NAME": "Front Desk",
+    }  # fmt: skip
+    provider.write_text(provider.read_text() + "\n".join(smtp_env.lines(values)) + "\n")
+    after = call(["status"], REQUEST, deps(paths))[1]
+
+    assert (before["email_configured"], before["admin_email"]) == (False, ANSWERS["admin_email"])
+    assert (after["email_configured"], after["admin_email"]) == (True, ANSWERS["admin_email"])
+    assert "app pass 2026" not in json.dumps(after)

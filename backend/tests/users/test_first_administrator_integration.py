@@ -29,7 +29,7 @@ from uuid6 import uuid7
 
 import app.systems.access.users.service as user_service
 from app.core.config import get_settings
-from app.core.integrations.supabase_auth import ProviderUser
+from app.core.integrations.supabase_auth import ProviderUser, get_supabase_auth_client
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import Membership, PlatformOperator, User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
@@ -399,3 +399,41 @@ def test_d4_fresh_bootstrap_time_zone_gives_the_default_policy_at_0200_local(
     )
     assert next_due_at is not None
     assert next_due_at.astimezone(ZoneInfo("Asia/Manila")).time() == time(2)
+
+
+def test_ac_b1_the_installer_administrator_signs_in_with_the_setup_password(
+    empty_installation: tuple[Engine, list[str]],
+) -> None:
+    """DEC-0041: the real Auth account is confirmed with the password; no invitation."""
+
+    owner, invited = empty_installation
+    invitation = InvitationCreate(
+        email=f"setup-{uuid7().hex}@example.test", username=f"setup_{uuid7().hex[-12:]}"
+    )
+    invited.append(invitation.email)
+    password = "Setup pass " + uuid7().hex[-8:]
+    slug = f"b1-{uuid7().hex[-12:]}"
+    client = get_supabase_auth_client()
+    provider_id = None
+    try:
+        provider_id, created = bootstrap._password_account(invitation, password)
+        first = bootstrap._provision(get_settings(), invitation, provider_user_id=provider_id,
+                                     name="Harbor Supply", slug=slug)
+
+        assert created and first.status == UserStatus.ACTIVE.value
+        assert client.password_grant(invitation.email, password).access_token
+        with Session(owner) as db:
+            membership = db.scalars(select(Membership).where(
+                Membership.user_id == first.user_id)).one()
+            assert (membership.role, membership.status, membership.org_id) == (
+                UserRole.ADMIN.value, UserStatus.ACTIVE.value, first.org_id
+            )
+            assert db.scalar(select(PlatformOperator.id).where(
+                PlatformOperator.user_id == first.user_id)) is not None
+            assert db.get(User, first.user_id).supabase_user_id == provider_id
+
+        again_id, created_again = bootstrap._password_account(invitation, password)
+        assert (again_id, created_again) == (provider_id, False)
+    finally:
+        if provider_id is not None:
+            client.admin_delete_user(provider_id)

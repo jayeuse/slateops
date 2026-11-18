@@ -7,9 +7,11 @@ with Docker at the next Linux start (a failed keep path, a reinstall with kept d
 is stopped, not turned off, so the next Linux start runs it again.
 
 ``set-email`` (input ``run_id``, through the secret pipe like ``smtp-test``) takes the values
-that ``smtp-test`` staged, writes them into the six SMTP lines of ``provider.env`` and keeps
-every other line, removes the staged file, then recreates ``auth`` and waits until it is
-healthy. The staged password is held by the redactor from the job's start.
+that ``smtp-test`` staged, writes them into the six SMTP lines of ``provider.env`` (replaced in
+place, or appended: an install writes none, DEC-0041) and keeps every other line, removes the
+staged file, then recreates ``auth`` and then ``api`` (Compose gives the API its SMTP_* values
+when it creates the container) and waits until each is healthy. The staged password is held
+by the redactor from the job's start.
 
 Both jobs hold the runner's host lock, so no backup copies a half-changed state.
 """
@@ -22,7 +24,7 @@ from typing import Any
 from engine import answers, backups, compose, progress, smtp_env
 from engine.context import Context
 from engine.core import failed, is_run_id, refused, write_private
-from engine.env_templates import TemplateError, render
+from engine.env_templates import TemplateError
 
 KEYS = {"run_id": is_run_id}
 REQUIRED = frozenset(KEYS)
@@ -71,24 +73,23 @@ def set_email(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
         values = smtp_env.parse(staged.read_text(encoding="utf-8"))
     except TemplateError as error:
         raise refused("smtp_not_staged") from error
-    template = (paths.engine_home / "templates" / "provider.env").read_text(encoding="utf-8")
-    lines = {
-        line.split("=", 1)[0]: line for line in template.splitlines() if line.startswith("SMTP_")
-    }
+    try:
+        lines = {line.split("=", 1)[0]: line for line in smtp_env.lines(values)}
+    except TemplateError as error:
+        raise refused("smtp_not_staged") from error
     target = paths.etc / "provider.env"
     with backups.runner_idle(ctx, step, instance):
         progress.report(ctx, "write")
         written = []
-        try:
-            for line in target.read_text(encoding="utf-8").splitlines():
-                name = line.split("=", 1)[0]
-                written.append(render(lines[name], values).rstrip("\n") if name in lines else line)
-        except TemplateError as error:
-            raise refused("smtp_not_staged") from error
+        for line in target.read_text(encoding="utf-8").splitlines():
+            name = line.split("=", 1)[0]
+            written.append(lines.pop(name) if name in lines else line)
+        written.extend(lines.values())  # an installation with no email settings yet
         write_private(target, ("\n".join(written) + "\n").encode())
         staged.unlink()
         ctx.log.line(step, "INFO", "email settings written to provider.env")
         progress.report(ctx, "auth")
-        compose.up(ctx, step, instance, ("auth",), deps=False, recreate=True)
-        compose.wait_healthy(ctx, step, instance, ("auth",))
+        for service in ("auth", "api"):
+            compose.up(ctx, step, instance, (service,), deps=False, recreate=True)
+            compose.wait_healthy(ctx, step, instance, (service,))
     return {"code": "email_set"}

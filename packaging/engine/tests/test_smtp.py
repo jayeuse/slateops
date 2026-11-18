@@ -11,11 +11,12 @@ from typing import Any
 
 import pytest
 
-from engine import smtp, smtp_env
+from engine import answers, smtp, smtp_env
 from engine.core import Paths
 
 from .helpers import RUN_ID, call, deps, log_text, make_paths, progress_lines
 from .smtp_server import Behavior, SmtpServer, closed_port, make_certificates
+from .test_install import ANSWERS
 
 USER = "office" + "@frontdesk.test"
 PASSWORD = "app pass $HOME #1 \"q\" \\ 'x' "
@@ -87,7 +88,7 @@ def test_ac_m2_starttls_pass_sends_one_message_and_stages_the_values(
 
     code, payload = _run(paths, certificates, _request(server.port))
 
-    assert (code, payload) == (0, {"code": "smtp_passed"})
+    assert (code, payload) == (0, {"code": "smtp_passed", "sent_to": ADMIN})
     commands = server.behavior.commands
     assert ("AUTH", True) in commands
     assert ("AUTH", False) not in commands
@@ -106,6 +107,52 @@ def test_ac_m2_starttls_pass_sends_one_message_and_stages_the_values(
         "SMTP_PASS": PASSWORD,
         "SMTP_SENDER_NAME": " Front Desk $1 ",
     }
+
+
+def test_ac_b4_after_the_install_the_test_email_goes_to_the_stored_administrator(
+    paths: Paths, certificates: dict[str, Path], serve: Callable[..., SmtpServer]
+) -> None:
+    # DEC-0041: email is set up after the install, so the address is the stored one.
+    stored = "owner.later" + "@frontdesk.test"
+    answers.store(paths, {**ANSWERS, "admin_email": stored})
+    server = serve()
+    request = _request(server.port)
+    del request["admin_email"]
+
+    code, payload = _run(paths, certificates, request)
+
+    assert (code, payload) == (0, {"code": "smtp_passed", "sent_to": stored})
+    [message] = server.behavior.messages
+    assert [line.lower() for line in message["to"]] == [f"rcpt to:<{stored}>"]
+    assert stored not in log_text(paths)
+
+
+def test_ac_b6_the_result_names_the_address_the_test_email_went_to(
+    paths: Paths, certificates: dict[str, Path], serve: Callable[..., SmtpServer]
+) -> None:
+    stored = "owner.later" + "@frontdesk.test"
+    answers.store(paths, {**ANSWERS, "admin_email": stored})
+    server = serve()
+    request = _request(server.port)
+    del request["admin_email"]
+
+    code, payload = _run(paths, certificates, request)
+
+    assert (code, payload["code"], payload["sent_to"]) == (0, "smtp_passed", stored)
+
+
+def test_ac_b4_with_no_installation_and_no_address_the_test_is_refused(
+    paths: Paths, certificates: dict[str, Path], serve: Callable[..., SmtpServer]
+) -> None:
+    server = serve()
+    request = _request(server.port)
+    del request["admin_email"]
+
+    code, payload = _run(paths, certificates, request)
+
+    assert (code, payload["code"]) == (2, "not_installed")
+    assert server.behavior.commands == []
+    assert not paths.staged_smtp.exists()
 
 
 def test_ac_m2_implicit_tls_on_the_implicit_port(

@@ -74,12 +74,14 @@ from app.systems.access.identity.schemas import (
     TokenResponse,
 )
 from app.systems.access.identity.session_revocation import revoke_session
+from app.systems.access.users import email_setup
 from app.systems.access.users.acceptance import (
     begin_invitation_acceptance,
     record_invitation_acceptance_failure,
 )
 from app.systems.access.users.account_operations import router as account_operations_router
 from app.systems.access.users.coordination import InvitationConflict, InvitationError
+from app.systems.access.users.email_setup import EmailNotConfigured, email_not_configured
 from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import Membership, User
 from app.systems.access.users.router import router as users_router
@@ -304,6 +306,8 @@ def resend_invite(
 ) -> InvitationResponse:
     try:
         user = resend_invitation(db, user_id, actor_id=admin.id)
+    except EmailNotConfigured as error:
+        raise email_not_configured() from error
     except InvitationError as error:
         raise HTTPException(status_code=409, detail="Unable to resend invitation") from error
     org_id = bound_organization(db)
@@ -374,6 +378,8 @@ def request_recovery(
 ) -> Response:
     _require_browser_origin(request)
     require_allowed_source(request, db)
+    if not email_setup.email_configured():
+        raise email_not_configured()  # Auth would accept it and send nothing (DEC-0041)
     try:
         provider_actions.request_recovery(
             db,

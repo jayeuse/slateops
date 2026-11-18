@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from app.common.normalization import normalize_email
 from engine import answers
 from operations import local_ca
 from operations.create_organization import validate_identity
@@ -83,6 +84,28 @@ def test_ac_i1_the_public_host_rule_equals_the_local_ca_rule(host: str) -> None:
 @pytest.mark.parametrize(("name", "slug"), IDENTITIES)
 def test_ac_i1_the_name_and_slug_rule_equals_the_bootstrap_rule(name: str, slug: str) -> None:
     assert answers.valid_identity(name, slug) is _w5a_accepts(name, slug)
+
+
+# DEC-0041: setup accepts any email address that bootstrap accepts (no mail is sent to it).
+EMAILS = [
+    ("owner@frontdesk.test", True),
+    ("Owner.Name+desk@Gmail.com", True),
+    ("o'neil_x@mail.example.co.uk", True),
+    ("owner@localhost", False),  # bootstrap refuses a domain with no dot
+    ("owner@frontdesk.", False),
+    ("owner@.frontdesk.test", False),
+]
+
+
+@pytest.mark.parametrize(("email", "accepted"), EMAILS)
+def test_ac_b1_the_admin_email_rule_equals_the_bootstrap_rule(email: str, accepted: bool) -> None:
+    try:
+        normalize_email(email)
+        bootstrap_accepts = True
+    except ValueError:
+        bootstrap_accepts = False
+    assert (answers.parse({**VALID, "admin_email": email}) is not None) is accepted
+    assert bootstrap_accepts is accepted
 
 
 def test_ac_i1_valid_answers_pass_unchanged() -> None:

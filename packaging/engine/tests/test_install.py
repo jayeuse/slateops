@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 
-from engine import cli, install, smtp_env
+from engine import cli, install
 from engine.core import Paths, private_dir
 from engine.docker_api import DockerError
 from engine.logs import RunLog
@@ -39,7 +39,9 @@ PROVIDERS = [
 ]
 EMAIL = "owner" + "@frontdesk.test"
 USERNAME = "frontowner" + "77"
-SMTP_PASSWORD = "app " + 'pa$$ "q" #x'
+# The first administrator's password (DEC-0041): only on the install pipe, never stored.
+ADMIN_PASSWORD = "Front desk " + 'pa$$ "q" #x'
+PASSWORD = {"admin_password": ADMIN_PASSWORD}
 ANSWERS: dict[str, Any] = {
     "business_name": "Front Desk Dental",
     "slug": "front-desk",
@@ -85,6 +87,8 @@ class World:
         self.records: dict[str, int] = {}
         self.sent = 0
         self.active = False
+        self.admin_created = False
+        self.admin_stdin: list[bytes | None] = []
         self.bootstrap_exit: tuple[int, str] | None = None
         self.provisioning: tuple[int, str] = (0, '{"result":"provisioned"}')
         self.provisioning_stderr = "provision.roles info ok\n"
@@ -165,7 +169,7 @@ class World:
             code, out = self.provisioning
             return Result(code, out.encode() + b"\n", self.provisioning_stderr.encode())
         if "operations/bootstrap_admin.py" in argv:
-            return self._bootstrap(env)
+            return self._bootstrap(argv, env, stdin)
         if text.startswith(("systemctl", "journalctl", "docker ps", "docker logs")):
             return Result(0, b"", b"")
         return Result(0, b"", b"")
@@ -262,11 +266,17 @@ class World:
             return Result(0, b'200 {"status":"ready"}', b"")
         return Result(0, b"", b"")
 
-    def _bootstrap(self, env: dict[str, str]) -> Result:
+    def _bootstrap(self, argv: list[str], env: dict[str, str], stdin: bytes | None) -> Result:
         if self.bootstrap_exit is not None:
             code, output = self.bootstrap_exit
             return Result(code, output.encode() + b"\n", b"")
         email = env["ADMIN_EMAIL"]
+        if "--password-stdin" in argv:  # DEC-0041: the account with its password, no email
+            self.admin_stdin.append(stdin)
+            self.records[email] = 1
+            created, self.admin_created = not self.admin_created, True
+            answer = b"created" if created else b"already_active"
+            return Result(0, b'{"result":"%s"}\n' % answer, b"")
         if self.active:
             return Result(0, b'{"result":"already_active"}\n', b"")
         self.records[email] = 1  # the same record on every rerun (W5a resume path)
@@ -317,19 +327,6 @@ class FakeApi:
         yield {"status": "Pull complete", "id": "layer"}
 
 
-def _stage_smtp(paths: Paths) -> None:
-    private_dir(paths.etc / "new")
-    values = {
-        "SMTP_HOST": "smtp.frontdesk.test",
-        "SMTP_PORT": "587",
-        "SMTP_ADMIN_EMAIL": "noreply" + "@frontdesk.test",
-        "SMTP_USER": "mailer" + "@frontdesk.test",
-        "SMTP_PASS": SMTP_PASSWORD,
-        "SMTP_SENDER_NAME": "Front Desk",
-    }
-    (paths.etc / "new" / "smtp.env").write_text(smtp_env.render(values))
-
-
 def _setup(root: Path) -> tuple[Paths, World]:
     paths = make_paths(root)
     shutil.copytree(ROOT / "packaging/engine/templates", paths.engine_home / "templates")
@@ -354,7 +351,6 @@ def _setup(root: Path) -> tuple[Paths, World]:
         },
     }
     (kept / "release-manifest.json").write_text(json.dumps(manifest))
-    _stage_smtp(paths)
     return paths, World(paths)
 
 
@@ -367,7 +363,10 @@ def run(
     paths: Paths, world: World, request: dict[str, Any] | None = None, job: str = "install"
 ) -> tuple[int, dict[str, Any]]:
     if request is None:
-        request = {"run_id": RUN_ID, "version": VERSION, "answers": ANSWERS}
+        request = {
+            "run_id": RUN_ID, "version": VERSION, "answers": ANSWERS,
+            "admin_password": ADMIN_PASSWORD,
+        }  # fmt: skip
     out = io.StringIO()
     dependencies = deps(
         paths,
@@ -418,7 +417,7 @@ def test_ac_i10_a_full_install_runs_every_step_in_plan_order(world: tuple[Paths,
     assert sorted(steps) == [f"{n:02d}" for n in range(1, 14)]
 
 
-def test_ac_i13_the_result_is_safe_and_names_the_ca_and_the_invitation(
+def test_ac_i13_the_result_is_safe_and_names_the_ca_and_the_administrator(
     world: tuple[Paths, World],
 ) -> None:
     paths, fake = world
@@ -426,17 +425,18 @@ def test_ac_i13_the_result_is_safe_and_names_the_ca_and_the_invitation(
     _, result = run(paths, fake)
 
     assert set(result) == {
-        "code", "version", "invitation", "backup_setup", "ca_root_sha256", "ca_certificate_pem",
+        "code", "version", "admin", "backup_setup", "ca_root_sha256", "ca_certificate_pem",
         "ca_security_code", "recovery_key",  # TASK-0093: the key, from the run that made it
     }  # fmt: skip
     assert result["code"] == "installed"
-    assert result["invitation"] == "sent"
+    assert result["admin"] == "created"
     assert result["ca_certificate_pem"] == ROOT_PEM
     assert len(result["ca_root_sha256"]) == 64
     record = json.loads(paths.installation.read_text())
     assert set(record) == {"instance_id", "project", "public_host", "version"}
     assert _mode(paths.installation) == 0o600
-    assert EMAIL not in json.dumps(result) and USERNAME not in json.dumps(result)
+    for value in (EMAIL, USERNAME, ADMIN_PASSWORD):
+        assert value not in json.dumps(result), value
 
 
 def test_ac_i12_the_backup_step_sets_up_the_backup(world: tuple[Paths, World]) -> None:
@@ -459,9 +459,7 @@ def test_ac_i6_env_files_are_private_and_the_generator_output_is_gone(
     for name in ("provider.env", "app.env", "provision.env", "restic-password"):
         assert _mode(paths.etc / name) == 0o600, name
     assert sorted(path.name for path in paths.new.iterdir()) == []
-    assert not (paths.etc / "install-smtp.env").exists()
     provider = (paths.etc / "provider.env").read_text()
-    assert 'SMTP_PASS="app pa$$$$ \\"q\\" #x"' in provider
     assert "SLATEOPS_APP_PRIVATE_SUBNET=172.31.248.0/28" in provider
     assert f"SLATEOPS_SERVER_IMAGE=ghcr.io/jayeuse/slateops-server:{VERSION}" in provider
     app = (paths.etc / "app.env").read_text()
@@ -567,9 +565,10 @@ def test_ac_i11_ac_s1_the_email_and_user_name_reach_bootstrap_only_through_its_e
         "--name=Front Desk Dental",
         "--slug=front-desk",
         "--time-zone=Asia/Manila",
+        "--password-stdin",
     ]
     everything = json.dumps(fake.calls) + log_text(paths)
-    for value in (EMAIL, USERNAME, SMTP_PASSWORD, "g1-postgres_password", "restic-g1"):
+    for value in (EMAIL, USERNAME, ADMIN_PASSWORD, "g1-postgres_password", "restic-g1"):
         assert value not in everything, value
 
 
@@ -583,14 +582,14 @@ def test_f2_s86_1_a_first_run_masks_the_answers_and_the_generated_secrets(
     fake.provisioning_stderr = (
         f"provision.roles error connect as {USERNAME} with password {generated}\n"
     )
-    fake.bootstrap_exit = (3, f"user {USERNAME} at {EMAIL} key {generated}")
+    fake.bootstrap_exit = (3, f"user {USERNAME} at {EMAIL} key {generated} pw {ADMIN_PASSWORD}")
 
     code, result = run(paths, fake)
 
     assert (code, result["code"]) == (3, "bootstrap_failed")
     logs = log_text(paths)
     assert "provision.roles error connect as" in logs
-    for value in (USERNAME, EMAIL, generated, SMTP_PASSWORD):
+    for value in (USERNAME, EMAIL, generated, ADMIN_PASSWORD):
         assert value not in logs, value
 
 
@@ -601,7 +600,10 @@ def test_architect_a_name_that_looks_like_an_option_stays_one_value(
     # A name that step 1 accepts must reach bootstrap as the value of --name, never as an
     # option of its own (argparse reads "--name -Clinic" as a missing value).
     paths, fake = world
-    request = {"run_id": RUN_ID, "version": VERSION, "answers": {**ANSWERS, "business_name": name}}
+    request = {
+        "run_id": RUN_ID, "version": VERSION, "answers": {**ANSWERS, "business_name": name},
+        "admin_password": ADMIN_PASSWORD,
+    }  # fmt: skip
 
     code, _ = run(paths, fake, request)
 
@@ -610,9 +612,27 @@ def test_architect_a_name_that_looks_like_an_option_stays_one_value(
     assert code == 0
     assert values[2] == f"--name={name}"
     assert all(
-        item.startswith("--") and (item in ("--confirm", "--json") or "=" in item)
+        item.startswith("--")
+        and (item in ("--confirm", "--json", "--password-stdin") or "=" in item)
         for item in values
     )
+
+
+def test_ac_b5_a_kept_data_reinstall_sends_no_password_and_creates_no_administrator(
+    world: tuple[Paths, World],
+) -> None:
+    # A kept-data reinstall finds the finished journal on the kept disk: step 11 does not run
+    # again, so no password is needed and the existing accounts stay (DEC-0041).
+    paths, fake = world
+    assert run(paths, fake)[0] == 0
+    calls = len(_commands(fake, "bootstrap_admin.py"))
+
+    kept = {"run_id": "install-20261118T120000Z-kk11aa", "version": VERSION}
+    code, result = run(paths, fake, kept)
+
+    assert (code, result["code"]) == (0, "installed")
+    assert len(_commands(fake, "bootstrap_admin.py")) == calls == 1
+    assert fake.admin_stdin == [ADMIN_PASSWORD.encode() + b"\n"]
 
 
 # AC-I1, AC-I2: input and resume ----------------------------------------------------------------
@@ -644,14 +664,87 @@ def test_ac_i1_a_first_run_without_answers_is_refused(world: tuple[Paths, World]
     assert (code, result["code"]) == (2, "invalid_input")
 
 
-def test_ac_i5_without_staged_email_settings_nothing_starts(world: tuple[Paths, World]) -> None:
+def test_ac_b4_an_install_without_email_settings_completes_and_writes_none(
+    world: tuple[Paths, World],
+) -> None:
     paths, fake = world
-    (paths.etc / "new" / "smtp.env").unlink()
+    assert not paths.staged_smtp.exists()
 
     code, result = run(paths, fake)
 
-    assert (code, result["code"]) == (2, "smtp_not_staged")
-    assert not paths.journal.exists()
+    assert (code, result["code"], result["admin"]) == (0, "installed", "created")
+    provider = (paths.etc / "provider.env").read_text().splitlines()
+    assert [line for line in provider if line.startswith("SMTP_")] == []
+    assert not (paths.etc / "install-smtp.env").exists()
+
+
+def test_ac_b1_ac_b5_the_admin_password_reaches_bootstrap_only_on_its_standard_input(
+    world: tuple[Paths, World],
+) -> None:
+    paths, fake = world
+
+    code, _ = run(paths, fake)
+
+    assert code == 0
+    [(argv, env)] = [(a, e) for a, e in zip(fake.calls, fake.environments, strict=True)
+                     if "operations/bootstrap_admin.py" in a]  # fmt: skip
+    assert argv[-1] == "--password-stdin"
+    image = argv.index("--entrypoint")
+    assert "--interactive" in argv[:image]
+    assert fake.admin_stdin == [ADMIN_PASSWORD.encode() + b"\n"]
+    assert env == {**ENVIRONMENT, "ADMIN_EMAIL": EMAIL, "ADMIN_USERNAME": USERNAME}
+    assert ADMIN_PASSWORD not in json.dumps(fake.calls) + json.dumps(fake.environments)
+    root = paths.etc.parent.parent
+    for path in root.rglob("*"):
+        if path.is_file():
+            assert ADMIN_PASSWORD.encode() not in path.read_bytes(), path
+
+
+@pytest.mark.parametrize(
+    "password",
+    [
+        pytest.param(None, id="missing"),
+        pytest.param("eleven-char", id="shorter-than-12"),
+        pytest.param("x" * 73, id="longer-than-72-bytes"),
+        pytest.param("\u00e9" * 37, id="72-characters-but-74-bytes"),
+        pytest.param("first line\nsecond line", id="line-break"),
+        pytest.param("tab\tinside-password", id="control-character"),
+        pytest.param(123456789012, id="not-text"),
+    ],
+)
+def test_ac_b5_a_missing_or_invalid_admin_password_is_refused_before_any_change(
+    world: tuple[Paths, World], password: object
+) -> None:
+    paths, fake = world
+    request: dict[str, Any] = {"run_id": RUN_ID, "version": VERSION, "answers": ANSWERS}
+    if password is not None:
+        request["admin_password"] = password
+
+    code, result = run(paths, fake, request)
+
+    assert (code, result["code"]) == (2, "invalid_input")
+    assert not paths.journal.exists() and not paths.answers.exists()
+    assert fake.calls == []
+
+
+def test_ac_b5_a_resume_needs_the_admin_password_until_the_admin_step_is_done(
+    world: tuple[Paths, World],
+) -> None:
+    paths, fake = world
+    fake.kill_at = 6
+    with pytest.raises(Killed):
+        run(paths, fake)
+    fake.kill_at = None
+    resume = {"run_id": "install-20261117T110000Z-cd34ef", "version": VERSION}
+
+    without = run(paths, fake, resume)
+    resumed = run(paths, fake, {**resume, "admin_password": ADMIN_PASSWORD})
+    after_step_11 = run(paths, fake, {**resume, "run_id": "install-20261117T120000Z-ee55ff"})
+
+    assert without == (2, {"code": "invalid_input", "message_key": "install.invalid_input"})
+    assert (resumed[0], resumed[1]["code"], resumed[1]["admin"]) == (0, "installed", "created")
+    assert (after_step_11[0], after_step_11[1]["code"]) == (0, "installed")
+    assert fake.admin_stdin == [ADMIN_PASSWORD.encode() + b"\n"]
 
 
 def test_ac_i2_a_resume_takes_the_stored_answers_and_refuses_changed_ones(
@@ -662,7 +755,7 @@ def test_ac_i2_a_resume_takes_the_stored_answers_and_refuses_changed_ones(
     with pytest.raises(Killed):
         run(paths, fake)
     fake.kill_at = None
-    resume = {"run_id": "install-20261117T110000Z-cd34ef", "version": VERSION}
+    resume = {"run_id": "install-20261117T110000Z-cd34ef", "version": VERSION, **PASSWORD}
 
     changed = run(paths, fake, {**resume, "answers": {**ANSWERS, "slug": "other"}})
     other_version = run(paths, fake, {**resume, "version": "0.1.0-rc.10"})
@@ -786,7 +879,10 @@ def test_ac_k1_a_kill_at_any_command_then_a_rerun_completes_one_installation(
         with pytest.raises(Killed):
             run(paths, fake)
         fake.kill_at = None
-        resume = {"run_id": "install-20261117T110000Z-cd34ef", "version": VERSION}
+        resume = {
+            "run_id": "install-20261117T110000Z-cd34ef", "version": VERSION,
+            "admin_password": ADMIN_PASSWORD,
+        }  # fmt: skip
         code, result = run(paths, fake, resume if paths.journal.exists() else None)
 
         assert (code, result["code"]) == (0, "installed"), (kill_at, result)
@@ -808,7 +904,9 @@ def test_ac_k1_a_kill_between_file_writes_then_a_rerun_completes_one_installatio
             run(paths, fake)
         monkeypatch.setattr(install, "commit_new", commit)
 
-        code, result = run(paths, fake, {"run_id": RUN_ID, "version": VERSION})
+        code, result = run(
+            paths, fake, {"run_id": RUN_ID, "version": VERSION, "admin_password": ADMIN_PASSWORD}
+        )
 
         assert (code, result["code"]) == (0, "installed"), stop
         _assert_one_installation(paths, fake)
@@ -898,7 +996,7 @@ def test_ac_n1_the_chosen_subnet_is_kept_on_a_rerun(world: tuple[Paths, World]) 
     fake.kill_at = None
     fake.docker_subnets = ["172.31.248.0/28"]  # now the project's own app-private network
 
-    code, _ = run(paths, fake, {"run_id": RUN_ID, "version": VERSION})
+    code, _ = run(paths, fake, {"run_id": RUN_ID, "version": VERSION, **PASSWORD})
 
     assert code == 0
     assert "SLATEOPS_APP_PRIVATE_SUBNET=172.31.248.0/28" in (paths.etc / "provider.env").read_text()
@@ -1043,9 +1141,10 @@ def test_ac_v1_resend_sends_again_or_reports_an_active_administrator(
     assert pending == (0, {"code": "sent"})
     assert active == (0, {"code": "already_active"})
     assert failure[0] == 3 and failure[1]["code"] == "bootstrap_failed"
-    assert fake.records == {EMAIL: 1} and fake.sent == 2
+    assert fake.records == {EMAIL: 1} and fake.sent == 1  # the install sends no email
     first, resent = _commands(fake, "bootstrap_admin.py")[:2]
-    assert resent[-6:] == first[-6:]  # the same fixed arguments from the stored answers
+    # The same fixed arguments from the stored answers; only the install passes a password.
+    assert resent[-5:] == first[-6:-1] and "--password-stdin" not in resent
 
 
 # TASK-0089 (W6a): the trust files, the chain check, the key that Caddy owns, renewal ---------
@@ -1105,7 +1204,7 @@ def test_ac_e5_a_rerun_of_step_6_reads_the_key_that_caddy_owns(
     monkeypatch.setattr(install, "commit_new", commit)
     assert fake.key_owner == 1000
 
-    code, _ = run(paths, fake, {"run_id": RUN_ID, "version": VERSION})
+    code, _ = run(paths, fake, {"run_id": RUN_ID, "version": VERSION, **PASSWORD})
 
     assert code == 0
     assert fake.leaves == 1  # the rerun kept the leaf: no second certificate
@@ -1273,7 +1372,9 @@ def test_w14_d5_install_reports_each_step_and_a_rerun_reports_finished_steps_as_
     first = progress_lines(capsys.readouterr().err)
     fake.bootstrap_exit = None
 
-    code, _ = run(paths, fake, {"run_id": "install-20261117T103000Z-cd34ef", "version": VERSION})
+    code, _ = run(
+        paths, fake, {"run_id": "install-20261117T103000Z-cd34ef", "version": VERSION, **PASSWORD}
+    )
 
     assert code == 0
     assert first == [

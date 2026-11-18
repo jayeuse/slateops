@@ -99,11 +99,14 @@ def _lines(path: Path) -> list[str]:
     return path.read_text().splitlines()
 
 
-def test_e3_set_email_applies_the_staged_values_and_recreates_auth(
+def test_ac_b4_set_email_adds_the_staged_values_and_recreates_auth_then_api(
     installed: tuple[Paths, World],
 ) -> None:
+    # DEC-0041: the install wrote no SMTP line; set-email adds the six and both Auth and the
+    # API (which reads SMTP_* from Compose at creation) start again with them.
     paths, fake = installed
     before = _lines(paths.etc / "provider.env")
+    assert [line for line in before if line.startswith("SMTP_")] == []
     values = _stage_new_email(paths)
 
     result = _job(paths, fake, "set-email")
@@ -111,17 +114,35 @@ def test_e3_set_email_applies_the_staged_values_and_recreates_auth(
     assert result == {"exit": 0, "code": "email_set"}
     after = _lines(paths.etc / "provider.env")
     expected = smtp_env.parse(smtp_env.render(values))
-    written = {line.split("=", 1)[0]: line for line in after if line.startswith("SMTP_")}
-    assert smtp_env.parse("\n".join(written.values()) + "\n") == expected
-    assert [line for line in after if not line.startswith("SMTP_")] == [
-        line for line in before if not line.startswith("SMTP_")
-    ]
+    written = [line for line in after if line.startswith("SMTP_")]
+    assert smtp_env.parse("\n".join(written) + "\n") == expected
+    assert [line for line in after if not line.startswith("SMTP_")] == before
     assert not paths.staged_smtp.exists()
-    [up] = [argv for argv in fake.calls if argv[:2] == ["docker", "compose"] and "up" in argv]
-    assert up[up.index("up") :] == [
-        "up", "--detach", "--pull", "never", "--no-deps", "--force-recreate", "auth",
-    ]  # fmt: skip
+    ups = [argv for argv in fake.calls if argv[:2] == ["docker", "compose"] and "up" in argv]
+    assert [up[up.index("up") :] for up in ups] == [
+        ["up", "--detach", "--pull", "never", "--no-deps", "--force-recreate", "auth"],
+        ["up", "--detach", "--pull", "never", "--no-deps", "--force-recreate", "api"],
+    ]
     assert NEW_PASSWORD not in log_text(paths)
+
+
+def test_ac_b4_set_email_again_replaces_the_email_settings_in_place(
+    installed: tuple[Paths, World],
+) -> None:
+    paths, fake = installed
+    _stage_new_email(paths)
+    assert _job(paths, fake, "set-email")["exit"] == 0
+    first = _lines(paths.etc / "provider.env")
+    values = {**_stage_new_email(paths), "SMTP_HOST": "smtp.gmail.test"}
+    private_dir(paths.staged_smtp.parent)
+    paths.staged_smtp.write_text(smtp_env.render(values))
+
+    assert _job(paths, fake, "set-email")["exit"] == 0
+
+    after = _lines(paths.etc / "provider.env")
+    assert len(after) == len(first)
+    assert "SMTP_HOST=smtp.gmail.test" in after
+    assert [line.split("=", 1)[0] for line in after] == [line.split("=", 1)[0] for line in first]
 
 
 def test_e3_set_email_without_staged_values_changes_nothing(

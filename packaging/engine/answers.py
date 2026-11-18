@@ -38,8 +38,12 @@ KEYS = (
 _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
 # UserCreate.username (backend/app/systems/access/users/schemas.py:259).
 _USERNAME = re.compile(r"[a-zA-Z0-9_-]{3,100}\Z")
-# A shape check only; Auth and bootstrap validate the address.
-_EMAIL = re.compile(r"[^@\s]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9.-]{0,253})\Z")
+# A shape check only; Auth and bootstrap validate the address. Like bootstrap's
+# normalize_email, the domain has at least one dot and does not start or end with one.
+_LABEL_TEXT = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+_EMAIL = re.compile(
+    r"[^@\s]{1,64}@(?=[^@]{1,253}\Z)" + _LABEL_TEXT + r"(?:\." + _LABEL_TEXT + r")+\Z"
+)
 _TIME_ZONE = re.compile(r"[A-Za-z][A-Za-z0-9_+-]{0,30}(?:/[A-Za-z0-9_+-]{1,30}){0,2}\Z")
 # Planning values (Proposed): at least the plan 10.2 free-space minimum (25 GB), at most the
 # VHDX limit (64 TiB). The Windows side sizes the disk; the engine only records the value.

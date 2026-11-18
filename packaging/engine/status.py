@@ -5,8 +5,10 @@ Input: the run ID, the Windows-part version and the installed WSL version. Outpu
 code, the prefetch code and whole-number progress for display, and (W10b, TASK-0093) the
 backup state of the last tick (``backup``: ``not_set_up``, ``ok``, ``backup_target_missing``
 or ``runner_layout_stale``) and the last Linux start with its ready time (``linux_start``,
-W7-6). It keeps no run log (the setup program polls it); it records version changes in
-``report.json``.
+W7-6). TASK-0097 AC-B6 (DEC-0041): ``email_configured`` (``set-email`` wrote the SMTP
+lines) and ``admin_email``, the stored first-administrator address that ``smtp-test`` mails
+(personal data: the Windows side shows it and keeps it out of its logs). It keeps no run log
+(the setup program polls it); it records version changes in ``report.json``.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import os
 import re
 from typing import Any
 
-from engine import backups, packages, prefetch, release, report, tick, update
+from engine import answers, backups, packages, prefetch, release, report, smtp_env, tick, update
 from engine.context import Context
 from engine.core import INSTANCE_ID, engine_version, is_run_id, is_version, lock_state
 
@@ -70,6 +72,19 @@ def _linux_start(ctx: Context) -> dict[str, Any] | None:
     return {"started_at": last.get("started_at"), "ready_at": last.get("ready_at")}
 
 
+def _email_configured(ctx: Context) -> bool:
+    try:
+        text = (ctx.paths.etc / "provider.env").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    return smtp_env.configured(text)
+
+
+def _admin_email(ctx: Context) -> str | None:
+    stored = answers.load(ctx.paths)
+    return None if stored is None else str(stored["admin_email"])
+
+
 def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     paths = ctx.paths
     wsl = request["wsl_version"]
@@ -104,4 +119,6 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
         "backup": _backup(ctx),
         "linux_start": _linux_start(ctx),
         "instance_id": _instance_id(ctx),
+        "email_configured": _email_configured(ctx),
+        "admin_email": _admin_email(ctx),
     }

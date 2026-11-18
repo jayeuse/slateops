@@ -1,7 +1,11 @@
 """The first administrator (plan 6.2 step 11) and ``resend-invitation`` (TASK-0080 item 11).
 
 Both run ``bootstrap_admin.py --confirm --json`` in a one-shot server-image container on the
-provider network, with ``app.env``. The email and user name reach the container through
+provider network, with ``app.env``. Step 11 adds ``--password-stdin`` (DEC-0041): the account
+gets the password that setup asked for, with no invitation and no email. The password goes
+only to the container's standard input (``docker run --interactive`` and the runner's
+``input``), never into an argument, an environment value or a file. Results:
+``{"result": "created" | "already_active"}``. The email and user name reach the container through
 ``docker run -e NAME`` from the child environment, so they are never an argument or a log
 value (TASK-0081 A-3); the name, slug and time zone are fixed arguments from the stored
 answers, and ``--provider-user-id`` is never passed (TASK-0080 Security Engineer list).
@@ -16,6 +20,7 @@ provider rate limit is ``bootstrap_failed``.
 from __future__ import annotations
 
 import json
+import unicodedata
 from typing import Any
 
 from engine import answers, journal, progress
@@ -25,6 +30,23 @@ from engine.core import failed, is_run_id, refused
 KEYS = {"run_id": is_run_id}
 REQUIRED = frozenset(KEYS)
 TIMEOUT_SECONDS = 300
+# The product's shortest password (PasswordChangeRequest) and the pinned GoTrue's longest
+# ("Password cannot be longer than 72 characters", counted in bytes: bcrypt).
+PASSWORD_MIN_CHARACTERS, PASSWORD_MAX_BYTES = 12, 72
+
+
+def valid_password(value: Any) -> bool:
+    """The rule of ``bootstrap_admin.py --password-stdin``, checked again here so a bad
+    password stops the install before step 1."""
+    return (
+        isinstance(value, str)
+        and len(value) >= PASSWORD_MIN_CHARACTERS
+        and len(value.encode("utf-8")) <= PASSWORD_MAX_BYTES
+        and "".join(value.splitlines()) == value
+        and not any(unicodedata.category(character) == "Cc" for character in value)
+    )
+
+
 ONE_SHOT = [
     "--user",
     "10001:10001",
@@ -40,12 +62,13 @@ ONE_SHOT = [
 
 
 def bootstrap_argv(
-    ctx: Context, project: str, server_image: str, given: dict[str, Any]
+    ctx: Context, project: str, server_image: str, given: dict[str, Any], *, password: bool = False
 ) -> list[str]:
     return [
         "docker",
         "run",
         "--rm",
+        *(["--interactive"] if password else []),
         "--pull",
         "never",
         "--network",
@@ -70,19 +93,28 @@ def bootstrap_argv(
         f"--name={given['business_name']}",
         f"--slug={given['slug']}",
         f"--time-zone={given['time_zone']}",
+        *(["--password-stdin"] if password else []),
     ]
 
 
 def bootstrap(
-    ctx: Context, step: str, project: str, server_image: str, given: dict[str, Any]
+    ctx: Context,
+    step: str,
+    project: str,
+    server_image: str,
+    given: dict[str, Any],
+    password: str | None = None,
 ) -> str:
-    """Run bootstrap; return ``sent`` or ``already_active``; raise its refusal or failure."""
+    """Run bootstrap; return ``sent``, ``created`` or ``already_active``; raise its refusal
+    or failure."""
     result = ctx.runner.run(
         step,
-        bootstrap_argv(ctx, project, server_image, given),
+        bootstrap_argv(ctx, project, server_image, given, password=password is not None),
         timeout=TIMEOUT_SECONDS,
         extra_env={"ADMIN_EMAIL": given["admin_email"], "ADMIN_USERNAME": given["admin_username"]},
+        input=None if password is None else password.encode("utf-8") + b"\n",
     )
+    wanted = ("sent", "already_active") if password is None else ("created", "already_active")
     try:
         last = result.text().strip().splitlines()[-1]
         output = json.loads(last)
@@ -90,12 +122,20 @@ def bootstrap(
         output = {}
     if not isinstance(output, dict):
         output = {}
-    if result.ok and output.get("result") in ("sent", "already_active"):
+    if result.ok and output.get("result") in wanted:
         ctx.log.line(step, "INFO", f"first administrator: {output['result']}")
         return str(output["result"])
     if result.returncode == 2 and output.get("code") == "bootstrap_refused":
         raise refused("bootstrap_refused")
     raise failed("bootstrap_failed")
+
+
+def create_admin(
+    ctx: Context, step: str, project: str, server_image: str, given: dict[str, Any], password: str
+) -> str:
+    """Step 11 (DEC-0041): the first administrator with its password; ``created`` or
+    ``already_active`` (a rerun)."""
+    return bootstrap(ctx, step, project, server_image, given, password)
 
 
 def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:

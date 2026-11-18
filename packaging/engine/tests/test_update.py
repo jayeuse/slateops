@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from engine import cli, update
+from engine import cli, smtp_env, update
 from engine.core import Paths, private_dir
 from engine.runner import Result
 
@@ -412,6 +412,32 @@ def test_w13b_1_an_update_runs_the_target_release_and_keeps_the_data(machine: In
     assert json.loads(paths.journal.read_text())["server_image"].endswith(f":{TARGET}")
     # 7.3: the backup runs with the services stopped, before the first target container.
     assert machine.index("backup_installation.py") < machine.index("--force-recreate")
+
+
+def test_ac_b4_an_update_keeps_the_email_settings_and_adds_none_to_a_no_email_install(
+    machine: Installed,
+) -> None:
+    # DEC-0041: the template has no SMTP line, so an update never adds one, and it keeps the
+    # six lines that set-email wrote.
+    paths = machine.paths
+    assert not [key for key in machine.env("provider.env") if key.startswith("SMTP_")]
+    values = {
+        "SMTP_HOST": "smtp.gmail.test", "SMTP_PORT": "465",
+        "SMTP_ADMIN_EMAIL": "office" + "@gmail.test", "SMTP_USER": "office" + "@gmail.test",
+        "SMTP_PASS": "app pass 2026", "SMTP_SENDER_NAME": "Front Desk",
+    }  # fmt: skip
+    private_dir(paths.staged_smtp.parent)
+    paths.staged_smtp.write_text(smtp_env.render(values))
+    assert machine.job("set-email", {"run_id": "maintenance-20261118T090000Z-se11ab"})[0] == 0
+    email = {k: v for k, v in machine.env("provider.env").items() if k.startswith("SMTP_")}
+    assert len(email) == 6
+    machine.stage()
+
+    code, result = machine.update()
+
+    assert (code, result["code"]) == (0, "updated")
+    after = {k: v for k, v in machine.env("provider.env").items() if k.startswith("SMTP_")}
+    assert after == email
 
 
 def test_w13b_1_an_api_that_reports_another_version_is_rolled_back(machine: Installed) -> None:

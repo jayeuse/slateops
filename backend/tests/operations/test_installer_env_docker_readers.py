@@ -90,6 +90,11 @@ def files(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     values = {**literal_lines(generated), **ANSWERS}
     for name in ("provider.env", "app.env", "provision.env"):
         text = render((TEMPLATES / name).read_text(encoding="utf-8"), values)
+        if name == "provider.env":
+            # DEC-0041: the SMTP lines as set-email appends them after the install.
+            email = {key: value for key, value in values.items() if key.startswith("SMTP_")}
+            lines = importlib.import_module("engine.smtp_env").lines(email)
+            text += "\n".join(lines) + "\n"
         (directory / name).write_text(text, encoding="utf-8")
     return {"directory": directory, "values": values}
 

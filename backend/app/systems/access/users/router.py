@@ -48,6 +48,7 @@ from app.systems.access.users.directory import (
     membership_view,
 )
 from app.systems.access.users.directory import UserSortField as UserSortField
+from app.systems.access.users.email_setup import EmailNotConfigured, email_not_configured
 from app.systems.access.users.membership import (
     bound_organization,
     require_current_membership,
@@ -314,6 +315,8 @@ def create_user(
         ) from error
     except ProfileValidationError as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except EmailNotConfigured as error:
+        raise email_not_configured() from error
     except InvitationError as error:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

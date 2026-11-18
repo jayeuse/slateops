@@ -2,15 +2,18 @@
 
 Input (W7 wire contract): ``run_id``, ``version`` and, on the first run, ``answers`` (plan 6.1
 plus ``time_zone``). A rerun resumes from the journal; it may leave ``answers`` out
-(TASK-0080 N-3), and answers that it does give must equal the stored ones.
+(TASK-0080 N-3), and answers that it does give must equal the stored ones. ``admin_password``
+(DEC-0041) is required until step 11 is done; it is held in memory only: never stored, never
+an argument or an environment value, and masked in every log line from the job's start.
 
 Steps (step IDs ``install.NN.<name>``; each is journaled before the next starts):
 
 1. ``release``: the verified release that ``receive`` kept; the app subnet (W5b-7).
 2. ``folders``: owners and modes of every folder the installation uses.
 3. ``images``: our two images by manifest digest; the provider images by digest.
-4. ``secrets``: the staged email settings are kept, ``/etc/slateops/new`` is emptied (N-6),
-   and the W2 generator runs in a one-shot container with no network.
+4. ``secrets``: ``/etc/slateops/new`` is emptied (N-6), and the W2 generator runs in a
+   one-shot container with no network. The install needs no email settings (DEC-0041):
+   ``provider.env`` gets none, and ``set-email`` adds them later.
 5. ``env``: ``provider.env``, ``app.env`` and ``provision.env`` from the W2 templates (0600).
 6. ``tls``: the local CA and server certificate (W2 ``local_ca.py init``, no network) and
    the Caddyfile (W5b-6). W6a adds port 80, the trust files and the renewal.
@@ -18,7 +21,7 @@ Steps (step IDs ``install.NN.<name>``; each is journaled before the next starts)
 8. ``provision``: the W5a provisioning job on the provider network.
 9. ``api``: start ``api``; wait for the internal ``/api/ready``.
 10. ``caddy``: start ``caddy``; ``https://<public_host>/api/ready`` through loopback.
-11. ``admin``: the first administrator and the invitation (W5a bootstrap).
+11. ``admin``: the first administrator with the typed password, no invitation (DEC-0041).
 12. ``backup``: the backup drive, the repository, the config, the default policy, the first
     backup, the recovery key and the runner timer (W10b, ``engine.backups``).
 13. ``finish``: ``installation.json`` and the safe result.
@@ -68,19 +71,18 @@ from engine.core import (
 )
 from engine.env_templates import TemplateError, render
 from engine.held import load_held
-from engine.smtp_env import parse as parse_smtp
 
 KEYS = {
     "run_id": is_run_id,
     "version": is_version,
     "answers": lambda value: isinstance(value, dict),
+    "admin_password": invitation.valid_password,
 }
 REQUIRED = frozenset({"run_id", "version"})
 STEPS = tuple(enumerate(progress.STEPS["install"], start=1))  # the one list (W14-D5)
 ENV_FILES = ("provider.env", "app.env", "provision.env")
 GENERATED = "generated.env"
 RESTIC = "restic-password"
-SMTP_COPY = "install-smtp.env"
 CADDYFILE = "Caddyfile"
 TRUST_MOUNT = "/srv/slateops-trust"  # the Caddy template root (generate_config --trust-root)
 API_UID = 10001  # the server image's appuser (infra/docker/backend.Dockerfile)
@@ -299,25 +301,6 @@ def step_images(
 # Step 4 ------------------------------------------------------------------------------------
 
 
-def _keep_staged_smtp(ctx: Context) -> None:
-    """Move the staged email settings out of ``new/`` (the password crosses once, 3.2)."""
-    paths = ctx.paths
-    staged, kept = paths.staged_smtp, paths.etc / SMTP_COPY
-    if staged.is_file() and not staged.is_symlink():
-        try:
-            parse_smtp(staged.read_text(encoding="utf-8"))
-        except TemplateError as error:
-            raise refused("smtp_not_staged") from error
-        if kept.exists():
-            if kept.read_bytes() != staged.read_bytes():
-                raise refused("install_state_mismatch", part=SMTP_COPY)
-        else:
-            os.link(staged, kept)
-        staged.unlink()
-    elif not kept.is_file():
-        raise refused("smtp_not_staged")
-
-
 def _empty(folder: Path) -> None:
     for entry in folder.iterdir():
         if entry.is_dir() and not entry.is_symlink():
@@ -330,7 +313,6 @@ def step_secrets(
     ctx: Context, step: str, state: dict[str, Any], given: dict[str, Any], manifest: dict[str, Any]
 ) -> None:
     paths = ctx.paths
-    _keep_staged_smtp(ctx)
     _empty(paths.new)  # N-6: a repeated step starts from an empty folder
     argv = [
         "docker", "run", "--rm", "--pull", "never", "--network", "none", *ONE_SHOT_ROOT,
@@ -362,7 +344,6 @@ def step_env(
     try:
         values = {
             **literal_lines(paths.new / GENERATED),
-            **parse_smtp((paths.etc / SMTP_COPY).read_text(encoding="utf-8")),
             "PUBLIC_HOST": given["public_host"],
             "SLATEOPS_SERVER_IMAGE": state["server_image"],
             "SLATEOPS_CADDY_IMAGE": state["caddy_image"],
@@ -383,10 +364,10 @@ def step_env(
 
 
 def cleanup_generator_output(ctx: Context) -> None:
-    """After step 5 is journaled: the generator output and the SMTP copy are now in the env
-    files (TASK-0081 A-3 item 4)."""
+    """After step 5 is journaled: the generator output is now in the env files (TASK-0081 A-3
+    item 4)."""
     paths = ctx.paths
-    for path in (paths.new / GENERATED, paths.new / RESTIC, paths.etc / SMTP_COPY):
+    for path in (paths.new / GENERATED, paths.new / RESTIC):
         if path.exists() or path.is_symlink():
             path.unlink()
 
@@ -556,10 +537,11 @@ def wait_https(ctx: Context, step: str, host: str) -> None:
 
 
 def step_admin(
-    ctx: Context, step: str, state: dict[str, Any], given: dict[str, Any], manifest: dict[str, Any]
+    ctx: Context, step: str, state: dict[str, Any], given: dict[str, Any], password: str
 ) -> None:
-    state["invitation"] = invitation.bootstrap(
-        ctx, step, _project(state), _server_image(state), given
+    """The only step that takes the password, so it is not in ``RUNNERS`` (DEC-0041)."""
+    state["admin"] = invitation.create_admin(
+        ctx, step, _project(state), _server_image(state), given, password
     )
 
 
@@ -605,7 +587,6 @@ RUNNERS: dict[int, Step] = {
     8: step_provision,
     9: step_api,
     10: step_caddy,
-    11: step_admin,
     12: step_backup,
     13: step_finish,
 }
@@ -640,7 +621,7 @@ def check_state(ctx: Context, state: dict[str, Any] | None) -> None:
         13: [paths.installation],
     }  # fmt: skip
     if journal.done(steps, 4) and not journal.done(steps, 5):
-        required[4] = [paths.new / GENERATED, paths.new / RESTIC, etc / SMTP_COPY]
+        required[4] = [paths.new / GENERATED, paths.new / RESTIC]
     for number, files in sorted(required.items()):
         if journal.done(steps, number) and not all(_exists(path) for path in files):
             raise refused("install_state_mismatch", part=dict(STEPS)[number])
@@ -657,11 +638,10 @@ def _start(ctx: Context, request: dict[str, Any]) -> tuple[dict[str, Any], dict[
         parsed = answers.parse(given)
         if parsed is None:
             raise refused("invalid_input")
+        if "admin_password" not in request:
+            raise refused("invalid_input")
         check_state(ctx, None)
         release.require(paths, version)
-        staged = paths.staged_smtp.is_file() or (paths.etc / SMTP_COPY).is_file()
-        if not staged:
-            raise refused("smtp_not_staged")
         answers.store(paths, parsed)
         hold_new_values(ctx)
         state = journal.new(version, ctx.run_id, _at(ctx))
@@ -683,10 +663,8 @@ def _start(ctx: Context, request: dict[str, Any]) -> tuple[dict[str, Any], dict[
     check_state(ctx, state)
     if journal.done(state, 13):
         return state, stored  # complete: a rerun changes no state file (only its own log)
-    if not journal.done(state, 4) and not (
-        paths.staged_smtp.is_file() or (paths.etc / SMTP_COPY).is_file()
-    ):
-        raise refused("smtp_not_staged")
+    if not journal.done(state, 11) and "admin_password" not in request:
+        raise refused("invalid_input")
     state.setdefault("runs", []).append(ctx.run_id)
     journal.save(paths, state)
     return state, stored
@@ -701,7 +679,7 @@ def _result(ctx: Context, state: dict[str, Any]) -> dict[str, Any]:
         **shown,
         "code": "installed",
         "version": state["version"],
-        "invitation": state.get("invitation", "unknown"),
+        "admin": state.get("admin", "unknown"),
         "backup_setup": state.get("backup_setup", "not_built"),
         "ca_root_sha256": fingerprint,
         "ca_certificate_pem": pem,
@@ -718,6 +696,10 @@ def _space(ctx: Context, step: str) -> None:
 
 
 def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
+    password = request.get("admin_password")
+    if isinstance(password, str):  # masked from the first log line of this job on
+        ctx.redactor = ctx.redactor.with_values([password], [], words=[password])
+        ctx.log.redact = ctx.redactor
     state, given = _start(ctx, request)
     manifest = release.require(ctx.paths, state["version"])
     if journal.done(state, 5):
@@ -733,7 +715,11 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
         if number > 1:
             _space(ctx, step)
         ctx.log.line(step, "INFO", f"start {name}")
-        RUNNERS[number](ctx, step, state, given, manifest)
+        if number == 11:
+            assert isinstance(password, str)  # _start refuses a missing one before step 11
+            step_admin(ctx, step, state, given, password)
+        else:
+            RUNNERS[number](ctx, step, state, given, manifest)
         if number in (4, 5):
             hold_new_values(ctx)
         journal.mark(ctx.paths, state, number, name, _at(ctx))
