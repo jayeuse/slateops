@@ -95,21 +95,6 @@ Test-Case 'AC-1 C14 names the program that holds port 80 or 443' {
     Assert-Equal 'pass' (Get-Check C14 @{ listeners = @() }).class
 }
 
-Test-Case 'AC-1 P3-9 C15 and C30 use the DNS host name in lower case' {
-    $ok = Get-Check C15 @{ dns_host_name = 'office-pc'; computer_name = 'OFFICE-PC' }
-    Assert-Equal 'pass office-pc.local' ('{0} {1}' -f $ok.class, $ok.values.address)
-    foreach ($bad in @('office_pc', '1234', '-office')) { Assert-Equal 'fix' (Get-Check C15 @{ dns_host_name = $bad; computer_name = 'OFFICE-PC' }).class $bad }
-    $differs = Get-Check C15 @{ dns_host_name = 'front-desk-server-01'; computer_name = 'FRONT-DESK-SERV' }
-    Assert-Equal 'advice name_mismatch front-desk-server-01.local' ('{0} {1} {2}' -f $differs.class, $differs.code, $differs.values.address)
-    Assert-Equal 'name_mismatch' (Get-Check C15 @{ dns_host_name = 'office'; computer_name = 'RECEPTION' }).code
-    Assert-Equal 'advice factory_name' ('{0} {1}' -f (Get-Check C30 @{ dns_host_name = 'desktop-7gh2k1a' }).class, (Get-Check C30 @{ dns_host_name = 'desktop-7gh2k1a' }).code)
-    Assert-Equal 'pass' (Get-Check C30 @{ dns_host_name = 'office-pc' }).class
-}
-
-Test-Case 'AC-1 P3-1 an unreadable C15 shows as Advice, because it is a requirement check' {
-    Assert-Equal 'advice cannot_read' ('{0} {1}' -f (Get-Check C15 @{}).class, (Get-Check C15 @{}).code)
-}
-
 Test-Case 'AC-1 C18 is Fix when module logging covers ScheduledTasks and when the policy is unreadable (W80-8)' {
     Assert-Equal 'fix unreadable' ('{0} {1}' -f (Get-Check C18 @{}).class, (Get-Check C18 @{}).code)
     $covered = Get-Check C18 @{ logging_policy = @{ ModuleLogging = $true; ModuleNames = @('*') } }
@@ -197,10 +182,10 @@ Test-Case 'AC-1 the recheck runs exactly the spec 5.2 checks' {
     Assert-Equal @('C08', 'C09', 'C10', 'C12', 'C13', 'C14', 'C21') $ids
 }
 
-Test-Case 'AC-1 the check reads this PC without changing it and returns every check (W7 plus C16 and C17 from W8)' {
+Test-Case 'AC-1 the check reads this PC without changing it and returns every check (W7 plus C17 from W8; DEC-0039 no C15, C16, C30)' {
     $facts = Get-PcCheckFacts
     $results = @(Invoke-PcCheck -Facts $facts -PinnedWsl ([version]'3.0.3.0'))
-    Assert-Equal 30 $results.Count
+    Assert-Equal 27 $results.Count
     foreach ($result in $results) {
         Assert-True ($result.message_key -match '^check\.c[0-9]{2}\.[a-z_]+$') $result.message_key
         Assert-True (@('pass', 'stop', 'fix', 'advice', 'auto', 'log') -contains $result.class) $result.id

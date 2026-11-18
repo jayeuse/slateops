@@ -19,7 +19,7 @@ param(
     [ValidateSet('state-check', 'check', 'recheck', 'facts', 'time-zone', 'fix-network-private', 'remove-kit',
         'save-progress', 'clear-resume', 'restart', 'prepare-pc', 'prepare-data', 'service', 'job', 'job-result',
         'start-boot', 'windows-steps', 'account-sid', 'r7', 'provider-detect', 'drives', 'drive-check', 'prepare-backup',
-        'printers', 'data-check', 'https-check', 'job-stop', 'report-collect', 'report-zip', 'fix-mdns',
+        'printers', 'data-check', 'name-check', 'https-check', 'job-stop', 'report-collect', 'report-zip', 'fix-mdns',
         'uninstall-info', 'uninstall-stop', 'uninstall-data', 'remove-windows', 'kept-read', 'restore-kept', 'kept-status',
         'kept-return', 'kept-done', 'setup-remove-data', 'remove-features', 'engine-status', 'repair', 'security-code', 'update-prepare', 'update-wsl', 'update-done')]
     [string]$Action,
@@ -42,6 +42,8 @@ param(
     [switch]$UseKept,
     [switch]$KeptMark,
     [switch]$Prepared,
+    # DEC-0039: the label of <label>.local (the S08 short name); the full rule is Test-AddressLabel.
+    [ValidatePattern('^$|^[a-z0-9]+(-[a-z0-9]+)*$')][string]$Label = '',
     [switch]$DataLeft,
     [switch]$Restored
 )
@@ -49,7 +51,7 @@ param(
 # S91-6: modules load only from Windows PowerShell's own folder, never from a folder in the
 # caller's module path.
 $env:PSModulePath = Join-Path $PSHOME 'Modules'
-foreach ($name in @('Common', 'Checks', 'Facts', 'Exec', 'Service', 'Windows', 'Report', 'Uninstall')) { . (Join-Path $PSScriptRoot ('lib\{0}.ps1' -f $name)) }
+foreach ($name in @('Common', 'Checks', 'Facts', 'Exec', 'Service', 'Windows', 'Report', 'Uninstall', 'Mdns')) { . (Join-Path $PSScriptRoot ('lib\{0}.ps1' -f $name)) }
 
 $helperRoot = Split-Path -Parent $PSScriptRoot
 $layout = New-SlateOpsLayout
@@ -379,7 +381,17 @@ try {
         'data-check' { $result = Test-DataFolderChoice -DataRoot $DataRoot -AllowKept:$UseKept }
         'prepare-data' {
             # S07, and every resume with the background preparation not done (TASK-0097 AC-1).
-            $result = Invoke-PrepareData -Layout $layout -DataRoot $DataRoot -ScriptsDir $PSScriptRoot -PayloadDir (Join-Path $helperRoot 'payload') -Version (Read-HelperVersion) -ServiceSid $serviceSid -AllowKept:$UseKept
+            $result = Invoke-PrepareData -Layout $layout -DataRoot $DataRoot -ScriptsDir $PSScriptRoot -PayloadDir (Join-Path $helperRoot 'payload') -Version (Read-HelperVersion) -ServiceSid $serviceSid -AllowKept:$UseKept -Label $Label
+        }
+        'name-check' {
+            # DEC-0039 (P-3 a): S08 Next asks the network whether another device answers for
+            # <label>.local; a check, no work: nothing is written.
+            if (-not (Test-AddressLabel $Label)) { $result = New-StepResult -Code 'label_invalid' -MessageKey 'setup.name.label_invalid'; break }
+            $inUse = $null
+            try { $inUse = Test-MdnsNameInUse -Name $Label } catch { Write-RunLog 'setup.name' 'WARN' ('probe failed: {0}' -f $_.Exception.Message) }
+            if ($inUse -eq $true) { $result = New-StepResult -Code 'in_use' -MessageKey 'setup.name.in_use' }
+            elseif ($inUse -eq $false) { $result = New-StepResult -Code 'free' -MessageKey 'setup.name.free' }
+            else { $result = New-StepResult -Code 'unreadable' -MessageKey 'setup.name.unreadable' }
         }
         'service' {
             $state = Read-InstallState -Layout $layout
@@ -424,8 +436,9 @@ try {
             if (-not $lan) { $result = New-StepResult -Code 'no_network' -MessageKey 'check.c09.not_connected'; break }
             $cidr = ConvertTo-NetworkCidr -Address $lan.address -PrefixLength $lan.prefix_length
             Assert-TreeWritable -Tree $layout.StateTree -Directory $layout.State -ServiceSid $serviceSid
-            # P3-9: the address is the DNS host name in lower case.
-            $hostName = ([string](Get-CimInstance -ClassName Win32_ComputerSystem).DNSHostName).ToLowerInvariant()
+            # DEC-0039: the address is the stored label (install.json), not the computer name.
+            $hostName = Get-InstallAddressLabel -Layout $layout
+            if (-not $hostName) { $result = New-StepResult -Code 'label_missing' -MessageKey 'install.windows.label_missing'; break }
             $steps = @()
             Write-HelperProgress -Job 'win' -Number 1 -Total 4 -Key 'firewall'
             $steps += Set-FirewallRules -Layout $layout -Cidr $cidr
@@ -461,7 +474,7 @@ try {
             $result = Initialize-BackupFolder -Drive $Drive -DataRoot $state.data_root -ServiceSid $serviceSid -Layout $layout
         }
         'printers' { $result = New-StepResult -Code 'listed' -MessageKey 'setup.printers.listed' -Values @{ printers = @(Get-PrinterFact) } }
-        'https-check' { $result = Test-HttpsFromWindows }
+        'https-check' { $result = Test-HttpsFromWindows -Layout $layout }
         'job-stop' {
             Stop-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.ExecTaskName -ErrorAction SilentlyContinue
             $result = New-StepResult -Code 'stopped' -MessageKey 'exec.stopped'

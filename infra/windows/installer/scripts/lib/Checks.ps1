@@ -1,7 +1,9 @@
-# Checks.ps1 - the PC check (wizard spec 5.1 to 5.3, checks C01 to C30; plan 4.2 R1 to R9).
+# Checks.ps1 - the PC check (wizard spec 5.1 to 5.3, checks C01 to C29 without C15 and C16;
+# plan 4.2 R1 to R9). DEC-0039: the address comes from the organization name, so C15 (computer
+# name) and C30 (rename advice) are gone and the C16 name probe runs on S08 (name-check).
 #
 # Two halves:
-# - Test-C01 ... Test-C30 decide one check each from a facts hashtable. They read nothing from
+# - Test-C01 ... Test-C29 decide one check each from a facts hashtable. They read nothing from
 #   Windows, so tests drive them with controlled inputs.
 # - Get-PcCheckFacts reads Windows (read-only; it changes nothing on the PC) and fills the
 #   facts. A value that cannot be read is $null.
@@ -18,8 +20,6 @@ $SlateOpsCheck = @{
     MinFreeBytes         = [long]15 * 1GB
     # C13: 30 seconds (spec C13 planning value).
     MaxClockOffsetSec    = 30
-    # C30: Windows' generated computer names (spec C30; pattern is an Assumption, W14 checks it).
-    FactoryNamePattern   = '^(DESKTOP|LAPTOP)-[A-Z0-9]{7}$'
     # C02: the kit's edition rule (precheck): Pro, Enterprise or Education families.
     EditionPattern       = '^(Professional|Enterprise|Education)'
     # The checks that run again on S06 and on Install in S11 (spec 5.2).
@@ -29,13 +29,13 @@ $SlateOpsCheck = @{
     ReaderCheck          = @{
         windows = 'C01'; architecture = 'C03'; computer_system = 'C04'; processor = 'C04'; native = 'C05'
         drives = 'C07'; restart_pending = 'C08'; lan = 'C09'; internet = 'C12'; listeners = 'C14'
-        mdns_other = 'C16'; mdns = 'C17'; logging_policy = 'C18'; smart_app_control = 'C19'; antivirus = 'C20'
+        mdns = 'C17'; logging_policy = 'C18'; smart_app_control = 'C19'; antivirus = 'C20'
         battery = 'C21'; lid = 'C22'; bitlocker = 'C24'; docker_desktop = 'C25'; vmp = 'C26'; wsl_version = 'C26'
         sleep = 'C27'; hibernate = 'C27'; fast_startup = 'C28'; user_distros = 'C28'; user_wslconfig = 'C28'
         time_zone = 'C28'; leftovers = 'C29'
     }
     # Plan R-checks whose unreadable value is Advice "cannot read" (spec 5.2; C18 is Fix).
-    RequirementIds       = @('C01', 'C02', 'C04', 'C05', 'C07', 'C10', 'C11', 'C12', 'C15', 'C16', 'C17', 'C21')
+    RequirementIds       = @('C01', 'C02', 'C04', 'C05', 'C07', 'C10', 'C11', 'C12', 'C17', 'C21')
     # C17 (plan F1; W8): the built-in inbound mDNS rules. The names are an Assumption from
     # Windows 11's built-in rule set ("MDNS-In-UDP-<profile>-Active"); W14 shows them.
     MdnsRulePattern      = 'MDNS-In-UDP*'
@@ -269,31 +269,6 @@ function Test-DnsLabel {
     return $true
 }
 
-function Test-C15 {
-    # The address is the DNS host name in lower case (P3-9; Windows answers mDNS for it). Advice
-    # when it differs from the NetBIOS name or is longer than 15 characters, because other
-    # Windows names of this PC then do not match the address.
-    param([hashtable]$Facts)
-    $name = Get-FactValue $Facts 'dns_host_name'
-    if (-not $name) { return New-UnreadableResult 'C15' }
-    $netbios = [string](Get-FactValue $Facts 'computer_name')
-    $values = @{ address = ('{0}.local' -f ([string]$name).ToLowerInvariant()); netbios_name = $netbios }
-    if (-not (Test-DnsLabel $name)) { return New-CheckResult 'C15' 'fix' 'invalid_name' $values }
-    if ((([string]$name).Length -gt 15) -or ($netbios -and ([string]$name -ine $netbios))) { return New-CheckResult 'C15' 'advice' 'name_mismatch' $values }
-    return New-CheckResult 'C15' 'pass' 'ok' $values
-}
-
-function Test-C16 {
-    # Plan F1: no other device on this network answers to <name>.local (an mDNS probe).
-    param([hashtable]$Facts)
-    if (-not $Facts.ContainsKey('mdns_other')) { return New-UnreadableResult 'C16' }
-    $other = Get-FactValue $Facts 'mdns_other'
-    if ($null -eq $other) { return New-UnreadableResult 'C16' }
-    $name = Get-FactValue $Facts 'dns_host_name'
-    if ($other -eq $true) { return New-CheckResult 'C16' 'fix' 'name_in_use' @{ address = ('{0}.local' -f $name) } }
-    return New-CheckResult 'C16' 'pass' 'ok'
-}
-
 function Test-C17 {
     # Plan F1: the DNS Client service runs, no policy turns multicast name resolution off, and a
     # built-in mDNS rule allows the Private profile. A rule that a policy sets is not fixable
@@ -326,7 +301,7 @@ function Get-MdnsFact {
 }
 
 function Test-MdnsNameInUse {
-    # C16: one mDNS query for <name>.local (A record, unicast response asked) on every IPv4
+    # DEC-0039 (S08 name-check): one mDNS query for <name>.local (A record, unicast response asked) on every IPv4
     # address of this PC. An answer from an address that is not this PC's means another device
     # uses the name. $null when the probe cannot run.
     param([Parameter(Mandatory = $true)][string]$Name, [int]$WaitMs = 1500)
@@ -490,15 +465,6 @@ function Test-C29 {
     return New-CheckResult 'C29' 'pass' 'ok' $values
 }
 
-function Test-C30 {
-    param([hashtable]$Facts)
-    $name = Get-FactValue $Facts 'dns_host_name'
-    if (-not $name) { return New-UnreadableResult 'C30' }
-    $values = @{ address = ('{0}.local' -f ([string]$name).ToLowerInvariant()) }
-    if (([string]$name).ToUpperInvariant() -cmatch $SlateOpsCheck.FactoryNamePattern) { return New-CheckResult 'C30' 'advice' 'factory_name' $values }
-    return New-CheckResult 'C30' 'pass' 'ok' $values
-}
-
 function Invoke-PcCheck {
     # Runs every check that W7 owns over one facts hashtable. -Only limits it to the given IDs
     # (the recheck of spec 5.2). Returns the results in ID order.
@@ -507,8 +473,8 @@ function Invoke-PcCheck {
         [version]$PinnedWsl = [version]'0.0.0.0',
         [string[]]$Only = @()
     )
-    $ids = @('C01', 'C02', 'C03', 'C04', 'C05', 'C06', 'C07', 'C08', 'C09', 'C10', 'C11', 'C12', 'C13', 'C14', 'C15',
-        'C16', 'C17', 'C18', 'C19', 'C20', 'C21', 'C22', 'C23', 'C24', 'C25', 'C26', 'C27', 'C28', 'C29', 'C30')
+    $ids = @('C01', 'C02', 'C03', 'C04', 'C05', 'C06', 'C07', 'C08', 'C09', 'C10', 'C11', 'C12', 'C13', 'C14',
+        'C17', 'C18', 'C19', 'C20', 'C21', 'C22', 'C23', 'C24', 'C25', 'C26', 'C27', 'C28', 'C29')
     if ($Only.Count -gt 0) { $ids = @($ids | Where-Object { $Only -contains $_ }) }
     $results = @()
     foreach ($id in $ids) {
@@ -871,7 +837,6 @@ function Read-PcCheckFacts {
     $internet = Invoke-Reader 'internet' { Get-InternetFact }
     if ($internet) { $facts.internet = $internet.internet; $facts.clock_offset_seconds = $internet.clock_offset_seconds }
     $facts.listeners = Invoke-Reader 'listeners' { , @(Get-ListenerFact) }
-    if ($facts.dns_host_name) { $facts.mdns_other = Invoke-Reader 'mdns_other' { Test-MdnsNameInUse -Name $facts.dns_host_name } }
     $facts.mdns = Invoke-Reader 'mdns' { Get-MdnsFact }
     $facts.logging_policy = Invoke-Reader 'logging_policy' { Get-PowerShellLoggingPolicy }
     $facts.smart_app_control = Invoke-Reader 'smart_app_control' {

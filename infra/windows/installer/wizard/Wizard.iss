@@ -67,6 +67,8 @@ const
   { DEC-0041 (AC-W1): the S07 folder check reads only; a security program that holds the helper
     shows the antivirus message after this time. }
   DATA_CHECK_MS = 60000;
+  { DEC-0039 (P-3 a): the S08 name check (one mDNS probe of 1.5 s, and the helper's start). }
+  NAME_CHECK_MS = 30000;
   SUBMIT_LIMIT_MS = 120000;
   { W14-D8: the job-result helper answers in this time, and it is asked every 15 s while this
     process does not see the result itself. }
@@ -99,8 +101,6 @@ procedure GetSystemTime(var SystemTime: TSystemTime);
   external 'GetSystemTime@kernel32.dll stdcall';
 function GetTickCount: Cardinal;
   external 'GetTickCount@kernel32.dll stdcall';
-function GetComputerNameEx(NameType: Integer; Buffer: String; var Size: Cardinal): Boolean;
-  external 'GetComputerNameExW@kernel32.dll stdcall';
 function SetTimer(hWnd, nIDEvent, uElapse, lpTimerFunc: Longword): Longword;
   external 'SetTimer@user32.dll stdcall';
 function CreateNamedPipe(Name: String; OpenMode, PipeMode, MaxInstances, OutSize, InSize, Timeout: Longword; var Attributes: TSecurityAttributes): Longword;
@@ -163,6 +163,9 @@ function GetVolumeInformation(Root, Name: String; NameSize: Longword; Serial, Ma
   external 'GetVolumeInformationW@kernel32.dll stdcall';
 
 var
+  { HostName: DEC-0039, the label of the address <label>.local: the S08 short name in a new
+    install, the kept installation's label in a kept reinstall, the stored label (install.json)
+    in maintenance, an update and the key page after Install. Never the computer name. }
   HelperScript, StateCheckCode, RunId, SetupVersion, ServiceSid, HostName: String;
   EntryScreen, EntryNext: String;
   EntryWelcomeBack, StateUnsafe, ForceClose, ModalOpen, Ticking, KeyTicking: Boolean;
@@ -211,6 +214,15 @@ var
   OrgName, OrgEmail, OrgYourName, OrgPassword, OrgConfirm: TNewEdit;
   OrgShow: TNewCheckBox;
   OrgError: TNewStaticText;
+  { DEC-0039 (P-1 a): the short name under "Change" (the address line); it is the label of the
+    address and the organization's short name. OrgSlugTyped: the person changed it, so the
+    organization name no longer fills it. OrgNameChecked: the label that the S08 name check
+    passed (P-3 a). }
+  OrgSlug: TNewEdit;
+  OrgSlugLabel, OrgSlugHelp, OrgStatus: TNewStaticText;
+  OrgAddressLink: TNewLinkLabel;
+  OrgMoreOpen, OrgSlugTyped, OrgSlugSetting: Boolean;
+  OrgNameChecked: String;
   { W14-D3 (6.1 L9): the S08 field blocks, laid out by LayoutOrg. }
   OrgNameLabel, OrgNameHelp, OrgEmailLabel, OrgEmailHelp, OrgYourNameLabel, OrgPasswordLabel, OrgPasswordHelp, OrgConfirmLabel: TNewStaticText;
   OrgErrorAfter: TControl;
@@ -229,6 +241,9 @@ var
     text. }
   MailMeasure: TNewStaticText;
   MailPassed, MailSelfTested, MailOutlook, MailMore, MailSaved: Boolean;
+  { AC-W6: the address the test email went to (smtp-test sent_to), from the pipe; personal data:
+    it is shown on M02 only, never logged and never saved. }
+  MailSentTo: String;
   MailPhase, MailDetected, MailCheckedDomain, MailProviderName: String;
   MailErrorAfter: TControl;
   MailChangedAt: Cardinal;
@@ -277,12 +292,14 @@ var
   CheckStartedAt, FixStartedAt, PrepStartedAt, BgStartedAt, InstallOutAt, DataStartedAt: Cardinal;
   MailShowReport: Boolean;
   { W9: reinstall with kept data (spec S07 kept-data card, plan 9.2). }
-  KeptState, KeptVersion, KeptName, KeptOn, KeptFor: String;
+  KeptState, KeptVersion, KeptName, KeptOn, KeptFor, KeptLabel: String;
   KeptUse, WizardReady: Boolean;
   { W9 maintenance (Maintenance.iss). }
   MaintAction, MaintPhase, MaintStatus, MaintStatusOut, MaintTarget, MaintState, MaintBackup, MaintBackupFolder: String;
   MaintStatusAt: Cardinal;
   MaintNetwork: Boolean;
+  { AC-W6: the engine status says email is not set up (email_configured false). }
+  MaintEmailMissing: Boolean;
   KeyFormOpen: Boolean;
   KeyFormStatus: TNewStaticText;
   KeyFormDone: TNewButton;
@@ -415,19 +432,11 @@ begin
     TwoDigits(Clock.Hour) + TwoDigits(Clock.Minute) + TwoDigits(Clock.Second) + 'Z-' + Suffix;
 end;
 
-{ The DNS host name (ComputerNameDnsHostname = 1) in lower case; the NetBIOS name when the call
-  fails. }
-function DnsHostName(Param: String): String;
-var
-  Buffer: String;
-  Size: Cardinal;
+{ DEC-0039: the host of the address, <label>.local, for the desktop shortcut (the code constant
+  AddressHost in SlateOpsSetup.iss) and the address lines. }
+function AddressHost(Param: String): String;
 begin
-  Size := 256;
-  Buffer := StringOfChar(#0, Integer(Size));
-  if GetComputerNameEx(1, Buffer, Size) then
-    Result := Lowercase(Copy(Buffer, 1, Integer(Size)))
-  else
-    Result := Lowercase(ExpandConstant('{computername}'));
+  Result := HostName + '.local';
 end;
 
 function HelperParams(Action, ARunId, OutFile, Extra: String): String;
@@ -632,6 +641,57 @@ begin
   Result := Result + '"';
 end;
 
+{ DEC-0039: the label of <label>.local: the engine's short name rule (lowercase letters and
+  digits in groups split by single hyphens) and the DNS label rule (1 to 63 characters, not all
+  digits); the same rule as Test-AddressLabel (Mdns.ps1). }
+function ValidLabel(S: String): Boolean;
+var
+  I: Integer;
+  C, Prev: String;
+  Digits: Boolean;
+begin
+  Result := (Length(S) >= 1) and (Length(S) <= 63);
+  if not Result then
+    Exit;
+  Digits := True;
+  Prev := '-';
+  for I := 1 to Length(S) do
+  begin
+    C := Copy(S, I, 1);
+    if C = '-' then
+    begin
+      if Prev = '-' then
+        Result := False;
+    end
+    else if Pos(C, 'abcdefghijklmnopqrstuvwxyz') > 0 then
+      Digits := False
+    else if Pos(C, '0123456789') = 0 then
+      Result := False;
+    Prev := C;
+  end;
+  if Prev = '-' then
+    Result := False;
+  if Digits then
+    Result := False;
+end;
+
+{ DEC-0039: the stored label of an installed system: host_label in install.json, else the hosts
+  entry of an older install (hosts_name in windows-changes.json); '' when neither passes. }
+function StoredAddressLabel: String;
+var
+  Name: String;
+begin
+  Result := JsonValue(ReadText(ExpandConstant('{commonappdata}\SlateOps\state\install.json')), 'host_label');
+  if ValidLabel(Result) then
+    Exit;
+  Name := Lowercase(JsonValue(ReadText(ExpandConstant('{commonappdata}\SlateOps\state\windows-changes.json')), 'hosts_name'));
+  Result := '';
+  if (Length(Name) > 6) and (Copy(Name, Length(Name) - 5, 6) = '.local') then
+    Result := Copy(Name, 1, Length(Name) - 6);
+  if not ValidLabel(Result) then
+    Result := '';
+end;
+
 { Bytes from the system's random source, as lower-case hex. }
 function RandomHex(Bytes: Integer): String;
 var
@@ -670,7 +730,7 @@ end;
 
 function AddressUrl: String;
 begin
-  Result := 'https://' + HostName + '.local';
+  Result := 'https://' + AddressHost('');
 end;
 
 { ------------------------------------------------------------------------------------------- }
@@ -2094,7 +2154,6 @@ begin
   else if Item.Id = 'C07' then V := JsonLiteral(Item.Raw, 'free_gb')
   else if Item.Id = 'C13' then V := JsonLiteral(Item.Raw, 'offset_minutes')
   else if Item.Id = 'C14' then V := JsonFirstItem(Item.Raw, 'programs')
-  else if (Item.Id = 'C15') or (Item.Id = 'C16') or (Item.Id = 'C30') then V := JsonValue(Item.Raw, 'address')
   else if Item.Id = 'C20' then V := JsonFirstItem(Item.Raw, 'products')
   else if Item.Id = 'C24' then V := JsonValue(Item.Raw, 'letter');
   if Item.Id = 'C05' then
@@ -2292,7 +2351,6 @@ begin
       StartFix('fix-network-private', '');
   end
   else if Id = 'C13' then OpenAsUser('ms-settings:dateandtime', '')
-  else if (Id = 'C15') or (Id = 'C16') or (Id = 'C30') then OpenAsUser('ms-settings:about', '')
   else if Id = 'C17' then StartFix('fix-mdns', '')
   else if Id = 'C18' then SaveReport(nil)
   else if Id = 'C22' then begin LidChosen := not LidChosen; RenderPage(-1); end
@@ -2324,7 +2382,6 @@ begin
   else if Item.Id = 'C08' then Caption := CM('c08_btn')
   else if Item.Id = 'C10' then Caption := CM('c10_btn')
   else if Item.Id = 'C13' then Caption := CM('c13_btn')
-  else if (Item.Id = 'C15') or (Item.Id = 'C16') or (Item.Id = 'C30') then Caption := CM('c15_btn')
   else if (Item.Id = 'C17') and (Item.Code = 'rule_off') then Caption := CM('c17_btn')
   else if Item.Id = 'C18' then Caption := CM('btn_save_report')
   else if Item.Id = 'C22' then
@@ -2974,6 +3031,8 @@ begin
   KeptVersion := JsonValue(Text, 'version');
   KeptName := JsonValue(Text, 'business_name');
   KeptOn := JsonValue(Text, 'kept_on');
+  { DEC-0039: a kept reinstall keeps the kept installation's address. }
+  KeptLabel := JsonValue(Text, 'host_label');
 end;
 
 procedure KeptChoiceClick(Sender: TObject);
@@ -3200,6 +3259,9 @@ end;
   (data.unpack, StepFinished 'data-unpack'), then the data folder step makes the folder. }
 procedure StartServerPrep;
 begin
+  { DEC-0039: a kept reinstall keeps the kept installation's address. }
+  if KeptMode and ValidLabel(KeptLabel) then
+    HostName := KeptLabel;
   InstallStep := -1;
   DataPrepared := False;
   DataStarted := True;
@@ -3215,10 +3277,11 @@ procedure StartDataFolder;
 begin
   BgOut := NewOut('prepare-data');
   DataStartedAt := GetTickCount;
+  { DEC-0039: the label is frozen in install.json here (a kept reinstall: the kept one). }
   if KeptMode then
     StartHelper('prepare-data', RunId, BgOut, '-DataRoot ' + AddQuotes(DataRoot) + ' -UseKept')
   else
-    StartHelper('prepare-data', RunId, BgOut, '-DataRoot ' + AddQuotes(DataRoot));
+    StartHelper('prepare-data', RunId, BgOut, '-DataRoot ' + AddQuotes(DataRoot) + ' -Label ' + HostName);
   RenderPage(P_INSTALL);
 end;
 
@@ -3591,6 +3654,65 @@ end;
 
 procedure LayoutOrg; forward;
 
+{ DEC-0039 (P-2 a): the default label from the organization name, cut at 30 characters (at a
+  whole word when it can), with "org-" before a name of digits only. }
+function LabelFromName(Name: String): String;
+begin
+  Result := DefaultSlug(Trim(Name));
+  if Length(Result) > 30 then
+  begin
+    Result := Copy(Result, 1, 30);
+    while (Result <> '') and (Copy(Result, Length(Result), 1) = '-') do
+      Result := Copy(Result, 1, Length(Result) - 1);
+  end;
+  if (Result <> '') and not ValidLabel(Result) then
+    Result := Copy('org-' + Result, 1, 30);
+  if not ValidLabel(Result) then
+    Result := 'slate-operations';
+end;
+
+{ The address line (6.1 L7): the address that phones and other PCs use, ending with "Change",
+  which opens the short name. }
+procedure UpdateOrgAddress;
+var
+  Shown: String;
+begin
+  Shown := OrgSlug.Text;
+  if not ValidLabel(Shown) then
+    Shown := LabelFromName(OrgName.Text);
+  if OrgMoreOpen then
+    OrgAddressLink.Caption := FM1('s08_address_line', Shown)
+  else
+    OrgAddressLink.Caption := FM1('s08_address_line', Shown) + ' <a href="change">' + CM('s08_address_change') + '</a>';
+end;
+
+procedure OrgNameChanged(Sender: TObject);
+begin
+  if not OrgSlugTyped then
+  begin
+    OrgSlugSetting := True;
+    OrgSlug.Text := LabelFromName(OrgName.Text);
+    OrgSlugSetting := False;
+  end;
+  UpdateOrgAddress;
+end;
+
+procedure OrgSlugChanged(Sender: TObject);
+begin
+  if not OrgSlugSetting then
+    OrgSlugTyped := True;
+  UpdateOrgAddress;
+end;
+
+procedure OrgAddressClick(Sender: TObject; const Link: String; LinkType: TSysLinkType);
+begin
+  OrgMoreOpen := True;
+  UpdateOrgAddress;
+  LayoutOrg;
+  if OrgSlug.CanFocus then
+    WizardForm.ActiveControl := OrgSlug;
+end;
+
 procedure OrgShowClick(Sender: TObject);
 begin
   if OrgShow.Checked then
@@ -3623,7 +3745,7 @@ begin
   OrgTop := StageLineAt(Surface, 0, 2);
   OrgNameLabel := AddTextTo(Surface, 0, CM('s08_name'), True);
   OrgNameHelp := AddTextTo(Surface, 0, CM('s08_name_help'), False);
-  OrgName := NewEditAt(Surface, 0); OrgName.MaxLength := 200;
+  OrgName := NewEditAt(Surface, 0); OrgName.MaxLength := 200; OrgName.OnChange := @OrgNameChanged;
   OrgYourNameLabel := AddTextTo(Surface, 0, CM('s08_your_name'), True);
   OrgYourName := NewEditAt(Surface, 0); OrgYourName.MaxLength := 200;
   OrgEmailLabel := AddTextTo(Surface, 0, CM('s08_email'), True);
@@ -3639,8 +3761,24 @@ begin
   OrgShow.Caption := CM('s08_show');
   OrgShow.SetBounds(0, 0, ScaleX(120), ScaleY(18));
   OrgShow.OnClick := @OrgShowClick;
+  { DEC-0039: the address line, and the short name behind its "Change" (P-1 a). }
+  OrgAddressLink := TNewLinkLabel.Create(WizardForm);
+  OrgAddressLink.Parent := Surface;
+  NoFocusBox(OrgAddressLink);
+  OrgAddressLink.Width := Surface.Width;
+  OrgAddressLink.OnLinkClick := @OrgAddressClick;
+  OrgSlugLabel := AddTextTo(Surface, 0, CM('s08_slug'), True);
+  OrgSlug := NewEditAt(Surface, 0); OrgSlug.MaxLength := 63; OrgSlug.OnChange := @OrgSlugChanged;
+  OrgSlugHelp := AddTextTo(Surface, 0, CM('s08_slug_help'), False);
+  { The one line of the name check (7.6 one-line form). }
+  OrgStatus := AddTextTo(Surface, 0, '', False);
   { 6.1 L2: a field error is regular text, under its field. }
   OrgError := AddTextTo(Surface, 0, '', False);
+  OrgSlugSetting := True;
+  OrgSlug.Text := LabelFromName('');
+  OrgSlugSetting := False;
+  OrgSlugTyped := False;
+  UpdateOrgAddress;
   LayoutOrg;
 end;
 
@@ -3663,10 +3801,31 @@ begin
   if not ValidEmail(Trim(OrgEmail.Text)) then begin OrgFail('s08_err_email', OrgEmail); Exit; end;
   if not PasswordLengthOk(OrgPassword.Text) then begin OrgFail('s08_err_password', OrgPassword); Exit; end;
   if OrgConfirm.Text <> OrgPassword.Text then begin OrgFail('s08_err_confirm', OrgConfirm); Exit; end;
+  if not ValidLabel(OrgSlug.Text) then
+  begin
+    OrgMoreOpen := True;
+    UpdateOrgAddress;
+    OrgFail('s08_err_label', OrgSlug);
+    Exit;
+  end;
   OrgError.Caption := '';
   OrgErrorAfter := nil;
   LayoutOrg;
+  { DEC-0039 (P-3 a): Next asks the network whether another device answers for the address; a
+    check, nothing is written (StepFinished 'org-name' selects Next again). }
+  if OrgNameChecked <> OrgSlug.Text then
+  begin
+    if RunStep('name-check', '-Label ' + OrgSlug.Text, 'org-name', FM1('s08_checking_name', OrgSlug.Text + '.local'), 0, 0, NAME_CHECK_MS) then
+    begin
+      OrgStatus.Caption := PageLineText;
+      StepLabel := OrgStatus;
+      LayoutOrg;
+      WizardForm.NextButton.Enabled := False;
+    end;
+    Exit;
+  end;
   HideOrgShow;
+  HostName := OrgSlug.Text;
   Result := True;
 end;
 
@@ -3841,6 +4000,26 @@ begin
   Place(OrgConfirmLabel, Y, True, ScaleY(4));
   Place(OrgConfirm, Y, True, ScaleY(4));
   PlaceOrgError(OrgConfirm, Y);
+  Y := Y + ScaleY(8);
+  { DEC-0039: the address line; with "Change" open, the short name block under it. }
+  OrgAddressLink.Width := OrgName.Width;
+  OrgAddressLink.AdjustHeight;
+  Place(OrgAddressLink, Y, True, ScaleY(4));
+  Place(OrgSlugLabel, Y, OrgMoreOpen, ScaleY(4));
+  Place(OrgSlug, Y, OrgMoreOpen, ScaleY(4));
+  if OrgMoreOpen then
+  begin
+    PlaceOrgError(OrgSlug, Y);
+    Place(OrgSlugHelp, Y, True, ScaleY(4));
+  end
+  else
+    OrgSlugHelp.Visible := False;
+  OrgStatus.Visible := OrgStatus.Caption <> '';
+  if OrgStatus.Visible then
+  begin
+    OrgStatus.Top := Y;
+    WizardForm.AdjustLabelHeight(OrgStatus);
+  end;
 end;
 
 { The status line and Save report under the form; RenderMailStatus calls it again when the
@@ -4126,7 +4305,8 @@ begin
     StepLabel := MailStatus;
   end
   { DEC-0041 (AC-W6): after set-email, the test email's address and where to look. }
-  else if MailSaved then MailStatus.Caption := FM1('m02_test_sent', Trim(OrgEmail.Text))
+  else if MailSaved and (MailSentTo <> '') then MailStatus.Caption := FM1('m02_test_sent', MailSentTo)
+  else if MailSaved then MailStatus.Caption := FM1('m02_test_sent', Trim(MailFrom.Text))
   else MailStatus.Caption := '';
   if MailShowReport and ((ReportLine <> '') or (ReportPhase <> '')) then
   begin
@@ -4173,7 +4353,7 @@ begin
   MailPhase := 'sending';
   StartJob('smtp-test', '{"run_id":"' + RunId + '","mode":"test","host":' + JsonText(MailHost) + ',"port":' + IntToStr(MailPortValue) +
     ',"user":' + JsonText(MailUserValue) + ',"password":' + JsonText(MailPassword.Text) + ',"sender_email":' + JsonText(Trim(MailFrom.Text)) +
-    ',"sender_name":' + JsonText(MailSenderValue) + ',"admin_email":' + JsonText(Trim(OrgEmail.Text)) + '}', 'smtp', True, False, 3);
+    ',"sender_name":' + JsonText(MailSenderValue) + ',"admin_email":' + JsonText(Trim(OrgEmail.Text)) + '}', 'smtp', True, True, 3);
   RenderMailStatus;
 end;
 
@@ -4233,6 +4413,12 @@ begin
   end;
   MailPhase := '';
   HideShow;
+  { AC-W6: the engine's answer comes through the pipe (sent_to: the stored administrator's
+    address); it stays in this process. }
+  MailSentTo := JsonValue(JobText, 'sent_to');
+  if JsonValue(JobText, 'code') <> '' then
+    JobCode := JsonValue(JobText, 'code');
+  JobText := '';
   if JobCode = 'smtp_passed' then
   begin
     { DEC-0041 (AC-W6): set-email follows at once (Maintenance.iss, StartSetEmail). }
@@ -4455,6 +4641,9 @@ begin
   end;
   if KeptMode then
   begin
+    { DEC-0039: the kept installation keeps its address. }
+    if ValidLabel(KeptLabel) then
+      HostName := KeptLabel;
     { Spec 4.3: the summary of the kept installation; the kept data holds the answers. }
     if KeptName <> '' then
       AddRow(FM1('s11_org', KeptName), -1);
@@ -5432,7 +5621,7 @@ begin
 #ifdef SelfTest
   { The self-test reads no PC state and starts no helper. }
   SetupVersion := '{#AppVersion}';
-  HostName := DnsHostName('');
+  HostName := 'riverside-learning';
   RunId := NewRunId('install');
   EntryScreen := 'S01';
   Result := True;
@@ -5446,7 +5635,7 @@ begin
     Log('version.json is not in this setup file.');
   end;
   HelperScript := ExpandConstant('{tmp}\scripts\setup-helper.ps1');
-  HostName := DnsHostName('');
+  HostName := '';
   VersionText := ReadText(ExpandConstant('{tmp}\scripts\version.json'));
   SetupVersion := JsonValue(VersionText, 'version');
   WslVersion := JsonValue(VersionText, 'wsl_version');
@@ -5488,6 +5677,9 @@ begin
     DataRoot := JsonValue(Text, 'data_root');
     DataPrepared := DataRoot <> '';
   end;
+  { DEC-0039: an installed system keeps its stored address (M01, M05, the key page). }
+  if (EntryNext = 'S14') or (EntryScreen = 'M01') or (EntryScreen = 'M05') then
+    HostName := StoredAddressLabel;
   { DEC-0041: the only continuation, after the restart that S05 asked for. }
   if EntryNext = 'S07' then
     PrepState := 'done';

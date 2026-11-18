@@ -314,6 +314,9 @@ begin
   Verdict := AddVerdict(Sentence);
   if Line <> '' then
     AddText(Line, False);
+  { AC-W6 (DEC-0041): email is set up after install, in M02. }
+  if (MaintStatus = 'ok') and MaintEmailMissing then
+    AddText(CM('m01_email_not_set'), False);
   { W14-D5 (7.6 "M01 status"): full form, one stage; the sentence above names the action. }
   if MaintStatus = 'checking' then
     AddProgress('maint', '', 1, '', MaintStatusAt, '');
@@ -419,6 +422,8 @@ begin
       MaintBackup := JsonValue(Text, 'backup');
       MaintBackupFolder := JsonValue(Text, 'backup_folder');
       MaintNetwork := JsonLiteral(Text, 'network_changed') = 'true';
+      { AC-W6: only the flag; the administrator's address never reaches Windows here. }
+      MaintEmailMissing := JsonLiteral(Text, 'email_configured') = 'false';
       RenderPage(P_MAINT);
     end;
   end;
@@ -921,8 +926,10 @@ begin
   Log('Removal ended: ' + EndKey + '.');
   if RemoveForm = nil then
     Exit;
+  { Inno's Pascal Script gives a form no ModalResult (only buttons have one): Close ends
+    ShowModal, and RunRemoval reads CloseEnd, not the modal result. }
   if (EndKey = 'done') and (RemoveFeaturesCode <> 'removed') then
-    RemoveForm.ModalResult := mrOk
+    RemoveForm.Close
   else
     RenderRemove;
 end;
@@ -1090,6 +1097,38 @@ begin
   end
   else if ForTag = 'data-unpack' then
     StartDataFolder
+  else if ForTag = 'org-name' then
+  begin
+    { DEC-0039 (P-3 a): another device answers for the address: the person chooses another
+      short name. A probe that cannot run does not stop setup (it is logged). }
+    OrgStatus.Caption := '';
+    StepLabel := nil;
+    WizardForm.NextButton.Enabled := True;
+    if Code = 'in_use' then
+    begin
+      OrgMoreOpen := True;
+      UpdateOrgAddress;
+      OrgError.Caption := FM1('s08_err_label_in_use', OrgSlug.Text + '.local');
+      OrgErrorAfter := OrgSlug;
+      LayoutOrg;
+      if OrgSlug.CanFocus then
+        WizardForm.ActiveControl := OrgSlug;
+    end
+    else if Code = 'label_invalid' then
+    begin
+      OrgMoreOpen := True;
+      UpdateOrgAddress;
+      OrgFail('s08_err_label', OrgSlug);
+    end
+    else
+    begin
+      if Code <> 'free' then
+        Log('S08 name check: ' + Code + '; setup goes on.');
+      OrgNameChecked := OrgSlug.Text;
+      LayoutOrg;
+      WizardForm.NextButton.OnClick(WizardForm.NextButton);
+    end;
+  end
   else if ForTag = 'data-check' then
   begin
     { DEC-0041 (AC-W1): the S07 folder check; Next goes on only with "ready". }
@@ -1259,9 +1298,10 @@ end;
 
 function CheckStage(Number: Integer): Integer;
 begin
+  { DEC-0039: 27 checks (no C15, C16, C30): C17 is check 15. }
   if Number <= 6 then Result := 1
   else if Number <= 8 then Result := 2
-  else if Number <= 17 then Result := 3
+  else if Number <= 15 then Result := 3
   else Result := 4;
 end;
 
@@ -1509,12 +1549,9 @@ begin
     Result := OneLine(1, 4, CM('s09_channel'), MailAt)
   else if MailPhase = 'sending' then
   begin
-    Action := '';
-    if JobPurpose = 'smtp' then
-      Action := StepText(JobStepJob, JobStepKey, Trim(OrgEmail.Text), '', '');
-    if Action = '' then
-      Action := StepText('smtp-test', 'send', Trim(OrgEmail.Text), '', '');
-    Result := OneLine(3, 4, Action, MailAt);
+    { AC-W6: the engine sends to the administrator's stored address, which Windows learns only
+      from the answer (sent_to). }
+    Result := OneLine(3, 4, CM('m02_sending'), MailAt);
   end
   else if MaintPhase = 'setemail' then
   begin

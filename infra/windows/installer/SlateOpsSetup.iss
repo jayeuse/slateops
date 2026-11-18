@@ -103,7 +103,7 @@ Source: "{#SettingsExe}"; DestDir: "{commonappdata}\SlateOps\settings"; DestName
 [Icons]
 ; An Internet Shortcut (.url) with the address (spec 12 item 13). Uninstall removes it. The
 ; address is the DNS host name in lower case (P3-9), the name that Windows answers mDNS for.
-Name: "{autodesktop}\Slate Operations"; Filename: "https://{code:DnsHostName}.local"
+Name: "{autodesktop}\Slate Operations"; Filename: "https://{code:AddressHost}"
 #ifdef SettingsExe
 ; W9 (plan 9.3, DEC-0033): "Slate Operations settings" and the Save report entry. A file name
 ; cannot hold ":", so the entry reads "Slate Operations - Save report".

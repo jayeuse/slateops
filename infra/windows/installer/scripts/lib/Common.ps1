@@ -21,6 +21,8 @@ $SlateOps = @{
     EnginePath       = '/usr/local/bin/slateops-engine'
     KeepAlivePath    = '/bin/sleep'
     FirewallRuleName = 'SlateOps-TCP-443-80'
+    # DEC-0039: the inbound mDNS rule of our own responder (start.ps1).
+    MdnsRuleName     = 'SlateOps-mDNS-In-UDP'
     HyperVRuleName   = 'SlateOps-HyperV-TCP-443-80'
     FirewallGroup    = 'Slate Operations'
     Ports            = @(443, 80)
@@ -259,7 +261,13 @@ function Write-RunLog {
     if (-not $runId) { $runId = '-' }
     $line = Format-LogLine -RunId $runId -Step $Step -Level $Level -Message $Message
     if ($script:Log.Console) { try { [Console]::Error.WriteLine($line) } catch { $null = $_ } }
-    if ($script:Log.File) { [System.IO.File]::AppendAllText($script:Log.File, $line + "`r`n", (New-Object System.Text.UTF8Encoding($false))) }
+    if (-not $script:Log.File) { return }
+    # DEC-0039: the boot task's mDNS thread writes the same run log; a write that meets the other
+    # thread's open file tries again, and a log line never stops the caller.
+    for ($try = 1; $try -le 5; $try++) {
+        try { [System.IO.File]::AppendAllText($script:Log.File, $line + "`r`n", (New-Object System.Text.UTF8Encoding($false))); return }
+        catch [System.IO.IOException] { Start-Sleep -Milliseconds 20 }
+    }
 }
 
 function Write-CappedFile {

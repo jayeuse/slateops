@@ -837,7 +837,8 @@ class W14DefectTest(unittest.TestCase):
             '"bitlocker_caution":false,"maker":"Gigabyte Technology Co., Ltd."}}',
             owner,
         )
-        self.assertEqual(owner.count('{"id":"C'), 30)
+        # DEC-0039: 27 checks (C15, C16 and C30 are gone).
+        self.assertEqual(owner.count('{"id":"C'), 27)
         iss = ISS.read_text(encoding="ascii")
         self.assertIn('#ifdef SelfTest\n#include "wizard\\SelfTest.iss"\n#endif', iss)
 
@@ -1790,10 +1791,41 @@ class Dec0041Test(unittest.TestCase):
             r"\s+StartSetEmail;",
         )
         self.assertIn(
-            "else if MailSaved then MailStatus.Caption := "
-            "FM1('m02_test_sent', Trim(OrgEmail.Text))",
+            "else if MailSaved and (MailSentTo <> '') then MailStatus.Caption := "
+            "FM1('m02_test_sent', MailSentTo)",
             self.part("procedure RenderMailStatus;"),
         )
+        # sent_to comes through the pipe (smtp-test is a pipe-output job), never from a file.
+        self.assertIn("MailSentTo := JsonValue(JobText, 'sent_to');", mail)
+        self.assertRegex(self.raw, r"StartJob\('smtp-test', [^;]*'smtp', True, True, 3\);")
+        exec_lib = (SCRIPTS / "lib/Exec.ps1").read_text(encoding="ascii")
+        self.assertIn(
+            "PipeOutputJobs = @('install', 'new-recovery-key', 'pipe-test', 'smtp-test')", exec_lib
+        )
+        # M01: "Email: not set up" from the status flag only; the admin address stays out.
+        self.assertEqual(copy.get("m01_email_not_set"), "Email: not set up")
+        render = self.part("procedure RenderMaint;\nvar")
+        self.assertRegex(
+            render,
+            r"if \(MaintStatus = 'ok'\) and MaintEmailMissing then\s+"
+            r"AddText\(CM\('m01_email_not_set'\), False\);",
+        )
+        self.assertIn(
+            "MaintEmailMissing := JsonLiteral(Text, 'email_configured') = 'false';", self.raw
+        )
+        uninstall = (SCRIPTS / "lib/Uninstall.ps1").read_text(encoding="ascii")
+        status = uninstall.split("function Get-EngineStatus {", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("$values.email_configured = $email", status)
+        self.assertNotIn("'admin_email'", status)
+        self.assertIn("finally { Remove-EngineOutput -Layout $Layout -Result $result }", status)
+        start = (SCRIPTS / "start.ps1").read_text(encoding="ascii")
+        self.assertIn(
+            "if (Test-Path -LiteralPath $stdout) { Remove-PathNoFollow -Path $stdout }", start
+        )
+        for line in re.findall(r"(?m)^.*\bLog\(.*$", self.raw):
+            with self.subTest(line=line.strip()):
+                self.assertNotIn("MailSentTo", line)
+        self.assertIn("SelfRecord('AC-W6 M02 says where the test email went'", self.selftest)
         self.assertIn("HideMailOtherFields;", self.part("procedure LayoutMail;\nvar"))
 
     def test_ac_w7_no_wait_without_a_limit_and_no_focus_box_on_links(self) -> None:
@@ -1893,6 +1925,13 @@ class PascalBlockBalanceTest(unittest.TestCase):
             with self.subTest(path=path.name):
                 self.assertEqual(block_balance_problems(path.read_text(encoding="ascii")), [])
 
+    def test_no_form_sets_a_modal_result(self) -> None:
+        # Windows CI on ddd21fb5: "Unknown identifier 'MODALRESULT'" at RemoveForm.ModalResult.
+        # Inno's Pascal Script gives TSetupForm no ModalResult; only buttons have one.
+        code = code_only(pascal_code() + SELFTEST.read_text(encoding="ascii"))
+        self.assertEqual(re.findall(r"\b\w*Form\.ModalResult\b", code), [])
+        self.assertIn("RemoveForm.Close", routine(pascal_code(), "procedure EndCloseFlow("))
+
     def test_the_balance_check_finds_a_stray_end_and_a_missing_end(self) -> None:
         good = "[Code]\nprocedure A;\nbegin\n  case X of\n    1: begin end;\n  end;\nend;\n"
         self.assertEqual(block_balance_problems(good), [])
@@ -1900,3 +1939,151 @@ class PascalBlockBalanceTest(unittest.TestCase):
         self.assertEqual(block_balance_problems(stray), ["line 8: end without an opener"])
         missing = "[Code]\nprocedure A;\nbegin\n  try\n  finally\nend;\nprocedure B;\n"
         self.assertEqual(block_balance_problems(missing), ["line 7: routine starts at depth 1"])
+
+
+class Dec0039Test(unittest.TestCase):
+    """DEC-0039 (TASK-0097): the address for PCs and phones is <label>.local, the label from the
+    S08 short name; our own mDNS responder in the boot task's process answers for it (option B;
+    the CI mdns-spike showed Windows' responder never answers for a registered name); one
+    inbound UDP 5353 rule; C15 and C30 go. Behavior: Address.Tests.ps1 and the self-test."""
+
+    def setUp(self) -> None:
+        self.raw = pascal_code()
+        self.selftest = SELFTEST.read_text(encoding="ascii")
+        self.helper = (SCRIPTS / "setup-helper.ps1").read_text(encoding="ascii")
+        self.windows = (SCRIPTS / "lib/Windows.ps1").read_text(encoding="ascii")
+        mdns = SCRIPTS / "lib/Mdns.ps1"
+        self.mdns = mdns.read_text(encoding="ascii") if mdns.is_file() else ""
+        tests = PS_TESTS / "Address.Tests.ps1"
+        self.tests = tests.read_text(encoding="ascii") if tests.is_file() else ""
+
+    def part(self, head: str) -> str:
+        self.assertIn(head, self.raw)
+        return routine(self.raw, head)
+
+    def test_ac_a1_s08_short_name_makes_the_address_and_next_checks_the_network(self) -> None:
+        build = self.part("procedure BuildOrgPage;")
+        self.assertIn("OrgSlug := NewEditAt(Surface, 0); OrgSlug.MaxLength := 63;", build)
+        self.assertIn("NoFocusBox(OrgAddressLink);", build)
+        label = self.part("function LabelFromName(Name: String): String;")
+        self.assertIn("if Length(Result) > 30 then", label)
+        check = self.part("function CheckOrg: Boolean;")
+        self.assertIn("if not ValidLabel(OrgSlug.Text) then", check)
+        self.assertLess(
+            check.index("RunStep('name-check', '-Label ' + OrgSlug.Text, 'org-name'"),
+            check.index("HostName := OrgSlug.Text;"),
+        )
+        finished = self.part("procedure StepFinished(ForTag, Code: String);\nvar")
+        name = finished.split("else if ForTag = 'org-name' then", 1)[1].split("else if ForTag", 1)[
+            0
+        ]
+        self.assertIn("if Code = 'in_use' then", name)
+        self.assertIn("FM1('s08_err_label_in_use', OrgSlug.Text + '.local')", name)
+        # The helper's name check reads the network only (P-3 a: a check, no work).
+        action = self.helper.split("'name-check' {", 1)[1].split("\n        }\n", 1)[0]
+        self.assertIn("Test-MdnsNameInUse -Name $Label", action)
+        self.assertNotRegex(action, r"Write-JsonFile|Save-|Set-|New-Item")
+        self.assertIn("[ValidatePattern('^$|^[a-z0-9]+(-[a-z0-9]+)*$')][string]$Label", self.helper)
+        copy = read_copy()
+        self.assertEqual(
+            copy.get("s08_address_line"), "Address for PCs and phones: https://%1.local"
+        )
+        self.assertIn(
+            "SelfRecord('AC-A1 S08 address line from the organization name'", self.selftest
+        )
+        self.assertIn("Test-Case 'AC-A1 the address label follows", self.tests)
+
+    def test_ac_a2_every_use_of_the_address_reads_the_stored_label(self) -> None:
+        for gone in ("DnsHostName", "GetComputerNameEx"):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, self.raw)
+        self.assertIn('Filename: "https://{code:AddressHost}"', ISS.read_text(encoding="ascii"))
+        start = self.part("function InitializeSetup(): Boolean;")
+        self.assertRegex(
+            start,
+            r"if \(EntryNext = 'S14'\) or \(EntryScreen = 'M01'\) or \(EntryScreen = 'M05'\) then"
+            r"\s+HostName := StoredAddressLabel;",
+        )
+        self.assertIn("' -Label ' + HostName", self.part("procedure StartDataFolder;"))
+        self.assertIn("',\"public_host\":' + JsonText(HostName + '.local')", self.raw)
+        self.assertIn("$state['host_label'] = $Label", self.windows)
+        lib = "\n".join(
+            (SCRIPTS / name).read_text(encoding="ascii")
+            for name in ("setup-helper.ps1", "start.ps1", "lib/Windows.ps1", "lib/Uninstall.ps1")
+        )
+        self.assertNotIn("DNSHostName", lib)
+        self.assertEqual(lib.count("Get-InstallAddressLabel -Layout"), 4)
+        self.assertIn("Test-Case 'AC-A2 the stored label comes from install.json", self.tests)
+
+    def test_ac_a3_our_responder_runs_in_the_boot_task_process(self) -> None:
+        start = (SCRIPTS / "start.ps1").read_text(encoding="ascii")
+        self.assertIn("'Common', 'Checks', 'Exec', 'Mdns'", start)
+        self.assertIn("Start-MdnsResponderThread -Label $label", start)
+        for value in (
+            "RecheckMs      = 60000",
+            "ProbeCount     = 3",
+            "AnnounceCount  = 2",
+            "Group          = '224.0.0.251'",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, self.mdns)
+        thread = self.mdns.split("function Start-MdnsResponderThread {", 1)[1]
+        self.assertIn("[PowerShell]::Create()", thread)
+        self.assertIn("Write-RunLog 'boot.mdns'", thread)
+        loop = self.mdns.split("function Invoke-MdnsResponder {", 1)[1].split("\nfunction ", 1)[0]
+        for log in re.findall(r"& \$Log [^\n]*", loop):
+            with self.subTest(log=log):
+                self.assertNotIn("remote", log)
+        for case in (
+            "AC-A3 the responder probes three times, announces twice, then answers a query",
+            "AC-A3 the responder re-checks the adapter every minute",
+            "AC-A3 a conflict during probing",
+        ):
+            with self.subTest(case=case):
+                self.assertIn(f"Test-Case '{case}", self.tests)
+
+    def test_ac_a4_one_mdns_rule_recorded_so_every_removal_deletes_it(self) -> None:
+        definition = self.windows.split("function Get-FirewallRuleDefinition {", 1)[1].split(
+            "\nfunction ", 1
+        )[0]
+        self.assertIn("Mdns = @{", definition)
+        rule = definition.split("Mdns = @{", 1)[1].split("}", 1)[0]
+        for field in (
+            "Direction = 'Inbound'",
+            "Action = 'Allow'",
+            "Protocol = 'UDP'",
+            "LocalPort = '5353'",
+            "Profile = 'Private'",
+            "RemoteAddress = 'LocalSubnet'",
+            "Program = (Join-Path $SlateOpsPaths.System32 "
+            "'WindowsPowerShell\\v1.0\\powershell.exe')",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, rule)
+        self.assertIn(
+            "$record['firewall_rules'] = @(Get-FirewallRecordNames -Definition $definition)",
+            self.windows,
+        )
+        uninstall = (SCRIPTS / "lib/Uninstall.ps1").read_text(encoding="ascii")
+        self.assertIn(
+            "foreach ($name in @(Get-DictValue $record 'firewall_rules')) { if ($name) { "
+            "Get-NetFirewallRule -Name $name",
+            uninstall,
+        )
+        self.assertIn("Test-Case 'AC-A4 the mDNS rule allows inbound UDP 5353", self.tests)
+
+    def test_ac_a5_c15_and_c30_are_gone_and_c16_moved_to_s08(self) -> None:
+        checks = (SCRIPTS / "lib/Checks.ps1").read_text(encoding="ascii")
+        for gone in (
+            "function Test-C15",
+            "function Test-C16",
+            "function Test-C30",
+            "FactoryNamePattern",
+        ):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, checks)
+        self.assertFalse([key for key in read_copy() if re.match(r"c(15|16|30)_", key)])
+        self.assertNotRegex(code_only(self.raw), r"'C(15|16|30)'")
+        stage = self.part("function CheckStage(Number: Integer): Integer;")
+        self.assertIn("else if Number <= 15 then Result := 3", stage)
+        self.assertIn("Test-Case 'AC-A5 the PC check has no C15 and no C30", self.tests)

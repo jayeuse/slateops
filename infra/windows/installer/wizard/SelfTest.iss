@@ -41,7 +41,8 @@ begin
     ExtractTemporaryFile(Fixture);
     Text := ReadText(ExpandConstant('{tmp}\' + Fixture));
     ParseCheck(Text);
-    SelfRecord(Name + ' read', (CheckVerdict = Verdict) and (GetArrayLength(Items) = 30) and (CountClass('fix') = Fixes),
+    { DEC-0039: 27 checks (no C15, C16, C30). }
+    SelfRecord(Name + ' read', (CheckVerdict = Verdict) and (GetArrayLength(Items) = 27) and (CountClass('fix') = Fixes),
       'verdict ' + CheckVerdict + ', ' + IntToStr(GetArrayLength(Items)) + ' rows, ' + IntToStr(CountClass('fix')) + ' fix');
   except
     SelfRecord(Name + ' read', False, GetExceptionMessage);
@@ -290,6 +291,33 @@ begin
     OrgError.Caption := '';
     OrgErrorAfter := nil;
     LayoutOrg;
+    { DEC-0039 (AC-A1): the address line follows the organization name until the short name is
+      typed; the default label is cut at 30 characters; "Change" opens the short name, and the
+      tallest S08 state (an error under the short name) ends inside the page. }
+    OrgSlugTyped := False;
+    OrgName.Text := 'Riverside Learning Center';
+    Ok := (OrgSlug.Text = 'riverside-learning-center') and (Pos('https://riverside-learning-center.local', OrgAddressLink.Caption) > 0)
+      and OrgAddressLink.Visible and (OrgAddressLink.Top > OrgConfirm.Top) and not OrgSlug.Visible;
+    SelfRecord('AC-A1 S08 address line from the organization name', Ok, OrgAddressLink.Caption);
+    Ok := (LabelFromName('Riverside Learning Center for the Arts and Sciences') = 'riverside-learning-center-for')
+      and (LabelFromName('2024') = 'org-2024') and (LabelFromName('') = 'organization') and ValidLabel('a1')
+      and not ValidLabel('river--side') and not ValidLabel('-river') and not ValidLabel('12345') and not ValidLabel(StringOfChar('a', 64));
+    SelfRecord('AC-A1 label rules (cut at 30, no all digits, DNS label)', Ok, LabelFromName('Riverside Learning Center for the Arts and Sciences'));
+    OrgAddressClick(nil, '', sltID);
+    OrgError.Caption := FM1('s08_err_label_in_use', 'riverside-learning-center.local');
+    OrgErrorAfter := OrgSlug;
+    LayoutOrg;
+    Ok := OrgSlug.Visible and OrgSlugLabel.Visible and (OrgSlug.Top > OrgAddressLink.Top) and (Pos('<a', OrgAddressLink.Caption) = 0)
+      and OrgError.Visible and (OrgError.Top > OrgSlug.Top) and (OrgSlugHelp.Top + OrgSlugHelp.Height <= StatusBandTop - ScaleY(12));
+    SelfRecord('AC-A1 S08 short name open with its error fits the page', Ok,
+      'ends at ' + IntToStr(OrgSlugHelp.Top + OrgSlugHelp.Height) + ', limit ' + IntToStr(StatusBandTop - ScaleY(12)));
+    SelfInfo('S08 short name open height', 'content ends at ' + IntToStr(OrgSlugHelp.Top + OrgSlugHelp.Height) + ', limit '
+      + IntToStr(StatusBandTop - ScaleY(12)) + ', page ' + IntToStr(Pages[P_ORG].SurfaceHeight));
+    OrgError.Caption := '';
+    OrgErrorAfter := nil;
+    OrgMoreOpen := False;
+    UpdateOrgAddress;
+    LayoutOrg;
     { M02 as the owner fills it: Gmail, More options open, an error under the password. }
     MailGmail.Checked := True;
     MailMore := True;
@@ -347,6 +375,14 @@ begin
     MailOutlook := False;
     MailGmail.Checked := True;
     LayoutMail;
+    { AC-W6: after set-email, the address that the engine sent to (sent_to). }
+    MailSaved := True;
+    MailSentTo := 'admin@example.com';
+    RenderMailStatus;
+    SelfRecord('AC-W6 M02 says where the test email went', MailStatus.Caption = FM1('m02_test_sent', 'admin@example.com'), MailStatus.Caption);
+    MailSaved := False;
+    MailSentTo := '';
+    RenderMailStatus;
   except
     SelfRecord('AC-W1 S08 and AC-W6 M02 forms', False, GetExceptionMessage);
   end;
@@ -1027,6 +1063,12 @@ begin
   SelfDraw('M01 backup drive missing', P_MAINT);
   MaintNetwork := True;
   SelfDraw('M01 network changed', P_MAINT);
+  { AC-W6: the engine says email is not set up. }
+  MaintNetwork := False;
+  MaintEmailMissing := True;
+  SelfDraw('AC-W6 M01 email not set up', P_MAINT);
+  MaintEmailMissing := False;
+  MaintNetwork := True;
   { TASK-0097 AC-5 (Designer B2): Repair running in the tallest M01 state (the backup drive
     sentence): its full form in place of the actions, inside the page (SelfFits, FAIL level). }
   MaintNetwork := False;

@@ -113,12 +113,6 @@ c13_wrong=This PC's clock is wrong by %1 minutes. Turn on Set time automatically
 c13_btn=Open date and time settings
 c14_name=Web connection
 c14_in_use=Another program on this PC uses the web connection that Slate Operations needs: %1. Stop or uninstall it, then select Check again.
-c15_name=Address
-c15_invalid_name=This PC's name cannot be used as an address. Rename this PC with letters, numbers and hyphens only.
-c15_name_mismatch=Some Windows screens show this PC under a different name than its address, %1. For one name everywhere, rename this PC with 15 or fewer letters, numbers and hyphens. Do it before setup, restart this PC, then run setup again.
-c15_btn=Open About settings
-c16_name=Address
-c16_name_in_use=Another device on this network already uses the address %1. Rename this PC, then select Check again.
 c17_name=Phones can find this PC
 c17_rule_off=Phones and other PCs cannot find this PC by its address. A Windows setting blocks it.
 c17_policy=Phones and other PCs cannot find this PC by its address. A Windows setting blocks it. Ask the person who manages this PC.
@@ -150,8 +144,6 @@ c29_unknown_parts=This PC has parts of Slate Operations that setup cannot identi
 c29_btn=Remove them
 c29_form_title=Remove the parts of the earlier test?
 c29_form_text=Setup removes the earlier test's server part and its data, its hidden account, its start tasks and its firewall rules. The test's log files stay. Your other programs and files do not change. If the normal removal does not work, setup stops Windows Subsystem for Linux (WSL) for a moment, for every user of this PC.
-c30_name=Address
-c30_factory_name=The address of Slate Operations will be %1, from this PC's name. It cannot change after setup without every phone and PC trusting Slate Operations again. If you want a short address, rename this PC in Windows Settings before setup, restart it, then run setup again.
 cannot_read=Setup cannot check this on this PC. You can continue. If setup stops later, select Save report.
 
 ; ---- S04 License agreement
@@ -215,6 +207,13 @@ s08_err_email=Enter an email address, for example maria@example.com.
 s08_err_your_name=Enter your name.
 s08_err_password=Use 12 to 128 characters.
 s08_err_confirm=The two passwords are not the same. Type them again.
+s08_address_line=Address for PCs and phones: https://%1.local
+s08_address_change=Change
+s08_slug=Short name
+s08_slug_help=It makes the address. Lowercase letters, numbers and single hyphens. It stays the same after setup.
+s08_err_label=Use lowercase letters, numbers and single hyphens, 1 to 63 characters, for example riverside-learning.
+s08_err_label_in_use=Another device on this network already uses %1. Choose another short name.
+s08_checking_name=Checking that no other device uses %1
 
 ; ---- S09 Email for Slate Operations
 s09_title=Email for Slate Operations
@@ -418,6 +417,7 @@ m01_needs_support=Needs support. Select Save report and send the file to Slate O
 ; Copy gaps (W9): the engine reports no "not ready since" time and no running line.
 m01_not_ready=Not ready. Select Repair. If that does not help, select Save report.
 m01_runs_line=Slate Operations is running.
+m01_email_not_set=Email: not set up
 m01_checking=Checking Slate Operations… (about 1 minute)
 m01_open=Open Slate Operations
 m01_open_hint=In your browser on this PC.
@@ -439,6 +439,7 @@ m01_not_installed=Slate Operations is not installed on this PC. To install it, o
 m02_title=Change email account
 m02_done=Slate Operations sends email from %1 now. Sign-ins stop for about a minute while it restarts.
 m02_test_sent=Test email sent to %1. Check its inbox and Spam folder.
+m02_sending=Sending a test email to the administrator
 m02_failed=Slate Operations could not change the email account. Select Save report and send the file to Slate Operations support.
 m03_checking=Checking drive %1…
 m03_first=Your new backup drive has its own lock. The old recovery key does not open it.

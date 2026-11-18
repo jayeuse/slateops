@@ -27,7 +27,9 @@ $SlateOpsExec = @{
     # plan 6.1). Output through the pipe: exactly the two jobs whose result holds the recovery
     # key (install, new-recovery-key; parent decision, TASK-0093 field recovery_key).
     PipeInputJobs  = @('smtp-test', 'set-email', 'install', 'pipe-test')
-    PipeOutputJobs = @('install', 'new-recovery-key', 'pipe-test')
+    # AC-W6 (DEC-0041): smtp-test answers with sent_to, the administrator's address (personal
+    # data), so its output stays in memory too.
+    PipeOutputJobs = @('install', 'new-recovery-key', 'pipe-test', 'smtp-test')
     PipeOutputCap = 1MB         # the install result with the CA certificate is about 4 KB
     PipeTimeoutMs = 60000
     InputLimit  = 64KB          # engine core.py INPUT_LIMIT
@@ -1049,6 +1051,16 @@ function Get-ExecResult {
     # S91-3: the request is spent once its result is read; a later start of the task finds none.
     foreach ($path in @($Layout.RequestFile, $Layout.InputFile)) { if (Test-Path -LiteralPath $path) { Remove-PathNoFollow -Path $path } }
     return $value
+}
+
+function Remove-EngineOutput {
+    # AC-W6: the engine's status output names the administrator's address (admin_email); once
+    # the safe values are read, the output file leaves svc-out, so no log or report holds it.
+    param([Parameter(Mandatory = $true)][hashtable]$Layout, [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Result)
+    $name = [string](Get-DictValue $Result 'stdout_file')
+    if ($name -notmatch '^[0-9a-f-]{36}\.stdout\.json$') { return }
+    $path = Join-Path $Layout.SvcOut $name
+    if (Test-Path -LiteralPath $path) { Remove-PathNoFollow -Path $path }
 }
 
 function Read-EngineOutput {

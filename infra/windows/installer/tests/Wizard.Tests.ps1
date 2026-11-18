@@ -230,11 +230,7 @@ Test-Case 'N-2 import-distro keeps the data tree check but not the parent check 
     Assert-Equal 'imported' $result.code
 }
 
-Test-Case 'W8-1 C16 and C17 (plan F1) decide from the mDNS facts; an unreadable value is Advice' {
-    Assert-Equal 'fix name_in_use' ('{0} {1}' -f (Get-Check C16 @{ mdns_other = $true; dns_host_name = 'office-pc' }).class, (Get-Check C16 @{ mdns_other = $true; dns_host_name = 'office-pc' }).code)
-    Assert-Equal 'office-pc.local' (Get-Check C16 @{ mdns_other = $true; dns_host_name = 'office-pc' }).values.address
-    Assert-Equal 'pass' (Get-Check C16 @{ mdns_other = $false }).class
-    Assert-Equal 'advice cannot_read' ('{0} {1}' -f (Get-Check C16 @{}).class, (Get-Check C16 @{}).code)
+Test-Case 'W8-1 C17 (plan F1) decides from the mDNS facts; an unreadable value is Advice' {
     $ok = @{ dns_client_running = $true; multicast_off = $false; private_rule = 'MDNS-In-UDP-Private-Active'; private_rule_enabled = $true; rule_from_policy = $false }
     Assert-Equal 'pass' (Get-Check C17 @{ mdns = $ok }).class
     $off = $ok.Clone(); $off.private_rule_enabled = $false

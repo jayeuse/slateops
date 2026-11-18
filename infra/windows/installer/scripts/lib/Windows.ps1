@@ -76,9 +76,12 @@ function Initialize-DataFolder {
         [Parameter(Mandatory = $true)][string]$DataRoot,
         [string]$ServiceSid = '',
         # W9: a reinstall that uses the kept data allows the kept folder (plan 9.2).
-        [switch]$AllowKept
+        [switch]$AllowKept,
+        # DEC-0039: the label of <label>.local (the S08 short name), frozen here for the install.
+        [string]$Label = ''
     )
     if (-not (Test-DataRootPath $DataRoot)) { return New-StepResult -Code 'path_invalid' -MessageKey 'setup.data.path_invalid' }
+    if ($Label -and -not (Test-AddressLabel $Label)) { return New-StepResult -Code 'label_invalid' -MessageKey 'setup.data.label_invalid' }
     # S91-2: every folder above the data folder must keep it in place (W8 writes the copy).
     $parents = @(Get-FolderParentProblem -Path $DataRoot)
     if ($parents.Count -gt 0) {
@@ -109,8 +112,10 @@ function Initialize-DataFolder {
             if ($recorded.data_root -eq $DataRoot) { $size = $recorded.vhd_size_gb }
         } catch { Write-RunLog 'setup.data' 'WARN' ('recorded disk limit not read: {0}' -f $_.Exception.Message) }
     }
-    Write-JsonFile -Path $Layout.StateFile -Value ([ordered]@{ schema_version = 1; data_root = $DataRoot; vhd_size_gb = $size })
-    Write-RunLog 'setup.data' 'INFO' ('data folder {0}, disk limit {1} GB' -f $DataRoot, $size)
+    $state = [ordered]@{ schema_version = 1; data_root = $DataRoot; vhd_size_gb = $size }
+    if ($Label) { $state['host_label'] = $Label }
+    Write-JsonFile -Path $Layout.StateFile -Value $state
+    Write-RunLog 'setup.data' 'INFO' ('data folder {0}, disk limit {1} GB, address {2}.local' -f $DataRoot, $size, $Label)
     return New-StepResult -Code 'ready' -MessageKey 'setup.data.ready' -Values @{ vhd_size_gb = $size }
 }
 
@@ -194,11 +199,23 @@ function Invoke-PrepareData {
         [Parameter(Mandatory = $true)][string]$PayloadDir,
         [Parameter(Mandatory = $true)][hashtable]$Version,
         [string]$ServiceSid = '',
-        [switch]$AllowKept
+        [switch]$AllowKept,
+        [string]$Label = ''
     )
     $ready = Initialize-StateFolder -Layout $Layout -ServiceSid $ServiceSid
     if ($ready.code -ne 'ready') { return $ready }
-    $data = Initialize-DataFolder -Layout $Layout -DataRoot $DataRoot -ServiceSid $ServiceSid -AllowKept:$AllowKept
+    # DEC-0039: a kept reinstall keeps the address of the kept installation (its certificate
+    # names it): the label of public_host in kept.json.
+    if ($AllowKept) {
+        $keptRecord = Join-Path (Join-Path $DataRoot 'kept') 'kept.json'
+        if (Test-Path -LiteralPath $keptRecord -PathType Leaf) {
+            try {
+                $keptHost = [string](Get-DictValue (Read-JsonFile -Path $keptRecord) 'public_host')
+                if ($keptHost -match '^(?<label>[a-z0-9-]+)\.local$' -and (Test-AddressLabel $Matches['label'])) { $Label = $Matches['label'] }
+            } catch { Write-RunLog 'setup.data' 'WARN' ('kept address not read: {0}' -f $_.Exception.Message) }
+        }
+    }
+    $data = Initialize-DataFolder -Layout $Layout -DataRoot $DataRoot -ServiceSid $ServiceSid -AllowKept:$AllowKept -Label $Label
     if ($data.code -ne 'ready') { return $data }
     $copy = Install-ScriptsCopy -Layout $Layout -SourceDir $ScriptsDir
     if ($copy.code -ne 'copied') { return $copy }
@@ -604,7 +621,22 @@ function Get-FirewallRuleDefinition {
             Direction = 'Inbound'; VMCreatorId = $SlateOps.WslVmCreatorId; Protocol = 'TCP'; LocalPorts = @('443', '80'); RemoteAddresses = $Cidr
             Profiles = 'Private'; Action = 'Allow'
         }
+        # DEC-0039: our own mDNS responder (start.ps1) receives the queries for <label>.local:
+        # inbound UDP to local port 5353 only, from the local subnet only, on Private networks
+        # only, for the program that hosts the responder (the boot task's Windows PowerShell).
+        Mdns = @{
+            Name = $SlateOps.MdnsRuleName; DisplayName = 'Slate Operations (mDNS, UDP 5353)'; Group = $SlateOps.FirewallGroup
+            Direction = 'Inbound'; Action = 'Allow'; Protocol = 'UDP'; LocalPort = '5353'; Profile = 'Private'; RemoteAddress = 'LocalSubnet'
+            Program = (Join-Path $SlateOpsPaths.System32 'WindowsPowerShell\v1.0\powershell.exe')
+        }
     }
+}
+
+function Get-FirewallRecordNames {
+    # The Windows Firewall rules that windows-changes.json records (firewall_rules), so every
+    # removal (Cancel, a failed install, an earlier run at start, uninstall) deletes each one.
+    param([Parameter(Mandatory = $true)][hashtable]$Definition)
+    return @($Definition.Windows.Name, $Definition.Mdns.Name)
 }
 
 function ConvertTo-NetworkCidr {
@@ -633,12 +665,16 @@ function Set-FirewallRules {
         $hyperV = $definition.HyperV
         New-NetFirewallHyperVRule @hyperV | Out-Null
         Write-RunLog 'install.windows.firewall' 'INFO' ('Hyper-V rule {0}: inbound TCP 443, 80, Private, {1}' -f $hyperV.Name, $Cidr)
+        Get-NetFirewallRule -Name $definition.Mdns.Name -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+        $mdns = $definition.Mdns
+        New-NetFirewallRule @mdns | Out-Null
+        Write-RunLog 'install.windows.firewall' 'INFO' ('rule {0}: inbound UDP 5353, Private, LocalSubnet, program {1}' -f $mdns.Name, $mdns.Program)
     } catch {
         Write-RunLog 'install.windows.firewall' 'ERROR' $_.Exception.Message
         return New-StepResult -Code 'failed' -MessageKey 'install.windows.firewall_failed'
     }
     $record = Read-WindowsChanges -Layout $Layout
-    $record['firewall_rules'] = @($definition.Windows.Name)
+    $record['firewall_rules'] = @(Get-FirewallRecordNames -Definition $definition)
     $record['hyperv_rules'] = @($definition.HyperV.Name)
     $record['hyperv_cidr'] = $Cidr
     Save-WindowsChanges -Layout $Layout -Record $record
@@ -1132,12 +1168,15 @@ function Get-PrinterFact {
 
 function Test-HttpsFromWindows {
     # Plan 10.3 F2 and W8-3: the product's Private firewall rule exists, then
-    # https://<name>.local/api/health opens from Windows with the normal certificate checks
-    # (through the hosts entry). The name is this PC's DNS host name, never an input.
+    # https://<label>.local/api/health opens from Windows with the normal certificate checks
+    # (through the hosts entry). DEC-0039: the label is the installation's stored address label,
+    # never an input.
+    param([Parameter(Mandatory = $true)][hashtable]$Layout)
     $rule = Get-NetFirewallRule -Name $SlateOps.FirewallRuleName -ErrorAction SilentlyContinue
     if ((-not $rule) -or ([string]$rule.Profile -notmatch 'Private')) { return New-StepResult -Code 'firewall_missing' -MessageKey 'install.f2.firewall_missing' }
-    $hostName = ([string](Get-CimInstance -ClassName Win32_ComputerSystem).DNSHostName).ToLowerInvariant()
-    $url = 'https://{0}.local/api/health' -f $hostName
+    $label = Get-InstallAddressLabel -Layout $Layout
+    if (-not $label) { return New-StepResult -Code 'label_missing' -MessageKey 'install.f2.label_missing' }
+    $url = 'https://{0}.local/api/health' -f $label
     $last = ''
     for ($try = 1; $try -le 3; $try++) {
         try {

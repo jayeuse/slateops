@@ -64,6 +64,7 @@ function Get-EngineStatus {
     $result = Invoke-ExecJobAndWait -Layout $Layout -Job 'status' -RunId $RunId -InputText $request -TimeoutSeconds 120
     if ((Get-DictValue $result 'exit_code') -ne 0) { return New-StepResult -Code 'unreachable' -MessageKey 'maintenance.status.unreachable' }
     try { $output = Read-EngineOutput -Layout $Layout -Result $result } catch { return New-StepResult -Code 'unreachable' -MessageKey 'maintenance.status.unreachable' }
+    finally { Remove-EngineOutput -Layout $Layout -Result $result }
     $values = @{}
     foreach ($key in @('state', 'backup')) {
         $value = [string](Get-DictValue $output $key)
@@ -74,6 +75,10 @@ function Get-EngineStatus {
     # W13b-5 (plan 7.4): the only engine value that Windows acts on; true only as a JSON true.
     $idle = Get-DictValue $output 'engine_idle'
     $values.engine_idle = (($idle -is [bool]) -and $idle)
+    # AC-W6 (DEC-0041): only whether email is set up; the administrator's address in the engine's
+    # answer (admin_email) is personal data and is never passed on, logged or saved.
+    $email = Get-DictValue $output 'email_configured'
+    if ($email -is [bool]) { $values.email_configured = $email }
     return New-StepResult -Code 'ok' -MessageKey 'maintenance.status.ok' -Values $values
 }
 
@@ -193,7 +198,10 @@ function Get-KeptData {
     }
     $when = ''
     try { $when = ([datetime]::Parse([string](Get-DictValue $kept 'kept_at'), [System.Globalization.CultureInfo]::InvariantCulture)).ToString('d MMMM yyyy', [System.Globalization.CultureInfo]::InvariantCulture) } catch { $when = '' }
-    $values = @{ version = $version; business_name = [string]$kept['business_name']; kept_on = $when }
+    # DEC-0039: the kept installation keeps its address (its certificate names it).
+    $keptLabel = ''
+    if (([string]$kept['public_host']) -match '^(?<label>[a-z0-9-]+)\.local$' -and (Test-AddressLabel $Matches['label'])) { $keptLabel = $Matches['label'] }
+    $values = @{ version = $version; business_name = [string]$kept['business_name']; kept_on = $when; host_label = $keptLabel }
     if ((Compare-ReleaseVersion -Left $version -Right $SetupVersion) -gt 0) { return New-StepResult -Code 'kept_newer' -MessageKey 'setup.kept.kept_newer' -Values $values }
     if ((Compare-ReleaseVersion -Left $version -Right $SetupVersion) -lt 0) { return New-StepResult -Code 'kept_older' -MessageKey 'setup.kept.kept_older' -Values $values }
     return New-StepResult -Code 'kept' -MessageKey 'setup.kept.kept' -Values $values
@@ -704,8 +712,13 @@ function Invoke-Repair {
     $lan = Get-LanFact
     if ($lan) { $steps += Set-FirewallRules -Layout $Layout -Cidr (ConvertTo-NetworkCidr -Address $lan.address -PrefixLength $lan.prefix_length) }
     Write-HelperProgress -Job 'repair' -Number 5 -Total 7 -Key 'hosts'
-    $hostName = ([string](Get-CimInstance -ClassName Win32_ComputerSystem).DNSHostName).ToLowerInvariant()
-    $steps += Set-HostsEntry -Layout $Layout -HostName ('{0}.local' -f $hostName)
+    # DEC-0039: the stored address label, not the computer name.
+    $label = Get-InstallAddressLabel -Layout $Layout
+    if ($label) { $steps += Set-HostsEntry -Layout $Layout -HostName ('{0}.local' -f $label) }
+    else {
+        Write-RunLog $step 'WARN' 'no address label recorded; the hosts entry is not written'
+        $steps += New-StepResult -Code 'label_missing' -MessageKey 'install.windows.label_missing'
+    }
     # The start task runs before the result of the steps above is read (unchanged order), so
     # the start is stage 6 and the backup folder rights stage 7.
     Write-HelperProgress -Job 'repair' -Number 6 -Total 7 -Key 'start'

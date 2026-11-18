@@ -16,7 +16,7 @@ param()
 
 # S91-6: modules load only from Windows PowerShell's own folder.
 $env:PSModulePath = Join-Path $PSHOME 'Modules'
-foreach ($name in @('Common', 'Checks', 'Exec')) { . (Join-Path $PSScriptRoot ('lib\{0}.ps1' -f $name)) }
+foreach ($name in @('Common', 'Checks', 'Exec', 'Mdns')) { . (Join-Path $PSScriptRoot ('lib\{0}.ps1' -f $name)) }
 
 $layout = New-SlateOpsLayout
 $serviceSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -27,6 +27,15 @@ Start-RunLog -RunId $runId -Directory $logDir -NoConsole
 $null = Invoke-LogRotation -Directory $logDir
 $runDir = Join-Path $logDir $runId
 [void][System.IO.Directory]::CreateDirectory($runDir)
+
+# DEC-0039: our own mDNS responder answers for <label>.local on a thread of this process (the
+# program that the inbound UDP 5353 rule names); it ends with this process.
+$label = Get-InstallAddressLabel -Layout $layout
+$script:MdnsWorker = $null
+if ($label) {
+    try { $script:MdnsWorker = Start-MdnsResponderThread -Label $label -RunId $runId -LogDir $logDir -LibDir (Join-Path $PSScriptRoot 'lib') }
+    catch { Write-RunLog 'boot.mdns' 'ERROR' ('mDNS responder not started: {0}' -f $_.Exception.Message) }
+} else { Write-RunLog 'boot.mdns' 'WARN' 'no address label recorded; this PC answers no mDNS query for Slate Operations' }
 
 function Get-StatusInput {
     # {"run_id", "windows_part_version", "wsl_version"} (engine status.py KEYS), or $null when
@@ -65,6 +74,8 @@ while ($true) {
             # S91-8: the cap is checked again before the file is read.
             if (($run.stdout_total -gt $SlateOpsExec.StdoutCap) -or ((Get-Item -LiteralPath $stdout -Force).Length -gt $SlateOpsExec.StdoutCap)) { $engine = @{ code = 'output_too_large' } }
             else { $engine = Get-EngineCode -Path $stdout }
+            # AC-W6: the status output names the administrator's address; only the code stays.
+            if (Test-Path -LiteralPath $stdout) { Remove-PathNoFollow -Path $stdout }
             Write-RunLog 'boot.status' 'INFO' ('status: exit code {0}, code {1}, {2} ms' -f $run.exit_code, $engine.code, $run.duration_ms)
         } else {
             Write-RunLog 'boot.status' 'WARN' 'status skipped: the Windows-part or the WSL version cannot be read'
