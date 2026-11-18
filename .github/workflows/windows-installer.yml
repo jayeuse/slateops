@@ -104,3 +104,39 @@ jobs:
           $PSVersionTable.PSVersion.ToString()
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File infra\windows\installer\tests\run-tests.ps1
           exit $LASTEXITCODE
+
+  exec-path:
+    # TASK-0097 W14-D8: the real job path of setup on a fresh runner. The helper creates the
+    # account slateops-svc and the task \SlateOps\Exec as setup does, then wslconfig jobs go
+    # through the task and are collected as the wizard collects them (exec-path.ps1). Its own
+    # job, because it changes C:\ProgramData\SlateOps, which the self-test also uses.
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Run wslconfig jobs through the real account, Exec task and helper (W14-D8)
+        shell: powershell
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File infra\windows\installer\tests\exec-path.ps1
+          exit $LASTEXITCODE
+
+  mdns-spike:
+    # DEC-0039 CI spike (TASK-0097): a limited account, run by a scheduled task as slateops-svc
+    # is, registers a non-computer host name with DnsServiceRegister; then an own UDP 5353
+    # responder next to Windows' responder (the fallback). Each check prints PASS, FAIL or
+    # INCONCLUSIVE; a verdict never fails the job, only a spike that cannot run does.
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Announce a host name from a limited account and run an own mDNS responder (DEC-0039 spike)
+        shell: powershell
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File infra\windows\installer\tests\mdns-spike.ps1
+          exit $LASTEXITCODE

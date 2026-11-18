@@ -150,8 +150,9 @@ class WindowsInstallerWorkflowTest(unittest.TestCase):
         self.assertIn("runs-on: windows-latest", self.source)
         steps = re.findall(r"(?ms)^      - name: .*?(?=^      - |\Z)", self.source)
         run_steps = [step for step in steps if "run: |" in step]
-        # Compile, the [Code] self-test (W14-D1, TASK-0097), the script tests.
-        self.assertEqual(len(run_steps), 3)
+        # Compile, the [Code] self-test (W14-D1, TASK-0097), the script tests, the real Exec job
+        # path (W14-D8) and the DEC-0039 mDNS spike.
+        self.assertEqual(len(run_steps), 5)
         for step in run_steps:
             with self.subTest(step=step.splitlines()[0]):
                 self.assertIn("shell: powershell\n", step)
