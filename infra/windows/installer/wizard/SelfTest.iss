@@ -835,6 +835,12 @@ begin
         RenderRemove;
         SelfRecord('AC-W3 the last line says Windows finishes at the next restart', (CurY <= RemovePanel.Height)
           and (WaitDrawn = 6), 'content ends at ' + IntToStr(CurY) + ', panel ' + IntToStr(RemovePanel.Height));
+        { R-10: both restart lines (features and the account) fit, and the account line shows. }
+        RemoveWindowsCode := 'removed_at_restart';
+        RenderRemove;
+        SelfRecord('R-10 the account line at the next restart fits the form', (CurY <= RemovePanel.Height)
+          and (WaitDrawn = 6), 'both restart lines end at ' + IntToStr(CurY) + ', panel ' + IntToStr(RemovePanel.Height));
+        RemoveWindowsCode := '';
         { R-3, R-5: the longest stopped lines fit too. }
         CloseNumber := 3;
         CloseEnd := 'data';
@@ -850,6 +856,7 @@ begin
         ClosePhase := '';
         CloseEnd := '';
         RemoveFeaturesCode := '';
+        RemoveWindowsCode := '';
         FreeRemoveForm;
       end;
     except

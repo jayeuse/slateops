@@ -826,7 +826,7 @@ const
   REMOVE_WINDOWS_MS = 90000;
 
 var
-  CloseFlow, CloseAfter, ClosePhase, CloseOut, CloseLine, CloseEnd, RemoveFeaturesCode, RemoveDataCode: String;
+  CloseFlow, CloseAfter, ClosePhase, CloseOut, CloseLine, CloseEnd, RemoveFeaturesCode, RemoveDataCode, RemoveWindowsCode: String;
   CloseAt, CloseStartedAt, CloseLimitMs: Cardinal;
   CloseNumber: Integer;
   RemoveClose: TNewButton;
@@ -871,7 +871,11 @@ begin
     if CloseEnd = 'limit' then AddText(CM('remove_limit'), False)
     else if CloseEnd = 'kept' then AddText(CM('remove_kept_failed'), False)
     else if CloseEnd = 'data' then AddText(CM('remove_data_failed'), False)
-    else if RemoveFeaturesCode = 'removed' then AddText(CM('remove_restart_line'), False);
+    else
+    begin
+      if RemoveFeaturesCode = 'removed' then AddText(CM('remove_restart_line'), False);
+      if RemoveWindowsCode = 'removed_at_restart' then AddText(CM('remove_account_restart'), False);
+    end;
   end;
 end;
 
@@ -904,6 +908,7 @@ begin
   CloseEnd := '';
   RemoveFeaturesCode := '';
   RemoveDataCode := '';
+  RemoveWindowsCode := '';
   CloseStartedAt := GetTickCount;
   { Nothing of the install goes on: no step, no unpacking, no job result is awaited. }
   StepFor := '';
@@ -943,7 +948,8 @@ begin
     Exit;
   { Inno's Pascal Script gives a form no ModalResult (only buttons have one): Close ends
     ShowModal, and RunRemoval reads CloseEnd, not the modal result. }
-  if (EndKey = 'done') and (RemoveFeaturesCode <> 'removed') then
+  { A restart line (features or the account, R-10) stays on the form until Close. }
+  if (EndKey = 'done') and (RemoveFeaturesCode <> 'removed') and (RemoveWindowsCode <> 'removed_at_restart') then
     RemoveForm.Close
   else
     RenderRemove;
@@ -1010,7 +1016,11 @@ begin
     CloseStep(5, 'windows', CM('remove_windows'), 'remove-windows', Extra, REMOVE_WINDOWS_MS);
   end
   else
+  begin
+    { R-10: removed_at_restart: a startup task removes the account's profile at the restart. }
+    RemoveWindowsCode := Code;
     EndCloseFlow('done');
+  end;
 end;
 
 { The form, built without being shown (the self-test builds it too). }

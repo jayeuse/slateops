@@ -487,6 +487,7 @@ remove_wait_prep=Waiting for setup to finish turning on Virtual Machine Platform
 remove_data_line=Removing the server part and its data…
 remove_features=Turning off Virtual Machine Platform and Windows Subsystem for Linux (WSL), if setup turned them on…
 remove_restart_line=Windows finishes turning off Virtual Machine Platform and Windows Subsystem for Linux (WSL) at the next restart. Setup does not restart this PC.
+remove_account_restart=Windows finishes removing the account that setup added at the next restart. Setup does not restart this PC.
 remove_limit=A step took too long, so setup stopped the removal. The next time you start setup, it removes the rest.
 remove_data_failed=Setup could not remove the server part and its data, so it stopped the removal. The next time you start setup, it tries again.
 remove_kept_failed=Setup could not move your kept data back to its folder. The data is not changed. The next time setup starts, it tries again.

@@ -47,6 +47,8 @@ if (($env:GITHUB_ACTIONS -ne 'true') -or (-not $env:RUNNER_TEMP)) {
 }
 
 $script:Clock = [System.Diagnostics.Stopwatch]::StartNew()
+# R-10: the User Profile Service events of this run are read from this time on.
+$script:RunStarted = Get-Date
 $script:Failed = 0
 $script:Results = New-Object System.Collections.Generic.List[string]
 $script:OutSeq = 0
@@ -336,6 +338,72 @@ function Get-RegistryValueText {
     if (-not (Test-Path -LiteralPath $Key)) { return '<no key>' }
     $item = Get-ItemProperty -LiteralPath $Key
     return (@($item.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object { '{0}={1}' -f $_.Name, $_.Value } | Sort-Object) -join "`n")
+}
+
+function Write-AccountProbe {
+    # R-10: what holds the profile of slateops-svc at this point of the removal: its processes
+    # (by user name), its hive under HKEY_USERS (from the key list, which opens no hive), the
+    # profile list values and its logon sessions with their logon types.
+    param([Parameter(Mandatory = $true)][string]$Sid, [Parameter(Mandatory = $true)][string]$When)
+    $parts = New-Object System.Collections.Generic.List[string]
+    try {
+        $names = @(Get-Process -IncludeUserName -ErrorAction Stop | Where-Object { $_.UserName -like '*\slateops-svc' } | ForEach-Object { '{0} ({1})' -f $_.ProcessName, $_.Id })
+        $parts.Add(('processes [{0}]' -f ($names -join ', ')))
+    } catch { $parts.Add(('processes unreadable: {0}' -f $_.Exception.Message)) }
+    $parts.Add(('hive loaded {0}' -f (@([Microsoft.Win32.Registry]::Users.GetSubKeyNames()) -contains $Sid)))
+    try {
+        $list = Get-Item -LiteralPath ('HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{0}' -f $Sid) -ErrorAction Stop
+        $parts.Add(('profile list RefCount {0}, State {1}' -f $list.GetValue('RefCount', '-'), $list.GetValue('State', '-')))
+    } catch { $parts.Add('no profile list entry') }
+    try {
+        $sessions = @(Get-CimInstance -ClassName Win32_LoggedOnUser -ErrorAction Stop | Where-Object { $_.Antecedent.Name -eq 'slateops-svc' } | ForEach-Object {
+                $id = [string]$_.Dependent.LogonId
+                $session = Get-CimInstance -ClassName Win32_LogonSession -Filter ("LogonId='{0}'" -f $id) -ErrorAction SilentlyContinue
+                '{0} type {1}' -f $id, $(if ($session) { $session.LogonType } else { '?' })
+            })
+        $parts.Add(('logon sessions [{0}]' -f ($sessions -join ', ')))
+    } catch { $parts.Add(('logon sessions unreadable: {0}' -f $_.Exception.Message)) }
+    Write-Line ('account probe {0}: {1}' -f $When, ($parts.ToArray() -join '; '))
+}
+
+function Write-ProfileEvents {
+    # R-10: the User Profile Service events since this run started; event 1530 names the
+    # processes that kept a user's hive open.
+    param([Parameter(Mandatory = $true)][string]$Sid)
+    foreach ($filter in @(@{ LogName = 'Application'; ProviderName = 'Microsoft-Windows-User Profiles Service'; StartTime = $script:RunStarted }, @{ LogName = 'Microsoft-Windows-User Profile Service/Operational'; StartTime = $script:RunStarted })) {
+        $events = @()
+        try { $events = @(Get-WinEvent -FilterHashtable $filter -ErrorAction Stop | Sort-Object TimeCreated) } catch { Write-Line ('profile events in {0}: none ({1})' -f $filter.LogName, $_.Exception.Message); continue }
+        $mine = @($events | Where-Object { $_.Message -and ($_.Message.Contains($Sid) -or $_.Id -eq 1530) })
+        if ($mine.Count -eq 0) { $mine = @($events | Select-Object -Last 20) }
+        Write-Line ('profile events in {0}: {1} since the start, {2} shown' -f $filter.LogName, $events.Count, ([Math]::Min($mine.Count, 40)))
+        foreach ($entry in @($mine | Select-Object -Last 40)) {
+            $text = ([string]$entry.Message) -replace '\s+', ' '
+            if ($text.Length -gt 700) { $text = $text.Substring(0, 700) + ' ...' }
+            Write-Line ('  {0:HH:mm:ss} id {1}: {2}' -f $entry.TimeCreated, $entry.Id, $text)
+        }
+    }
+}
+
+function Get-FinishTaskProblem {
+    # R-10: the startup task that removes the profile at the next restart: SYSTEM, at startup
+    # only, powershell.exe with the inline script for this SID. '' when it is right.
+    param([Parameter(Mandatory = $true)][string]$Sid, [Parameter(Mandatory = $true)][string]$Name)
+    $task = Get-ScheduledTask -TaskPath '\' -TaskName $Name -ErrorAction SilentlyContinue
+    if (-not $task) { return ('the startup task \{0} does not exist' -f $Name) }
+    $principal = '{0} {1} {2}' -f $task.Principal.UserId, $task.Principal.LogonType, $task.Principal.RunLevel
+    $triggers = @($task.Triggers | ForEach-Object { $_.CimClass.CimClassName })
+    $action = @($task.Actions)[0]
+    $encoded = [regex]::Match([string]$action.Arguments, '-EncodedCommand (\S+)$').Groups[1].Value
+    $finishScript = ''
+    try { $finishScript = [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded)) } catch { $finishScript = '' }
+    Write-Line ('startup task \{0}: {1}; triggers [{2}]; {3}; script: {4}' -f $Name, $principal, ($triggers -join ', '), $action.Execute, ($finishScript -replace "`r`n", ' | '))
+    if ($principal -ne 'SYSTEM ServiceAccount Highest') { return ('the startup task runs as {0}' -f $principal) }
+    if (($triggers -join ',') -ne 'MSFT_TaskBootTrigger') { return ('the startup task triggers are [{0}]' -f ($triggers -join ', ')) }
+    if ([string]$action.Execute -notlike '*\WindowsPowerShell\v1.0\powershell.exe') { return ('the startup task runs {0}' -f $action.Execute) }
+    foreach ($part in @(("SID='{0}'" -f $Sid), 'Remove-CimInstance -InputObject $userProfile', ("Unregister-ScheduledTask -TaskPath '\' -TaskName '{0}'" -f $Name))) {
+        if (-not $finishScript.Contains($part)) { return ('the startup task script has no "{0}"' -f $part) }
+    }
+    return ''
 }
 
 function Get-MachineSnapshot {
@@ -628,19 +696,36 @@ try {
         # Maintenance.iss PollCloseFlow: each step follows the last whatever its code; only
         # keep_failed stops; -DataLeft when the data step did not remove the data folder.
         $codes = [ordered]@{}
+        if ($sid) { Write-AccountProbe -Sid $sid -When 'before the removal' }
         foreach ($action in @('job-stop', 'uninstall-stop', 'setup-remove-data', 'remove-features')) {
             $codes[$action] = (Invoke-HelperAndWait -Action $action).code
+            if ($sid) { Write-AccountProbe -Sid $sid -When ('after {0}' -f $action) }
             if ($codes[$action] -eq 'keep_failed') { throw 'setup-remove-data answered keep_failed' }
         }
         $extra = ''
         if (@('removed', 'returned', 'nothing') -notcontains $codes['setup-remove-data']) { $extra = '-DataLeft' }
         $codes['remove-windows'] = (Invoke-HelperAndWait -Action 'remove-windows' -Extra $extra).code
+        if ($sid) { Write-AccountProbe -Sid $sid -When 'after remove-windows'; Write-ProfileEvents -Sid $sid }
         $problems = New-Object System.Collections.Generic.List[string]
+        # R-10: a profile still loaded at the limit goes at the next restart (removed_at_restart):
+        # then only the startup task and the profile stay, and both are checked here.
+        $atRestart = ($codes['remove-windows'] -eq 'removed_at_restart')
+        $finishName = 'SlateOpsFinishRemoval-{0}' -f $sid
         $expectedCodes = [ordered]@{ 'job-stop' = 'stopped'; 'uninstall-stop' = 'stopped'; 'setup-remove-data' = 'removed'; 'remove-features' = 'kept'; 'remove-windows' = 'removed' }
+        if ($atRestart) { $expectedCodes['remove-windows'] = 'removed_at_restart' }
         foreach ($action in @($expectedCodes.Keys)) { if ($codes[$action] -ne $expectedCodes[$action]) { $problems.Add(('{0} answered {1}, expected {2}' -f $action, $codes[$action], $expectedCodes[$action])) } }
         if (Get-LocalUser -Name 'slateops-svc' -ErrorAction SilentlyContinue) { $problems.Add('the account slateops-svc') }
-        if ($sid -and (Get-CimInstance -ClassName Win32_UserProfile -Filter ("SID='{0}'" -f $sid) -ErrorAction SilentlyContinue)) { $problems.Add(('the profile record of {0}' -f $sid)) }
-        if ($profilePath -and (Test-Path -LiteralPath $profilePath)) { $problems.Add(('the profile folder {0}' -f $profilePath)) }
+        if ($atRestart) {
+            Write-Line ('the fallback ran: the profile {0} goes at the next restart (a restart is not part of this job)' -f $profilePath)
+            $setupLog = [System.IO.File]::ReadAllText((Join-Path $setupLogDir ('{0}.log' -f $runId)))
+            if (-not $setupLog.Contains(('the profile of {0} goes at the next restart: task \{1} (SYSTEM, at startup)' -f $sid, $finishName))) { $problems.Add('the setup log does not say that the startup task took the profile') }
+            $taskProblem = Get-FinishTaskProblem -Sid $sid -Name $finishName
+            if ($taskProblem) { $problems.Add($taskProblem) }
+        } else {
+            if (Get-ScheduledTask -TaskPath '\' -TaskName $finishName -ErrorAction SilentlyContinue) { $problems.Add(('the startup task \{0} with the answer removed' -f $finishName)) }
+            if ($sid -and (Get-CimInstance -ClassName Win32_UserProfile -Filter ("SID='{0}'" -f $sid) -ErrorAction SilentlyContinue)) { $problems.Add(('the profile record of {0}' -f $sid)) }
+            if ($profilePath -and (Test-Path -LiteralPath $profilePath)) { $problems.Add(('the profile folder {0}' -f $profilePath)) }
+        }
         if (@(Get-ScheduledTask -TaskPath '\SlateOps\' -ErrorAction SilentlyContinue).Count -gt 0) { $problems.Add('tasks in \SlateOps\') }
         $schedule = New-Object -ComObject 'Schedule.Service'
         $schedule.Connect()
@@ -656,7 +741,10 @@ try {
         if (@(Get-Content -LiteralPath $hostsPath | Where-Object { $_ -like '*# Slate Operations' }).Count -gt 0) { $problems.Add('the hosts entry') }
         if ($script:CaThumbprint -and (Test-Path -LiteralPath ('Cert:\LocalMachine\Root\{0}' -f $script:CaThumbprint))) { $problems.Add('the trusted CA') }
         if (Test-Path -LiteralPath $stateRoot) { Write-Line ('kept by design for Save report: {0} with [{1}]' -f $stateRoot, ((@(Get-ChildItem -LiteralPath $stateRoot -Force | ForEach-Object { $_.Name })) -join ', ')) }
-        foreach ($change in @(Compare-MachineSnapshot -Before $script:Before -After (Get-MachineSnapshot))) { $problems.Add(('outside the recorded parts: {0}' -f $change)) }
+        # R-10: with the fallback, the startup task and the profile folder are the expected changes.
+        $expected = @()
+        if ($atRestart) { $expected = @(('scheduled tasks changed; added [\{0}]; gone []' -f $finishName), ('Users folders changed; added [{0}]; gone []' -f (Split-Path -Leaf $profilePath))) }
+        foreach ($change in @(Compare-MachineSnapshot -Before $script:Before -After (Get-MachineSnapshot))) { if ($expected -notcontains $change) { $problems.Add(('outside the recorded parts: {0}' -f $change)) } }
         if ($problems.Count -gt 0) { throw ('left over or changed: {0}' -f ($problems.ToArray() -join '; ')) }
     }
 
@@ -672,6 +760,8 @@ try {
             $service.Connect()
             $service.GetFolder('\').DeleteFolder('SlateOps', 0)
         } catch { $null = $_ }
+        # R-10: the startup task that a removal registered (the runner never restarts).
+        Get-ScheduledTask -TaskPath '\' -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -like 'SlateOpsFinishRemoval-S-1-5-21-*' } | ForEach-Object { Unregister-ScheduledTask -TaskPath '\' -TaskName $_.TaskName -Confirm:$false -ErrorAction SilentlyContinue }
         $user = Get-LocalUser -Name 'slateops-svc' -ErrorAction SilentlyContinue
         if ($user) {
             Get-CimInstance -ClassName Win32_UserProfile -Filter ("SID='{0}'" -f $user.SID.Value) -ErrorAction SilentlyContinue | Remove-CimInstance -ErrorAction SilentlyContinue

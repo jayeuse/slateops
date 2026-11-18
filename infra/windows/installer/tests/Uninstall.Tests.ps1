@@ -21,6 +21,7 @@ function Get-TestNames {
         TaskPath = ('\SlateOpsW9{0}\' -f $Tag); TaskFolder = ('SlateOpsW9{0}' -f $Tag); AccountName = ''
         HostsPath = $HostsPath; UserList = ('HKLM:\SOFTWARE\SlateOpsW9{0}\SpecialAccounts\UserList' -f $Tag)
         StoreLocation = 'LocalMachine'; Power = $false
+        FinishTaskPath = '\'; FinishTaskPrefix = ('SlateOpsW9{0}Finish-' -f $Tag)
     }
 }
 
@@ -83,9 +84,10 @@ Test-Case 'R-9 the service profile goes after the account processes end; a fake 
     $logDir = New-TestDirectory 'r9-log'
     Start-RunLog -RunId 'uninstall-20261118T170000Z-r9prof' -Directory $logDir -NoConsole
     $sid = 'S-1-5-21-1000-2000-3000-1003'
+    $facts = { param([string]$Sid) 'hive loaded True; processes of the account 0 []' }
     # A profile that unloads once the account's processes end: stop first, then the delete.
     $fake = @{ loaded = $true; gone = $false; calls = (New-Object System.Collections.Generic.List[string]) }
-    $removed = Remove-ServiceProfile -Sid $sid -LimitSeconds 5 -WaitMilliseconds 50 `
+    $removed = Remove-ServiceProfile -Sid $sid -LimitSeconds 5 -WaitMilliseconds 50 -Facts $facts `
         -StopProcesses { param([string]$Sid) $fake.calls.Add('stop'); $fake.loaded = $false } `
         -FindProfile { param([string]$Sid) if (-not $fake.gone) { [pscustomobject]@{ SID = $Sid; LocalPath = 'C:\Users\slateops-svc'; Loaded = $fake.loaded } } } `
         -DeleteProfile { param($UserProfile) $fake.calls.Add('delete'); if ($UserProfile.Loaded) { throw 'loaded' }; $fake.gone = $true }
@@ -94,7 +96,7 @@ Test-Case 'R-9 the service profile goes after the account processes end; a fake 
     # A fake loaded profile that never unloads: tried again until the limit, never deleted.
     $held = @{ stops = 0; deletes = 0 }
     $started = [DateTime]::UtcNow
-    $removed = Remove-ServiceProfile -Sid $sid -LimitSeconds 1 -WaitMilliseconds 100 `
+    $removed = Remove-ServiceProfile -Sid $sid -LimitSeconds 1 -WaitMilliseconds 100 -Facts $facts `
         -StopProcesses { param([string]$Sid) $held.stops++ } `
         -FindProfile { param([string]$Sid) [pscustomobject]@{ SID = $Sid; LocalPath = 'C:\Users\slateops-svc.PC1'; Loaded = $true } } `
         -DeleteProfile { param($UserProfile) $held.deletes++ }
@@ -103,10 +105,11 @@ Test-Case 'R-9 the service profile goes after the account processes end; a fake 
     Assert-True ($held.stops -ge 2) ('tried again: {0} stops' -f $held.stops)
     Assert-True (([DateTime]::UtcNow - $started).TotalSeconds -lt 5) 'it ends at its limit'
     $log = [System.IO.File]::ReadAllText((Join-Path $logDir 'uninstall-20261118T170000Z-r9prof.log'))
-    Assert-True ($log -match 'WARN profile of S-1-5-21-1000-2000-3000-1003 not removed in 1 s \(it is still loaded\); the record stays') $log
+    Assert-True ($log -match 'INFO profile of S-1-5-21-1000-2000-3000-1003: loaded True; hive loaded True; processes of the account 0 \[\]') $log
+    Assert-True ($log -match 'WARN profile of S-1-5-21-1000-2000-3000-1003 not removed in 1 s \(it is still loaded\); hive loaded True') $log
     # Another profile under that SID is never ended or deleted.
     $other = @{ stops = 0; deletes = 0 }
-    $removed = Remove-ServiceProfile -Sid $sid -LimitSeconds 1 -WaitMilliseconds 100 `
+    $removed = Remove-ServiceProfile -Sid $sid -LimitSeconds 1 -WaitMilliseconds 100 -Facts $facts `
         -StopProcesses { param([string]$Sid) $other.stops++ } `
         -FindProfile { param([string]$Sid) [pscustomobject]@{ SID = $Sid; LocalPath = 'C:\Users\someone'; Loaded = $true } } `
         -DeleteProfile { param($UserProfile) $other.deletes++ }
@@ -116,7 +119,93 @@ Test-Case 'R-9 the service profile goes after the account processes end; a fake 
     Assert-Equal 0 (Stop-AccountProcesses -Sid 'S-1-12-1-1-2-3-4')
 }
 
-Test-Case 'R-9 a service profile that stays loaded keeps only the account SID in the record, and the next start removes it' {
+Test-Case 'R-10 the removal waits for the hive to unload, then deletes the profile' {
+    # No process of the account holds it: the hive unloads by itself after a few checks.
+    $sid = 'S-1-5-21-1000-2000-3000-1003'
+    $fake = @{ checks = 0; gone = $false; deletes = 0 }
+    $removed = Remove-ServiceProfile -Sid $sid -LimitSeconds 5 -WaitMilliseconds 50 -Facts { param([string]$Sid) '' } `
+        -StopProcesses { param([string]$Sid) 0 } `
+        -FindProfile { param([string]$Sid) if (-not $fake.gone) { $fake.checks++; [pscustomobject]@{ SID = $Sid; LocalPath = 'C:\Users\slateops-svc'; Loaded = ($fake.checks -lt 5) } } } `
+        -DeleteProfile { param($UserProfile) $fake.deletes++; $fake.gone = $true }
+    Assert-Equal $true $removed
+    Assert-Equal 1 $fake.deletes 'one delete, after the hive unloaded'
+    Assert-True ($fake.checks -ge 5) ('checked until it unloaded: {0}' -f $fake.checks)
+}
+
+Test-Case 'R-10 the startup task script deletes the profile only when it is not loaded, and itself only when the profile is gone' {
+    $sid = 'S-1-5-21-1000-2000-3000-1003'
+    $text = Get-ProfileFinishScript -Sid $sid -TaskPath '\' -TaskName ('SlateOpsW9R10Finish-{0}' -f $sid)
+    $fake = @{ state = 'loaded'; calls = (New-Object System.Collections.Generic.List[string]) }
+    # The script's commands, faked here: no real profile or task is touched.
+    function Get-CimInstance { param([string]$ClassName, [string]$Filter) $fake.calls.Add(('find {0}' -f $Filter)); if ($fake.state -ne 'gone') { [pscustomobject]@{ Loaded = ($fake.state -eq 'loaded') } } }
+    function Remove-CimInstance { param($InputObject) $fake.calls.Add('delete'); $fake.state = 'gone' }
+    function Unregister-ScheduledTask { param([string]$TaskPath, [string]$TaskName, [switch]$Confirm) $fake.calls.Add(('unregister {0}{1}' -f $TaskPath, $TaskName)) }
+    $finish = [scriptblock]::Create($text)
+    & $finish
+    Assert-Equal @(("find SID='{0}'" -f $sid)) @($fake.calls) 'loaded: nothing is deleted and the task stays'
+    $fake.state = 'unloaded'; $fake.calls.Clear()
+    & $finish
+    Assert-Equal @(("find SID='{0}'" -f $sid), 'delete', ("find SID='{0}'" -f $sid), ('unregister \SlateOpsW9R10Finish-{0}' -f $sid)) @($fake.calls) 'unloaded: the profile, then the task'
+    $fake.state = 'gone'; $fake.calls.Clear()
+    & $finish
+    Assert-Equal @(("find SID='{0}'" -f $sid), ("find SID='{0}'" -f $sid), ('unregister \SlateOpsW9R10Finish-{0}' -f $sid)) @($fake.calls) 'gone: only the task'
+    $refused = $false
+    try { $null = Get-ProfileFinishScript -Sid ("{0}'; Remove-Item C:\" -f $sid) -TaskPath '\' -TaskName 'x' } catch { $refused = $true }
+    Assert-True $refused 'a value that is not an account SID never goes into the script'
+}
+
+Test-Case 'R-10 the order is tasks, then the profile, then the account; a profile still loaded at the limit goes to one startup task and nothing else stays' {
+    $layout = New-UninstallLayout 'r10-order'
+    $hosts = Join-Path (New-TestDirectory 'r10-hosts') 'hosts'
+    [System.IO.File]::WriteAllText($hosts, "127.0.0.1 localhost`r`n")
+    $names = Get-TestNames -Tag 'R10' -HostsPath $hosts
+    $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c exit 0'
+    Register-ScheduledTask -TaskPath $names.TaskPath -TaskName 'Start' -Action $action -Force | Out-Null
+    $sid = New-TestUser 'slateops-r10'
+    Write-JsonFile -Path (Join-Path $layout.State 'windows-changes.json') -Value ([ordered]@{ account_sid = $sid })
+    $seen = @{ tasks = -1; account = $false; registered = '' }
+    $result = Remove-WindowsParts -Layout $layout -Names $names `
+        -RemoveProfile { param([string]$Sid, [int]$LimitSeconds = 45) $seen.tasks = @(Get-ScheduledTask -TaskPath $names.TaskPath -ErrorAction SilentlyContinue).Count; $seen.account = [bool](Get-LocalUser -SID $Sid -ErrorAction SilentlyContinue); $false } `
+        -RegisterFinish { param([string]$Sid) $seen.registered = $Sid; $true }
+    Assert-Equal 0 $seen.tasks 'the tasks are gone before the profile'
+    Assert-Equal $true $seen.account 'the account is still there for the profile'
+    Assert-Equal $sid $seen.registered 'the startup task gets the profile'
+    Assert-Equal $null (Get-LocalUser -SID $sid -ErrorAction SilentlyContinue) 'the account goes last'
+    Assert-Equal 'removed_at_restart' $result.code (ConvertTo-JsonText $result)
+    Assert-Equal $false (Test-Path -LiteralPath $layout.State) 'no record stays: the task is the only one'
+}
+
+Test-Case 'R-10 the startup task registers as SYSTEM at startup with the inline script, and a later removal deletes it once the profile is gone' {
+    $hosts = Join-Path (New-TestDirectory 'r10-task-hosts') 'hosts'
+    [System.IO.File]::WriteAllText($hosts, "127.0.0.1 localhost`r`n")
+    $names = Get-TestNames -Tag 'R10Task' -HostsPath $hosts
+    $sid = 'S-1-5-21-1000-2000-3000-1004'
+    $name = '{0}{1}' -f $names.FinishTaskPrefix, $sid
+    try {
+        Assert-Equal $true (Register-ProfileFinishTask -Sid $sid -Names $names)
+        $task = Get-ScheduledTask -TaskPath $names.FinishTaskPath -TaskName $name
+        Assert-Equal 'SYSTEM ServiceAccount Highest' ('{0} {1} {2}' -f $task.Principal.UserId, $task.Principal.LogonType, $task.Principal.RunLevel)
+        Assert-Equal @('MSFT_TaskBootTrigger') @($task.Triggers | ForEach-Object { $_.CimClass.CimClassName })
+        Assert-Equal $false $task.Settings.DisallowStartIfOnBatteries 'it starts on battery'
+        $action = @($task.Actions)[0]
+        Assert-True ($action.Execute -like '*\WindowsPowerShell\v1.0\powershell.exe') $action.Execute
+        $encoded = [regex]::Match([string]$action.Arguments, '-EncodedCommand (\S+)$').Groups[1].Value
+        Assert-Equal (Get-ProfileFinishScript -Sid $sid -TaskPath $names.FinishTaskPath -TaskName $name) ([System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded)))
+        # A later removal: the task stays while its profile is still there, and goes after.
+        $layout = New-UninstallLayout 'r10-later'
+        $tries = New-Object System.Collections.Generic.List[string]
+        $null = Remove-WindowsParts -Layout $layout -Names $names -RemoveProfile { param([string]$Sid, [int]$LimitSeconds = 45) $tries.Add(('{0} {1}' -f $Sid, $LimitSeconds)); $false }
+        Assert-Equal @(('{0} 5' -f $sid)) @($tries) 'a short try for the earlier profile'
+        Assert-True ([bool](Get-ScheduledTask -TaskPath $names.FinishTaskPath -TaskName $name -ErrorAction SilentlyContinue)) 'the task stays while its profile is there'
+        $layout = New-UninstallLayout 'r10-later-2'
+        $null = Remove-WindowsParts -Layout $layout -Names $names -RemoveProfile { param([string]$Sid, [int]$LimitSeconds = 45) $true }
+        Assert-Equal $null (Get-ScheduledTask -TaskPath $names.FinishTaskPath -TaskName $name -ErrorAction SilentlyContinue) 'the task goes with its profile'
+    } finally {
+        Unregister-ScheduledTask -TaskPath $names.FinishTaskPath -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
+    }
+}
+
+Test-Case 'R-9 when no startup task can be registered, the record keeps only the account SID, and the next start removes the profile' {
     $layout = New-UninstallLayout 'r9-record'
     $hosts = Join-Path (New-TestDirectory 'r9-hosts') 'hosts'
     [System.IO.File]::WriteAllText($hosts, "127.0.0.1 localhost`r`n")
@@ -125,7 +214,7 @@ Test-Case 'R-9 a service profile that stays loaded keeps only the account SID in
     Write-JsonFile -Path (Join-Path $layout.State 'windows-changes.json') -Value ([ordered]@{ account_sid = $sid; firewall_rules = @('SlateOpsR9Gone'); ca_thumbprint = '' })
     [System.IO.File]::WriteAllText((Join-Path $layout.State 'install.json'), '{}')
     [void][System.IO.Directory]::CreateDirectory($layout.Scripts)
-    $result = Remove-WindowsParts -Layout $layout -Names $names -RemoveProfile { param([string]$Sid) $false }
+    $result = Remove-WindowsParts -Layout $layout -Names $names -RemoveProfile { param([string]$Sid, [int]$LimitSeconds = 45) $false } -RegisterFinish { param([string]$Sid) $false }
     Assert-Equal 'leftovers' $result.code (ConvertTo-JsonText $result)
     Assert-Equal @('windows-changes.json') @(Get-ChildItem -LiteralPath $layout.State -Force | ForEach-Object { $_.Name }) 'only the record stays'
     $record = Read-WindowsChanges -Layout $layout
@@ -133,7 +222,7 @@ Test-Case 'R-9 a service profile that stays loaded keeps only the account SID in
     Assert-Equal $sid ([string]$record['account_sid'])
     Assert-Equal $true (Test-Path -LiteralPath $layout.Scripts) 'the scripts stay for Save report'
     # The next start: the profile goes, then the record.
-    $result = Remove-WindowsParts -Layout $layout -Names $names -RemoveProfile { param([string]$Sid) $true }
+    $result = Remove-WindowsParts -Layout $layout -Names $names -RemoveProfile { param([string]$Sid, [int]$LimitSeconds = 45) $true }
     Assert-Equal 'removed' $result.code (ConvertTo-JsonText $result)
     Assert-Equal $false (Test-Path -LiteralPath $layout.State) 'the record goes'
 }

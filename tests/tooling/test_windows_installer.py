@@ -2366,7 +2366,80 @@ class ReviewFixTest(unittest.TestCase):
         tests = (PS_TESTS / "Uninstall.Tests.ps1").read_text(encoding="ascii")
         for case in (
             "Test-Case 'R-9 the service profile goes after the account processes end;",
-            "Test-Case 'R-9 a service profile that stays loaded keeps only the account SID",
+            "Test-Case 'R-9 when no startup task can be registered, the record keeps only",
+        ):
+            with self.subTest(case=case):
+                self.assertIn(case, tests)
+
+    def test_r10_a_profile_still_loaded_goes_to_one_startup_task(self) -> None:
+        # R-10 (exec-path CI on e4b73ba6): the profile stayed loaded after the kill and the wait.
+        def body(name: str) -> str:
+            self.assertIn(f"function {name} {{", self.uninstall)
+            return self.uninstall.split(f"function {name} {{", 1)[1].split("\nfunction ", 1)[0]
+
+        profile = body("Remove-ServiceProfile")
+        self.assertIn("[int]$LimitSeconds = 45,", profile)
+        self.assertIn("(& $Facts $Sid)", profile)
+        self.assertIn("GetSubKeyNames()) -contains $Sid", body("Get-ServiceProfileFacts"))
+        finish = body("Get-ProfileFinishScript")
+        self.assertLess(
+            finish.index("if ($Sid -cnotmatch $SlateOpsKept.SidPattern) { throw"),
+            finish.index("$lines = @("),
+        )
+        self.assertLess(
+            finish.index("'if ($userProfile -and $userProfile.Loaded) { return }'"),
+            finish.index("Unregister-ScheduledTask -TaskPath"),
+        )
+        register = body("Register-ProfileFinishTask")
+        self.assertIn(
+            "New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount"
+            " -RunLevel Highest",
+            register,
+        )
+        self.assertIn("-Trigger (New-ScheduledTaskTrigger -AtStartup)", register)
+        self.assertIn("-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries", register)
+        names = body("Get-UninstallNames")
+        self.assertIn("FinishTaskPath = '\\'", names)
+        self.assertIn("FinishTaskPrefix = 'SlateOpsFinishRemoval-'", names)
+        parts = body("Remove-WindowsParts")
+        self.assertLess(
+            parts.index("Invoke-UninstallPart 'tasks'"), parts.index("& $RemoveProfile $sid")
+        )
+        self.assertLess(
+            parts.index("& $RemoveProfile $sid"), parts.index("(& $RegisterFinish $sid)")
+        )
+        self.assertLess(
+            parts.index("(& $RegisterFinish $sid)"), parts.index("Remove-LocalUser -SID $sid")
+        )
+        self.assertIn("-Code 'removed_at_restart'", parts)
+        self.assertIn("(& $RemoveProfile $old 5)", parts)
+        maintenance = (INSTALLER / "wizard/Maintenance.iss").read_text(encoding="ascii")
+        self.assertIn(
+            "(RemoveFeaturesCode <> 'removed') and"
+            " (RemoveWindowsCode <> 'removed_at_restart') then",
+            maintenance,
+        )
+        self.assertIn(
+            "if RemoveWindowsCode = 'removed_at_restart' then"
+            " AddText(CM('remove_account_restart'), False);",
+            maintenance,
+        )
+        uninstall_iss = (INSTALLER / "wizard/Uninstall.iss").read_text(encoding="ascii")
+        self.assertIn(
+            "UAccountRestart := JsonValue(Text, 'code') = 'removed_at_restart';", uninstall_iss
+        )
+        self.assertIn("remove_account_restart", self.copy)
+        self.assertIn("'R-10 the account line at the next restart fits the form'", self.selftest)
+        exec_path = (PS_TESTS / "exec-path.ps1").read_text(encoding="ascii")
+        self.assertIn("Write-AccountProbe -Sid $sid -When ('after {0}' -f $action)", exec_path)
+        self.assertIn("Write-ProfileEvents -Sid $sid", exec_path)
+        self.assertIn("$taskProblem = Get-FinishTaskProblem -Sid $sid -Name $finishName", exec_path)
+        tests = (PS_TESTS / "Uninstall.Tests.ps1").read_text(encoding="ascii")
+        for case in (
+            "Test-Case 'R-10 the removal waits for the hive to unload",
+            "Test-Case 'R-10 the startup task script deletes the profile only when it is not",
+            "Test-Case 'R-10 the order is tasks, then the profile, then the account;",
+            "Test-Case 'R-10 the startup task registers as SYSTEM at startup",
         ):
             with self.subTest(case=case):
                 self.assertIn(case, tests)

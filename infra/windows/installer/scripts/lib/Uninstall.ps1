@@ -390,6 +390,9 @@ function Get-UninstallNames {
         UserList = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList'
         StoreLocation = 'LocalMachine'
         Power = $true
+        # R-10: the startup task that finishes a profile removal (outside \SlateOps\).
+        FinishTaskPath = '\'
+        FinishTaskPrefix = 'SlateOpsFinishRemoval-'
     }
 }
 
@@ -403,7 +406,9 @@ function Get-UninstallLeftovers {
     foreach ($name in @(Get-DictValue $Record 'firewall_rules')) { if ($name -and (Get-NetFirewallRule -Name $name -ErrorAction SilentlyContinue)) { $left.Add(('firewall_rule:{0}' -f $name)) } }
     foreach ($name in @(Get-DictValue $Record 'hyperv_rules')) { if ($name -and (Get-NetFirewallHyperVRule -Name $name -ErrorAction SilentlyContinue)) { $left.Add(('hyperv_rule:{0}' -f $name)) } }
     if ((Test-Path -LiteralPath $Names.HostsPath) -and (@([System.IO.File]::ReadAllLines($Names.HostsPath) | Where-Object { $_.EndsWith($SlateOps.HostsMarker) }).Count -gt 0)) { $left.Add('hosts') }
-    if ($sid -and (Get-CimInstance -ClassName Win32_UserProfile -Filter ("SID='{0}'" -f $sid) -ErrorAction SilentlyContinue)) { $left.Add('profile') }
+    # R-10: a profile that a startup task removes at the next restart is not a leftover.
+    if ($sid -and (Get-CimInstance -ClassName Win32_UserProfile -Filter ("SID='{0}'" -f $sid) -ErrorAction SilentlyContinue) -and
+        -not (Get-ScheduledTask -TaskPath $Names.FinishTaskPath -TaskName ('{0}{1}' -f $Names.FinishTaskPrefix, $sid) -ErrorAction SilentlyContinue)) { $left.Add('profile') }
     $thumbprint = [string](Get-DictValue $Record 'ca_thumbprint')
     if ($thumbprint -and (Test-Path -LiteralPath ('Cert:\{0}\Root\{1}' -f $Names.StoreLocation, $thumbprint))) { $left.Add('ca') }
     foreach ($folder in @('state', 'requests', 'svc-out', 'scripts', 'settings')) {
@@ -421,41 +426,76 @@ function Invoke-UninstallPart {
     try { & $Body } catch { Write-RunLog 'uninstall.windows' 'WARN' ('{0}: {1}' -f $Name, $_.Exception.Message) }
 }
 
+function Get-AccountProcesses {
+    # R-9, R-10: the processes that run as the account (id and name only), by the token owner.
+    # A process whose owner cannot be read is skipped and counted in unreadable.
+    param([Parameter(Mandatory = $true)][string]$Sid)
+    $found = New-Object System.Collections.Generic.List[object]
+    $unreadable = 0
+    foreach ($process in @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue)) {
+        try {
+            $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop
+            if (($owner.ReturnValue -eq 0) -and ($owner.Sid -eq $Sid)) { $found.Add(@{ id = [int]$process.ProcessId; name = [string]$process.Name }) }
+        } catch { $unreadable++ }
+    }
+    return @{ processes = $found.ToArray(); unreadable = $unreadable }
+}
+
 function Stop-AccountProcesses {
     # R-9 (exec-path CI): ends every process that runs as the service account, so its profile
     # can unload. Its scheduled tasks are already stopped and removed. Only an S-1-5-21- SID (a
     # local or domain account; Remove-ServiceProfile calls it only for the profile folder of the
-    # service account), never the account of this process. Returns the number of ended processes.
+    # service account), never the account of this process. Every end and every failure is
+    # logged. Returns the number of ended processes.
     param([Parameter(Mandatory = $true)][string]$Sid)
     if ($Sid -notmatch '^S-1-5-21(-[0-9]+)+$') { return 0 }
     if ($Sid -eq [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { return 0 }
     $count = 0
-    foreach ($process in @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue)) {
+    foreach ($process in @((Get-AccountProcesses -Sid $Sid).processes)) {
         try {
-            $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop
-            if (($owner.ReturnValue -ne 0) -or ($owner.Sid -ne $Sid)) { continue }
-            Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
-            Write-RunLog 'uninstall.windows' 'INFO' ('ended {0} ({1}) of the service account' -f $process.Name, $process.ProcessId)
+            Stop-Process -Id $process.id -Force -ErrorAction Stop
+            Write-RunLog 'uninstall.windows' 'INFO' ('ended {0} ({1}) of the service account' -f $process.name, $process.id)
             $count++
-        } catch { $null = $_ }
+        } catch { Write-RunLog 'uninstall.windows' 'WARN' ('{0} ({1}) of the service account did not end: {2}' -f $process.name, $process.id, $_.Exception.Message) }
     }
     return $count
 }
 
+function Get-ServiceProfileFacts {
+    # R-10 (exec-path CI): one log line about what keeps the profile of the service account
+    # loaded: its hive under HKEY_USERS (read from the key list, which opens no hive), the
+    # profile list values, and its processes (names and ids only). For the log and Save report.
+    param([Parameter(Mandatory = $true)][string]$Sid)
+    $parts = New-Object System.Collections.Generic.List[string]
+    try { $parts.Add(('hive loaded {0}' -f (@([Microsoft.Win32.Registry]::Users.GetSubKeyNames()) -contains $Sid))) } catch { $parts.Add('hive unreadable') }
+    try {
+        $list = Get-Item -LiteralPath ('HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{0}' -f $Sid) -ErrorAction Stop
+        $parts.Add(('profile list RefCount {0}, State {1}' -f $list.GetValue('RefCount', '-'), $list.GetValue('State', '-')))
+    } catch { $parts.Add('profile list entry absent') }
+    try {
+        $found = Get-AccountProcesses -Sid $Sid
+        $names = @($found.processes | ForEach-Object { '{0} ({1})' -f $_.name, $_.id })
+        $parts.Add(('processes of the account {0} [{1}], owner unreadable for {2}' -f $names.Count, ($names -join ', '), $found.unreadable))
+    } catch { $parts.Add('processes unreadable') }
+    return ($parts.ToArray() -join '; ')
+}
+
 function Remove-ServiceProfile {
-    # R-9 (exec-path CI): the profile of the service account, its record and its C:\Users folder.
-    # The start task and the last job ran as the account, so the profile can still be loaded:
-    # the account's processes end first, and a loaded profile is tried again until the limit.
-    # True when no profile is left. At the limit the profile stays, the log says so, and the
-    # caller keeps the record, so the next start removes it.
+    # R-9, R-10 (exec-path CI): the profile of the service account, its record and its C:\Users
+    # folder. Its tasks are already removed and its account still exists. The account's
+    # processes end, then the profile is checked again until its hive unloads or the limit
+    # (inside the 90 s of the windows step), and deleted. True when no profile is left. At the
+    # limit it is logged with what still holds it, and false: the caller then leaves the rest
+    # to a task at the next startup (R-10).
     param(
         [Parameter(Mandatory = $true)][string]$Sid,
-        [int]$LimitSeconds = 30,
+        [int]$LimitSeconds = 45,
         [int]$WaitMilliseconds = 1000,
         [string]$AccountName = $SlateOps.AccountName,
         [scriptblock]$StopProcesses = { param([string]$Sid) Stop-AccountProcesses -Sid $Sid },
         [scriptblock]$FindProfile = { param([string]$Sid) Get-CimInstance -ClassName Win32_UserProfile -Filter ("SID='{0}'" -f $Sid) -ErrorAction SilentlyContinue },
-        [scriptblock]$DeleteProfile = { param($UserProfile) Remove-CimInstance -InputObject $UserProfile -ErrorAction Stop }
+        [scriptblock]$DeleteProfile = { param($UserProfile) Remove-CimInstance -InputObject $UserProfile -ErrorAction Stop },
+        [scriptblock]$Facts = { param([string]$Sid) Get-ServiceProfileFacts -Sid $Sid }
     )
     $deadline = [DateTime]::UtcNow.AddSeconds($LimitSeconds)
     $problem = 'it is still loaded'
@@ -468,26 +508,74 @@ function Remove-ServiceProfile {
         Write-RunLog 'uninstall.windows' 'WARN' ('the profile of {0} is not the service account profile; setup leaves it' -f $Sid)
         return $true
     }
+    $attempt = 0
     while ($true) {
+        $attempt++
         $null = & $StopProcesses $Sid
         $userProfile = & $FindProfile $Sid
         if (-not $userProfile) { return $true }
+        if ($attempt -eq 1) { Write-RunLog 'uninstall.windows' 'INFO' ('profile of {0}: loaded {1}; {2}' -f $Sid, [bool]$userProfile.Loaded, (& $Facts $Sid)) }
         if (-not $userProfile.Loaded) {
             try {
                 & $DeleteProfile $userProfile
                 if (-not (& $FindProfile $Sid)) {
-                    Write-RunLog 'uninstall.windows' 'INFO' ('profile of {0} removed' -f $Sid)
+                    Write-RunLog 'uninstall.windows' 'INFO' ('profile of {0} removed after {1} checks' -f $Sid, $attempt)
                     return $true
                 }
                 $problem = 'its record is still there after the delete'
             } catch { $problem = $_.Exception.Message }
         }
         if ([DateTime]::UtcNow -ge $deadline) {
-            Write-RunLog 'uninstall.windows' 'WARN' ('profile of {0} not removed in {1} s ({2}); the record stays, so the next start removes it' -f $Sid, $LimitSeconds, $problem)
+            Write-RunLog 'uninstall.windows' 'WARN' ('profile of {0} not removed in {1} s ({2}); {3}' -f $Sid, $LimitSeconds, $problem, (& $Facts $Sid))
             return $false
         }
         Start-Sleep -Milliseconds $WaitMilliseconds
     }
+}
+
+function Get-ProfileFinishScript {
+    # R-10: the script of the startup task, inline (the scripts folder is gone by then). As
+    # SYSTEM at startup, before the account could sign in: the profile is deleted when it is not
+    # loaded, and the task deletes itself only when no profile record is left; else it stays
+    # and tries again at the next startup. The SID passes the strict pattern before it goes in.
+    param([Parameter(Mandatory = $true)][string]$Sid, [Parameter(Mandatory = $true)][string]$TaskPath, [Parameter(Mandatory = $true)][string]$TaskName)
+    if ($Sid -cnotmatch $SlateOpsKept.SidPattern) { throw ('not an account SID: {0}' -f $Sid) }
+    if (($TaskPath + $TaskName) -cnotmatch '^[\\A-Za-z0-9_.-]+$') { throw 'not a task name' }
+    $lines = @(
+        '$ErrorActionPreference = ''Stop'''
+        ('$filter = "SID=''{0}''"' -f $Sid)
+        '$userProfile = Get-CimInstance -ClassName Win32_UserProfile -Filter $filter'
+        'if ($userProfile -and $userProfile.Loaded) { return }'
+        'if ($userProfile) { Remove-CimInstance -InputObject $userProfile }'
+        'if (Get-CimInstance -ClassName Win32_UserProfile -Filter $filter) { return }'
+        ('Unregister-ScheduledTask -TaskPath ''{0}'' -TaskName ''{1}'' -Confirm:$false' -f $TaskPath, $TaskName)
+    )
+    return ($lines -join "`r`n")
+}
+
+function Register-ProfileFinishTask {
+    # R-10 (exec-path CI): when the profile of the removed account stays loaded past the wait,
+    # one task (SYSTEM, at startup) deletes it at the next restart, then deletes itself. The
+    # task name holds the SID and is the only record; it is outside \SlateOps\ (C29 reads that
+    # folder as an installation). True only when the task reads back as registered.
+    param([Parameter(Mandatory = $true)][string]$Sid, [hashtable]$Names = (Get-UninstallNames))
+    $name = '{0}{1}' -f $Names.FinishTaskPrefix, $Sid
+    try {
+        $finishScript = Get-ProfileFinishScript -Sid $Sid -TaskPath $Names.FinishTaskPath -TaskName $name
+        $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($finishScript))
+        $powershell = Join-Path $SlateOpsPaths.System32 'WindowsPowerShell\v1.0\powershell.exe'
+        $action = New-ScheduledTaskAction -Execute $powershell -Argument ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {0}' -f $encoded)
+        $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -MultipleInstances IgnoreNew
+        $description = 'Slate Operations setup: removes the profile of the removed account {0} at startup, then this task.' -f $Sid
+        Register-ScheduledTask -TaskPath $Names.FinishTaskPath -TaskName $name -Action $action -Principal $principal -Settings $settings -Trigger (New-ScheduledTaskTrigger -AtStartup) -Description $description -Force | Out-Null
+    } catch {
+        Write-RunLog 'uninstall.windows' 'WARN' ('the startup task {0} could not be registered: {1}' -f $name, $_.Exception.Message)
+        return $false
+    }
+    $registered = [bool](Get-ScheduledTask -TaskPath $Names.FinishTaskPath -TaskName $name -ErrorAction SilentlyContinue)
+    if ($registered) { Write-RunLog 'uninstall.windows' 'INFO' ('the profile of {0} goes at the next restart: task {1}{2} (SYSTEM, at startup)' -f $Sid, $Names.FinishTaskPath, $name) }
+    return $registered
 }
 
 function Remove-WindowsParts {
@@ -497,11 +585,12 @@ function Remove-WindowsParts {
         [Parameter(Mandatory = $true)][hashtable]$Layout,
         [hashtable]$Names = (Get-UninstallNames),
         [switch]$DataLeft,
-        [scriptblock]$RemoveProfile = { param([string]$Sid) Remove-ServiceProfile -Sid $Sid }
+        [scriptblock]$RemoveProfile = { param([string]$Sid, [int]$LimitSeconds = 45) Remove-ServiceProfile -Sid $Sid -LimitSeconds $LimitSeconds },
+        [scriptblock]$RegisterFinish = { param([string]$Sid) Register-ProfileFinishTask -Sid $Sid -Names $Names }
     )
     $step = 'uninstall.windows'
     $record = Read-WindowsChanges -Layout $Layout
-    $outcome = @{ profile_left = $false }
+    $outcome = @{ profile_left = $false; at_restart = $false }
     Invoke-UninstallPart 'tasks' {
         foreach ($task in @(Get-ScheduledTask -TaskPath $Names.TaskPath -ErrorAction SilentlyContinue)) {
             Stop-ScheduledTask -TaskPath $Names.TaskPath -TaskName $task.TaskName -ErrorAction SilentlyContinue
@@ -512,11 +601,28 @@ function Remove-WindowsParts {
     }
     # The account: sign-in list entry, profile, account, rights; the UserList keys as they were.
     $sid = [string](Get-DictValue $record 'account_sid')
+    # R-10: a startup task of an earlier removal goes once its profile is gone (a short try
+    # here); while that profile is still there, the task stays and finishes at the restart.
+    Invoke-UninstallPart 'finish_tasks' {
+        foreach ($task in @(Get-ScheduledTask -TaskPath $Names.FinishTaskPath -ErrorAction SilentlyContinue | Where-Object { $_.TaskName.StartsWith($Names.FinishTaskPrefix) })) {
+            $old = $task.TaskName.Substring($Names.FinishTaskPrefix.Length)
+            if (($old -cmatch $SlateOpsKept.SidPattern) -and ($old -ne $sid) -and (& $RemoveProfile $old 5)) {
+                Unregister-ScheduledTask -TaskPath $Names.FinishTaskPath -TaskName $task.TaskName -Confirm:$false
+                Write-RunLog $step 'INFO' ('task {0}{1} removed: the profile of {2} is gone' -f $Names.FinishTaskPath, $task.TaskName, $old)
+            }
+        }
+    }
     Invoke-UninstallPart 'account' {
         if ($sid) {
-            # R-9: the profile first, after the account's processes end; it needs no account, so
-            # a next start removes a profile that stayed loaded here.
+            # R-9, R-10: the order is the tasks (above), the account's processes, the wait for its
+            # hive to unload, the profile, then the account. A profile still loaded at the limit
+            # goes at the next restart (a startup task); only when that task cannot be
+            # registered does the record keep the SID for the next start.
             $outcome.profile_left = -not (& $RemoveProfile $sid)
+            if ($outcome.profile_left -and (& $RegisterFinish $sid)) {
+                $outcome.profile_left = $false
+                $outcome.at_restart = $true
+            }
             $account = Get-LocalUser -SID $sid -ErrorAction SilentlyContinue
             if ($account) {
                 Remove-ItemProperty -LiteralPath $Names.UserList -Name $account.Name -ErrorAction SilentlyContinue
@@ -568,8 +674,9 @@ function Remove-WindowsParts {
     # with no leftover, so U04 can still save a report (and the next setup run removes the rest,
     # plan 10.7).
     Invoke-UninstallPart 'resume' { $null = Clear-SetupResume -Layout $Layout }
-    # R-9: with the profile left, the record keeps only the account SID; the next start sees it,
-    # runs the removal again and removes the profile, and nothing else.
+    # R-9: with the profile left and no startup task (R-10), the record keeps only the account
+    # SID; the next start sees it, runs the removal again and removes the profile, and nothing
+    # else.
     $keepRecord = Join-Path $Layout.State 'windows-changes.json'
     if ($outcome.profile_left) { Invoke-UninstallPart 'record' { Write-JsonFile -Path $keepRecord -Value ([ordered]@{ account_sid = $sid }) } }
     foreach ($folder in @('state', 'requests', 'svc-out', 'settings')) {
@@ -591,6 +698,8 @@ function Remove-WindowsParts {
     foreach ($item in $left) { Write-RunLog $step 'FAIL' ('leftover: {0}' -f $item) }
     if ($left.Count -gt 0) { return New-StepResult -Code 'leftovers' -MessageKey 'uninstall.leftovers' -Values @{ items = $left } }
     Write-RunLog $step 'INFO' 'every item removed; WSL and VirtualMachinePlatform stay'
+    # R-10: the wizard's last line then says that Windows finishes at the next restart.
+    if ($outcome.at_restart) { return New-StepResult -Code 'removed_at_restart' -MessageKey 'uninstall.removed_at_restart' }
     return New-StepResult -Code 'removed' -MessageKey 'uninstall.removed'
 }
 

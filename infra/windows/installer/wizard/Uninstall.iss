@@ -24,7 +24,7 @@ const
 
 var
   UHelper, URoot, URunId, UDataRoot, UBackupFolder, ULeft: String;
-  UKeep, UDeleteBackups: Boolean;
+  UKeep, UDeleteBackups, UAccountRestart: Boolean;
   UDiskGb, USeq: Integer;
   URadioKeep, URadioDelete: TNewRadioButton;
   UBackupsCheck, UConfirmCheck: TNewCheckBox;
@@ -397,6 +397,8 @@ begin
     Text := URun('remove-windows', URunId, Extra, U_WINDOWS_SEC);
     if JsonValue(Text, 'code') = 'leftovers' then
       ULeft := ULeft + ' windows';
+    { R-10: a startup task removes the account's profile at the next restart. }
+    UAccountRestart := JsonValue(Text, 'code') = 'removed_at_restart';
     { Inno's own lines follow (its files). }
     UStageLine := '';
   end;
@@ -408,6 +410,8 @@ begin
     else
       Text := CM('u04_deleted');
     Text := Text + #13#10#13#10 + CM('u04_feature');
+    if UAccountRestart then
+      Text := Text + #13#10#13#10 + CM('remove_account_restart');
     if ULeft <> '' then
     begin
       if TaskDialogMsgBox(CM('u04_leftovers'), Text, mbInformation, MB_YESNO, [CM('btn_save_report'), CM('btn_close')], 0) = IDYES then
