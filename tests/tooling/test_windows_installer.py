@@ -1407,7 +1407,7 @@ RECHECK_COPY = {
     "from the Start menu.",
     "report_failed": "Setup could not save the report. Select Save report again.",
     "s05_done_no_restart": "Virtual Machine Platform and Windows Subsystem for Linux (WSL) are "
-    "ready on this PC. This PC does not need a restart.",
+    "ready on this PC.",
     "s12_fail1": "load the Slate Operations programs",
     "s12_fail2": "create the settings and passwords",
     "s05_done_vmp": "Setup turned on Virtual Machine Platform. Windows finishes it when this PC "
@@ -1582,6 +1582,7 @@ class W14RecheckTest(unittest.TestCase):
         self.assertIn("WizardForm.PageDescriptionLabel.Caption := CM(S05SubtitleKey);", render)
         self.assertIn("else if not Vmp and not Wsl then Result := 's05_subtitle_ready'", self.raw)
         self.assertIn("'AC-6 S05 subtitle with no restart'", self.selftest)
+        self.assertIn("WizardForm.PageDescriptionLabel.Caption := CM('s05_subtitle_ready');", render)
         self.assertIn("AddProgress('', S05NoRestartStages, 3, '', 0, '');", render)
         self.assertIn("FM3('s05_details', S05WslVersion, PrepFeature, PrepWsl)", render)
         self.assertIn("StepText('pc', Key, S05WslVersion, '', '')", self.raw)

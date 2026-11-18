@@ -2803,6 +2803,8 @@ begin
   end
   else
   begin
+    { No restart happened, so the subtitle says so, also when setup installed WSL just now (spec S05). }
+    WizardForm.PageDescriptionLabel.Caption := CM('s05_subtitle_ready');
     AddProgress('', S05NoRestartStages, 3, '', 0, '');
     BlockGap;
     AddVerdict(CM('s05_done_no_restart'));

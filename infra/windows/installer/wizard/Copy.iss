@@ -200,7 +200,7 @@ s07_prep_failed=Preparing the server part stopped. Select Next for details.
 s07_start_failed=Setup could not start the server part of Slate Operations.
 s07_folder_changed=Setup cannot keep your data in %1, because a folder above it changed. Select Cancel, then Remove everything, and start setup again.
 ; TASK-0097 AC-1: engineer copy for the Product Designer's review (a resume after an older setup file put its server part on this PC).
-s07_other_version=The server part on this PC comes from another setup file. Select Cancel, then Remove everything, and start setup again.
+s07_other_version=Setup cannot use the server part that is on this PC. Select Cancel, then Remove everything, and start setup again.
 
 ; ---- S08 Your organization
 s08_title=Your organization
@@ -668,7 +668,7 @@ s05_stage_install=Install
 s05_already=(already on this PC)
 s05_why_vmp=Virtual Machine Platform: lets this PC run the server part of Slate Operations.
 s05_why_wsl=Windows Subsystem for Linux (WSL): runs the server part of Slate Operations inside Windows.
-s05_done_no_restart=Virtual Machine Platform and Windows Subsystem for Linux (WSL) are ready on this PC. This PC does not need a restart.
+s05_done_no_restart=Virtual Machine Platform and Windows Subsystem for Linux (WSL) are ready on this PC.
 ; TASK-0097 AC-6 (Product Designer): the S05 verdict and subtitle from the helper's codes.
 s05_done_vmp=Setup turned on Virtual Machine Platform. Windows finishes it when this PC restarts.
 s05_done_wsl=Setup installed Windows Subsystem for Linux (WSL). Windows finishes it when this PC restarts.
