@@ -3968,7 +3968,7 @@ end;
 
 procedure LayoutOrg;
 var
-  Y, ShowWidth: Integer;
+  Y, ShowWidth, Half: Integer;
 begin
   Y := OrgTop;
   OrgError.Visible := (OrgErrorAfter <> nil) and (OrgError.Caption <> '');
@@ -3986,19 +3986,30 @@ begin
   Place(OrgEmail, Y, True, ScaleY(4));
   PlaceOrgError(OrgEmail, Y);
   Y := Y + ScaleY(8);
-  { "Show" at the right end of the Password label's line (as on M02 Other), for both fields. }
+  { Parent decision (2026-11-18, spec 6.1 rule 9 exception, as on M02 Other): Password and its
+    second entry share one row, each column a block (label, 4 px, field); "Show" sits at the
+    right end of the Password label's line and shows both fields. The help and an error of either
+    field follow the row at full width, so every S08 state ends inside the page. }
+  Half := (OrgName.Width - ScaleX(16)) div 2;
   OrgShow.Width := RadioWidth(OrgShow.Caption);
   ShowWidth := OrgShow.Width;
-  OrgPasswordLabel.Width := OrgName.Width - ShowWidth - ScaleX(8);
-  OrgShow.SetBounds(OrgName.Width - ShowWidth, Y, ShowWidth, OrgShow.Height);
+  OrgPasswordLabel.SetBounds(0, Y, Half - ShowWidth - ScaleX(8), OrgPasswordLabel.Height);
+  OrgShow.SetBounds(Half - ShowWidth, Y, ShowWidth, OrgShow.Height);
+  OrgConfirmLabel.SetBounds(Half + ScaleX(16), Y, Half, OrgConfirmLabel.Height);
+  OrgPasswordLabel.Visible := True;
   OrgShow.Visible := True;
-  Place(OrgPasswordLabel, Y, True, ScaleY(4));
+  OrgConfirmLabel.Visible := True;
+  if OrgShow.Height > OrgPasswordLabel.Height then
+    Y := Y + OrgShow.Height + ScaleY(4)
+  else
+    Y := Y + OrgPasswordLabel.Height + ScaleY(4);
+  OrgPassword.SetBounds(0, Y, Half, OrgPassword.Height);
+  OrgConfirm.SetBounds(Half + ScaleX(16), Y, Half, OrgConfirm.Height);
+  OrgPassword.Visible := True;
+  OrgConfirm.Visible := True;
+  Y := Y + OrgPassword.Height + ScaleY(4);
   Place(OrgPasswordHelp, Y, True, ScaleY(4));
-  Place(OrgPassword, Y, True, ScaleY(4));
   PlaceOrgError(OrgPassword, Y);
-  Y := Y + ScaleY(8);
-  Place(OrgConfirmLabel, Y, True, ScaleY(4));
-  Place(OrgConfirm, Y, True, ScaleY(4));
   PlaceOrgError(OrgConfirm, Y);
   Y := Y + ScaleY(8);
   { DEC-0039: the address line; with "Change" open, the short name block under it. }

@@ -1273,7 +1273,8 @@ class W14Part3Test(unittest.TestCase):
         self.assertIn("MailError := AddTextTo(Surface, 0, '', False);", build)
         self.assertIn("OrgError := AddTextTo(Surface, 0, '', False);", self.raw)
         self.assertIn(
-            "Place(OrgConfirm, Y, True, ScaleY(4));", routine(self.raw, "procedure LayoutOrg;\nvar")
+            "OrgConfirm.SetBounds(Half + ScaleX(16), Y, Half, OrgConfirm.Height);",
+            routine(self.raw, "procedure LayoutOrg;\nvar"),
         )
         self.assertIn("ScaleX(16)", routine(self.raw, "procedure PlaceRadioRow("))
         copy = read_copy()
@@ -1619,11 +1620,24 @@ class Dec0041Test(unittest.TestCase):
         copy = read_copy()
         self.assertEqual(copy.get("s11_admin"), "Administrator: %1. You sign in with this address.")
         self.assertNotIn("s11_mail", self.part("procedure RenderReady;"))
+        # Parent decision (S08 too tall): Password and its second entry share one row; "Show" sits
+        # at the right end of the Password label's line (spec 6.1 rule 9 exception).
+        layout = self.part("procedure LayoutOrg;\nvar")
+        self.assertIn("OrgPassword.SetBounds(0, Y, Half, OrgPassword.Height);", layout)
         self.assertIn(
-            "SelfRecord('AC-W1 S08 fields in order, Show on the password line, the error inside "
-            "the page', Ok,",
+            "OrgConfirm.SetBounds(Half + ScaleX(16), Y, Half, OrgConfirm.Height);", layout
+        )
+        self.assertIn("OrgShow.SetBounds(Half - ShowWidth, Y, ShowWidth, OrgShow.Height);", layout)
+        self.assertIn(
+            "SelfRecord('AC-W1 S08 fields in order, Password and its second entry in one row, Show "
+            "on the password line, the error inside the page', Ok,",
             self.selftest,
         )
+        # Windows CI on 53acdd6e: a masked field is any character but 0 (themed edit controls
+        # draw a dot), and each S08 check says what it saw.
+        show = self.selftest.split("SelfRecord('AC-W1 S08 Show shows both passwords", 1)[1]
+        self.assertIn("'shown chars ' + Masked", show.split(");", 1)[0])
+        self.assertNotIn("EditPasswordChar(OrgPassword) = Ord('*')", self.selftest)
 
     def test_ac_w2_every_server_step_runs_on_s12_in_order_with_a_limit(self) -> None:
         prep = self.part("procedure PollServerPrep;")

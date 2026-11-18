@@ -268,32 +268,60 @@ procedure SelfFormPages;
 var
   Ok: Boolean;
   ErrorHeight: Integer;
+  Masked: String;
 begin
   try
-    OrgError.Caption := CM('s08_err_confirm');
-    OrgErrorAfter := OrgConfirm;
+    { AC-W1 and the parent's S08 decision: the fields in order, Password and its second entry in
+      one row with "Show" at the right end of the Password label's line, both masked, and a
+      password error under the row, inside the page. }
+    OrgError.Caption := CM('s08_err_password');
+    OrgErrorAfter := OrgPassword;
     LayoutOrg;
     Ok := (OrgNameLabel.Top >= OrgTop) and (OrgName.Top < OrgYourNameLabel.Top) and (OrgYourName.Top < OrgEmailLabel.Top)
-      and (OrgEmail.Top < OrgPasswordLabel.Top) and (OrgPassword.Top < OrgConfirmLabel.Top)
+      and (OrgEmail.Top < OrgPasswordLabel.Top) and (OrgConfirm.Top = OrgPassword.Top) and (OrgConfirmLabel.Top = OrgPasswordLabel.Top)
+      and (OrgConfirm.Left >= OrgPassword.Left + OrgPassword.Width + ScaleX(16))
       and (OrgShow.Top = OrgPasswordLabel.Top) and (OrgShow.Left >= OrgPasswordLabel.Left + OrgPasswordLabel.Width)
-      and (EditPasswordChar(OrgPassword) = Ord('*')) and (EditPasswordChar(OrgConfirm) = Ord('*'))
-      and OrgError.Visible and (OrgError.Top > OrgConfirm.Top)
-      and (OrgError.Top + OrgError.Height <= StatusBandTop - ScaleY(12));
-    SelfRecord('AC-W1 S08 fields in order, Show on the password line, the error inside the page', Ok,
-      'error ends at ' + IntToStr(OrgError.Top + OrgError.Height) + ', limit ' + IntToStr(StatusBandTop - ScaleY(12)));
-    SelfInfo('S08 height', 'content ends at ' + IntToStr(OrgError.Top + OrgError.Height) + ', limit '
+      and (OrgShow.Left + OrgShow.Width <= OrgPassword.Left + OrgPassword.Width)
+      and (EditPasswordChar(OrgPassword) <> 0) and (EditPasswordChar(OrgConfirm) <> 0)
+      and OrgError.Visible and (OrgError.Top > OrgPassword.Top) and (OrgError.Top < OrgAddressLink.Top)
+      and (OrgAddressLink.Top + OrgAddressLink.Height <= StatusBandTop - ScaleY(12));
+    SelfRecord('AC-W1 S08 fields in order, Password and its second entry in one row, Show on the password line, the error inside the page', Ok,
+      'name ' + IntToStr(OrgName.Top) + ', your name ' + IntToStr(OrgYourName.Top) + ', email ' + IntToStr(OrgEmail.Top)
+      + ', password ' + IntToStr(OrgPassword.Left) + '/' + IntToStr(OrgPassword.Top) + ' w ' + IntToStr(OrgPassword.Width)
+      + ', confirm ' + IntToStr(OrgConfirm.Left) + '/' + IntToStr(OrgConfirm.Top)
+      + ', show ' + IntToStr(OrgShow.Left) + '/' + IntToStr(OrgShow.Top) + ' w ' + IntToStr(OrgShow.Width)
+      + ', password label ' + IntToStr(OrgPasswordLabel.Left) + '/' + IntToStr(OrgPasswordLabel.Top) + ' w ' + IntToStr(OrgPasswordLabel.Width)
+      + ', masked chars ' + IntToStr(EditPasswordChar(OrgPassword)) + '/' + IntToStr(EditPasswordChar(OrgConfirm))
+      + ', error ' + IntToStr(OrgError.Top) + ' visible ' + IntToStr(Ord(OrgError.Visible))
+      + ', address line ends at ' + IntToStr(OrgAddressLink.Top + OrgAddressLink.Height) + ', limit ' + IntToStr(StatusBandTop - ScaleY(12)));
+    SelfInfo('S08 height', 'content ends at ' + IntToStr(OrgAddressLink.Top + OrgAddressLink.Height) + ', limit '
       + IntToStr(StatusBandTop - ScaleY(12)) + ', page ' + IntToStr(Pages[P_ORG].SurfaceHeight));
+    { Show reveals both fields and hides them again. The edit control answers itself
+      (EM_GETPASSWORDCHAR): 0 shows the text, any other character masks it (with themed edit
+      controls Windows draws a dot, so the exact character is not the contract). }
     OrgShow.Checked := True;
     OrgShowClick(nil);
+    Masked := IntToStr(EditPasswordChar(OrgPassword)) + '/' + IntToStr(EditPasswordChar(OrgConfirm));
     Ok := (EditPasswordChar(OrgPassword) = 0) and (EditPasswordChar(OrgConfirm) = 0);
     HideOrgShow;
-    Ok := Ok and (EditPasswordChar(OrgPassword) = Ord('*')) and (EditPasswordChar(OrgConfirm) = Ord('*')) and not OrgShow.Checked;
-    SelfRecord('AC-W1 S08 Show shows both passwords and hides them again', Ok, '');
+    Ok := Ok and (EditPasswordChar(OrgPassword) <> 0) and (EditPasswordChar(OrgConfirm) <> 0) and not OrgShow.Checked;
+    SelfRecord('AC-W1 S08 Show shows both passwords and hides them again', Ok,
+      'shown chars ' + Masked + ', hidden chars ' + IntToStr(EditPasswordChar(OrgPassword)) + '/' + IntToStr(EditPasswordChar(OrgConfirm))
+      + ', Show checked ' + IntToStr(Ord(OrgShow.Checked)));
+    OrgError.Caption := '';
+    OrgErrorAfter := nil;
+    LayoutOrg;
     SelfRecord('AC-W1 S08 email format check (the engine shape)', ValidEmail('maria@example.com') and ValidEmail('a.b+c@mail.example-school.org')
       and (not ValidEmail('maria@example')) and (not ValidEmail('maria@-example.com')) and (not ValidEmail('maria@example-.com'))
-      and (not ValidEmail('ma ria@example.com')) and (not ValidEmail('@example.com')) and (not ValidEmail('maria@example..com')), '');
+      and (not ValidEmail('ma ria@example.com')) and (not ValidEmail('@example.com')) and (not ValidEmail('maria@example..com')),
+      'valid 1 1 = ' + IntToStr(Ord(ValidEmail('maria@example.com'))) + ' ' + IntToStr(Ord(ValidEmail('a.b+c@mail.example-school.org')))
+      + ', refused 0 0 0 0 0 0 = ' + IntToStr(Ord(ValidEmail('maria@example'))) + ' ' + IntToStr(Ord(ValidEmail('maria@-example.com')))
+      + ' ' + IntToStr(Ord(ValidEmail('maria@example-.com'))) + ' ' + IntToStr(Ord(ValidEmail('ma ria@example.com')))
+      + ' ' + IntToStr(Ord(ValidEmail('@example.com'))) + ' ' + IntToStr(Ord(ValidEmail('maria@example..com'))));
     SelfRecord('AC-W1 S08 password length rule (12 to 128)', (not PasswordLengthOk('elevenchars')) and PasswordLengthOk('twelve chars')
-      and PasswordLengthOk(StringOfChar('a', 128)) and not PasswordLengthOk(StringOfChar('a', 129)), '');
+      and PasswordLengthOk(StringOfChar('a', 128)) and not PasswordLengthOk(StringOfChar('a', 129)),
+      '11, 12, 128, 129 characters = ' + IntToStr(Ord(PasswordLengthOk('elevenchars'))) + ' ' + IntToStr(Ord(PasswordLengthOk('twelve chars')))
+      + ' ' + IntToStr(Ord(PasswordLengthOk(StringOfChar('a', 128)))) + ' ' + IntToStr(Ord(PasswordLengthOk(StringOfChar('a', 129)))) + ' (want 0 1 1 0)');
     SelfRecord('AC-W5 the user name from the name on S08', (UserFromName('Maria Santos', 'maria@example.com') = 'maria-santos')
       and (UserFromName('  ', 'jo@example.com') = 'jo_') and (UserFromName('Al', 'al@example.com') = 'al_'),
       UserFromName('Maria Santos', 'maria@example.com') + ', ' + UserFromName('  ', 'jo@example.com'));
@@ -319,7 +347,9 @@ begin
     Ok := OrgSlug.Visible and OrgSlugLabel.Visible and (OrgSlug.Top > OrgAddressLink.Top) and (Pos('<a', OrgAddressLink.Caption) = 0)
       and OrgError.Visible and (OrgError.Top > OrgSlug.Top) and (OrgSlugHelp.Top + OrgSlugHelp.Height <= StatusBandTop - ScaleY(12));
     SelfRecord('AC-A1 S08 short name open with its error fits the page', Ok,
-      'ends at ' + IntToStr(OrgSlugHelp.Top + OrgSlugHelp.Height) + ', limit ' + IntToStr(StatusBandTop - ScaleY(12)));
+      'short name ' + IntToStr(OrgSlug.Top) + ' visible ' + IntToStr(Ord(OrgSlug.Visible)) + ', address line ' + IntToStr(OrgAddressLink.Top)
+      + ', error ' + IntToStr(OrgError.Top) + ' visible ' + IntToStr(Ord(OrgError.Visible))
+      + ', ends at ' + IntToStr(OrgSlugHelp.Top + OrgSlugHelp.Height) + ', limit ' + IntToStr(StatusBandTop - ScaleY(12)));
     SelfInfo('S08 short name open height', 'content ends at ' + IntToStr(OrgSlugHelp.Top + OrgSlugHelp.Height) + ', limit '
       + IntToStr(StatusBandTop - ScaleY(12)) + ', page ' + IntToStr(Pages[P_ORG].SurfaceHeight));
     OrgError.Caption := '';
