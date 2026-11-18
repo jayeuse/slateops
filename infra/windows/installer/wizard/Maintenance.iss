@@ -182,7 +182,6 @@ begin
   MaintLine := Line;
   MaintAction := '';
   MaintPhase := '';
-  WizardForm.BeveledLabel.Caption := '';
   WizardForm.BackButton.OnClick(WizardForm.BackButton);
 end;
 
@@ -235,21 +234,28 @@ begin
   end;
 end;
 
-procedure MaintActionClick(Sender: TObject);
+{ M01 "Show the phone code" after its helper (W14-D9: StepFinished 'code'). }
+procedure ShowPhoneCode(Code: String);
 var
-  Text, Code: String;
+  Text: String;
 begin
-  if JobRunning or (MaintPhase <> '') then
+  Text := CM('s15_step3') + #13#10 + 'http://' + HostName + '.local/trust';
+  if Code <> '' then
+    Text := Text + #13#10#13#10 + FM1('s15_security', Code);
+  InfoForm(CM('m01_code'), Text);
+end;
+
+procedure MaintActionClick(Sender: TObject);
+begin
+  if JobRunning or StepRunning or (MaintPhase <> '') then
     Exit;
   case TNewButton(Sender).Tag of
     0: OpenAsUser(AddressUrl, '');
     1: InviteClick(nil);
     2: begin
-         Text := CM('s15_step3') + #13#10 + 'http://' + HostName + '.local/trust';
-         Code := JsonValue(ReadText(NewOutRun('security-code', '')), 'security_code');
-         if Code <> '' then
-           Text := Text + #13#10#13#10 + FM1('s15_security', Code);
-         InfoForm(CM('m01_code'), Text);
+         { 7.6 "M01 phone code": "Reading the security code..." from the timer. }
+         if RunStep('security-code', '', 'code', CM('m01_reading_code'), 0, 0, HELPER_LIMIT_MS) then
+           RenderPage(P_MAINT);
        end;
     3: GoToMaintPage('email');
     4: GoToMaintPage('backup');
@@ -257,20 +263,17 @@ begin
          if not ConfirmNewKey then
            Exit;
          StartMaintKey('key4');
-         MaintLine := CM('s14_making');
+         MaintAt := GetTickCount;
+         MaintLine := '';
          RenderPage(P_MAINT);
        end;
     6: begin
-         { Repair: R7 is read again inside the helper right before the new password (11.1 W9). }
-         MaintLine := CM('m01_repairing');
-         RenderPage(P_MAINT);
-         WizardForm.Refresh;
-         Code := ReadResultCode(NewOutRun('repair', ''));
-         if Code = 'repaired' then MaintLine := CM('m01_repaired')
-         else if Code = 'logging_policy' then MaintLine := CM('c18_policy')
-         else if Code = 'logging_policy_unreadable' then MaintLine := CM('c18_unreadable')
-         else MaintLine := CM('m01_repair_failed');
-         RenderPage(P_MAINT);
+         { Repair: R7 is read again inside the helper right before the new password (11.1 W9).
+           W14-D9 (7.6 "M01 Repair"): from the timer, with its stages from the helper's
+           progress lines (repair.*); StepFinished 'repair' writes the result line. }
+         MaintLine := '';
+         if RunStep('repair', '', 'repair', '', 0, 0, HELPER_LIMIT_MS) then
+           RenderPage(P_MAINT);
        end;
     7: SaveReport(nil);
   end;
@@ -311,8 +314,9 @@ begin
   Verdict := AddVerdict(Sentence);
   if Line <> '' then
     AddText(Line, False);
+  { W14-D5 (7.6 "M01 status"): full form, one stage; the sentence above names the action. }
   if MaintStatus = 'checking' then
-    AddMarquee;
+    AddProgress('maint', '', 1, '', MaintStatusAt, '');
   CurY := CurY + ScaleY(4);
   for I := 0 to 3 do
   begin
@@ -323,10 +327,18 @@ begin
     if I = 3 then begin AddMaintAction(6, 0, CM('m01_repair'), CM('m01_repair_hint'), Bottom); AddMaintAction(7, 1, CM('btn_save_report'), CM('m01_report_hint'), Bottom); end;
     CurY := Bottom + ScaleY(4);
   end;
+  { 7.6 "M01 Repair": full form under the actions; the other M01 waits: one line. }
+  if StepFor = 'repair' then
+    AddProgress('repair', CM('repair_stages'), WaitStage('repair'), WaitActionText('repair'), StepAt, '')
+  else
+    AddStepLine;
   if MaintLine <> '' then
     AddText(MaintLine, True);
-  if ReportLine <> '' then
-    AddText(ReportLine, False);
+  if (ReportLine <> '') or (ReportPhase <> '') then
+  begin
+    ReportLabel := AddText(ReportLine, False);
+    ShowReportLine;
+  end;
   AddText(CM('m01_footer'), False);
   if (MaintStatus <> 'checking') and Verdict.CanFocus then
     WizardForm.ActiveControl := Verdict;
@@ -334,18 +346,20 @@ end;
 
 { M02 (S09 form) and M03 (S10 form) Next; True lets Inno move on (never in maintenance). }
 function MaintNext(PageID: Integer): Boolean;
-var
-  Code: String;
 begin
   Result := False;
   if PageID = Pages[P_EMAIL].ID then
   begin
     if MailPassed then
     begin
+      if JobRunning then
+        Exit;
       { W9-4: set-email applies the staged values and recreates auth; through the pipe. }
       MaintPhase := 'setemail';
+      MaintAt := GetTickCount;
       WizardForm.NextButton.Enabled := False;
       StartJob('set-email', '{"run_id":"' + RunId + '"}', 'setemail', True, False, 5);
+      RenderMailStatus;
     end
     else
     begin
@@ -359,26 +373,24 @@ begin
   end
   else if PageID = Pages[P_BACKUP].ID then
   begin
-    WizardForm.BeveledLabel.Caption := ' ' + FM1('m03_checking', BackupDrive);
-    WizardForm.Refresh;
-    if not CheckBackupDrive then
-    begin
-      WizardForm.BeveledLabel.Caption := '';
+    { W14-D9 (7.6 "M03"): 1 drive-check and 2 prepare-backup from the timer (StepFinished
+      'm03-check', 'm03-prepare'), 3 set-backup-target and 4 the new key (PollMaint). }
+    if StepRunning or (MaintPhase <> '') then
       Exit;
-    end;
-    Code := ReadResultCode(NewOutRun('prepare-backup', '-Drive ' + Uppercase(BackupDrive)));
-    if Code <> 'ready' then
-    begin
-      WizardForm.BeveledLabel.Caption := '';
-      BackupError := FM1('s10_not_writable', BackupDrive);
+    BackupError := '';
+    MaintAt := GetTickCount;
+    if RunStep('drive-check', '-Drive ' + Uppercase(BackupDrive), 'm03-check', FM1('m03_checking', BackupDrive), 1, 4, HELPER_LIMIT_MS) then
       RenderPage(P_BACKUP);
-      Exit;
-    end;
-    MaintTarget := Uppercase(BackupDrive);
-    MaintPhase := 'target';
-    WizardForm.NextButton.Enabled := False;
-    StartJob('set-backup-target', '{"run_id":"' + RunId + '","backup_target":' + JsonText(MaintTarget + '\SlateOps-backups') + '}', 'target', False, False, 10);
   end;
+end;
+
+procedure M03Target;
+begin
+  MaintTarget := Uppercase(BackupDrive);
+  MaintPhase := 'target';
+  WizardForm.NextButton.Enabled := False;
+  StartJob('set-backup-target', '{"run_id":"' + RunId + '","backup_target":' + JsonText(MaintTarget + '\SlateOps-backups') + '}', 'target', False, False, 10);
+  RenderPage(P_BACKUP);
 end;
 
 { From the timer. }
@@ -405,8 +417,16 @@ begin
   end;
   if (MaintPhase = '') or (JobState <> JOB_DONE) then
     Exit;
+  { W14-D9: only this phase's job (Save report can run a job too). }
+  if not ((JobPurpose = MaintPhase) or ((JobPurpose = 'maintkey') and ((MaintPhase = 'key3') or (MaintPhase = 'key4')))) then
+    Exit;
   JobState := JOB_IDLE;
-  if MaintPhase = 'setemail' then
+  if MaintPhase = 'invite' then
+  begin
+    MaintPhase := '';
+    InviteDone(JobCode);
+  end
+  else if MaintPhase = 'setemail' then
   begin
     if JobCode = 'email_set' then
       BackToMaint(FM1('m02_done', Trim(MailFrom.Text)))
@@ -421,7 +441,6 @@ begin
     else
     begin
       MaintPhase := '';
-      WizardForm.BeveledLabel.Caption := '';
       BackupError := FM1('s10_not_writable', MaintTarget);
       RenderPage(P_BACKUP);
     end;
@@ -549,22 +568,16 @@ begin
     UpdFail(3, UpdStepText(JobCode), True);
 end;
 
-{ The receive parts and the WSL package of this setup; not the Linux image. }
+{ The receive parts and the WSL package of this setup; not the Linux image. W14-D9: one file
+  per timer tick (upd.unpack); StepFinished 'upd-unpack' copies them (update-prepare). }
 procedure ExtractUpdateParts;
 begin
-  try
-    ExtractTemporaryFiles('{tmp}\payload\slateops-engine-*');
-    ExtractTemporaryFiles('{tmp}\payload\slateops-server-*');
-    ExtractTemporaryFiles('{tmp}\payload\slateops-caddy-*');
-    ExtractTemporaryFiles('{tmp}\payload\release-manifest.json*');
-    ExtractTemporaryFiles('{tmp}\payload\wsl.*');
-  except
-    Log('The setup payload is not in this setup file.');
-  end;
+  QueueExtract('slateops-engine-*|slateops-server-*|slateops-caddy-*|release-manifest.json|release-manifest.json.sigstore.json|wsl.*', 'upd-unpack');
 end;
 
 procedure StartUpdate;
 begin
+  UpdStartedAt := GetTickCount;
   UpdFailed := False;
   UpdWaiting := False;
   UpdSlowShown := False;
@@ -573,10 +586,15 @@ begin
   RenderPage(P_UPDATE);
 end;
 
+{ The four M05 stages, and the fifth when the update goes back (7.6). }
+function UpdStages: String;
+begin
+  Result := UpdStageName(1) + '|' + UpdStageName(2) + '|' + UpdStageName(3) + '|' + UpdStageName(4);
+  if (JobPurpose = 'update') and ((JobStepJob = 'rollback') or (JobStepJob = 'recover')) then
+    Result := Result + '|' + FM1('m05_stage_back', InstalledVersion);
+end;
+
 procedure RenderUpdate;
-var
-  I, Running: Integer;
-  StateWord: String;
 begin
   BeginBody(P_UPDATE);
   WizardForm.PageNameLabel.Caption := CM('m05_title');
@@ -597,25 +615,15 @@ begin
   end;
   WizardForm.NextButton.Enabled := False;
   WizardForm.CancelButton.Enabled := UpdCanStop;
-  { Stage 1 runs on Windows (the idle check, the parts, the WSL step). Stages 2 to 4 run inside
-    one engine job that reports no step while it runs, so they show "Now" together (as S12). }
-  if (UpdPhase = 'scripts') or (UpdPhase = 'done') then Running := 5
-  else if UpdPhase = 'update' then Running := 2
-  else Running := 1;
-  for I := 1 to 4 do
-  begin
-    StateWord := '';
-    if I < Running then StateWord := CM('s12_done_word')
-    else if (I = Running) or ((Running = 2) and (I > 2)) then StateWord := CM('s12_now_word');
-    if StateWord <> '' then
-      AddText(IntToStr(I) + '. ' + UpdStageName(I) + '   ' + StateWord, I >= Running)
-    else
-      AddText(IntToStr(I) + '. ' + UpdStageName(I), False);
-  end;
+  { W14-D5 (7.6 "M05 update"): stage 1 on Windows (the idle check, the parts, the WSL step) and
+    the engine's receive; stages 2 to 4 from the update job's standard error; the stage "Go back
+    to version ..." when the engine reports a rollback or a recover. }
   if UpdWaiting then
     AddText(CM('m05_waiting'), True);
-  if Running < 5 then
-    AddMarquee;
+  if UpdPhase = 'done' then
+    AddProgress('update', UpdStages, 5, '', 0, '')
+  else
+    AddProgress('update', UpdStages, WaitStage('update'), WaitActionText('update'), UpdStartedAt, CM('wait_up_to_60'));
   { P2-5: no verdict at a time limit; the slow line and Save report, and no Try again while the
     engine still works. }
   if (UpdPhase = 'update') and UpdSlowShown then
@@ -633,7 +641,7 @@ procedure PollUpdate;
 var
   Code: String;
 begin
-  if (EntryScreen <> 'M05') or (UpdPhase = '') or (UpdPhase = 'done') then
+  if (EntryScreen <> 'M05') or (UpdPhase = '') or (UpdPhase = 'done') or (UpdPhase = 'unpack') then
     Exit;
   if UpdPhase = 'pause' then
   begin
@@ -652,13 +660,13 @@ begin
       if (UpdPhase = 'update') and JobSlow and not UpdSlowShown then
       begin
         UpdSlowShown := True;
-        { As S12 (correction 5): the task's last result once; an account that cannot sign in
-          never runs the job. }
-        if TaskTimeoutCode = 'service_logon_failed' then
+        { As S12 (correction 5): the task's last result; an account that cannot sign in never
+          runs the job. W14-D9: the poll's job-result answer; the stop runs from the timer
+          (StepFinished 'upd-logon'). }
+        if JobLogonFailed then
         begin
-          RunHelper('job-stop', RunId, NewOut('job-stop'), '');
           JobState := JOB_IDLE;
-          UpdFail(3, CM('service_logon_failed'), True);
+          RunStep('job-stop', '', 'upd-logon', '', 0, 0, HELPER_LIMIT_MS);
           Exit;
         end;
         RenderPage(P_UPDATE);
@@ -702,11 +710,9 @@ begin
     else
     begin
       UpdWaiting := False;
-      UpdPhase := 'copy';
-      RenderPage(P_UPDATE);
-      WizardForm.Refresh;
+      UpdStep('unpack', '', '');
       ExtractUpdateParts;
-      UpdStep('copy', 'update-prepare', '');
+      RenderPage(P_UPDATE);
     end;
   end
   else if UpdPhase = 'copy' then
@@ -761,6 +767,9 @@ function UpdateNext: Boolean;
 begin
   Result := UpdPhase = 'done';
   if Result then
+    Exit;
+  { W14-D9: Save report's server part runs; one job at a time. }
+  if JobRunning then
     Exit;
   if UpdFailed and not UpdRetry then
     Exit;
@@ -854,36 +863,40 @@ const
 var
   CloseFlow, CloseAfter, ClosePhase, CloseOut, CloseLine: String;
   CloseAt, CloseStartedAt: Cardinal;
-  CloseStatus: TNewStaticText;
 
 function CloseFlowRunning: Boolean;
 begin
   Result := ClosePhase <> '';
 end;
 
-function CloseTimeText: String;
-var
-  Seconds: Cardinal;
+{ W14-D5: the step's place in its flow (7.6): later 1 to 3, remove 1 to 4; clear and the restart
+  have one step. }
+function ClosePhaseNumber: Integer;
 begin
-  Seconds := Elapsed(CloseStartedAt) div 1000;
-  Result := IntToStr(Seconds div 60) + ':' + Copy(IntToStr(100 + (Seconds mod 60)), 2, 2);
+  Result := 0;
+  if ClosePhase = 'wait' then Result := 1
+  else if (ClosePhase = 'discard') or (ClosePhase = 'stop') then Result := 2
+  else if (ClosePhase = 'save') or (ClosePhase = 'data') then Result := 3
+  else if ClosePhase = 'windows' then Result := 4;
 end;
 
+function CloseText: String;
+var
+  Total: Integer;
+begin
+  Total := 0;
+  if CloseFlow = 'later' then Total := 3
+  else if CloseFlow = 'remove' then Total := 4;
+  if (ClosePhase = 'restart') or (ClosePhase = 'clear') then
+    Result := OneLine(0, 0, CloseLine, CloseStartedAt)
+  else
+    Result := OneLine(ClosePhaseNumber, Total, CloseLine, CloseStartedAt);
+end;
+
+{ The line above the button row (6.1 L12), shared with the background preparation. }
 procedure ShowCloseStatus(Text: String);
 begin
-  if CloseStatus = nil then
-  begin
-    CloseStatus := TNewStaticText.Create(WizardForm);
-    CloseStatus.Parent := WizardForm;
-    CloseStatus.AutoSize := False;
-    CloseStatus.ShowAccelChar := False;
-    CloseStatus.WordWrap := True;
-    CloseStatus.SetBounds(WizardForm.InnerNotebook.Left, WizardForm.Bevel.Top - ScaleY(22),
-      WizardForm.InnerNotebook.Width, ScaleY(18));
-  end;
-  CloseStatus.Caption := Text;
-  CloseStatus.Visible := Text <> '';
-  CloseStatus.BringToFront;
+  ShowStatusLine(Text);
 end;
 
 procedure CloseStep(Phase, Line, Action, Extra: String);
@@ -897,7 +910,7 @@ begin
     CloseOut := NewOut(Action);
     StartHelper(Action, RunId, CloseOut, Extra);
   end;
-  ShowCloseStatus(Line + ' ' + CloseTimeText);
+  ShowCloseStatus(CloseText);
   Log('Close flow ' + CloseFlow + ': ' + Phase);
 end;
 
@@ -905,6 +918,7 @@ procedure StartCloseFlow(Flow, After: String);
 begin
   if ClosePhase <> '' then
     Exit;
+  CloseNotice := '';
   CloseFlow := Flow;
   CloseAfter := After;
   CloseStartedAt := GetTickCount;
@@ -914,9 +928,11 @@ begin
   CloseStep('wait', CM('later_waiting'), '', '');
 end;
 
+{ The end of a flow: setup closes, or restarts this PC (W14-D9: the restart helper runs from
+  the timer too, phase restart). }
 procedure EndCloseFlow;
 var
-  OutFile, Extra: String;
+  Extra: String;
 begin
   ClosePhase := '';
   { The self-test runs a flow with no end action. }
@@ -931,20 +947,15 @@ begin
   Extra := '';
   if CloseAfter = 'restart-firmware' then
     Extra := '-Firmware';
-  ShowCloseStatus(CM('later_restarting'));
-  OutFile := NewOut('restart');
-  RunHelper('restart', RunId, OutFile, Extra);
-  if ReadResultCode(OutFile) = 'restarting' then
-  begin
-    ForceClose := True;
-    WizardForm.Close;
-  end;
+  CloseStep('restart', CM('later_restarting'), 'restart', Extra);
 end;
 
-{ A failed save: the message stays, and the buttons come back. }
+{ A failed save or restart: the message stays (until the page changes), and the buttons come
+  back. }
 procedure FailCloseFlow(Text: String);
 begin
   ClosePhase := '';
+  CloseNotice := Text;
   ShowCloseStatus(Text);
   WizardForm.NextButton.Enabled := True;
   WizardForm.BackButton.Enabled := True;
@@ -962,7 +973,7 @@ begin
   begin
     if JobRunning and (Elapsed(CloseAt) < CLOSE_WAIT_MS) then
     begin
-      ShowCloseStatus(CM('later_waiting') + ' ' + CloseTimeText);
+      ShowCloseStatus(CloseText);
       Exit;
     end;
     if JobRunning then
@@ -973,9 +984,12 @@ begin
     begin
       ClosePhase := 'discard';
       CloseAt := GetTickCount;
-      ShowCloseStatus(CM('later_discarding') + ' ' + CloseTimeText);
+      CloseLine := CM('later_discarding');
+      ShowCloseStatus(CloseText);
       StartJob('smtp-test', '{"run_id":"' + RunId + '","mode":"discard"}', 'discard', True, False, 2);
     end
+    else if CloseFlow = 'clear' then
+      CloseStep('clear', CM('cancel_closing'), 'clear-resume', '-Cancel')
     else
       CloseStep('stop', CM('remove_stopping'), 'uninstall-stop', '');
     Exit;
@@ -984,7 +998,7 @@ begin
   begin
     if (JobState <> JOB_DONE) and (Elapsed(CloseAt) < CLOSE_WAIT_MS) then
     begin
-      ShowCloseStatus(CM('later_discarding') + ' ' + CloseTimeText);
+      ShowCloseStatus(CloseText);
       Exit;
     end;
     { The mark email_discarded only when the engine confirms the discard (D2). }
@@ -1000,7 +1014,7 @@ begin
   Code := ReadResultCode(CloseOut);
   if (Code = '') and (Elapsed(CloseAt) < CLOSE_STEP_MS) then
   begin
-    ShowCloseStatus(CloseLine + ' ' + CloseTimeText);
+    ShowCloseStatus(CloseText);
     Exit;
   end;
   if Code = '' then
@@ -1011,6 +1025,17 @@ begin
       FailCloseFlow(CM('later_save_failed'))
     else
       EndCloseFlow;
+  end
+  else if ClosePhase = 'restart' then
+  begin
+    if Code = 'restarting' then
+    begin
+      ClosePhase := '';
+      ForceClose := True;
+      WizardForm.Close;
+    end
+    else
+      FailCloseFlow(CM('later_restart_failed'));
   end
   else if ClosePhase = 'stop' then
   begin
@@ -1028,22 +1053,573 @@ begin
 end;
 
 { ------------------------------------------------------------------------------------------- }
+{ W14-D9: what follows each step of the step runner and the unpacking (Wizard.iss)               }
+{ ------------------------------------------------------------------------------------------- }
+
+procedure StepFinished(ForTag, Code: String);
+var
+  Text: String;
+begin
+  Text := '';
+  if StepOut <> '' then
+    Text := ReadText(StepOut);
+  if ForTag = 'cr-save' then
+  begin
+    RenderPage(-1);
+    CheckRestartConfirm(Code);
+  end
+  else if ForTag = 'cr-restart' then
+  begin
+    if Code = 'restarting' then
+    begin
+      ForceClose := True;
+      WizardForm.Close;
+    end
+    else
+      RenderPage(-1);
+  end
+  else if ForTag = 'restart-now' then
+  begin
+    ForceClose := True;
+    WizardForm.Close;
+  end
+  else if ForTag = 'prep-unpack' then
+  begin
+    PrepOut := NewOut('prepare-pc');
+    PrepState := 'working';
+    StartHelper('prepare-pc', RunId, PrepOut, '');
+    RenderPage(P_RESTART);
+  end
+  else if ForTag = 'prep-save' then
+  begin
+    PrepState := 'restart';
+    ResumeCode := Code;
+    RenderPage(P_RESTART);
+  end
+  else if ForTag = 'drives' then
+  begin
+    LoadDataDrives(Text);
+    if Code = 'helper_timeout' then
+      DataError := 'helper_timeout';
+    RenderPage(P_DATA);
+  end
+  else if ForTag = 'kept' then
+  begin
+    KeptRead(Text);
+    { A kept folder that the helper could not read never counts as an empty one. }
+    if KeptState = '' then
+      KeptState := 'kept_unreadable';
+    RenderPage(P_DATA);
+  end
+  else if ForTag = 'data-unpack' then
+    StartDataFolder
+  else if ForTag = 'provider' then
+  begin
+    MailDetected := Code;
+    ApplyProvider;
+    LayoutMail;
+    RenderMailStatus;
+  end
+  else if ForTag = 'r7' then
+  begin
+    if Code <> 'clear' then
+    begin
+      MailPhase := '';
+      MailShowReport := True;
+      if Code = 'policy' then SetMailError(CM('c18_policy'), MailPassword)
+      else SetMailError(CM('c18_unreadable'), MailPassword);
+      RenderMailStatus;
+    end
+    else
+    begin
+      MailPhase := 'r7done';
+      StartMailTest;
+    end;
+  end
+  else if ForTag = 's10-check' then
+  begin
+    if BackupResult(Text) then
+    begin
+      BackupCheckedDrive := BackupDrive;
+      WizardForm.NextButton.Enabled := True;
+      WizardForm.NextButton.OnClick(WizardForm.NextButton);
+    end
+    else
+      RenderPage(P_BACKUP);
+  end
+  else if ForTag = 'inst-save' then
+  begin
+    if ResumedInstall or KeptMode then
+      InstallStartJob('')
+    else
+      RunStep('time-zone', '', 'inst-tz', '', 0, 0, HELPER_LIMIT_MS);
+  end
+  else if ForTag = 'inst-tz' then
+    InstallStartJob(JsonValue(Text, 'iana'))
+  else if ForTag = 'inst-logon' then
+    InstallFail(0, CM('service_logon_failed'))
+  else if ForTag = 'inst-retry' then
+  begin
+    InstallStep := 1;
+    InstallNextStep;
+  end
+  else if ForTag = 'cd-check' then
+  begin
+    if Code <> 'ready' then
+      ChooseDriveFailed
+    else
+    begin
+      RunStep('prepare-backup', '-Drive ' + Uppercase(CdDrive), 'cd-prepare', FM1('cd_preparing', CdDrive), 2, 3, HELPER_LIMIT_MS);
+      RenderPage(P_INSTALL);
+    end;
+  end
+  else if ForTag = 'cd-prepare' then
+  begin
+    if Code <> 'ready' then
+      ChooseDriveFailed
+    else if InstallStep >= 2 then
+    begin
+      { The engine keeps its target from step 12; set-backup-target changes it (PollInstall). }
+      StartJob('set-backup-target', '{"run_id":"' + RunId + '","backup_target":' + JsonText(Uppercase(CdDrive) + '\SlateOps-backups') + '}', 'cdtarget', False, False, 5);
+      RenderPage(P_INSTALL);
+    end
+    else
+      ChooseDriveDone;
+  end
+  else if ForTag = 'printers' then
+    ShowPrinterForm(Text)
+  else if ForTag = 'key-saved' then
+  begin
+    KeySavedDone := True;
+    KeyText := '';
+    WizardForm.NextButton.Enabled := True;
+    WizardForm.NextButton.OnClick(WizardForm.NextButton);
+  end
+  else if ForTag = 'code' then
+  begin
+    RenderPage(P_MAINT);
+    ShowPhoneCode(JsonValue(Text, 'security_code'));
+  end
+  else if ForTag = 'repair' then
+  begin
+    if Code = 'repaired' then MaintLine := CM('m01_repaired')
+    else if Code = 'logging_policy' then MaintLine := CM('c18_policy')
+    else if Code = 'logging_policy_unreadable' then MaintLine := CM('c18_unreadable')
+    else if Code = 'helper_timeout' then MaintLine := CM('av_blocked')
+    else MaintLine := CM('m01_repair_failed');
+    RenderPage(P_MAINT);
+  end
+  else if ForTag = 'm03-check' then
+  begin
+    if not BackupResult(Text) then
+      RenderPage(P_BACKUP)
+    else
+    begin
+      RunStep('prepare-backup', '-Drive ' + Uppercase(BackupDrive), 'm03-prepare', FM1('cd_preparing', BackupDrive), 2, 4, HELPER_LIMIT_MS);
+      RenderPage(P_BACKUP);
+    end;
+  end
+  else if ForTag = 'm03-prepare' then
+  begin
+    if Code <> 'ready' then
+    begin
+      BackupError := FM1('s10_not_writable', BackupDrive);
+      RenderPage(P_BACKUP);
+    end
+    else
+      M03Target;
+  end
+  else if ForTag = 'upd-logon' then
+    UpdFail(3, CM('service_logon_failed'), True)
+  else if ForTag = 'upd-unpack' then
+  begin
+    UpdStep('copy', 'update-prepare', '');
+    RenderPage(P_UPDATE);
+  end;
+end;
+
+{ ------------------------------------------------------------------------------------------- }
+{ W14-D5: the stage and the action of each wait (spec 7.6)                                      }
+{ ------------------------------------------------------------------------------------------- }
+
+{ The last helper progress line of OutFile (beside its result file). }
+procedure HelperStep(OutFile: String; var Job, Key: String; var Number, Total: Integer);
+begin
+  Job := '';
+  Key := '';
+  Number := 0;
+  Total := 0;
+  if OutFile <> '' then
+    ReadProgressFile(ProgressFileOf(OutFile), True, Job, Key, Number, Total);
+end;
+
+{ The stage of one of the eight S12 stages that an install step key belongs to (7.6). }
+function InstallKeyStage(Key: String): Integer;
+begin
+  if (Key = 'folders') or (Key = 'secrets') or (Key = 'env') then Result := 2
+  else if Key = 'tls' then Result := 3
+  else if (Key = 'providers') or (Key = 'provision') then Result := 4
+  else if (Key = 'api') or (Key = 'caddy') then Result := 5
+  else if Key = 'admin' then Result := 6
+  else if (Key = 'backup') or (Key = 'finish') then Result := 7
+  else Result := 1;
+end;
+
+function UpdateKeyStage(Key: String): Integer;
+begin
+  if Key = 'backup' then Result := 2
+  else if (Key = 'env') or (Key = 'providers') or (Key = 'health') or (Key = 'provision') then Result := 3
+  else if (Key = 'api') or (Key = 'caddy') or (Key = 'switch') then Result := 4
+  else Result := 1;
+end;
+
+function CheckStage(Number: Integer): Integer;
+begin
+  if Number <= 6 then Result := 1
+  else if Number <= 8 then Result := 2
+  else if Number <= 17 then Result := 3
+  else Result := 4;
+end;
+
+function StageName(Stages: String; Index: Integer): String;
+var
+  I, Cut: Integer;
+begin
+  Result := Stages;
+  for I := 2 to Index do
+  begin
+    Cut := Pos('|', Result);
+    if Cut = 0 then
+      Exit;
+    Result := Copy(Result, Cut + 1, Length(Result));
+  end;
+  Cut := Pos('|', Result);
+  if Cut > 0 then
+    Result := Copy(Result, 1, Cut - 1);
+end;
+
+function WaitStage(Kind: String): Integer;
+var
+  Job, Key: String;
+  Number, Total: Integer;
+begin
+  Result := 1;
+  if Kind = 'check' then
+  begin
+    HelperStep(CheckOut, Job, Key, Number, Total);
+    Result := CheckStage(Number);
+  end
+  else if Kind = 'prep' then
+  begin
+    if PrepState = 'saving' then Result := 3
+    else if PrepState = 'working' then
+    begin
+      HelperStep(PrepOut, Job, Key, Number, Total);
+      if (Key = 'wsl') or (Key = 'busy') then Result := 2
+      else if Key = 'check' then Result := 3;
+    end;
+  end
+  else if Kind = 'data' then
+  begin
+    if not ExtractRunning then Result := 2;
+  end
+  else if Kind = 'bg' then
+    Result := BgIndex + 1
+  else if Kind = 'install' then
+  begin
+    if InstallDone then Result := 9
+    else if InstallStep >= 3 then Result := 8
+    else if (InstallStep = 2) and (JobPurpose = 'install') and (JobStepJob = 'install') then Result := InstallKeyStage(JobStepKey);
+  end
+  else if Kind = 'repair' then
+  begin
+    HelperStep(StepOut, Job, Key, Number, Total);
+    if Number > 0 then Result := Number;
+  end
+  else if Kind = 'update' then
+  begin
+    if UpdPhase = 'done' then Result := 5
+    else if UpdPhase = 'scripts' then Result := 4
+    else if (UpdPhase = 'update') and (JobPurpose = 'update') then
+    begin
+      if (JobStepJob = 'rollback') or (JobStepJob = 'recover') then Result := 5
+      else if JobStepJob = 'update' then Result := UpdateKeyStage(JobStepKey);
+    end;
+  end;
+end;
+
+{ The action line of the new recovery key's steps (7.6 S14, M03, M04). }
+function KeyAction(Context, Drive: String): String;
+begin
+  Result := '';
+  if (JobPurpose <> 'key') and (JobPurpose <> 'maintkey') then
+    Exit;
+  if JobStepKey = 'mount' then
+  begin
+    if Context = 'm03' then Result := FM1('m03_mount_line', Drive)
+    else Result := StepText('new-recovery-key', 'mount', Drive, '', '');
+  end
+  else if JobStepKey = 'key' then
+  begin
+    if Context = 'm03' then Result := FM1('m03_key_line', Drive)
+    else if Context = 'm04' then Result := CM('m04_key_line')
+    else Result := StepText('new-recovery-key', 'key', Drive, '', '');
+  end;
+end;
+
+{ The check that runs: "Checking: Internet (12 of 30)." (7.6), from the helper's line. }
+function CheckActionText(CopyKey, Stages: String): String;
+var
+  Job, Key, Name: String;
+  Number, Total: Integer;
+begin
+  HelperStep(CheckOut, Job, Key, Number, Total);
+  Result := '';
+  if (Key = '') or (Number = 0) then
+    Exit;
+  Name := CM(Key + '_name');
+  if (Name = '') and (Stages <> '') then
+    Name := StageName(Stages, CheckStage(Number));
+  if Name <> '' then
+    Result := FM3(CopyKey, Name, IntToStr(Number), IntToStr(Total));
+end;
+
+function WaitActionText(Kind: String): String;
+var
+  Job, Key, Drive: String;
+  Number, Total: Integer;
+begin
+  Result := '';
+  Drive := Copy(DataRoot, 1, 2);
+  if Kind = 'check' then
+  begin
+    Result := CheckActionText('check_action', CM('s02_stages'));
+    if Result = '' then
+      Result := StageName(CM('s02_stages'), 1);
+  end
+  else if Kind = 'recheck' then
+  begin
+    Result := CheckActionText('recheck_action', '');
+    if Result = '' then
+      Result := CM('s06_checking');
+  end
+  else if Kind = 'prep' then
+  begin
+    if PrepState = 'unpack' then Result := StepText('pc', 'unpack', '', '', '')
+    else if PrepState = 'saving' then Result := CM('later_saving')
+    else
+    begin
+      HelperStep(PrepOut, Job, Key, Number, Total);
+      if Key = 'busy' then Result := StepText('pc', 'busy', IntToStr(Number), IntToStr(Total), '')
+      else if Key <> '' then Result := StepText('pc', Key, WslVersion, '', '')
+      else Result := StepText('pc', 'vmp', '', '', '');
+    end;
+  end
+  else if Kind = 'data' then
+  begin
+    if ExtractRunning then Result := StepText('data', 'unpack', '', '', '')
+    else Result := StepText('data', 'folder', DataRoot, '', '');
+  end
+  else if Kind = 'bg' then
+    Result := BgAction
+  else if Kind = 'install' then
+  begin
+    if InstallDone then
+      Exit;
+    if InstallStep = 0 then
+      Result := StepText('backup', 'check', BackupDrive, '', '')
+    else if (InstallStep = 2) and (JobPurpose = 'install') and (JobStepJob = 'install') then
+      Result := StepText('install', JobStepKey, HostName + '.local', Trim(OrgEmail.Text), BackupDrive)
+    else if InstallStep = 3 then
+    begin
+      HelperStep(InstallOut, Job, Key, Number, Total);
+      Result := StepText('win', Key, HostName + '.local', '', '');
+    end
+    else if InstallStep = 4 then
+      Result := StepText('win', 'https', HostName + '.local', '', '');
+    if Result = '' then
+      Result := StageName(S12Stages, WaitStage('install'));
+  end
+  else if Kind = 'key' then
+  begin
+    Result := KeyAction('s14', BackupDrive);
+    if Result = '' then
+      Result := CM('s14_making');
+  end
+  else if Kind = 'repair' then
+  begin
+    HelperStep(StepOut, Job, Key, Number, Total);
+    Result := StepText('repair', Key, HostName + '.local', Copy(MaintBackupFolder, 1, 2), '');
+    if Result = '' then
+      Result := CM('m01_repairing');
+  end
+  else if Kind = 'update' then
+  begin
+    if (UpdPhase = 'idle') or (UpdPhase = 'pause') then Result := StepText('upd', 'idle', '', '', '')
+    else if UpdPhase = 'unpack' then Result := StepText('upd', 'unpack', SetupVersion, '', '')
+    else if UpdPhase = 'copy' then Result := StepText('upd', 'copy', SetupVersion, Drive, '')
+    else if UpdPhase = 'wsl' then Result := StepText('upd', 'wsl', WslVersion, '', '')
+    else if UpdPhase = 'scripts' then Result := StepText('upd', 'scripts', '', '', '')
+    else if ((UpdPhase = 'receive') and (JobPurpose = 'updreceive')) or ((UpdPhase = 'update') and (JobPurpose = 'update')) then
+      Result := StepText(JobStepJob, JobStepKey, SetupVersion, InstalledVersion, '');
+    if (Result = '') and (UpdPhase <> 'done') then
+      Result := StageName(UpdStages, WaitStage('update'));
+  end;
+  if (Result <> '') and (Kind <> 'check') and (Kind <> 'recheck') then
+    Result := FM1('wait_now', Result);
+end;
+
+{ The one line of the page's short wait (7.6 one-line form), or '' when none runs. }
+function PageLineText: String;
+var
+  Job, Key, Action: String;
+  Number, Total: Integer;
+begin
+  Result := '';
+  if (StepFor <> '') and (StepFor <> 'repair') and (StepLine <> '') then
+  begin
+    if (StepFor = 'm03-check') or (StepFor = 'm03-prepare') then
+      Result := OneLine(StepNumber, StepTotal, StepLine, MaintAt)
+    else if (StepFor = 'cd-check') or (StepFor = 'cd-prepare') then
+      Result := OneLine(StepNumber, StepTotal, StepLine, CdAt)
+    else if StepFor = 'r7' then
+      Result := OneLine(3, 4, StepLine, MailAt)
+    else
+      Result := OneLine(StepNumber, StepTotal, StepLine, StepAt);
+    Exit;
+  end;
+  if FixRunning then
+  begin
+    if FixAction = 'fix-network-private' then Action := CM('c10_fixing')
+    else if FixAction = 'fix-mdns' then Action := CM('c17_fixing')
+    else if FixAction = 'remove-windows' then Action := CM('c29_removing_leftovers')
+    else
+    begin
+      HelperStep(FixOut, Job, Key, Number, Total);
+      Action := StepText('kit', Key, '', '', '');
+      if Action = '' then
+      begin
+        Action := StepText('kit', 'stop', '', '', '');
+        Number := 1;
+      end;
+      Result := OneLine(Number, 3, Action, FixStartedAt);
+      Exit;
+    end;
+    Result := OneLine(0, 0, Action, FixStartedAt);
+    Exit;
+  end;
+  if CheckRunning and (CheckFor = 'S11') then
+  begin
+    Action := CheckActionText('recheck_action', '');
+    if Action = '' then
+      Action := CM('s06_checking');
+    Result := OneLine(0, 0, Action, CheckStartedAt);
+    Exit;
+  end;
+  if MailPhase = 'waiting' then
+    Result := OneLine(1, 4, FM1('s09_ready_bg', BgAction), MailAt)
+  else if MailPhase = 'selftest' then
+    Result := OneLine(2, 4, CM('s09_channel'), MailAt)
+  else if MailPhase = 'sending' then
+  begin
+    Action := '';
+    if JobPurpose = 'smtp' then
+      Action := StepText(JobStepJob, JobStepKey, Trim(OrgEmail.Text), '', '');
+    if Action = '' then
+      Action := StepText('smtp-test', 'send', Trim(OrgEmail.Text), '', '');
+    Result := OneLine(4, 4, Action, MailAt);
+  end
+  else if MaintPhase = 'setemail' then
+  begin
+    Number := 2;
+    Action := '';
+    if JobPurpose = 'setemail' then
+      Action := StepText(JobStepJob, JobStepKey, '', '', '');
+    if JobStepKey = 'auth' then
+      Number := 3;
+    if Action = '' then
+      Action := StepText('set-email', 'write', '', '', '');
+    Result := OneLine(Number, 3, Action, MaintAt);
+  end
+  else if MaintPhase = 'target' then
+  begin
+    Action := '';
+    if JobPurpose = 'target' then
+      Action := StepText(JobStepJob, JobStepKey, Copy(MaintBackupFolder, 1, 2), MaintTarget, '');
+    if Action = '' then
+      Action := FM1('m03_setting', MaintTarget);
+    Result := OneLine(3, 4, Action, MaintAt);
+  end
+  else if MaintPhase = 'key3' then
+  begin
+    Action := KeyAction('m03', MaintTarget);
+    if Action = '' then
+      Action := FM1('m03_key_line', MaintTarget);
+    Result := OneLine(4, 4, Action, MaintAt);
+  end
+  else if MaintPhase = 'key4' then
+  begin
+    Action := KeyAction('m04', Copy(MaintBackupFolder, 1, 2));
+    if Action = '' then
+      Action := CM('m04_key_line');
+    Result := OneLine(0, 0, Action, MaintAt);
+  end
+  else if MaintPhase = 'invite' then
+    Result := OneLine(0, 0, StepText('resend-invitation', 'resend', '', '', ''), MaintAt)
+  else if (JobPurpose = 'cdtarget') and JobRunning then
+  begin
+    Action := StepText(JobStepJob, JobStepKey, BackupDrive, CdDrive, '');
+    if Action = '' then
+      Action := FM1('m03_setting', CdDrive);
+    Result := OneLine(3, 3, Action, CdAt);
+  end;
+end;
+
+{ ------------------------------------------------------------------------------------------- }
 { The settings program (the small build, /DSettingsBuild)                                       }
 { ------------------------------------------------------------------------------------------- }
 
 { Returns True when the settings program goes on to M01. Save report from the Start menu runs
   here with no wizard (plan 10.6 item 1). }
 function SettingsEntry: Boolean;
+var
+  CloseButton: TNewButton;
 begin
   Result := True;
   if not SETTINGS_BUILD then
     Exit;
   if ExpandConstant('{param:SAVEREPORT|0}') = '1' then
   begin
-    { W9 review item 8 (design W9-B5): say what happens first, then the result. }
+    { W9 review item 8 (design W9-B5): say what happens first, then the result. W14-D9 (7.6
+      "Save report", settings program): a small form with the one line while the timer saves
+      the report; it closes by itself at the end. }
     MsgBox(CM('report_start'), mbInformation, MB_OK);
-    SaveReport(nil);
-    if ReportLine <> '' then
+    ReportForm := CreateCustomForm(ScaleX(440), ScaleY(110), False, False);
+    try
+      ReportForm.Caption := CM('btn_save_report');
+      ReportLabel := TNewStaticText.Create(ReportForm);
+      ReportLabel.Parent := ReportForm;
+      ReportLabel.AutoSize := False;
+      ReportLabel.WordWrap := True;
+      ReportLabel.ShowAccelChar := False;
+      ReportLabel.SetBounds(ScaleX(14), ScaleY(14), ReportForm.ClientWidth - ScaleX(28), ScaleY(40));
+      CloseButton := TNewButton.Create(ReportForm);
+      CloseButton.Parent := ReportForm;
+      CloseButton.Caption := CM('btn_close');
+      CloseButton.ModalResult := mrCancel;
+      CloseButton.Cancel := True;
+      CloseButton.SetBounds(ReportForm.ClientWidth - ScaleX(104), ReportForm.ClientHeight - ScaleY(38), ScaleX(90), ScaleY(26));
+      StartTimer;
+      SaveReport(nil);
+      ModalOpen := True;
+      ReportForm.ShowModal;
+    finally
+      ModalOpen := False;
+      ReportLabel := nil;
+      ReportForm.Free;
+      ReportForm := nil;
+    end;
+    if (ReportPhase = '') and (ReportLine <> '') then
       MsgBox(ReportLine, mbInformation, MB_OK);
     Result := False;
     Exit;

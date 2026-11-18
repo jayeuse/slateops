@@ -207,6 +207,35 @@ Test-Case 'AC-1 the check reads this PC without changing it and returns every ch
     }
 }
 
+Test-Case 'W14-D5 the check names each check as it reads it, in order, beside its result file' {
+    $dir = New-TestDirectory 'w14-d5-check'
+    $path = Join-Path $dir 'check-1.json.progress'
+    Set-HelperProgressFile -Path $path
+    try { $null = Get-PcCheckFacts -ProgressJob 'check' } finally { Set-HelperProgressFile -Path '' }
+    $lines = @([System.IO.File]::ReadAllLines($path))
+    Assert-Equal 'progress check 1/30 c01 start' $lines[0]
+    $last = 0
+    foreach ($line in $lines) {
+        Assert-True ($line -cmatch '^progress check ([0-9]+)/30 c[0-9]{2} start$') $line
+        $number = [int]$Matches[1]
+        Assert-True ($number -ge $last) ('{0} after {1}' -f $number, $last)
+        $last = $number
+    }
+    Assert-Equal 'progress check 29/30 c29 start' $lines[$lines.Count - 1]
+}
+
+Test-Case 'W14-D5 the recheck counts only its seven checks, and no file means no line' {
+    $dir = New-TestDirectory 'w14-d5-recheck'
+    $path = Join-Path $dir 'check-2.json.progress'
+    Set-HelperProgressFile -Path $path
+    try { $null = Get-PcCheckFacts -ProgressJob 'recheck' -ProgressIds $SlateOpsCheck.RecheckIds } finally { Set-HelperProgressFile -Path '' }
+    $lines = @([System.IO.File]::ReadAllLines($path))
+    Assert-Equal 'progress recheck 1/7 c08 start' $lines[0]
+    foreach ($line in $lines) { Assert-True ($line -cmatch '^progress recheck [1-7]/7 c(08|09|12|14|21) start$') $line }
+    Write-HelperProgress -Job 'pc' -Number 1 -Total 3 -Key 'vmp'
+    Assert-Equal $lines.Count @([System.IO.File]::ReadAllLines($path)).Count
+}
+
 Test-Case 'W9 review item 3 C29 offers to remove the parts of an earlier uninstall; other unknown parts still stop' {
     $base = @{ account = $false; kit_folder = $false; kit_distro = $false; kit_tasks = $false; kit_rules = $false; slateops_parts = $true; installed_program = $false; uninstall_log = $true }
     Assert-Equal 'fix uninstall_leftovers' ('{0} {1}' -f (Get-Check C29 @{ leftovers = $base }).class, (Get-Check C29 @{ leftovers = $base }).code)

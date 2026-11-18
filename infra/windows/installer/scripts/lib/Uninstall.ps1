@@ -546,6 +546,8 @@ function Invoke-Repair {
     # data does not change. R7 is read again right before the new password exists (11.1 W9).
     param([Parameter(Mandatory = $true)][hashtable]$Layout)
     $step = 'maintenance.repair'
+    # W14-D5 (spec 7.6 "M01 Repair"): one progress line as each of the seven stages starts.
+    Write-HelperProgress -Job 'repair' -Number 1 -Total 7 -Key 'r7'
     try { $covered = @(Get-PasswordModuleLogged) } catch { return New-StepResult -Code 'logging_policy_unreadable' -MessageKey 'check.c18.unreadable' }
     if ($covered.Count -gt 0) { return New-StepResult -Code 'logging_policy' -MessageKey 'check.c18.policy' }
     $sid = Get-RecordedServiceSid -Layout $Layout
@@ -555,22 +557,30 @@ function Invoke-Repair {
     $password = New-RandomPassword
     Register-LogSecret $password
     try {
+        Write-HelperProgress -Job 'repair' -Number 2 -Total 7 -Key 'account'
         Set-LocalUser -SID $sid -Password (ConvertTo-SecureText -Text $password)
         Initialize-LsaRightsType
         [SlateOpsSetup.LsaRights]::Add($sid, [string[]]$SlateOps.AccountRights)
         Write-RunLog $step 'INFO' 'account password set again (not stored, not shown); rights set again'
+        Write-HelperProgress -Job 'repair' -Number 3 -Total 7 -Key 'tasks'
         Register-ServiceTasks -Layout $Layout -AccountName $account.Name -Password $password
     } finally { $password = $null }
     $steps = @()
+    Write-HelperProgress -Job 'repair' -Number 4 -Total 7 -Key 'firewall'
     $lan = Get-LanFact
     if ($lan) { $steps += Set-FirewallRules -Layout $Layout -Cidr (ConvertTo-NetworkCidr -Address $lan.address -PrefixLength $lan.prefix_length) }
+    Write-HelperProgress -Job 'repair' -Number 5 -Total 7 -Key 'hosts'
     $hostName = ([string](Get-CimInstance -ClassName Win32_ComputerSystem).DNSHostName).ToLowerInvariant()
     $steps += Set-HostsEntry -Layout $Layout -HostName ('{0}.local' -f $hostName)
+    # The start task runs before the result of the steps above is read (unchanged order), so
+    # the start is stage 6 and the backup folder rights stage 7.
+    Write-HelperProgress -Job 'repair' -Number 6 -Total 7 -Key 'start'
     Enable-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.StartTaskName | Out-Null
     Start-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.StartTaskName
     $failed = @($steps | Where-Object { $_.code -ne 'added' })
     if ($failed.Count -gt 0) { return $failed[0] }
     # Option b: the backup folder rights (a skip when the drive is out is not a failure).
+    Write-HelperProgress -Job 'repair' -Number 7 -Total 7 -Key 'backup'
     $backup = Repair-BackupAccess -Layout $Layout -ServiceSid $sid
     if (@('ready', 'none', 'drive_missing') -notcontains $backup.code) { return $backup }
     return New-StepResult -Code 'repaired' -MessageKey 'maintenance.repaired'

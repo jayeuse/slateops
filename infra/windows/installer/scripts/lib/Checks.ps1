@@ -24,6 +24,16 @@ $SlateOpsCheck = @{
     EditionPattern       = '^(Professional|Enterprise|Education)'
     # The checks that run again on S06 and on Install in S11 (spec 5.2).
     RecheckIds           = @('C08', 'C09', 'C10', 'C12', 'C13', 'C14', 'C21')
+    # W14-D5 (spec 7.6 "S02 PC check"): the first check that each fact reader feeds, so the
+    # setup program names the check that runs ("Checking: Internet (12 of 30).").
+    ReaderCheck          = @{
+        windows = 'C01'; architecture = 'C03'; computer_system = 'C04'; processor = 'C04'; native = 'C05'
+        drives = 'C07'; restart_pending = 'C08'; lan = 'C09'; internet = 'C12'; listeners = 'C14'
+        mdns_other = 'C16'; mdns = 'C17'; logging_policy = 'C18'; smart_app_control = 'C19'; antivirus = 'C20'
+        battery = 'C21'; lid = 'C22'; bitlocker = 'C24'; docker_desktop = 'C25'; vmp = 'C26'; wsl_version = 'C26'
+        sleep = 'C27'; hibernate = 'C27'; fast_startup = 'C28'; user_distros = 'C28'; user_wslconfig = 'C28'
+        time_zone = 'C28'; leftovers = 'C29'
+    }
     # Plan R-checks whose unreadable value is Advice "cannot read" (spec 5.2; C18 is Fix).
     RequirementIds       = @('C01', 'C02', 'C04', 'C05', 'C07', 'C10', 'C11', 'C12', 'C15', 'C16', 'C17', 'C21')
     # C17 (plan F1; W8): the built-in inbound mDNS rules. The names are an Assumption from
@@ -529,8 +539,25 @@ function Get-PcVerdict {
 # Reading Windows (read-only). Each reader returns $null when it cannot read its value.
 # ---------------------------------------------------------------------------
 
+$script:SlateOpsCheckProgress = $null
+
+function Write-CheckProgress {
+    # W14-D5: the check that this reader serves, as its place in the checks that run (30 for
+    # the check, 7 for the recheck); a reader for a check that does not run writes nothing.
+    param([Parameter(Mandatory = $true)][string]$Reader)
+    $progress = $script:SlateOpsCheckProgress
+    if ($null -eq $progress) { return }
+    if (-not $SlateOpsCheck.ReaderCheck.ContainsKey($Reader)) { return }
+    $id = $SlateOpsCheck.ReaderCheck[$Reader]
+    $ids = @($progress.Ids)
+    $index = [array]::IndexOf($ids, $id)
+    if ($index -lt 0) { return }
+    Write-HelperProgress -Job $progress.Job -Number ($index + 1) -Total $ids.Count -Key $id.ToLowerInvariant()
+}
+
 function Invoke-Reader {
     param([Parameter(Mandatory = $true)][string]$Name, [Parameter(Mandatory = $true)][scriptblock]$Reader)
+    Write-CheckProgress -Reader $Name
     # The unary comma keeps an empty array as an empty array; a plain return would unroll it
     # to $null, which means "cannot read".
     try { $value = & $Reader; return , $value }
@@ -788,7 +815,20 @@ function Get-LeftoverFact {
 }
 
 function Get-PcCheckFacts {
-    # Reads every fact of the PC check. Changes nothing on the PC.
+    # Reads every fact of the PC check. Changes nothing on the PC. W14-D5: with -ProgressJob
+    # (check or recheck) each reader writes the check it serves (Write-CheckProgress); the
+    # readers run in check order, so the count only goes up.
+    param([string]$ProgressJob = '', [string[]]$ProgressIds = @())
+    $script:SlateOpsCheckProgress = $null
+    if ($ProgressJob) {
+        $ids = $ProgressIds
+        if ($ids.Count -eq 0) { $ids = @(1..30 | ForEach-Object { 'C{0:D2}' -f $_ }) }
+        $script:SlateOpsCheckProgress = @{ Job = $ProgressJob; Ids = $ids }
+    }
+    try { return (Read-PcCheckFacts) } finally { $script:SlateOpsCheckProgress = $null }
+}
+
+function Read-PcCheckFacts {
     $facts = @{}
     $cv = Invoke-Reader 'windows' { Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' }
     if ($cv) {
@@ -831,9 +871,9 @@ function Get-PcCheckFacts {
     $internet = Invoke-Reader 'internet' { Get-InternetFact }
     if ($internet) { $facts.internet = $internet.internet; $facts.clock_offset_seconds = $internet.clock_offset_seconds }
     $facts.listeners = Invoke-Reader 'listeners' { , @(Get-ListenerFact) }
-    $facts.logging_policy = Invoke-Reader 'logging_policy' { Get-PowerShellLoggingPolicy }
-    $facts.mdns = Invoke-Reader 'mdns' { Get-MdnsFact }
     if ($facts.dns_host_name) { $facts.mdns_other = Invoke-Reader 'mdns_other' { Test-MdnsNameInUse -Name $facts.dns_host_name } }
+    $facts.mdns = Invoke-Reader 'mdns' { Get-MdnsFact }
+    $facts.logging_policy = Invoke-Reader 'logging_policy' { Get-PowerShellLoggingPolicy }
     $facts.smart_app_control = Invoke-Reader 'smart_app_control' {
         # Registry value name is an Assumption (plan 10.4); 0 off, 1 on, 2 evaluation.
         [int](Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' -Name 'VerifiedAndReputablePolicyState' -ErrorAction Stop).VerifiedAndReputablePolicyState
@@ -847,10 +887,6 @@ function Get-PcCheckFacts {
     if ($null -ne $battery) { $facts.battery = $battery }
     $lid = Invoke-Reader 'lid' { Get-PowerIndex -SubGroup 'SUB_BUTTONS' -Setting 'LIDACTION' }
     if ($lid) { $facts.lid_action_ac = $lid.ac }
-    $sleep = Invoke-Reader 'sleep' { Get-PowerIndex -SubGroup 'SUB_SLEEP' -Setting 'STANDBYIDLE' }
-    if ($sleep) { $facts.sleep_ac_seconds = $sleep.ac }
-    $hibernate = Invoke-Reader 'hibernate' { Get-PowerIndex -SubGroup 'SUB_SLEEP' -Setting 'HIBERNATEIDLE' }
-    if ($hibernate) { $facts.hibernate_ac_seconds = $hibernate.ac }
     $mounts = @('C:')
     $candidates = @(Get-DataDriveCandidate -Drives $facts.drives)
     if ($candidates.Count -gt 0) { $mounts += [string]$candidates[0].letter }
@@ -861,6 +897,10 @@ function Get-PcCheckFacts {
     }
     $facts.vmp_state = Invoke-Reader 'vmp' { [string](Get-WindowsOptionalFeature -Online -FeatureName 'VirtualMachinePlatform' -ErrorAction Stop).State }
     $facts.wsl_version = Invoke-Reader 'wsl_version' { Get-WslPackageVersion }
+    $sleep = Invoke-Reader 'sleep' { Get-PowerIndex -SubGroup 'SUB_SLEEP' -Setting 'STANDBYIDLE' }
+    if ($sleep) { $facts.sleep_ac_seconds = $sleep.ac }
+    $hibernate = Invoke-Reader 'hibernate' { Get-PowerIndex -SubGroup 'SUB_SLEEP' -Setting 'HIBERNATEIDLE' }
+    if ($hibernate) { $facts.hibernate_ac_seconds = $hibernate.ac }
     $facts.fast_startup = Invoke-Reader 'fast_startup' { (Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -Name 'HiberbootEnabled' -ErrorAction Stop).HiberbootEnabled }
     $facts.user_distros = Invoke-Reader 'user_distros' {
         $lxss = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'

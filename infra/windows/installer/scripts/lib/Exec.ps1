@@ -275,7 +275,9 @@ namespace SlateOpsSetup
                 int read;
                 while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
                 {
-                    if (total < cap) { target.Write(buffer, 0, (int)Math.Min((long)read, cap - total)); }
+                    // W14-D5: each chunk reaches the file at once, so the wizard reads the
+                    // engine's progress line while the job runs.
+                    if (total < cap) { target.Write(buffer, 0, (int)Math.Min((long)read, cap - total)); target.Flush(); }
                     total += read;
                 }
                 target.Flush();
@@ -482,7 +484,9 @@ function Invoke-ProcessWithInput {
     $process.StartInfo = $info
     if ($StdoutStream) { $outFile = $StdoutStream }
     else { $outFile = [System.IO.File]::Open($StdoutPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write) }
-    $errFile = [System.IO.File]::Open($StderrPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+    # W14-D5: other processes may read standard error while the job runs (the wizard shows the
+    # engine's progress lines, spec 7.6); nobody else may write it.
+    $errFile = [System.IO.File]::Open($StderrPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
     $pipeClosed = $false
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     try {

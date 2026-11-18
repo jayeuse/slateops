@@ -174,8 +174,6 @@ var
   DriveFree: array of Int64;
   DriveRadios: array of TNewRadioButton;
   DataRoot, DataError, DataErrorValue: String;
-  { W14-D7: S07 is drawing; its radios change nothing then. }
-  DataRendering: Boolean;
   DataPrepared, DataStarted, BgFailed: Boolean;
   BgIndex: Integer;
   BgOut, BgCode: String;
@@ -253,6 +251,45 @@ var
 
   { Save report }
   ReportLine, ReportPath: String;
+  { W14-D9: Save report runs from the timer: phase linux (the log-bundle job), collect, zip. }
+  ReportPhase, ReportRun, ReportOut: String;
+  ReportAt, ReportStepAt: Cardinal;
+  ReportForm: TSetupForm;
+
+  { W14-D5: the progress block of the page (spec 6.1). The body panel owns these labels, so
+    BeginBody clears them; the timer changes only their captions. }
+  WaitTime, WaitNow, StepLabel, ReportLabel: TNewStaticText;
+  WaitSince: Cardinal;
+  WaitLimit, WaitKind: String;
+  WaitDrawn: Integer;
+  { The one line above the button row (6.1 L12): the background preparation and the close
+    flows. It belongs to WizardForm and stays. }
+  StatusLine: TNewStaticText;
+  { W14-D5: the last progress line of the running engine job (7.6), from its standard error. }
+  JobStepJob, JobStepKey, JobRunId: String;
+  JobStepNumber, JobStepTotal: Integer;
+  { W14-D9: the last job-result answer named a sign-in failure of the account (spec 7.5). }
+  JobLogonFailed: Boolean;
+  { W14-D9: the step runner, one short helper action at a time from the timer. StepFor names
+    what follows (StepFinished); StepLine is its one line. }
+  StepAction, StepOut, StepFor, StepLine, StepLastCode: String;
+  StepNumber, StepTotal: Integer;
+  StepAt, StepLimitMs: Cardinal;
+  { W14-D9: the setup file's parts, one file per timer tick. }
+  ExtractList, ExtractFor: String;
+  TimerStarted: Boolean;
+  { W14-D9: waits that moved to the timer. }
+  BgPending, BgPendingOut: String;
+  BgPendingAt, BgBeganAt, KeyStartedAt, UpdStartedAt: Cardinal;
+  BackupCheckedDrive, CdDrive, RestartExtra: String;
+  KeySavedDone, RestartFirmware: Boolean;
+  RestartIndex: Integer;
+  { The start of a wait with several steps (7.6: the time counts from the start of the wait). }
+  MailAt, MaintAt, CdAt: Cardinal;
+  { The pinned WSL version of this setup (version.json), for the 7.6 lines. }
+  WslVersion: String;
+  { A close flow's failure message on the status line; it stays until the page changes. }
+  CloseNotice: String;
 
   { W13b part 2: M05 Update (Maintenance.iss). JobRaw is the job-result text of the last job. }
   InstalledVersion, UpdPhase, UpdNext, UpdOut, UpdState, UpdNeedsGb, UpdFailText, UpdFailStage, JobRaw: String;
@@ -261,6 +298,11 @@ var
 
 procedure RenderPage(Index: Integer); forward;
 procedure SaveReport(Sender: TObject); forward;
+{ W14-D5 and W14-D9, in Maintenance.iss: what follows a step, and the page's current wait. }
+procedure StepFinished(ForTag, Code: String); forward;
+function WaitStage(Kind: String): Integer; forward;
+function WaitActionText(Kind: String): String; forward;
+function PageLineText: String; forward;
 procedure StartBackground; forward;
 function BgDone: Boolean; forward;
 { W9, in Maintenance.iss. }
@@ -349,6 +391,7 @@ var
   ResultCode: Integer;
 begin
   DeleteFile(OutFile);
+  DeleteFile(OutFile + '.progress');
   Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
     HelperParams(Action, ARunId, OutFile, Extra), '', SW_HIDE, ewNoWait, ResultCode);
 end;
@@ -410,6 +453,11 @@ end;
 function FM3(Key, A, B, C: String): String;
 begin
   Result := FmtMessage(CM(Key), [A, B, C]);
+end;
+
+function FM4(Key, A, B, C, D: String): String;
+begin
+  Result := FmtMessage(CM(Key), [A, B, C, D]);
 end;
 
 function HasMessage(Key: String): Boolean;
@@ -587,6 +635,13 @@ begin
   Bodies[Index].SetBounds(0, 0, Pages[Index].SurfaceWidth, Pages[Index].SurfaceHeight);
   Cur := Bodies[Index];
   CurY := 0;
+  { W14-D5: the old panel took its labels with it. }
+  WaitTime := nil;
+  WaitNow := nil;
+  StepLabel := nil;
+  ReportLabel := nil;
+  WaitKind := '';
+  WaitDrawn := 0;
 end;
 
 function AddTextTo(Parent: TWinControl; Top: Integer; S: String; Bold: Boolean): TNewStaticText;
@@ -655,13 +710,116 @@ begin
   CurY := CurY + Result.Height + ScaleY(6);
 end;
 
-function AddMarquee: TNewProgressBar;
+{ ------------------------------------------------------------------------------------------- }
+{ W14-D5: the progress block (spec 2.4, 6.1, 7.6): stages, the current action, the time so far  }
+{ ------------------------------------------------------------------------------------------- }
+
+{ Minutes and seconds since Since: "4:12". }
+function TimeText(Since: Cardinal): String;
+var
+  Seconds: Cardinal;
 begin
-  Result := TNewProgressBar.Create(WizardForm);
-  Result.Parent := Cur;
-  Result.Style := npbstMarquee;
-  Result.SetBounds(0, CurY, Cur.Width, ScaleY(14));
-  CurY := CurY + Result.Height + ScaleY(8);
+  Seconds := (GetTickCount - Since) div 1000;
+  Result := IntToStr(Seconds div 60) + ':' + Copy(IntToStr(100 + (Seconds mod 60)), 2, 2);
+end;
+
+function TimeLine: String;
+begin
+  if WaitLimit <> '' then
+    Result := FM2('wait_time_limit', TimeText(WaitSince), WaitLimit)
+  else
+    Result := FM1('wait_time', TimeText(WaitSince));
+end;
+
+{ The one-line form: "3 of 7: <action>, then the time"; with one stage only the action and the
+  time (copy wait_line, wait_line_one). }
+function OneLine(Number, Total: Integer; Action: String; Since: Cardinal): String;
+begin
+  if (Total > 1) and (Number > 0) then
+    Result := FM4('wait_line', IntToStr(Number), IntToStr(Total), Action, TimeText(Since))
+  else
+    Result := FM2('wait_line_one', Action, TimeText(Since));
+end;
+
+{ The full form. Stages: names split by "|" ('' for a wait with one stage, which shows no list);
+  Current: the stage that runs now (1-based). Action: the current action, shown as given; ''
+  shows none. Since: the start of the wait. Limit: the "This can take ..." sentence, or ''.
+  Kind names the wait for WaitStage and WaitActionText (Maintenance.iss). }
+procedure AddProgress(Kind, Stages: String; Current: Integer; Action: String; Since: Cardinal; Limit: String);
+var
+  Rest, Name, Word: String;
+  I, Cut: Integer;
+  Row: TNewStaticText;
+begin
+  Rest := Stages;
+  I := 0;
+  while Rest <> '' do
+  begin
+    I := I + 1;
+    Cut := Pos('|', Rest);
+    if Cut = 0 then
+    begin
+      Name := Rest;
+      Rest := '';
+    end
+    else
+    begin
+      Name := Copy(Rest, 1, Cut - 1);
+      Rest := Copy(Rest, Cut + 1, Length(Rest));
+    end;
+    if I < Current then Word := CM('s12_done_word')
+    else if I = Current then Word := CM('s12_now_word')
+    else Word := CM('wait_next_word');
+    Row := AddTextTo(Cur, CurY, Word, I = Current);
+    Row.Width := ScaleX(52);
+    Row := AddTextTo(Cur, CurY, Name, I = Current);
+    Row.Left := ScaleX(60);
+    Row.Width := Cur.Width - ScaleX(60);
+    WizardForm.AdjustLabelHeight(Row);
+    CurY := CurY + Row.Height + ScaleY(2);
+  end;
+  if I > 0 then
+    CurY := CurY + ScaleY(4);
+  WaitKind := Kind;
+  WaitDrawn := Current;
+  WaitNow := nil;
+  if Action <> '' then
+    WaitNow := AddText(Action, False);
+  WaitSince := Since;
+  WaitLimit := Limit;
+  WaitTime := nil;
+  { Since 0: the wait is over (all stages done), so no time line. }
+  if Since <> 0 then
+    WaitTime := AddText(TimeLine, False);
+end;
+
+{ The line above the button row, inside the page area (6.1 L12). }
+procedure ShowStatusLine(Text: String);
+begin
+  if StatusLine = nil then
+  begin
+    StatusLine := TNewStaticText.Create(WizardForm);
+    StatusLine.Parent := WizardForm;
+    StatusLine.AutoSize := False;
+    StatusLine.ShowAccelChar := False;
+    StatusLine.WordWrap := True;
+    StatusLine.SetBounds(WizardForm.InnerNotebook.Left, WizardForm.Bevel.Top - ScaleY(22),
+      WizardForm.InnerNotebook.Width, ScaleY(18));
+  end;
+  StatusLine.Caption := Text;
+  StatusLine.Visible := Text <> '';
+  StatusLine.BringToFront;
+end;
+
+{ The page's one line for a short wait (7.6 one-line form); the timer keeps it current. }
+procedure AddStepLine;
+var
+  Text: String;
+begin
+  Text := PageLineText;
+  if Text = '' then
+    Exit;
+  StepLabel := AddText(Text, False);
 end;
 
 { The stage line under the header on S02 to S12 (spec 6.1). }
@@ -847,6 +1005,136 @@ begin
   Result := ExpandConstant('{commonappdata}\SlateOps\svc-out\exec-result.json');
 end;
 
+{ W14-D5: Exec copies the engine's standard error to this file while the job runs. }
+function JobErrFile: String;
+begin
+  Result := '';
+  if JobRequestId <> '' then
+    Result := ExpandConstant('{commonappdata}\SlateOps\svc-out\') + Lowercase(JobRequestId) + '.stderr.txt';
+end;
+
+{ W14-D5: the helper writes its progress lines beside its result file. }
+function ProgressFileOf(OutFile: String): String;
+begin
+  Result := OutFile + '.progress';
+end;
+
+{ True when S is not empty and every character of S is in Allowed. }
+function AllChars(S, Allowed: String): Boolean;
+var
+  I: Integer;
+begin
+  Result := S <> '';
+  for I := 1 to Length(S) do
+    if Pos(Copy(S, I, 1), Allowed) = 0 then
+      Result := False;
+end;
+
+{ One progress line (7.6): "progress <job> <number>/<total> <key> <state>", fields split by one
+  space. The engine's lines match ^progress [a-z-]+ [0-9]+/[0-9]+ [a-z_]+ (start|done)$ (TASK-0097
+  W14-D5 engine part); the helper's keys may hold digits too (c12). Any other line is ignored. }
+function ParseProgressLine(Line: String; Helper: Boolean; var Job, Key, State: String; var Number, Total: Integer): Boolean;
+var
+  Parts: array of String;
+  Rest, Letters, Digits, KeyChars, Count: String;
+  Cut, Slash: Integer;
+begin
+  Result := False;
+  Letters := 'abcdefghijklmnopqrstuvwxyz';
+  Digits := '0123456789';
+  SetArrayLength(Parts, 0);
+  Rest := Line;
+  while GetArrayLength(Parts) < 6 do
+  begin
+    SetArrayLength(Parts, GetArrayLength(Parts) + 1);
+    Cut := Pos(' ', Rest);
+    if Cut = 0 then
+    begin
+      Parts[GetArrayLength(Parts) - 1] := Rest;
+      Break;
+    end;
+    Parts[GetArrayLength(Parts) - 1] := Copy(Rest, 1, Cut - 1);
+    Rest := Copy(Rest, Cut + 1, Length(Rest));
+  end;
+  if (GetArrayLength(Parts) <> 5) or (Parts[0] <> 'progress') then
+    Exit;
+  if not AllChars(Parts[1], Letters + '-') then
+    Exit;
+  Count := Parts[2];
+  Slash := Pos('/', Count);
+  if (Slash = 0) or not AllChars(Copy(Count, 1, Slash - 1), Digits) or not AllChars(Copy(Count, Slash + 1, Length(Count)), Digits) then
+    Exit;
+  KeyChars := Letters + '_';
+  if Helper then
+    KeyChars := KeyChars + Digits;
+  if not AllChars(Parts[3], KeyChars) then
+    Exit;
+  if (Parts[4] <> 'start') and (Parts[4] <> 'done') then
+    Exit;
+  Job := Parts[1];
+  Number := StrToIntDef(Copy(Count, 1, Slash - 1), 0);
+  Total := StrToIntDef(Copy(Count, Slash + 1, Length(Count)), 0);
+  Key := Parts[3];
+  State := Parts[4];
+  Result := True;
+end;
+
+{ The last complete progress line of FileName (only lines that end with a line break count, so a
+  line that is still being written is not read). The file can be open for writing in the other
+  process (W14-D5), so it is read with LoadStringFromLockedFile; the last 8 KB are enough. Job,
+  Key, Number and Total keep their values when no line matches. }
+procedure ReadProgressFile(FileName: String; Helper: Boolean; var Job, Key: String; var Number, Total: Integer);
+var
+  Raw: AnsiString;
+  Text, Line, J, K, S: String;
+  N, T, Stop: Integer;
+begin
+  if (FileName = '') or not FileExists(FileName) then
+    Exit;
+  if not LoadStringFromLockedFile(FileName, Raw) then
+    Exit;
+  Text := String(Raw);
+  if Length(Text) > 8192 then
+    Text := Copy(Text, Length(Text) - 8191, 8192);
+  Stop := Pos(#10, Text);
+  while Stop > 0 do
+  begin
+    Line := Copy(Text, 1, Stop - 1);
+    Text := Copy(Text, Stop + 1, Length(Text));
+    if Copy(Line, Length(Line), 1) = #13 then
+      Line := Copy(Line, 1, Length(Line) - 1);
+    if ParseProgressLine(Line, Helper, J, K, S, N, T) then
+    begin
+      Job := J;
+      Key := K;
+      Number := N;
+      Total := T;
+    end;
+    Stop := Pos(#10, Text);
+  end;
+end;
+
+{ The step that the running engine job reports (7.6 engine keys). }
+procedure ReadJobProgress;
+begin
+  ReadProgressFile(JobErrFile, False, JobStepJob, JobStepKey, JobStepNumber, JobStepTotal);
+end;
+
+{ The action line of one step (7.6): copy step_<job>_<key> with the values A, B and C; '' when
+  the copy has no line for it (the caller then shows the stage name, never the key). }
+function StepText(Job, Key, A, B, C: String): String;
+var
+  Name: String;
+begin
+  Result := '';
+  if (Job = '') or (Key = '') then
+    Exit;
+  Name := 'step_' + Job + '_' + Key;
+  StringChangeEx(Name, '-', '_', True);
+  if HasMessage(Name) then
+    Result := FM3(Name, A, B, C);
+end;
+
 { Starts one allow-listed job. InputJson goes through the pipe when PipeIn, else into the
   request's input file. PipeOut makes the job's output come back through the pipe. }
 function StartJob(Name, InputJson, Purpose: String; PipeIn, PipeOut: Boolean; LimitMinutes: Integer): Boolean;
@@ -862,6 +1150,15 @@ begin
   JobExit := -1;
   JobRequestId := NewRequestId;
   JobLimitMs := LimitMinutes * 60000;
+  JobStepJob := '';
+  JobStepKey := '';
+  JobStepNumber := 0;
+  JobStepTotal := 0;
+  JobLogonFailed := False;
+  { Save report's log-bundle job keeps the report's run ID (its bundle file is named by it). }
+  JobRunId := RunId;
+  if Purpose = 'report' then
+    JobRunId := ReportRun;
   Extra := '-Job ' + Name + ' -RequestId ' + JobRequestId;
   PipeExpectOutput := PipeOut;
   JobPipeOut := PipeOut;
@@ -886,7 +1183,7 @@ begin
   JobResultOut := '';
   JobState := JOB_SUBMIT;
   JobStartedAt := GetTickCount;
-  Result := StartHelper('job', RunId, JobOut, Extra);
+  Result := StartHelper('job', JobRunId, JobOut, Extra);
   if not Result then
   begin
     JobState := JOB_DONE;
@@ -895,15 +1192,12 @@ begin
   end;
 end;
 
-{ The code of a job that gave no result in its time limit: the task's last result, read once;
-  a sign-in failure of the account is service_logon_failed (plan 10.7, spec 7.5). }
-function TaskTimeoutCode: String;
-var
-  OutFile: String;
+{ The code of a job that gave no result in its time limit: the task's last result, from the
+  job-result answers that the poll asks for every 15 s (W14-D9: no blocking helper call); a
+  sign-in failure of the account is service_logon_failed (plan 10.7, spec 7.5). }
+function JobTimeoutCode: String;
 begin
-  OutFile := NewOut('job-result');
-  RunHelper('job-result', RunId, OutFile, '-RequestId ' + JobRequestId);
-  if Pos('"logon_failed":true', ReadText(OutFile)) > 0 then
+  if JobLogonFailed then
     Result := 'service_logon_failed'
   else
     Result := 'job_timeout';
@@ -917,7 +1211,10 @@ var
 begin
   if (JobState = JOB_IDLE) or (JobState = JOB_DONE) then
     Exit;
+  if JobRunId = '' then
+    JobRunId := RunId;
   PollPipe;
+  ReadJobProgress;
   if JobState = JOB_SUBMIT then
   begin
     Code := ReadResultCode(JobOut);
@@ -948,7 +1245,7 @@ begin
       begin
         { W8 correction 5: at the limit, the task's last result once (spec 7.5). }
         Log('Job ' + JobName + ': no result in its time.');
-        JobCode := TaskTimeoutCode;
+        JobCode := JobTimeoutCode;
         JobState := JOB_DONE;
         ClosePipe;
         Exit;
@@ -962,7 +1259,7 @@ begin
       JobPollAt := GetTickCount;
       JobResultAt := GetTickCount;
       JobResultOut := NewOut('job-result');
-      if not StartHelper('job-result', RunId, JobResultOut, '-RequestId ' + JobRequestId) then
+      if not StartHelper('job-result', JobRunId, JobResultOut, '-RequestId ' + JobRequestId) then
       begin
         Log('Job ' + JobName + ': the job-result helper did not start.');
         JobCode := 'helper_failed';
@@ -984,10 +1281,13 @@ begin
       Exit;
     if Code <> 'done' then
     begin
+      { W14-D9: the answer "waiting" names a sign-in failure of the account (spec 7.5). }
+      JobLogonFailed := Pos('"logon_failed":true', ReadText(JobResultOut)) > 0;
       JobResultOut := '';
       Exit;
     end;
     Log('Job ' + JobName + ': result collected.');
+    ReadJobProgress;
     Text := ReadText(JobResultOut);
     JobRaw := Text;
     JobCode := JsonValueFrom(Text, 'code', Pos('"exec":', Text));
@@ -1014,36 +1314,131 @@ begin
   Result := JobRunning and (Elapsed(JobStartedAt) > JobLimitMs);
 end;
 
-{ A short job without the pipe, waited for here (Cancel's discard, Save report's log-bundle). }
-function RunJobBlocking(Name, InputJson, ARunId: String; LimitSeconds: Integer): String;
-var
-  InFile, OutFile, Id, Text: String;
-  Start: Cardinal;
+{ ------------------------------------------------------------------------------------------- }
+{ W14-D9: the step runner. One short helper action at a time runs from the timer; StepFinished  }
+{ (Maintenance.iss) takes its code. A step past its limit ends as helper_timeout, so every      }
+{ continuation shows a message instead of waiting on.                                           }
+{ ------------------------------------------------------------------------------------------- }
+
+function StepRunning: Boolean;
 begin
-  Result := 'job_timeout';
-  Id := NewRequestId;
-  InFile := ExpandConstant('{tmp}\job-input.json');
-  SaveStringToFile(InFile, AnsiString(InputJson), False);
-  OutFile := NewOut('job');
-  RunHelper('job', ARunId, OutFile, '-Job ' + Name + ' -RequestId ' + Id + ' -InputFile ' + AddQuotes(InFile));
-  if ReadResultCode(OutFile) <> 'started' then
+  Result := StepFor <> '';
+end;
+
+{ Starts Action; False when another step runs (the caller's button stays as it is). Line,
+  Number and Total make the one line (7.6); Line '' shows none. }
+function RunStep(Action, Extra, ForTag, Line: String; Number, Total: Integer; LimitMs: Cardinal): Boolean;
+begin
+  Result := False;
+  if StepFor <> '' then
   begin
-    Result := ReadResultCode(OutFile);
+    Log('Step ' + ForTag + ' not started: ' + StepFor + ' runs.');
     Exit;
   end;
-  Start := GetTickCount;
-  while Elapsed(Start) < Cardinal(LimitSeconds * 1000) do
+  StepAction := Action;
+  StepFor := ForTag;
+  StepLine := Line;
+  StepNumber := Number;
+  StepTotal := Total;
+  StepLimitMs := LimitMs;
+  StepAt := GetTickCount;
+  StepOut := NewOut(Action);
+  if not StartHelper(Action, RunId, StepOut, Extra) then
+    StepOut := '';
+  Log('Step ' + ForTag + ': ' + Action + ' started.');
+  Result := True;
+end;
+
+{ From the timer. }
+procedure PollStep;
+var
+  Code, ForTag: String;
+begin
+  if StepFor = '' then
+    Exit;
+  if StepOut = '' then
+    Code := 'helper_failed'
+  else
+    Code := ReadResultCode(StepOut);
+  if (Code = '') and (Elapsed(StepAt) > StepLimitMs) then
   begin
-    Sleep(1000);
-    if Pos('"request_id":"' + Id + '"', ReadText(ExecResultFile)) > 0 then
-    begin
-      OutFile := NewOut('job-result');
-      RunHelper('job-result', ARunId, OutFile, '-RequestId ' + Id);
-      Text := ReadText(OutFile);
-      Result := JsonValueFrom(Text, 'code', Pos('"exec":', Text));
-      Exit;
-    end;
+    Log('Step ' + StepFor + ': no result in its time.');
+    Code := 'helper_timeout';
   end;
+  if Code = '' then
+    Exit;
+  ForTag := StepFor;
+  StepFor := '';
+  StepLastCode := Code;
+  Log('Step ' + ForTag + ': ' + Code + '.');
+  StepFinished(ForTag, Code);
+end;
+
+{ ------------------------------------------------------------------------------------------- }
+{ W14-D9: the setup file's parts, one file per timer tick. ExtractTemporaryFiles holds the      }
+{ window while it unpacks, so each file gets its own tick and the page shows the stage first.   }
+{ ------------------------------------------------------------------------------------------- }
+
+{ Patterns: file patterns under {tmp}\payload, split by "|". }
+procedure QueueExtract(Patterns, ForTag: String);
+begin
+  ExtractList := Patterns;
+  ExtractFor := ForTag;
+end;
+
+function ExtractRunning: Boolean;
+begin
+  Result := ExtractFor <> '';
+end;
+
+{ Unpacks the first file of the list. }
+procedure ExtractNextPart;
+var
+  Name: String;
+  Cut: Integer;
+begin
+  Cut := Pos('|', ExtractList);
+  if Cut = 0 then
+  begin
+    Name := ExtractList;
+    ExtractList := '';
+  end
+  else
+  begin
+    Name := Copy(ExtractList, 1, Cut - 1);
+    ExtractList := Copy(ExtractList, Cut + 1, Length(ExtractList));
+  end;
+  if Name = '' then
+    Exit;
+  try
+    ExtractTemporaryFiles('{tmp}\payload\' + Name);
+  except
+    Log('The setup file has no part ' + Name + '.');
+  end;
+end;
+
+{ From the timer: one file, or the end of the list. The first tick only shows the stage. }
+procedure PollExtract;
+var
+  ForTag: String;
+begin
+  if ExtractFor = '' then
+    Exit;
+  { Cancel: nothing more is unpacked, and no step follows. }
+  if CloseFlowRunning then
+  begin
+    ExtractList := '';
+    ExtractFor := '';
+    Exit;
+  end;
+  if ExtractList <> '' then
+  begin
+    ExtractNextPart;
+    Exit;
+  end;
+  ForTag := ExtractFor;
+  ExtractFor := '';
+  StepFinished(ForTag, 'extracted');
 end;
 
 
@@ -1106,42 +1501,146 @@ begin
   end;
 end;
 
-procedure SaveReport(Sender: TObject);
+{ W14-D9: Save report runs from the timer (7.6 "Save report", one line beside its button):
+  2 of 4 the server part's logs (the log-bundle job, when the server part answers and no other
+  job runs; W8 correction 3), 3 of 4 the setup logs with passwords and personal details removed
+  (report-collect and the wizard's own password check), 4 of 4 the file on the desktop
+  (report-zip). Stage 1, the copy of the setup log, takes no time. Each helper step has its
+  limit; a report that could not be saved says so. }
+procedure ReportCollect;
 var
-  ReportRun, OutFile, InnoCopy: String;
+  InnoCopy: String;
 begin
-  { W8 correction 3: Save report works while a job runs; only the Linux part waits for Exec,
-    so it is left out then and report.txt says the Linux part was not reachable. }
-  ReportRun := NewRunId('report');
-  ReportLine := CM('report_saving');
-  if WizardReady then
-  begin
-    WizardForm.BeveledLabel.Caption := ' ' + ReportLine;
-    WizardForm.Refresh;
-  end;
-  { The Linux part, when the server part answers (plan 10.6 item 1). }
-  if (ServiceSid <> '') and not JobRunning then
-    RunJobBlocking('log-bundle', '{"run_id":"' + ReportRun + '"}', ReportRun, 120);
   InnoCopy := ExpandConstant('{tmp}\setup-program.log');
   if ExpandConstant('{log}') <> '' then
     CopyFile(ExpandConstant('{log}'), InnoCopy, False);
-  OutFile := NewOut('report');
-  RunHelper('report-collect', ReportRun, OutFile, '-InputFile ' + AddQuotes(InnoCopy));
-  DropFilesWithPassword(ExpandConstant('{tmp}\report-') + ReportRun);
-  OutFile := NewOut('report');
-  RunHelper('report-zip', ReportRun, OutFile, '');
-  ReportPath := JsonValue(ReadText(OutFile), 'path');
+  ReportPhase := 'collect';
+  ReportStepAt := GetTickCount;
+  ReportOut := NewOut('report');
+  StartHelper('report-collect', ReportRun, ReportOut, '-InputFile ' + AddQuotes(InnoCopy));
+end;
+
+function ReportProgressText: String;
+var
+  Action: String;
+begin
+  if ReportPhase = 'linux' then
+  begin
+    Action := '';
+    if JobPurpose = 'report' then
+      Action := StepText(JobStepJob, JobStepKey, '', '', '');
+    if Action = '' then
+      Action := CM('report_stage2');
+    Result := OneLine(2, 4, Action, ReportAt);
+  end
+  else if ReportPhase = 'collect' then
+    Result := OneLine(3, 4, CM('report_stage3'), ReportAt)
+  else
+    Result := OneLine(4, 4, CM('report_stage4'), ReportAt);
+end;
+
+{ The line goes to the label that the page or form gave (ReportLabel), the S13 form, S01 and the
+  settings program's report form. }
+procedure ShowReportLine;
+var
+  Text: String;
+begin
+  if ReportPhase <> '' then
+    Text := ReportProgressText
+  else
+    Text := ReportLine;
+  if ReportLabel <> nil then
+    ReportLabel.Caption := Text;
+  if FailureStatus <> nil then
+    FailureStatus.Caption := Text;
+  if WizardReady and (WizardForm.CurPageID = wpWelcome) and StateUnsafe then
+    WizardForm.WelcomeLabel2.Caption := CM('s01_state_unsafe') + #13#10#13#10 + Text;
+end;
+
+{ W14-D9: the server part's logs need the one Exec job. They are left out (report.txt says so)
+  while a job runs or a flow can start one soon, so the report never takes the job of a page. }
+function ReportJobAllowed: Boolean;
+begin
+  Result := (StepFor = '') and (MaintPhase = '') and (MailPhase = '') and not CloseFlowRunning
+    and not (DataPrepared and not BgDone and not BgFailed)
+    and not (InstallStarted and not InstallDone and not InstallFailed)
+    and not ((EntryScreen = 'M05') and (UpdPhase <> '') and not UpdFailed);
+end;
+
+procedure SaveReport(Sender: TObject);
+begin
+  if ReportPhase <> '' then
+    Exit;
+  ReportRun := NewRunId('report');
+  ReportAt := GetTickCount;
+  ReportPath := '';
+  { The Linux part, when the server part answers (plan 10.6 item 1). }
+  if (ServiceSid <> '') and not JobRunning and ReportJobAllowed then
+  begin
+    ReportPhase := 'linux';
+    StartJob('log-bundle', '{"run_id":"' + ReportRun + '"}', 'report', False, False, 2);
+  end
+  else
+    ReportCollect;
+  ShowReportLine;
+  { The page draws the line beside its Save report button. }
+  if WizardReady and not ModalOpen then
+    RenderPage(-1);
+end;
+
+{ From the timer, also while a modal form is open (the S13 form). }
+procedure PollReport;
+var
+  Code: String;
+begin
+  if ReportPhase = '' then
+    Exit;
+  if ReportPhase = 'linux' then
+  begin
+    if (JobPurpose = 'report') and (JobState <> JOB_DONE) and (JobState <> JOB_IDLE) then
+    begin
+      ShowReportLine;
+      Exit;
+    end;
+    if JobPurpose = 'report' then
+    begin
+      JobState := JOB_IDLE;
+      JobPurpose := '';
+    end;
+    ReportCollect;
+    ShowReportLine;
+    Exit;
+  end;
+  Code := ReadResultCode(ReportOut);
+  if (Code = '') and (Elapsed(ReportStepAt) < HELPER_LIMIT_MS) then
+  begin
+    ShowReportLine;
+    Exit;
+  end;
+  if ReportPhase = 'collect' then
+  begin
+    DropFilesWithPassword(ExpandConstant('{tmp}\report-') + ReportRun);
+    ReportPhase := 'zip';
+    ReportStepAt := GetTickCount;
+    ReportOut := NewOut('report');
+    StartHelper('report-zip', ReportRun, ReportOut, '');
+    ShowReportLine;
+    Exit;
+  end;
+  ReportPath := JsonValue(ReadText(ReportOut), 'path');
+  ReportPhase := '';
   if ReportPath <> '' then
     ReportLine := FM1('report_saved', ExtractFileName(ReportPath))
   else
-    ReportLine := '';
-  if not WizardReady then
-    Exit;
-  WizardForm.BeveledLabel.Caption := '';
-  { Design B2: the result line also shows in the modal S13 form. }
-  if FailureStatus <> nil then
-    FailureStatus.Caption := ReportLine;
-  RenderPage(-1);
+    ReportLine := CM('report_failed');
+  ShowReportLine;
+  { The settings program's report form closes by itself (TForm.Close ends its modal loop; the
+    script classes give a form no ModalResult). }
+  if ReportForm <> nil then
+    ReportForm.Close;
+  { Design B2: the page draws the result line with "Show in folder". }
+  if WizardReady and not ModalOpen then
+    RenderPage(-1);
 end;
 
 procedure ShowReportClick(Sender: TObject; const Link: String; LinkType: TSysLinkType);
@@ -1159,10 +1658,12 @@ begin
   Button := AddButtonAt(CM('btn_save_report'), 0, 0);
   Button.OnClick := @SaveReport;
   CurY := CurY + Button.Height + ScaleY(6);
-  if ReportLine <> '' then
+  { W14-D9: the line while the report is saved, then its result. }
+  if (ReportLine <> '') or (ReportPhase <> '') then
   begin
-    AddText(ReportLine, False);
-    if ReportPath <> '' then
+    ReportLabel := AddText(ReportLine, False);
+    ShowReportLine;
+    if (ReportPath <> '') and (ReportPhase = '') then
     begin
       Link := AddLink(CM('btn_show_in_folder'), 0);
       Link.OnLinkClick := @ShowReportClick;
@@ -1374,6 +1875,8 @@ begin
   FixOut := NewOut('fix');
   FixStartedAt := GetTickCount;
   StartHelper(Action, RunId, FixOut, Extra);
+  { W14-D5: the item list shows the fix's one line. }
+  RenderPage(-1);
 end;
 
 function RestartResumeText(Code: String; Prefix: String): String;
@@ -1386,18 +1889,16 @@ begin
 end;
 
 { C08 "Restart now" and C04 "Restart to startup settings": save the progress (with the resume
-  entries), then restart (spec 5.3, F4a). }
-procedure CheckRestart(Firmware: Boolean; Index: Integer);
+  entries), then restart (spec 5.3, F4a). W14-D9: the save and the restart run from the timer
+  (7.6 "S02 and S06 restart": "Saving your progress...", then "Restarting this PC..."). }
+procedure CheckRestartConfirm(Code: String);
 var
-  OutFile, Code, Text, Extra, Title: String;
+  Firmware: Boolean;
+  Index: Integer;
+  Text, Extra, Title: String;
 begin
-  Code := '';
-  if not DataPrepared then
-  begin
-    OutFile := NewOut('save');
-    RunHelper('save-progress', RunId, OutFile, '-Stage check_restart -SetupPath ' + AddQuotes(ExpandConstant('{srcexe}')));
-    Code := ReadResultCode(OutFile);
-  end;
+  Firmware := RestartFirmware;
+  Index := RestartIndex;
   { D1: the firmware restart has its own title, text and, when BitLocker can ask, the caution. }
   if Firmware then
   begin
@@ -1426,13 +1927,21 @@ begin
     if Firmware then StartCloseFlow('later', 'restart-firmware') else StartCloseFlow('later', 'restart');
     Exit;
   end;
-  OutFile := NewOut('restart');
-  RunHelper('restart', RunId, OutFile, Extra);
-  if ReadResultCode(OutFile) = 'restarting' then
+  if RunStep('restart', Extra, 'cr-restart', CM('later_restarting'), 0, 0, HELPER_LIMIT_MS) then
+    RenderPage(-1);
+end;
+
+procedure CheckRestart(Firmware: Boolean; Index: Integer);
+begin
+  RestartFirmware := Firmware;
+  RestartIndex := Index;
+  if DataPrepared then
   begin
-    ForceClose := True;
-    WizardForm.Close;
+    CheckRestartConfirm('');
+    Exit;
   end;
+  if RunStep('save-progress', '-Stage check_restart -SetupPath ' + AddQuotes(ExpandConstant('{srcexe}')), 'cr-save', CM('later_saving'), 0, 0, HELPER_LIMIT_MS) then
+    RenderPage(-1);
 end;
 
 procedure ShowFirmwareHelp(Index: Integer);
@@ -1546,14 +2055,22 @@ begin
     Exit;
   Button := AddButtonAt(Caption, 0, Index * 16);
   Button.OnClick := @ItemButtonClick;
-  Button.Enabled := not FixRunning;
+  Button.Enabled := not FixRunning and not StepRunning;
   if Caption2 <> '' then
   begin
     Button := AddButtonAt(Caption2, Button.Width + ScaleX(8), Index * 16 + 1);
     Button.OnClick := @ItemButtonClick;
-    Button.Enabled := not FixRunning;
+    Button.Enabled := not FixRunning and not StepRunning;
   end;
   CurY := CurY + Button.Height + ScaleY(8);
+end;
+
+{ The check item that a fix action belongs to. }
+function FixItemId: String;
+begin
+  if FixAction = 'fix-network-private' then Result := 'C10'
+  else if FixAction = 'fix-mdns' then Result := 'C17'
+  else Result := 'C29';
 end;
 
 procedure AddItem(Index: Integer);
@@ -1563,11 +2080,9 @@ begin
     AddText(CM('c22_chosen'), False)
   else
     AddText(ItemMessage(Items[Index]), False);
-  if FixRunning and (((FixAction = 'remove-kit') or (FixAction = 'remove-windows')) and (Items[Index].Id = 'C29')) then
-  begin
-    AddText(CM('s02_removing'), False);
-    AddMarquee;
-  end
+  { W14-D5 (7.6 "S02 fixes"): the running fix's one line in its item, in place of its buttons. }
+  if FixRunning and (Items[Index].Id = FixItemId) then
+    StepLabel := AddText(PageLineText, False)
   else
     AddItemButtons(Index);
   { Design B2: the C18 item's Save report shows its result line here. }
@@ -1636,8 +2151,11 @@ begin
   Link.OnLinkClick := @ShowAllChecks;
   Button := AddButtonAt(CM('btn_check_again'), 0, 0);
   Button.OnClick := @CheckAgainClick;
-  Button.Enabled := not FixRunning;
+  Button.Enabled := not FixRunning and not StepRunning;
   CurY := CurY + Button.Height + ScaleY(6);
+  { W14-D5 (7.6 "S02 and S06 restart"): the one line of the save and the restart. }
+  if StepRunning then
+    AddStepLine;
   { W14-D1: Save report on S02 whatever the result. }
   AddReportControls;
 end;
@@ -1681,8 +2199,8 @@ begin
   end;
   if CheckRunning or not CheckDone then
   begin
-    AddText(CM('s02_checking'), True);
-    AddMarquee;
+    { W14-D5 (7.6 "S02 PC check"): four stages, the check that runs (N of 30), the time. }
+    AddProgress('check', CM('s02_stages'), WaitStage('check'), WaitActionText('check'), CheckStartedAt, CM('wait_about_1'));
     WizardForm.NextButton.Enabled := False;
     Exit;
   end;
@@ -1749,8 +2267,11 @@ begin
       Button := AddButtonAt(CM('btn_save_report'), 0, 0);
       Button.OnClick := @SaveReport;
       CurY := CurY + Button.Height + ScaleY(6);
-      if ReportLine <> '' then
-        AddText(ReportLine, False);
+      if (ReportLine <> '') or (ReportPhase <> '') then
+      begin
+        ReportLabel := AddText(ReportLine, False);
+        ShowReportLine;
+      end;
     except
       Log('S02 Save report button failed: ' + GetExceptionMessage);
     end;
@@ -1775,17 +2296,14 @@ begin
   RenderPage(P_RESTART);
 end;
 
+{ W14-D9: the WSL package comes out of the setup file from the timer (pc.unpack), then the
+  helper runs (StepFinished 'prep-unpack'). }
 procedure StartPrepare;
 begin
-  try
-    ExtractTemporaryFiles('{tmp}\payload\wsl.*.msi');
-  except
-    Log('The WSL package is not in this setup file.');
-  end;
-  PrepOut := NewOut('prepare-pc');
-  PrepState := 'working';
+  PrepState := 'unpack';
+  PrepOut := '';
   PrepStartedAt := GetTickCount;
-  StartHelper('prepare-pc', RunId, PrepOut, '');
+  QueueExtract('wsl.*.msi', 'prep-unpack');
 end;
 
 procedure RenderRestart;
@@ -1801,10 +2319,10 @@ begin
   WizardForm.NextButton.Caption := CM('btn_next');
   if ExtraButton <> nil then
     ExtraButton.Visible := False;
-  if PrepState = 'working' then
+  if (PrepState = 'unpack') or (PrepState = 'working') or (PrepState = 'saving') then
   begin
-    AddText(CM('s05_working'), True);
-    AddMarquee;
+    { W14-D5 (7.6 "S05 prepare"): the stages, the current action and the time so far. }
+    AddProgress('prep', CM('s05_stages'), WaitStage('prep'), WaitActionText('prep'), PrepStartedAt, CM('wait_about_2'));
     WizardForm.NextButton.Enabled := False;
   end
   else if PrepState = 'failed' then
@@ -1823,7 +2341,9 @@ begin
     if PrepDetails then
       AddText(CM('s05_details'), False);
     WizardForm.NextButton.Caption := CM('s05_next');
-    WizardForm.NextButton.Enabled := True;
+    WizardForm.NextButton.Enabled := not StepRunning;
+    { 7.6: "Restarting this PC..." after Restart now. }
+    AddStepLine;
     if ExtraButton <> nil then
     begin
       ExtraButton.Caption := CM('s05_later');
@@ -1860,8 +2380,8 @@ begin
   end;
   if CheckRunning or not CheckDone then
   begin
-    AddText(CM('s06_checking'), False);
-    AddMarquee;
+    { W14-D5 (7.6 "S06 and S11 recheck"): full on S06, one stage. }
+    AddProgress('recheck', '', 1, WaitActionText('recheck'), CheckStartedAt, '');
     WizardForm.NextButton.Enabled := False;
     Exit;
   end;
@@ -1881,23 +2401,12 @@ end;
 { S07 Where to keep your data, and the background preparation (plan page 4a)                    }
 { ------------------------------------------------------------------------------------------- }
 
-{ The drive that the check's C07 row names (the drive with the most space), or ''. }
-function C07Drive: String;
-var
-  I: Integer;
-begin
-  Result := '';
-  for I := 0 to GetArrayLength(Items) - 1 do
-    if Items[I].Id = 'C07' then
-      Result := Uppercase(JsonValue(Items[I].Raw, 'letter'));
-end;
-
-{ The S07 drive list from the helper's "drives" result, largest first. W14-D7: the selected
-  drive is the C07 drive when the list holds it, else the first (largest) one, whatever DataRoot
-  held before. }
+{ The S07 drive list from the helper's "drives" result, largest first. The first (largest) drive
+  is the default only while no folder is chosen, so the person's own choice stays after Back and
+  Next (W14-D7, closed: the part-1 reset is reverted). }
 procedure LoadDataDrives(Text: String);
 var
-  Rest, Letter, DriveType, FileSystem, Best: String;
+  Rest, Letter, DriveType, FileSystem: String;
   Start, Count, I, J: Integer;
   FreeBytes: Int64;
   SwapS: String;
@@ -1935,25 +2444,15 @@ begin
         SwapS := DriveLetters[I]; DriveLetters[I] := DriveLetters[J]; DriveLetters[J] := SwapS;
         SwapF := DriveFree[I]; DriveFree[I] := DriveFree[J]; DriveFree[J] := SwapF;
       end;
-  if not DataPrepared then
-  begin
-    Best := C07Drive;
-    DataRoot := '';
-    for I := 0 to Count - 1 do
-      if CompareText(DriveLetters[I], Best) = 0 then
-        DataRoot := DriveLetters[I] + '\SlateOps';
-    if (DataRoot = '') and (Count > 0) then
-      DataRoot := DriveLetters[0] + '\SlateOps';
-  end;
+  if (DataRoot = '') and (Count > 0) then
+    DataRoot := DriveLetters[0] + '\SlateOps';
 end;
 
+{ W14-D9: from the timer (7.6 "S07 drives": "Looking for drives..."); StepFinished 'drives'
+  loads the list and draws S07. }
 procedure ReadDataDrives;
-var
-  OutFile: String;
 begin
-  OutFile := NewOut('drives');
-  RunHelper('drives', RunId, OutFile, '');
-  LoadDataDrives(ReadText(OutFile));
+  RunStep('drives', '', 'drives', CM('s07_looking'), 0, 0, HELPER_LIMIT_MS);
 end;
 
 function GB(Bytes: Int64): String;
@@ -1968,20 +2467,38 @@ begin
   Result := (KeptState = 'kept') and KeptUse;
 end;
 
-{ Reads kept.json through the helper, after its folder checks (never a Pascal read, which
-  would follow a link). }
-procedure RefreshKept;
-var
-  Text: String;
+{ The stages of the background preparation (7.6), one per step, split by "|". }
+function BgStageNames: String;
 begin
-  if KeptFor = DataRoot then
+  if KeptMode then
+    Result := CM('bg_stages_kept')
+  else
+    Result := FM1('bg_stages', Copy(DataRoot, 1, 2));
+end;
+
+{ Reads kept.json through the helper, after its folder checks (never a Pascal read, which
+  would follow a link). W14-D9: from the timer (7.6 "S07 drives, kept data"); KeptState is
+  'reading' until StepFinished 'kept' fills it and draws S07 again. }
+procedure RefreshKept;
+begin
+  if (KeptFor = DataRoot) or StepRunning then
     Exit;
-  KeptFor := DataRoot;
   KeptState := '';
   KeptUse := True;
   if (DataRoot = '') or not DirExists(AddBackslash(DataRoot) + 'kept') then
+  begin
+    KeptFor := DataRoot;
     Exit;
-  Text := ReadText(NewOutRun('kept-read', '-DataRoot ' + AddQuotes(DataRoot)));
+  end;
+  if RunStep('kept-read', '-DataRoot ' + AddQuotes(DataRoot), 'kept', FM1('s07_reading_kept', AddBackslash(DataRoot) + 'kept'), 0, 0, HELPER_LIMIT_MS) then
+  begin
+    KeptFor := DataRoot;
+    KeptState := 'reading';
+  end;
+end;
+
+procedure KeptRead(Text: String);
+begin
   KeptState := JsonValue(Text, 'code');
   KeptVersion := JsonValue(Text, 'version');
   KeptName := JsonValue(Text, 'business_name');
@@ -1996,12 +2513,6 @@ end;
 
 procedure DriveRadioClick(Sender: TObject);
 begin
-  { W14-D7: no change while S07 draws, and no redraw for the drive that is already selected (a
-    radio that gets the focus is checked by Windows). }
-  if DataRendering then
-    Exit;
-  if CompareText(Copy(DataRoot, 1, 2), DriveLetters[TNewRadioButton(Sender).Tag]) = 0 then
-    Exit;
   DataRoot := DriveLetters[TNewRadioButton(Sender).Tag] + '\SlateOps';
   DataError := '';
   RenderPage(P_DATA);
@@ -2082,8 +2593,6 @@ var
   Link: TNewLinkLabel;
   Button: TNewButton;
 begin
-  DataRendering := True;
-  try
   BeginBody(P_DATA);
   AddStageLine(2);
   WizardForm.NextButton.Caption := CM('btn_next');
@@ -2094,7 +2603,17 @@ begin
     WizardForm.NextButton.Enabled := True;
     Exit;
   end;
+  if DataStarted then
+  begin
+    { W14-D5 (7.6 "S07 after Next"): unpack, the data folder, then the background stages. }
+    AddText(FM1('s07_folder', DataRoot), True);
+    AddProgress('data', CM('s07_stages') + '|' + BgStageNames, WaitStage('data'), WaitActionText('data'), DataStartedAt, '');
+    WizardForm.NextButton.Enabled := False;
+    Exit;
+  end;
   AddText(CM('s07_first'), False);
+  { 7.6 "S07 drives, kept data": the one line while the list or the kept data is read. }
+  AddStepLine;
   SetArrayLength(DriveRadios, GetArrayLength(DriveLetters));
   for I := 0 to GetArrayLength(DriveLetters) - 1 do
   begin
@@ -2175,21 +2694,9 @@ begin
   Link := AddLink(CM('s07_change_program'), 0);
   Link.OnLinkClick := @ChangeProgramClick;
   Link.Enabled := not DataStarted;
-  if DataStarted then
-  begin
-    AddText(FM1('s07_preparing', '0%'), False);
-    AddMarquee;
-  end;
   { W9-3: newer, older (W13b) or unreadable kept data, and "Start new" in a kept folder, keep
-    Next off until the folder changes. }
-  WizardForm.NextButton.Enabled := (DataRoot <> '') and not DataStarted and ((KeptState = '') or KeptMode);
-  { W14-D7: the selected drive takes the focus, so Windows checks no other radio. }
-  for I := 0 to GetArrayLength(DriveRadios) - 1 do
-    if DriveRadios[I].Checked and DriveRadios[I].CanFocus then
-      WizardForm.ActiveControl := DriveRadios[I];
-  finally
-    DataRendering := False;
-  end;
+    Next off until the folder changes; the kept data is read first (W14-D9). }
+  WizardForm.NextButton.Enabled := (DataRoot <> '') and not DataStarted and not StepRunning and ((KeptState = '') or KeptMode);
 end;
 
 { The folder that the person picked must be on a listed drive (spec S07 "drive too small"). }
@@ -2227,20 +2734,23 @@ begin
   end;
   DataStarted := True;
   DataError := '';
-  RenderPage(P_DATA);
-  WizardForm.Refresh;
-  try
-    ExtractTemporaryFiles('{tmp}\payload\slateops-*');
-    ExtractTemporaryFiles('{tmp}\payload\release-manifest.json*');
-  except
-    Log('The setup payload is not in this setup file.');
-  end;
-  BgOut := NewOut('prepare-data');
+  BgOut := '';
   DataStartedAt := GetTickCount;
+  { W14-D9: the parts come out of the setup file one per timer tick (data.unpack); then the
+    data folder step (StepFinished 'data-unpack'). The Linux image is one large file: S07 shows
+    its stage before that tick. }
+  QueueExtract('slateops-linux-*|slateops-engine-*|slateops-server-*|slateops-caddy-*|release-manifest.json|release-manifest.json.sigstore.json', 'data-unpack');
+  RenderPage(P_DATA);
+end;
+
+procedure StartDataFolder;
+begin
+  BgOut := NewOut('prepare-data');
   if KeptMode then
     StartHelper('prepare-data', RunId, BgOut, '-DataRoot ' + AddQuotes(DataRoot) + ' -UseKept')
   else
     StartHelper('prepare-data', RunId, BgOut, '-DataRoot ' + AddQuotes(DataRoot));
+  RenderPage(P_DATA);
 end;
 
 { The background preparation after prepare-data (plan page 4a; spec 12 item 1): one step at a
@@ -2306,23 +2816,51 @@ begin
   Result := DataPrepared and (BgIndex >= BgCount) and not BgFailed;
 end;
 
+{ W14-D5: the current action of the background preparation (7.6 background row): the helper
+  step's line, or the engine job's step from its standard error, else the stage name. }
+function BgAction: String;
+var
+  Name, Drive: String;
+begin
+  Result := '';
+  Name := BgStepName(BgIndex);
+  Drive := Copy(DataRoot, 1, 2);
+  if (BgPending = 'return') or (Name = 'kept-status') then
+    Result := StepText('bg', 'kept_status', '', '', '')
+  else if Name = 'service' then Result := StepText('bg', 'service', '', '', '')
+  else if Name = 'wslconfig' then Result := StepText('bg', 'wslconfig', '', '', '')
+  else if Name = 'import-distro' then Result := StepText('bg', 'import', Drive, '', '')
+  else if Name = 'restore-kept' then Result := StepText('bg', 'restore_kept', DataRoot, '', '')
+  else if Name = 'import-kept' then Result := StepText('bg', 'import_kept', '', '', '')
+  else if Name = 'start-boot' then Result := StepText('bg', 'start', '', '', '')
+  else if (JobPurpose = 'bg') and (JobStepJob = Name) then
+    Result := StepText(JobStepJob, JobStepKey, '', '', '');
+  if Result = '' then
+  begin
+    StringChangeEx(Name, '-', '_', True);
+    Result := CM('bg_stage_' + Name);
+  end;
+end;
+
+{ 7.6 background row, one-line form above the button row on S08 to S10 (and S11 of a kept
+  reinstall): "Preparing the server part, 3 of 7: <action>" and the time; at the end "The server
+  part is ready." The close flows use the same line and win. }
 procedure UpdateBgStatus;
 begin
-  if not DataPrepared then
+  if not DataPrepared or CloseFlowRunning or (CloseNotice <> '') then
     Exit;
   if (WizardForm.CurPageID <> Pages[P_ORG].ID) and (WizardForm.CurPageID <> Pages[P_EMAIL].ID) and (WizardForm.CurPageID <> Pages[P_BACKUP].ID)
     and not (KeptMode and (WizardForm.CurPageID = Pages[P_READY].ID)) then
   begin
-    WizardForm.BeveledLabel.Caption := '';
+    ShowStatusLine('');
     Exit;
   end;
   if BgFailed then
-    WizardForm.BeveledLabel.Caption := ' ' + CM('s07_prep_failed')
+    ShowStatusLine(CM('s07_prep_failed'))
   else if BgDone then
-    WizardForm.BeveledLabel.Caption := ' ' + CM('s07_prepared')
+    ShowStatusLine(CM('s07_prepared'))
   else
-    WizardForm.BeveledLabel.Caption := ' ' + FM1('s07_preparing', IntToStr((BgIndex * 100) div BgCount) + '%');
-  WizardForm.BeveledLabel.Visible := True;
+    ShowStatusLine(FM4('bg_line', IntToStr(BgIndex + 1), IntToStr(BgCount), BgAction, TimeText(BgBeganAt)));
 end;
 
 procedure StartBgStep;
@@ -2353,6 +2891,7 @@ procedure StartBackground;
 begin
   BgIndex := 0;
   BgFailed := False;
+  BgBeganAt := GetTickCount;
   StartBgStep;
 end;
 
@@ -2363,10 +2902,57 @@ begin
     RenderPage(P_READY);
 end;
 
+{ The step after a done background step. }
+procedure NextBgStep;
+begin
+  BgIndex := BgIndex + 1;
+  UpdateBgStatus;
+  StartBgStep;
+  if KeptMode and (WizardForm.CurPageID = Pages[P_READY].ID) then
+    RenderPage(P_READY);
+end;
+
+{ W14-D9: the helper calls inside the background run from the timer too: the account's SID
+  after the service step ('sid'), and the kept data back to kept\ after a mismatch ('return'). }
+function PollBgPending: Boolean;
+var
+  Code: String;
+begin
+  Result := BgPending <> '';
+  if not Result then
+    Exit;
+  Code := ReadResultCode(BgPendingOut);
+  if (Code = '') and (Elapsed(BgPendingAt) < HELPER_LIMIT_MS) then
+    Exit;
+  if BgPending = 'sid' then
+  begin
+    BgPending := '';
+    ServiceSid := JsonValue(ReadText(BgPendingOut), 'sid');
+    NextBgStep;
+    Exit;
+  end;
+  { F3 at reinstall: the disk that is not the kept installation is back in kept\ (advisor
+    item 1); only now the failure shows. }
+  BgPending := '';
+  BgFailed := True;
+  UpdateBgStatus;
+  RedrawKeptReady;
+end;
+
+procedure StartBgPending(Kind, Action: String);
+begin
+  BgPending := Kind;
+  BgPendingAt := GetTickCount;
+  BgPendingOut := NewOut(Action);
+  StartHelper(Action, RunId, BgPendingOut, '');
+end;
+
 procedure PollBackground;
 var
-  Code, Name, OutFile: String;
+  Code, Name: String;
 begin
+  if PollBgPending then
+    Exit;
   if (not DataPrepared) or BgFailed or (BgIndex >= BgCount) then
     Exit;
   Name := BgStepName(BgIndex);
@@ -2387,7 +2973,11 @@ begin
       begin
         BgCode := 'kept_mismatch';
         if Name = 'kept-status' then
-          NewOutRun('kept-return', '');
+        begin
+          BgFailed := False;
+          StartBgPending('return', 'kept-return');
+          Exit;
+        end;
       end;
       UpdateBgStatus;
       RedrawKeptReady;
@@ -2395,9 +2985,8 @@ begin
     end;
     if Name = 'service' then
     begin
-      OutFile := NewOut('account');
-      RunHelper('account-sid', RunId, OutFile, '');
-      ServiceSid := JsonValue(ReadText(OutFile), 'sid');
+      StartBgPending('sid', 'account-sid');
+      Exit;
     end;
   end
   else
@@ -2416,11 +3005,7 @@ begin
       Exit;
     end;
   end;
-  BgIndex := BgIndex + 1;
-  UpdateBgStatus;
-  StartBgStep;
-  if KeptMode and (WizardForm.CurPageID = Pages[P_READY].ID) then
-    RenderPage(P_READY);
+  NextBgStep;
 end;
 
 { Next on S08 to S10 after a background failure: the modal S13 form (spec S08). }
@@ -2452,6 +3037,10 @@ begin
   end;
   if FailureForm(CM('s07_title'), Text, True) then
   begin
+    { W14-D9: Save report's server part may still run in the one Exec job; Next again. }
+    Result := False;
+    if JobRunning then
+      Exit;
     BgFailed := False;
     UpdateBgStatus;
     StartBgStep;
@@ -2606,9 +3195,16 @@ end;
 
 { Spec S09 and 12 item 7: known domains first, then the MX records (Windows side only). The
   answer only selects a provider; it fills no field. }
+procedure ApplyProvider;
+begin
+  if MailDetected = 'gmail' then MailGmail.Checked := True
+  else if MailDetected = 'm365' then MailM365.Checked := True
+  else if not MailOutlook then MailOther.Checked := True;
+end;
+
 procedure DetectProvider;
 var
-  Domain, OutFile: String;
+  Domain: String;
 begin
   Domain := MailDomain;
   if (Domain = MailCheckedDomain) or not ValidEmail(MailFrom.Text) then
@@ -2626,13 +3222,13 @@ begin
     MailDetected := 'gmail'
   else
   begin
-    OutFile := NewOut('provider');
-    RunHelper('provider-detect', RunId, OutFile, '-Domain ' + Domain);
-    MailDetected := ReadResultCode(OutFile);
+    { W14-D9: from the timer (7.6 "S09 provider lookup"); StepFinished 'provider' sets the
+      radio. Another step running: the lookup runs at the next change. }
+    if not RunStep('provider-detect', '-Domain ' + Domain, 'provider', FM1('s09_looking_up', Domain), 0, 0, HELPER_LIMIT_MS) then
+      MailCheckedDomain := '';
+    Exit;
   end;
-  if MailDetected = 'gmail' then MailGmail.Checked := True
-  else if MailDetected = 'm365' then MailM365.Checked := True
-  else if not MailOutlook then MailOther.Checked := True;
+  ApplyProvider;
 end;
 
 procedure LayoutMail; forward;
@@ -2900,13 +3496,25 @@ begin
 end;
 
 procedure RenderMailStatus;
+var
+  Line: String;
 begin
-  if MailPhase = 'waiting' then MailStatus.Caption := CM('s09_waiting')
-  else if (MailPhase = 'selftest') or (MailPhase = 'sending') then MailStatus.Caption := FM1('s09_sending', Trim(OrgEmail.Text))
+  { W14-D5 (7.6 "S09 Send test email", "M02 save", "S09 provider lookup"): the one line of the
+    running wait; the timer keeps it current. }
+  Line := PageLineText;
+  StepLabel := nil;
+  if Line <> '' then
+  begin
+    MailStatus.Caption := Line;
+    StepLabel := MailStatus;
+  end
   else if MailPassed then MailStatus.Caption := FM1('s09_passed', Trim(OrgEmail.Text))
   else MailStatus.Caption := '';
-  if MailShowReport and (ReportLine <> '') then
-    MailStatus.Caption := ReportLine;
+  if MailShowReport and ((ReportLine <> '') or (ReportPhase <> '')) then
+  begin
+    ReportLabel := MailStatus;
+    ShowReportLine;
+  end;
   WizardForm.AdjustLabelHeight(MailStatus);
   MailReportButton.Visible := MailShowReport and (MailPhase = '');
   MailReportButton.Top := MailStatus.Top + MailStatus.Height + ScaleY(4);
@@ -2916,33 +3524,26 @@ begin
     WizardForm.NextButton.Caption := CM('btn_next')
   else
     WizardForm.NextButton.Caption := CM('s09_next_test');
-  WizardForm.NextButton.Enabled := (MailPhase = '') and (MailFieldsReady or MailPassed);
+  WizardForm.NextButton.Enabled := (MailPhase = '') and (MaintPhase = '') and (MailFieldsReady or MailPassed);
 end;
 
 { The channel self-test (plan F4d), then R7 again (spec 5.2), then smtp-test with the password
   through the pipe. }
+{ W14-D5 and W14-D9 (7.6 "S09 Send test email"): 1 the server part gets ready (the background),
+  2 the channel self-test, 3 the security policy (R7, from the timer), 4 the test email. The
+  password goes only with step 4, after both checks. }
 procedure StartMailTest;
 var
-  Value, OutFile, Code: String;
+  Value: String;
 begin
   MailError.Caption := '';
   MailShowReport := False;
   HideShow;
+  if MailPhase = '' then
+    MailAt := GetTickCount;
   if not BgDone then
   begin
     MailPhase := 'waiting';
-    RenderMailStatus;
-    Exit;
-  end;
-  OutFile := NewOut('r7');
-  RunHelper('r7', RunId, OutFile, '');
-  Code := ReadResultCode(OutFile);
-  if Code <> 'clear' then
-  begin
-    MailPhase := '';
-    MailShowReport := True;
-    if Code = 'policy' then SetMailError(CM('c18_policy'), MailPassword)
-    else SetMailError(CM('c18_unreadable'), MailPassword);
     RenderMailStatus;
     Exit;
   end;
@@ -2951,6 +3552,14 @@ begin
     MailPhase := 'selftest';
     Value := RandomHex(32);
     StartJob('pipe-test', Value, 'selftest:' + GetSHA256OfString(AnsiString(Value)), True, True, 2);
+    RenderMailStatus;
+    Exit;
+  end;
+  if MailPhase <> 'r7done' then
+  begin
+    MailPhase := 'r7';
+    if not RunStep('r7', '', 'r7', CM('s09_policy'), 3, 4, HELPER_LIMIT_MS) then
+      MailPhase := '';
     RenderMailStatus;
     Exit;
   end;
@@ -3007,6 +3616,9 @@ begin
   if (MailPhase <> 'selftest') and (MailPhase <> 'sending') then
     Exit;
   if JobState <> JOB_DONE then
+    Exit;
+  { W14-D9: only this page's job (Save report can run a job too). }
+  if (JobPurpose <> 'smtp') and (Copy(JobPurpose, 1, 9) <> 'selftest:') then
     Exit;
   JobState := JOB_IDLE;
   if MailPhase = 'selftest' then
@@ -3153,8 +3765,10 @@ begin
     AddText(CM('s10_usb'), False);
   if BackupError <> '' then
     AddText(BackupError, True);
+  { 7.6 "S10 Next" and M03: the one line under the list. }
+  AddStepLine;
   WizardForm.NextButton.Caption := CM('btn_next');
-  WizardForm.NextButton.Enabled := BackupDrive <> '';
+  WizardForm.NextButton.Enabled := (BackupDrive <> '') and not StepRunning and (MaintPhase = '');
   if OnData then
   begin
     BackupConfirm := TNewCheckBox.Create(WizardForm);
@@ -3168,21 +3782,17 @@ begin
   end;
 end;
 
-function CheckBackupDrive: Boolean;
+{ The drive-check result (W14-D9: the helper ran from the timer, 7.6 "S10 Next"). }
+function BackupResult(Text: String): Boolean;
 var
-  OutFile, Code, Text: String;
+  Code: String;
 begin
-  OutFile := NewOut('drive-check');
-  RunHelper('drive-check', RunId, OutFile, '-Drive ' + Uppercase(BackupDrive));
-  Text := ReadText(OutFile);
-  Code := ReadResultCode(OutFile);
+  Code := JsonValue(Text, 'code');
   Result := Code = 'ready';
   if Code = 'too_small' then
     BackupError := FM2('s10_too_small', BackupDrive, JsonLiteral(Text, 'free_gb'))
   else if not Result then
     BackupError := FM1('s10_not_writable', BackupDrive);
-  if not Result then
-    RenderPage(P_BACKUP);
 end;
 
 { ------------------------------------------------------------------------------------------- }
@@ -3235,8 +3845,8 @@ begin
   WizardForm.NextButton.Caption := CM('s11_next');
   if CheckRunning and (CheckFor = 'S11') then
   begin
-    AddText(CM('s06_checking'), False);
-    AddMarquee;
+    { W14-D5 (7.6 "S06 and S11 recheck"): one line on S11. }
+    StepLabel := AddText(PageLineText, False);
     WizardForm.NextButton.Enabled := False;
     Exit;
   end;
@@ -3269,6 +3879,10 @@ begin
     AddRow(CM('s11_edition'), -1);
   end;
   CurY := CurY + ScaleY(6);
+  { W14-D5 (6.1 L12, 7.6 background row): a kept reinstall waits for the background here, in
+    the full form. }
+  if KeptMode and not BgDone and not BgFailed then
+    AddProgress('bg', BgStageNames, WaitStage('bg'), WaitActionText('bg'), BgBeganAt, '');
   AddText(CM('s11_time'), False);
   Link := AddLink(CM('s11_what'), 0);
   Link.OnLinkClick := @WhatChangesClick;
@@ -3328,9 +3942,29 @@ begin
     Result := 25;
 end;
 
+{ The install job (step 2) with the answers; TimeZone is the IANA name of this PC's zone. }
+procedure InstallStartJob(TimeZone: String);
+var
+  Answers: String;
+begin
+  if ResumedInstall or KeptMode then
+    Answers := '{"run_id":"' + RunId + '","version":"' + SetupVersion + '"}'
+  else
+    Answers := '{"run_id":"' + RunId + '","version":"' + SetupVersion + '","answers":{' +
+      '"business_name":' + JsonText(Trim(OrgName.Text)) + ',"slug":' + JsonText(OrgSlug.Text) +
+      ',"admin_email":' + JsonText(Trim(OrgEmail.Text)) + ',"admin_username":' + JsonText(OrgUser.Text) +
+      ',"public_host":' + JsonText(HostName + '.local') + ',"backup_target":' + JsonText(Uppercase(BackupDrive) + '\SlateOps-backups') +
+      ',"data_vhd_max_gb":' + IntToStr(VhdSizeGb) + ',"time_zone":' + JsonText(TimeZone) + '}}';
+  InstallStep := 2;
+  { The answers go in and the result (with the recovery key) comes out through the pipe. }
+  StartJob('install', Answers, 'install', True, True, 45);
+  Answers := '';
+  RenderPage(P_INSTALL);
+end;
+
 procedure InstallNextStep;
 var
-  OutFile, Code, Answers, Lid, Extra: String;
+  Lid, Extra: String;
 begin
   InstallSlow := False;
   if InstallStep = 0 then
@@ -3343,27 +3977,12 @@ begin
   end
   else if InstallStep = 1 then
   begin
-    OutFile := NewOut('save');
+    { W14-D9: the save and the time zone run from the timer (StepFinished 'inst-save',
+      'inst-tz'), then InstallStartJob. }
     Extra := '-Stage install_started';
     if KeptMode then
       Extra := Extra + ' -KeptMark';
-    RunHelper('save-progress', RunId, OutFile, Extra);
-    if ResumedInstall or KeptMode then
-      Answers := '{"run_id":"' + RunId + '","version":"' + SetupVersion + '"}'
-    else
-    begin
-      OutFile := NewOut('time-zone');
-      RunHelper('time-zone', RunId, OutFile, '');
-      Answers := '{"run_id":"' + RunId + '","version":"' + SetupVersion + '","answers":{' +
-        '"business_name":' + JsonText(Trim(OrgName.Text)) + ',"slug":' + JsonText(OrgSlug.Text) +
-        ',"admin_email":' + JsonText(Trim(OrgEmail.Text)) + ',"admin_username":' + JsonText(OrgUser.Text) +
-        ',"public_host":' + JsonText(HostName + '.local') + ',"backup_target":' + JsonText(Uppercase(BackupDrive) + '\SlateOps-backups') +
-        ',"data_vhd_max_gb":' + IntToStr(VhdSizeGb) + ',"time_zone":' + JsonText(JsonValue(ReadText(OutFile), 'iana')) + '}}';
-    end;
-    InstallStep := 2;
-    { The answers go in and the result (with the recovery key) comes out through the pipe. }
-    StartJob('install', Answers, 'install', True, True, 45);
-    Answers := '';
+    RunStep('save-progress', Extra, 'inst-save', '', 0, 0, HELPER_LIMIT_MS);
   end
   else if InstallStep = 3 then
   begin
@@ -3385,10 +4004,38 @@ begin
   RenderPage(P_INSTALL);
 end;
 
+procedure ChooseDriveDone;
+begin
+  BackupDrive := CdDrive;
+  CdDrive := '';
+  InstallFailed := False;
+  if InstallStep >= 2 then
+    InstallStep := 1;
+  InstallNextStep;
+end;
+
+procedure ChooseDriveFailed;
+var
+  Failed: String;
+begin
+  Failed := CdDrive;
+  CdDrive := '';
+  RenderPage(P_INSTALL);
+  MsgBox(FM1('s10_not_writable', Failed), mbError, MB_OK);
+end;
+
 procedure PollInstall;
 var
   Code, Text: String;
 begin
+  { "Choose another drive" (7.6): the set-backup-target job of the chosen drive. }
+  if (JobPurpose = 'cdtarget') and (JobState = JOB_DONE) then
+  begin
+    JobState := JOB_IDLE;
+    JobPurpose := '';
+    if JobCode = 'backup_target_set' then ChooseDriveDone else ChooseDriveFailed;
+    Exit;
+  end;
   if (not InstallStarted) or InstallDone or InstallFailed then
     Exit;
   if InstallStep = 2 then
@@ -3396,13 +4043,13 @@ begin
     if JobSlow and not InstallSlow then
     begin
       InstallSlow := True;
-      { Correction 5: at the limit, the task's last result once (spec 7.5). }
-      if TaskTimeoutCode = 'service_logon_failed' then
+      { Correction 5: at the limit, the task's last result (spec 7.5); W14-D9: the poll's own
+        job-result answer, and the stop runs from the timer (StepFinished 'inst-logon'). }
+      if JobLogonFailed then
       begin
-        RunHelper('job-stop', RunId, NewOut('job-stop'), '');
         JobState := JOB_IDLE;
         ClosePipe;
-        InstallFail(0, CM('service_logon_failed'));
+        RunStep('job-stop', '', 'inst-logon', '', 0, 0, HELPER_LIMIT_MS);
         Exit;
       end;
       RenderPage(P_INSTALL);
@@ -3440,6 +4087,9 @@ begin
     InstallNextStep;
     Exit;
   end;
+  { W14-D9: step 1 (the save and the time zone) runs in the step runner. }
+  if InstallStep = 1 then
+    Exit;
   Code := ReadResultCode(InstallOut);
   if (Code = '') and (Elapsed(InstallOutAt) > HELPER_LIMIT_MS) then
   begin
@@ -3492,12 +4142,14 @@ end;
   install step; the engine's journal repeats only the step that did not finish. }
 procedure SlowTryAgainClick(Sender: TObject);
 begin
-  RunHelper('job-stop', RunId, NewOut('job-stop'), '');
+  { W14-D9: the stop runs from the timer; StepFinished 'inst-retry' repeats step 1. }
+  if StepRunning then
+    Exit;
   JobState := JOB_IDLE;
   ClosePipe;
   InstallSlow := False;
-  InstallStep := 1;
-  InstallNextStep;
+  RunStep('job-stop', '', 'inst-retry', '', 0, 0, HELPER_LIMIT_MS);
+  RenderPage(P_INSTALL);
 end;
 
 { Correction 6 (plan F5, design B10): "Choose another drive" after the backup step failed, with
@@ -3507,11 +4159,13 @@ var
   Form: TSetupForm;
   Radios: array of TNewRadioButton;
   Letters: array of String;
-  List, Item, Chosen, Code: String;
+  List, Item, Chosen: String;
   Count, I, Y: Integer;
   Go, Stop: TNewButton;
   Note: TNewStaticText;
 begin
+  if StepRunning or JobRunning or (CdDrive <> '') then
+    Exit;
   List := OtherDrives;
   Count := 0;
   Form := CreateCustomForm(ScaleX(380), ScaleY(260), False, False);
@@ -3567,27 +4221,13 @@ begin
   end;
   if Chosen = '' then
     Exit;
-  Code := ReadResultCode(NewOutRun('drive-check', '-Drive ' + Uppercase(Chosen)));
-  if Code = 'ready' then
-    Code := ReadResultCode(NewOutRun('prepare-backup', '-Drive ' + Uppercase(Chosen)));
-  if (Code = 'ready') and (InstallStep >= 2) then
-  begin
-    { The engine keeps its target from step 12; set-backup-target changes it. }
-    if RunJobBlocking('set-backup-target', '{"run_id":"' + RunId + '","backup_target":' + JsonText(Uppercase(Chosen) + '\SlateOps-backups') + '}', RunId, 300) = 'backup_target_set' then
-      Code := 'ready'
-    else
-      Code := 'not_set';
-  end;
-  if Code <> 'ready' then
-  begin
-    MsgBox(FM1('s10_not_writable', Chosen), mbError, MB_OK);
-    Exit;
-  end;
-  BackupDrive := Chosen;
-  InstallFailed := False;
-  if InstallStep >= 2 then
-    InstallStep := 1;
-  InstallNextStep;
+  { W14-D9 (7.6 "S12 Choose another drive"): drive-check, prepare-backup and, after step 12,
+    set-backup-target run from the timer (StepFinished 'cd-check', 'cd-prepare'; PollInstall). }
+  CdDrive := Chosen;
+  CdAt := GetTickCount;
+  if not RunStep('drive-check', '-Drive ' + Uppercase(Chosen), 'cd-check', FM1('m03_checking', Chosen), 1, 3, HELPER_LIMIT_MS) then
+    CdDrive := '';
+  RenderPage(P_INSTALL);
 end;
 
 procedure WaitClick(Sender: TObject);
@@ -3597,10 +4237,18 @@ begin
   RenderPage(P_INSTALL);
 end;
 
+{ The eight S12 stages, split by "|". }
+function S12Stages: String;
+var
+  I: Integer;
+begin
+  Result := CM('s12_stage1');
+  for I := 2 to 8 do
+    Result := Result + '|' + CM('s12_stage' + IntToStr(I));
+end;
+
 procedure RenderInstall;
 var
-  I, Running: Integer;
-  StateWord: String;
   Button: TNewButton;
 begin
   BeginBody(P_INSTALL);
@@ -3615,28 +4263,20 @@ begin
     begin
       Button := AddButtonAt(CM('s12_choose_drive'), 0, 0);
       Button.OnClick := @ChooseDriveClick;
+      Button.Enabled := (CdDrive = '') and not StepRunning;
       CurY := CurY + Button.Height + ScaleY(6);
+      { 7.6 "S12 Choose another drive": its one line on the S13 page. }
+      AddStepLine;
     end;
+    WizardForm.NextButton.Enabled := WizardForm.NextButton.Enabled and (CdDrive = '');
     Exit;
   end;
-  { Stages 1 to 7 run inside one engine job: the engine reports no step while it runs (TASK-0094
-    engine gap), so they show "Now" together; stage 8 is the Windows side. }
-  if InstallDone then Running := 9
-  else if InstallStep >= 3 then Running := 8
-  else Running := 1;
-  for I := 1 to 8 do
-  begin
-    StateWord := '';
-    if (I < Running) and ((I = 8) or (Running >= 8)) then StateWord := CM('s12_done_word')
-    else if (Running < 8) and (I <= 7) then StateWord := CM('s12_now_word')
-    else if I = Running then StateWord := CM('s12_now_word');
-    if StateWord <> '' then
-      AddText(IntToStr(I) + '. ' + CM('s12_stage' + IntToStr(I)) + '   ' + StateWord, (I = Running) or ((Running < 8) and (I <= 7)))
-    else
-      AddText(IntToStr(I) + '. ' + CM('s12_stage' + IntToStr(I)), False);
-  end;
-  if not InstallDone then
-    AddMarquee;
+  { W14-D5 (7.6 "S12 install"): the stage of the engine's step (its standard error) or of the
+    Windows step, the action, the time so far. }
+  if InstallDone then
+    AddProgress('install', S12Stages, 9, '', 0, '')
+  else
+    AddProgress('install', S12Stages, WaitStage('install'), WaitActionText('install'), InstallStartedAt, CM('wait_up_to_30'));
   if InstallSlow then
   begin
     AddText(CM('s12_slow'), True);
@@ -3741,18 +4381,28 @@ begin
   end;
 end;
 
+{ W14-D9: the printer list comes from the helper on the timer (StepFinished 'printers'). }
 procedure PrintKeyClick(Sender: TObject);
+begin
+  if StepRunning then
+    Exit;
+  if RunStep('printers', '', 'printers', '', 0, 0, HELPER_LIMIT_MS) then
+  begin
+    KeyStateText := CM('s14_finding_printers');
+    RefreshKeyState;
+  end;
+end;
+
+procedure ShowPrinterForm(Text: String);
 var
   Form: TSetupForm;
   Combo: TNewComboBox;
   Go, Stop: TNewButton;
-  OutFile, Text, Rest, Name: String;
+  Rest, Name: String;
   Files: array of Boolean;
   Count, Start, Answer: Integer;
 begin
-  OutFile := NewOut('printers');
-  RunHelper('printers', RunId, OutFile, '');
-  Text := ReadText(OutFile);
+  KeyStateText := '';
   Form := CreateCustomForm(ScaleX(380), ScaleY(110), False, False);
   try
     Form.Caption := CM('s14_print_title');
@@ -3797,8 +4447,16 @@ begin
     begin
       if Files[Combo.ItemIndex] then
         KeyStateText := CM('s14_file_printer')
-      else if PrintKey(Combo.Items[Combo.ItemIndex]) then
-        KeyStateText := CM('s14_printed');
+      else
+      begin
+        { 7.6 "S14 key": the line before the spool call (in this process, no async point). }
+        KeyStateText := FM1('s14_sending', Combo.Items[Combo.ItemIndex]);
+        RefreshKeyState;
+        if PrintKey(Combo.Items[Combo.ItemIndex]) then
+          KeyStateText := CM('s14_printed')
+        else
+          KeyStateText := '';
+      end;
     end;
   finally
     ModalOpen := False;
@@ -3835,8 +4493,8 @@ begin
   WizardForm.BackButton.Visible := False;
   if KeyState = 'making' then
   begin
-    AddText(CM('s14_making'), True);
-    AddMarquee;
+    { W14-D5 (7.6 "S14 key"): full form, one stage. }
+    AddProgress('key', '', 1, WaitActionText('key'), KeyStartedAt, '');
     WizardForm.NextButton.Enabled := False;
     Exit;
   end;
@@ -3893,13 +4551,16 @@ begin
   KeyCheck.SetBounds(0, CurY, Cur.Width, ScaleY(18));
   KeyCheck.Checked := KeyChecked;
   KeyCheck.OnClick := @KeyCheckClick;
+  { The one line of "Saving your progress..." after Next (W14-D9). }
+  AddStepLine;
   { W8-4: Next stays off until the box is checked. }
-  WizardForm.NextButton.Enabled := KeyChecked;
+  WizardForm.NextButton.Enabled := KeyChecked and not StepRunning;
 end;
 
 procedure StartNewKey;
 begin
   KeyState := 'making';
+  KeyStartedAt := GetTickCount;
   StartJob('new-recovery-key', '{"run_id":"' + RunId + '"}', 'key', False, True, 10);
 end;
 
@@ -3918,15 +4579,21 @@ end;
 { M01 Slate Operations on this PC (W8: "Send my invitation again" and Save report)              }
 { ------------------------------------------------------------------------------------------- }
 
+{ Design B7: the wait says what happens. W14-D9 (7.6 "M01 Send my invitation again"): the job
+  runs from the timer (PollMaint, phase invite) with its one line under the actions. }
 procedure InviteClick(Sender: TObject);
-var
-  Code: String;
 begin
-  { Design B7: the wait says what happens. }
-  MaintLine := CM('m01_sending');
+  if JobRunning or StepRunning or (MaintPhase <> '') then
+    Exit;
+  MaintLine := '';
+  MaintPhase := 'invite';
+  MaintAt := GetTickCount;
+  StartJob('resend-invitation', '{"run_id":"' + RunId + '"}', 'invite', False, False, 2);
   RenderPage(P_MAINT);
-  WizardForm.Refresh;
-  Code := RunJobBlocking('resend-invitation', '{"run_id":"' + RunId + '"}', RunId, 120);
+end;
+
+procedure InviteDone(Code: String);
+begin
   if Code = 'sent' then MaintLine := CM('m01_sent')
   else if Code = 'already_active' then MaintLine := CM('m01_already_active')
   else if Code = 'rate_limited' then MaintLine := CM('m01_rate_limited')
@@ -3978,22 +4645,70 @@ begin
   else if Index = P_UPDATE then RenderUpdate;
 end;
 
+{ W14-D5: the labels of the running waits; captions only, the page is not drawn again (6.1). }
+procedure RefreshWaitLabels;
+var
+  Line: String;
+begin
+  if WaitTime <> nil then
+    WaitTime.Caption := TimeLine;
+  if (WaitNow <> nil) and (WaitKind <> '') then
+  begin
+    Line := WaitActionText(WaitKind);
+    if (Line <> '') and (WaitNow.Caption <> Line) then
+      WaitNow.Caption := Line;
+  end;
+  if StepLabel <> nil then
+  begin
+    Line := PageLineText;
+    if Line <> '' then
+      StepLabel.Caption := Line;
+  end;
+  if ReportPhase <> '' then
+    ShowReportLine;
+end;
+
 procedure TimerTick(H, Msg, Id, Tick: Longword);
 var
   Code: String;
 begin
-  { W9: while the key form is open, only its USB list follows the plugged drives. }
+  { W14-D9: Save report moves in every state: inside a modal form (the S13 form) and in the
+    settings program's Start menu report, before the wizard exists. }
+  if ReportPhase <> '' then
+  begin
+    if ReportPhase = 'linux' then
+      PollJob;
+    PollReport;
+  end;
+  if not WizardReady then
+    Exit;
+  { W9: while the key form is open, only its USB list follows the plugged drives, and its
+    printer list step runs (W14-D9). }
   if KeyFormOpen then
   begin
     if (KeyUsb <> nil) and (UsbDrives <> KeyFormUsbSeen) then
       FillKeyFormUsb;
+    if not Ticking then
+    begin
+      Ticking := True;
+      try
+        PollStep;
+      finally
+        Ticking := False;
+      end;
+    end;
     Exit;
   end;
   if Ticking or ModalOpen then
+  begin
+    RefreshWaitLabels;
     Exit;
+  end;
   Ticking := True;
   try
     PollJob;
+    PollStep;
+    PollExtract;
     { Correction 5: the helper waits have time limits (a security program can block a helper). }
     if CheckRunning and (ReadResultCode(CheckOut) = '') and (Elapsed(CheckStartedAt) > CHECK_LIMIT_MS) then
     begin
@@ -4031,11 +4746,10 @@ begin
       begin
         if Pos('"restart_needed":true', ReadText(PrepOut)) > 0 then
         begin
-          PrepState := 'restart';
-          { Spec 7.5 resume_other_user: the progress is saved when "ready to restart" opens. }
-          PrepOut := NewOut('save');
-          RunHelper('save-progress', RunId, PrepOut, '-Stage feature_restart -SetupPath ' + AddQuotes(ExpandConstant('{srcexe}')));
-          ResumeCode := ReadResultCode(PrepOut);
+          { Spec 7.5 resume_other_user: the progress is saved when "ready to restart" opens.
+            W14-D9: from the timer; StepFinished 'prep-save' opens "ready to restart". }
+          PrepState := 'saving';
+          RunStep('save-progress', '-Stage feature_restart -SetupPath ' + AddQuotes(ExpandConstant('{srcexe}')), 'prep-save', '', 0, 0, HELPER_LIMIT_MS);
         end
         else
           PrepState := 'done';
@@ -4052,7 +4766,7 @@ begin
         RenderPage(P_RESTART);
       end;
     end;
-    if DataStarted and not DataPrepared then
+    if DataStarted and not DataPrepared and (BgOut <> '') then
     begin
       Code := ReadResultCode(BgOut);
       if Code = 'ready' then
@@ -4081,6 +4795,10 @@ begin
     PollMaint;
     PollUpdate;
     PollCloseFlow;
+    RefreshWaitLabels;
+    { W14-D5: the page draws again only when its wait moves to another stage. }
+    if (WaitKind <> '') and (WaitDrawn > 0) and (WaitStage(WaitKind) <> WaitDrawn) then
+      RenderPage(-1);
     if (Pages[P_EMAIL] <> nil) and (WizardForm.CurPageID = Pages[P_EMAIL].ID) and (MailChangedAt > 0) and (Elapsed(MailChangedAt) > 1500) then
     begin
       MailChangedAt := 0;
@@ -4102,6 +4820,15 @@ end;
 { Cancel (spec 4.5)                                                                             }
 { ------------------------------------------------------------------------------------------- }
 
+{ One timer for the wizard and the settings program's Start menu report (W14-D9). }
+procedure StartTimer;
+begin
+  if TimerStarted then
+    Exit;
+  TimerStarted := True;
+  SetTimer(0, 0, 1000, CreateCallback(@TimerTick));
+end;
+
 procedure ContinueLaterClick(Sender: TObject; const Link: String; LinkType: TSysLinkType);
 begin
   { W14-D9: from the timer; setup closes when the progress is saved. }
@@ -4109,8 +4836,6 @@ begin
 end;
 
 procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);
-var
-  OutFile: String;
 begin
   Confirm := False;
   { W14-D9: while "Continue later" or "Remove everything" runs, the window stays; it closes
@@ -4156,21 +4881,20 @@ begin
     end;
     Exit;
   end;
+  { W14-D9: the saved progress and the resume entries go from the timer (close flow 'clear');
+    setup closes when they are gone. }
   if (PrepState <> '') or (EntryNext = 'S07') then
   begin
-    Cancel := ConfirmBox(CM('cancel_feature'), '', CM('btn_stop_setup'), CM('btn_go_back'));
-    if Cancel then
-    begin
-      OutFile := NewOut('clear');
-      RunHelper('clear-resume', RunId, OutFile, '-Cancel');
-    end;
+    if ConfirmBox(CM('cancel_feature'), '', CM('btn_stop_setup'), CM('btn_go_back')) then
+      StartCloseFlow('clear', 'close');
+    Cancel := False;
     Exit;
   end;
   Cancel := ConfirmBox(CM('cancel_nothing'), '', CM('btn_stop_setup'), CM('btn_go_back'));
   if Cancel and (EntryWelcomeBack or (StateCheckCode = 'safe')) then
   begin
-    OutFile := NewOut('clear');
-    RunHelper('clear-resume', RunId, OutFile, '-Cancel');
+    StartCloseFlow('clear', 'close');
+    Cancel := False;
   end;
 end;
 
@@ -4202,6 +4926,7 @@ begin
   HostName := DnsHostName('');
   VersionText := ReadText(ExpandConstant('{tmp}\scripts\version.json'));
   SetupVersion := JsonValue(VersionText, 'version');
+  WslVersion := JsonValue(VersionText, 'wsl_version');
   if SetupVersion = '' then
     SetupVersion := '{#AppVersion}';
   RunId := NewRunId('install');
@@ -4328,9 +5053,12 @@ begin
   RunSelfTest;
   Exit;
 #endif
-  SetTimer(0, 0, 1000, CreateCallback(@TimerTick));
+  StartTimer;
   if BgResume then
+  begin
+    BgBeganAt := GetTickCount;
     StartBgStep;
+  end;
 end;
 
 procedure OpenAppClick(Sender: TObject);
@@ -4417,12 +5145,15 @@ begin
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
-var
-  OutFile, Text: String;
 begin
   if SELF_TEST then
     Exit;
   WizardForm.BeveledLabel.Caption := '';
+  if CloseNotice <> '' then
+  begin
+    CloseNotice := '';
+    ShowStatusLine('');
+  end;
   if ExtraButton <> nil then
     ExtraButton.Visible := False;
   WizardForm.NextButton.Visible := True;
@@ -4478,8 +5209,8 @@ begin
     { Plan F4a: setup removes the shortcut when this page opens. }
     if not DataPrepared then
     begin
-      OutFile := NewOut('clear');
-      RunHelper('clear-resume', RunId, OutFile, '');
+      { W14-D9: nothing waits for the shortcut's removal. }
+      StartHelper('clear-resume', RunId, NewOut('clear'), '');
       if GetArrayLength(DriveLetters) = 0 then
         ReadDataDrives;
     end;
@@ -4557,8 +5288,6 @@ begin
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
-var
-  OutFile: String;
 begin
   Result := True;
   if SELF_TEST then
@@ -4610,10 +5339,9 @@ begin
     end
     else if PrepState = 'restart' then
     begin
-      OutFile := NewOut('restart');
-      RunHelper('restart', RunId, OutFile, '');
-      ForceClose := True;
-      WizardForm.Close;
+      { W14-D9: from the timer; StepFinished 'restart-now' closes setup. }
+      if RunStep('restart', '', 'restart-now', CM('later_restarting'), 0, 0, HELPER_LIMIT_MS) then
+        RenderPage(P_RESTART);
       Result := False;
     end
     else
@@ -4648,7 +5376,22 @@ begin
       Result := CheckBackground;
   end
   else if CurPageID = Pages[P_BACKUP].ID then
-    Result := CheckBackground and CheckBackupDrive
+  begin
+    { W14-D9 (7.6 "S10 Next"): drive-check runs from the timer; StepFinished 's10-check' selects
+      Next again once the drive is ready. }
+    Result := False;
+    if not CheckBackground then
+      Exit;
+    if (BackupCheckedDrive <> '') and (BackupCheckedDrive = BackupDrive) then
+    begin
+      BackupCheckedDrive := '';
+      Result := True;
+      Exit;
+    end;
+    BackupError := '';
+    if RunStep('drive-check', '-Drive ' + Uppercase(BackupDrive), 's10-check', FM1('m03_checking', BackupDrive), 0, 0, HELPER_LIMIT_MS) then
+      RenderPage(P_BACKUP);
+  end
   else if CurPageID = Pages[P_READY].ID then
   begin
     { The quick recheck on Install (spec 5.2). }
@@ -4663,11 +5406,14 @@ begin
   begin
     if InstallFailed then
     begin
+      Result := False;
+      { W14-D9: Save report's server part runs, or another drive is being set; one at a time. }
+      if JobRunning or StepRunning or (CdDrive <> '') then
+        Exit;
       InstallFailed := False;
       if InstallStep = 2 then
         InstallStep := 1;
       InstallNextStep;
-      Result := False;
     end
     else
       Result := InstallDone;
@@ -4676,18 +5422,19 @@ begin
   begin
     if KeyState = 'failed' then
     begin
+      Result := False;
+      if JobRunning then
+        Exit;
       StartNewKey;
       RenderKey;
-      Result := False;
       Exit;
     end;
-    Result := KeyChecked;
-    if Result then
-    begin
-      OutFile := NewOut('save');
-      RunHelper('save-progress', RunId, OutFile, '-Stage key_saved');
-      KeyText := '';
-    end;
+    { W14-D9: the save runs from the timer; StepFinished 'key-saved' selects Next again. }
+    Result := KeySavedDone;
+    if Result or not KeyChecked then
+      Exit;
+    if RunStep('save-progress', '-Stage key_saved', 'key-saved', CM('later_saving'), 0, 0, HELPER_LIMIT_MS) then
+      RenderPage(P_KEY);
   end
   else if CurPageID = wpFinished then
     ExtraButton.Visible := False;

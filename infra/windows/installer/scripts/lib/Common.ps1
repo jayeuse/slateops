@@ -661,6 +661,40 @@ function Get-TreeProblem {
     return $problems.ToArray()
 }
 
+# ---------------------------------------------------------------------------
+# W14-D5: the helper's progress lines (spec 7.6 helper keys)
+# ---------------------------------------------------------------------------
+
+$script:SlateOpsHelperProgress = ''
+
+function Set-HelperProgressFile {
+    # The helper writes its progress lines beside its result file (<OutFile>.progress), so the
+    # setup program shows the step that runs. An empty path writes nothing.
+    param([AllowEmptyString()][string]$Path)
+    $script:SlateOpsHelperProgress = $Path
+    if ($Path -and (Test-Path -LiteralPath $Path)) { [System.IO.File]::Delete($Path) }
+}
+
+function Write-HelperProgress {
+    # One line when a step starts, in the engine's format: "progress <job> <n>/<total> <key>
+    # start" (ASCII, no value, no path). A failed write never fails the step.
+    param(
+        [Parameter(Mandatory = $true)][string]$Job,
+        [Parameter(Mandatory = $true)][int]$Number,
+        [Parameter(Mandatory = $true)][int]$Total,
+        [Parameter(Mandatory = $true)][string]$Key
+    )
+    if (-not $script:SlateOpsHelperProgress) { return }
+    $line = 'progress {0} {1}/{2} {3} start' -f $Job, $Number, $Total, $Key
+    try {
+        $stream = [System.IO.File]::Open($script:SlateOpsHelperProgress, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+        try {
+            $bytes = [System.Text.Encoding]::ASCII.GetBytes($line + "`n")
+            $stream.Write($bytes, 0, $bytes.Length)
+        } finally { $stream.Dispose() }
+    } catch { $null = $_ }
+}
+
 function Remove-PathNoFollow {
     # Deletes a file or folder tree. A reparse point is deleted itself; its target is never entered.
     param([Parameter(Mandatory = $true)][string]$Path)

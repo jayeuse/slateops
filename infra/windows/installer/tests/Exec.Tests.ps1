@@ -26,6 +26,14 @@ public static class StandIn
             Emit("{\"code\":\"payload_too_large\",\"message_key\":\"receive.payload_too_large\"}");
             return 2;
         }
+        if (mode == "progress")
+        {
+            // W14-D5: one engine progress line on standard error, then the input as usual.
+            byte[] line = Encoding.ASCII.GetBytes("progress install 8/13 provision start\n");
+            Stream error = Console.OpenStandardError();
+            error.Write(line, 0, line.Length);
+            error.Flush();
+        }
         if (mode == "big")
         {
             Stream big = Console.OpenStandardOutput();
@@ -254,6 +262,28 @@ Test-Case 'AC-2 S91-8 standard output stops at its cap while it is read, and the
     } finally { Remove-Item Env:\SLATEOPS_STANDIN_MODE }
     Assert-Equal 3145728 $run.stdout_total
     Assert-Equal 1048576 (Get-Item -LiteralPath (Join-Path $dir 'out.json')).Length
+}
+
+Test-Case 'W14-D5 the engine progress line can be read from the standard error file while the job runs' {
+    # The wizard reads <request>.stderr.txt while Exec waits for the job (spec 7.6): the file
+    # must allow readers and get each line at once, not when the job ends.
+    $dir = New-TestDirectory 'w14-d5-stderr'
+    $errPath = Join-Path $dir 'err.txt'
+    $script:SeenWhileRunning = ''
+    $env:SLATEOPS_STANDIN_MODE = 'progress'
+    try {
+        $null = Invoke-ProcessWithInput -FilePath $script:StandIn -ArgumentList @('status') -StdoutPath (Join-Path $dir 'out.json') -StderrPath $errPath -WriteInput {
+            param($sink)
+            $deadline = (Get-Date).AddSeconds(20)
+            while (((Get-Date) -lt $deadline) -and ($script:SeenWhileRunning -notmatch "`n")) {
+                Start-Sleep -Milliseconds 200
+                $stream = [System.IO.File]::Open($errPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                try { $script:SeenWhileRunning = (New-Object System.IO.StreamReader($stream)).ReadToEnd() } finally { $stream.Dispose() }
+            }
+            $null = $sink
+        }
+    } finally { Remove-Item Env:\SLATEOPS_STANDIN_MODE }
+    Assert-Equal "progress install 8/13 provision start`n" $script:SeenWhileRunning
 }
 
 Test-Case 'AC-2 P3-3 only an early end of the process counts as a closed input; another IO error is thrown' {

@@ -271,6 +271,8 @@ class WizardCopyTest(unittest.TestCase):
         for key, value in copy.items():
             if key in NEVER_ALLOWED or key.endswith("_details"):
                 continue
+            # Spec section 3 exception (rule 2.8): the component name that Windows shows.
+            value = value.replace("Windows Subsystem for Linux (WSL)", "")
             with self.subTest(key=key):
                 for word in NEVER:
                     self.assertNotRegex(value, rf"(?<![A-Za-z]){re.escape(word)}(?![A-Za-z])")
@@ -280,7 +282,7 @@ class WizardCopyTest(unittest.TestCase):
         code = pascal_code()
         self.assertNotRegex(code, r"\bTLabel\b")
         used = set(re.findall(r"\b(?:CM|FM[1-3])\('([a-z0-9_]+)'", code))
-        prefixed = {"s12_stage", "s12_fail", "stage_"}
+        prefixed = {"s12_stage", "s12_fail", "stage_", "bg_stage_"}
         missing = {key for key in used - set(self.copy()) if key not in prefixed}
         self.assertEqual(missing, set())
 
@@ -320,22 +322,32 @@ class WizardJobRunnerTest(unittest.TestCase):
         self.assertNotIn("JobPipeOut :=", routine(self.code, "procedure PollPipe;"))
 
     def test_f1_no_blocking_job_names_a_pipe_input_job(self) -> None:
-        # Security F-1: RunJobBlocking writes an input file, which Exec refuses for a pipe-input
-        # job (input_on_disk); the smtp-test discard must go through the pipe.
+        # Security F-1: a job input file is refused by Exec for a pipe-input job (input_on_disk);
+        # the smtp-test discard must go through the pipe. W14-D9: RunJobBlocking is gone, so every
+        # job starts through StartJob, and a pipe-input job always passes PipeIn True.
         exec_source = (INSTALLER / "scripts/lib/Exec.ps1").read_text(encoding="ascii")
         listed = re.search(r"PipeInputJobs\s*=\s*@\(([^)]*)\)", exec_source)
         self.assertIsNotNone(listed)
         pipe_input = set(re.findall(r"'([a-z-]+)'", listed.group(1)))
         self.assertIn("smtp-test", pipe_input)
-        blocking = re.findall(r"RunJobBlocking\('([a-z-]+)'", self.code)
-        self.assertTrue(blocking)
-        self.assertEqual(sorted(set(blocking) & pipe_input), [])
+        self.assertNotIn("RunJobBlocking", self.code)
+        calls = re.findall(r"StartJob\('([a-z-]+)', (.*?)\);", pascal_code(), re.S)
+        self.assertTrue(calls)
+        for name, rest in calls:
+            if name in pipe_input:
+                with self.subTest(job=name):
+                    self.assertEqual(rest.rsplit(", ", 3)[1], "True")
 
     def test_b3_save_report_works_while_a_job_runs(self) -> None:
         # QA B1, code B-3: in the S12 slow state a job runs; Save report must still save.
-        save = routine(self.code, "procedure SaveReport(Sender: TObject);\nvar")
+        save = routine(self.code, "procedure SaveReport(Sender: TObject);\nbegin")
         self.assertNotRegex(save, r"if JobRunning then\s+Exit;")
-        self.assertIn("not JobRunning then\n    RunJobBlocking('log-bundle'", save)
+        self.assertRegex(
+            pascal_code(),
+            r"if \(ServiceSid <> ''\) and not JobRunning and ReportJobAllowed then\s+begin\s+"
+            r"ReportPhase := 'linux';\s+"
+            r"StartJob\('log-bundle'",
+        )
 
 
 class UninstallAndMaintenanceTest(unittest.TestCase):
@@ -546,11 +558,9 @@ class UpdatePathTest(unittest.TestCase):
         self.assertEqual(re.findall(r"StartJob\('([a-z-]+)'[^;]*, 'update', ", raw), ["update"])
         self.assertIn("StartJob('receive', ", raw)
         self.assertRegex(raw, r"StartJob\('receive', [^;]*'updreceive', False, False, 15\)")
-        # At the slow point the task's last result is read once, as on S12.
-        self.assertIn(
-            "if TaskTimeoutCode = 'service_logon_failed' then",
-            routine(raw, "procedure PollUpdate;\nvar"),
-        )
+        # At the slow point the task's last result decides, as on S12. W14-D9: it is the
+        # job-result answer that the poll already asked for, not a blocking helper call.
+        self.assertIn("if JobLogonFailed then", routine(raw, "procedure PollUpdate;\nvar"))
         poll = routine(pascal_code(), "procedure PollJob;")
         self.assertIn(
             "(JobPurpose <> 'install') and (JobPurpose <> 'update') and "
@@ -724,7 +734,7 @@ class W9ReviewCorrectionTest(unittest.TestCase):
         self.assertIn("Later.Visible := EntryScreen <> 'M01';", build)
 
     def test_item_8_the_start_menu_report_says_what_it_does_first(self) -> None:
-        entry = routine(self.raw, "function SettingsEntry: Boolean;\nbegin")
+        entry = routine(self.raw, "function SettingsEntry: Boolean;\nvar")
         self.assertLess(entry.index("CM('report_start')"), entry.index("SaveReport(nil);"))
 
     def test_item_9_a_drive_change_without_a_key_says_so(self) -> None:
@@ -868,31 +878,24 @@ class W14DefectTest(unittest.TestCase):
         iss = ISS.read_text(encoding="ascii")
         self.assertIn('#ifdef SelfTest\n#include "wizard\\SelfTest.iss"\n#endif', iss)
 
-    def test_w14_d7_s07_preselects_the_c07_drive(self) -> None:
-        # W14-D7: S07 listed "E: · Most space" first but had C: selected. The default comes from
-        # the C07 drive (else the first, largest drive) whatever DataRoot held; the checked radio
-        # takes the focus, so no other radio is checked by focus; a click that changes nothing
-        # draws nothing.
+    def test_w14_d7_s07_keeps_the_persons_drive(self) -> None:
+        # W14-D7 closed as not a defect (the owner chose D: himself); the part-1 change that reset
+        # the drive on every load is reverted (parent decision). The default (the first, largest
+        # drive) is set only while no folder is chosen, so a chosen drive stays after Back and
+        # Next; no focus or click guard is left.
         load = routine(self.raw, "procedure LoadDataDrives(Text: String);")
-        self.assertRegex(load, r"Best := C07Drive;\s+DataRoot := '';")
-        self.assertIn(
-            "LoadDataDrives(ReadText(OutFile));", routine(self.raw, "procedure ReadDataDrives;")
-        )
+        self.assertIn("if (DataRoot = '') and (Count > 0) then", load)
+        self.assertNotIn("DataRoot := '';", load)
+        self.assertNotIn("C07Drive", self.raw)
+        self.assertNotIn("DataRendering", self.raw)
         render = routine(self.raw, "procedure RenderData;")
-        self.assertRegex(
-            render,
-            r"if DriveRadios\[I\]\.Checked and DriveRadios\[I\]\.CanFocus then\s+"
-            r"WizardForm\.ActiveControl := DriveRadios\[I\];",
-        )
-        click = routine(self.raw, "procedure DriveRadioClick(Sender: TObject);")
-        self.assertIn("if DataRendering then", click)
-        self.assertIn(
-            "if CompareText(Copy(DataRoot, 1, 2), "
-            "DriveLetters[TNewRadioButton(Sender).Tag]) = 0 then",
-            click,
-        )
+        self.assertNotIn("WizardForm.ActiveControl := DriveRadios[I];", render)
         selftest = (INSTALLER / "wizard/SelfTest.iss").read_text(encoding="ascii")
-        self.assertIn("SelfDrives(", selftest)
+        drives = routine(selftest, "procedure SelfDrives;")
+        self.assertIn("DataRoot := '';", drives)
+        self.assertIn("DriveRadioClick(DriveRadios[1]);", drives)
+        self.assertIn("(DataRoot = 'E:\\SlateOps')", drives)
+        self.assertIn("(DataRoot = 'D:\\SlateOps')", drives)
 
     def test_w14_d9_continue_later_and_remove_everything_never_hold_the_window(self) -> None:
         # W14-D9: "Continue later" froze the window (a Sleep loop waited for the stuck job). Both
@@ -926,7 +929,8 @@ class W14DefectTest(unittest.TestCase):
         # job-result helper is asked every 15 s too; its answer and its start have limits.
         poll = routine(self.raw, "procedure PollJob;\nvar")
         self.assertIn("if (not Found) and (Elapsed(JobPollAt) < JOB_ASK_MS) then", poll)
-        self.assertIn("if not StartHelper('job-result', RunId, JobResultOut,", poll)
+        # W14-D9: Save report's log-bundle job keeps its own run ID (JobRunId).
+        self.assertIn("if not StartHelper('job-result', JobRunId, JobResultOut,", poll)
         self.assertIn("(Elapsed(JobResultAt) > JOB_ANSWER_MS)", poll)
         selftest = (INSTALLER / "wizard/SelfTest.iss").read_text(encoding="ascii")
         self.assertIn('"request_id":"b6b02c87-f769-41b1-8c56-4aabfdc2dd94"', selftest)
@@ -936,6 +940,220 @@ class W14DefectTest(unittest.TestCase):
     def test_w14_d1_s02_offers_save_report(self) -> None:
         items = routine(self.raw, "procedure AddCheckItems(OnlyFix: Boolean);")
         self.assertLess(items.index("CM('btn_check_again')"), items.index("AddReportControls;"))
+
+
+def routines(code: str) -> dict[str, str]:
+    """Each routine of a Pascal text by its heading line (code only), to the next heading."""
+    heads = list(re.finditer(r"(?m)^(?:procedure|function) [^\n]*", code))
+    return {
+        head.group(0): code[
+            head.start() : heads[index + 1].start() if index + 1 < len(heads) else len(code)
+        ]
+        for index, head in enumerate(heads)
+    }
+
+
+ENGINE_PROGRESS = ROOT / "packaging/engine/progress.py"
+# Spec 7.6 helper keys (parent decision: final), as the copy names them: step_<group>_<key>.
+HELPER_STEP_KEYS = (
+    "pc_unpack", "pc_vmp", "pc_wsl", "pc_busy", "pc_check", "data_unpack", "data_folder",
+    "bg_service", "bg_wslconfig", "bg_import", "bg_restore_kept", "bg_import_kept", "bg_start",
+    "bg_kept_status", "backup_check", "win_firewall", "win_hosts", "win_trust", "win_power",
+    "win_lid", "win_https", "repair_r7", "repair_account", "repair_tasks", "repair_firewall",
+    "repair_hosts", "repair_backup", "repair_start", "upd_idle", "upd_unpack", "upd_copy",
+    "upd_wsl", "upd_scripts",
+)  # fmt: skip
+# Engine jobs with no wizard line: the nightly renewal, and prepare-uninstall, which runs inside
+# the uninstall-stop helper (U03 shows its stage text).
+ENGINE_JOBS_WITHOUT_LINE = ("renew-certificate", "prepare-uninstall")
+
+
+class W14Part2Test(unittest.TestCase):
+    """W14 fix round part 2 (TASK-0097): no wait holds the window (W14-D9) and every wait shows
+    its stages, action and time (W14-D5, spec 2.4, 6.1 progress block, 7.6)."""
+
+    def setUp(self) -> None:
+        self.raw = pascal_code()
+        self.code = code_only(self.raw)
+        self.wizard = code_only(
+            WIZARD.read_text(encoding="ascii") + MAINTENANCE.read_text(encoding="ascii")
+        )
+
+    def test_w14_d9_only_listed_routines_wait_in_the_window(self) -> None:
+        # A blocking call in the wizard disables the window until it returns (Inno 6.7
+        # Setup.ScriptFunc: Exec runs under a TWindowDisabler). Allowed: the plumbing itself,
+        # the start before any window, Inno's own install step, the one-file-per-tick unpacking
+        # and the small notices file.
+        allowed = {
+            "function RunHelper(": {"ewWaitUntilTerminated"},
+            "function NewOutRun(": {"RunHelper("},
+            "function InitializeSetup(": {"RunHelper(", "NewOutRun(", "ExtractTemporaryFiles("},
+            "procedure CurStepChanged(": {"RunHelper(", "NewOutRun("},
+            "procedure NoticesClick(": {"ExtractTemporaryFiles("},
+            "procedure ExtractNextPart;": {"ExtractTemporaryFiles("},
+        }
+        blocking = (
+            "RunHelper(",
+            "NewOutRun(",
+            "RunJobBlocking(",
+            "Sleep(",
+            "ExtractTemporaryFiles(",
+            "ExtractTemporaryFile(",
+            "TaskTimeoutCode",
+            "ewWaitUntilTerminated",
+        )
+        found = {}
+        for head, body in routines(self.wizard).items():
+            calls = {call for call in blocking if call in body.split("\n", 1)[1]}
+            if calls:
+                found[head] = calls
+        self.assertTrue(found)
+        for head, calls in found.items():
+            with self.subTest(routine=head):
+                rule = next((key for key in allowed if head.startswith(key)), None)
+                self.assertIsNotNone(rule, f"{head} waits: {sorted(calls)}")
+                self.assertLessEqual(calls, allowed[rule])
+
+    def test_w14_d9_the_waits_run_from_the_timer(self) -> None:
+        tick = routine(self.raw, "procedure TimerTick(H, Msg, Id, Tick: Longword);")
+        for poll in ("PollStep;", "PollReport;", "PollExtract;", "RefreshWaitLabels;"):
+            with self.subTest(poll=poll):
+                self.assertIn(poll, tick)
+        # Save report inside a modal form (S13 form) and in the settings program before the
+        # wizard exists still moves: the tick runs the report before its ModalOpen exit.
+        self.assertLess(tick.index("PollReport;"), tick.index("if Ticking or ModalOpen then"))
+        step = routine(self.raw, "procedure PollStep;")
+        self.assertIn("StepLimitMs", step)
+        self.assertIn("StepFinished(", step)
+        # Each step past its limit ends with a visible message, never a silent wait.
+        self.assertIn("'helper_timeout'", step)
+        # The settings program starts the timer for its Start menu report.
+        entry = routine(self.raw, "function SettingsEntry: Boolean;\nvar")
+        self.assertIn("StartTimer;", entry)
+        self.assertLess(entry.index("CM('report_start')"), entry.index("SaveReport(nil);"))
+
+    def test_w14_d9_u03_shows_each_stage_and_ticks_while_inno_waits(self) -> None:
+        # Inno's Exec pumps messages while it waits (Setup.InstFunc HandleProcessWait) but
+        # disables the windows; U03 has no button, so a timer callback keeps its line and time.
+        text = UNINSTALL.read_text(encoding="ascii")
+        step = routine(text, "procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);")
+        self.assertIn("SetTimer(0, 0, 1000, CreateCallback(@UTick));", text)
+        for call in ("uninstall-stop", "uninstall-data", "remove-windows"):
+            with self.subTest(call=call):
+                before = step[: step.index(f"URun('{call}'")]
+                self.assertRegex(before[-400:], r"UStage\([123], ")
+        report = routine(text, "procedure USaveReport;")
+        self.assertIn("UReportForm", report)
+
+    def test_w14_d5_engine_lines_are_read_from_the_job_standard_error(self) -> None:
+        exec_source = (INSTALLER / "scripts/lib/Exec.ps1").read_text(encoding="ascii")
+        self.assertIn(
+            "[System.IO.File]::Open($StderrPath, [System.IO.FileMode]::CreateNew, "
+            "[System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)",
+            exec_source,
+        )
+        copy_loop = exec_source.split("public static class CappedCopy", 1)[1].split(
+            "return total;", 1
+        )[0]
+        self.assertRegex(copy_loop, r"target\.Write\([^;]*\);\s*target\.Flush\(\);")
+        err = routine(self.raw, "function JobErrFile: String;")
+        self.assertIn("'.stderr.txt'", err)
+        read = routine(self.raw, "procedure ReadProgressFile(")
+        self.assertIn("LoadStringFromLockedFile(", read)
+        self.assertIn("ReadJobProgress;", routine(self.raw, "procedure PollJob;\nvar"))
+        parse = routine(self.raw, "function ParseProgressLine(")
+        for word in ("'progress'", "'start'", "'done'"):
+            with self.subTest(word=word):
+                self.assertIn(word, parse)
+
+    def test_w14_d5_every_engine_step_and_helper_key_has_its_line(self) -> None:
+        steps = {}
+        text = ENGINE_PROGRESS.read_text(encoding="utf-8")
+        block = text.split("STEPS: dict[str, tuple[str, ...]] = {", 1)[1].split("}", 1)[0]
+        for job, keys in re.findall(r'"([a-z-]+)": \(([^)]*)\)', block):
+            steps[job] = re.findall(r'"([a-z_]+)"', keys)
+        self.assertIn("install", steps)
+        copy = read_copy()
+        names = [f"step_{group}" for group in HELPER_STEP_KEYS]
+        for job, keys in steps.items():
+            if job in ENGINE_JOBS_WITHOUT_LINE:
+                continue
+            names += [f"step_{job.replace('-', '_')}_{key}" for key in keys]
+        for name in names:
+            with self.subTest(name=name):
+                self.assertTrue(copy.get(name), name)
+
+    def test_w14_d5_the_helper_writes_its_steps_beside_its_result(self) -> None:
+        helper = (INSTALLER / "scripts/setup-helper.ps1").read_text(encoding="ascii")
+        self.assertIn("Set-HelperProgressFile -Path ($script:outPath + '.progress')", helper)
+        common = (INSTALLER / "scripts/lib/Common.ps1").read_text(encoding="ascii")
+        self.assertIn("function Write-HelperProgress {", common)
+        self.assertIn("'progress {0} {1}/{2} {3} start'", common)
+        sources = "\n".join(
+            path.read_text(encoding="ascii") for path in (INSTALLER / "scripts").rglob("*.ps1")
+        )
+        for group, keys in (
+            ("pc", ("vmp", "wsl", "busy", "check")),
+            ("win", ("firewall", "hosts", "trust", "power")),
+            ("repair", ("r7", "account", "tasks", "firewall", "hosts", "backup", "start")),
+        ):
+            for key in keys:
+                with self.subTest(step=f"{group}.{key}"):
+                    self.assertRegex(
+                        sources,
+                        rf"Write-HelperProgress -Job '{group}' -Number \S+ -Total \d+ -Key '{key}'",
+                    )
+        checks = (INSTALLER / "scripts/lib/Checks.ps1").read_text(encoding="ascii")
+        reader = checks.split("function Invoke-Reader {", 1)[1].split("\n}", 1)[0]
+        self.assertIn("Write-CheckProgress -Reader $Name", reader)
+        # The wizard reads the file that the helper writes.
+        self.assertIn(
+            "+ '.progress'", routine(self.raw, "function ProgressFileOf(OutFile: String): String;")
+        )
+
+    def test_w14_d5_no_bar_or_spinner_and_one_time_label(self) -> None:
+        self.assertNotIn("npbstMarquee", self.code)
+        self.assertNotIn("AddMarquee", self.code)
+        block = routine(self.raw, "procedure AddProgress(")
+        for name in (
+            "WaitTime",
+            "WaitNow",
+            "CM('s12_done_word')",
+            "CM('s12_now_word')",
+            "CM('wait_next_word')",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, block)
+        body = routine(self.raw, "procedure BeginBody(Index: Integer);")
+        for name in (
+            "WaitTime := nil;",
+            "WaitNow := nil;",
+            "StepLabel := nil;",
+            "ReportLabel := nil;",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, body)
+        refresh = routine(self.raw, "procedure RefreshWaitLabels;")
+        self.assertIn("if WaitTime <> nil then", refresh)
+        self.assertNotIn("RenderPage(", refresh)
+        copy = read_copy()
+        self.assertEqual(copy.get("wait_line"), "%1 of %2: %3 · %4")
+        self.assertEqual(copy.get("wait_time"), "Time so far: %1.")
+        self.assertEqual(copy.get("wait_now"), "Now: %1")
+
+    def test_w14_d5_d9_the_self_test_covers_the_new_waits(self) -> None:
+        selftest = (INSTALLER / "wizard/SelfTest.iss").read_text(encoding="ascii")
+        for name in (
+            "SelfProgressLines;",
+            "SelfEngineStep;",
+            "SelfCheckStep;",
+            "SelfWaitRedraw;",
+            "SelfStepRunner;",
+            "SelfReport;",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, routine(selftest, "procedure RunSelfTest;"))
+        self.assertIn("'Now: Setting up the database.'", selftest)
 
 
 if __name__ == "__main__":

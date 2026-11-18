@@ -82,6 +82,8 @@ try {
     if (-not (Test-RunId $RunId)) { throw 'run_id_invalid' }
     $script:outPath = Assert-InsideRoot $OutFile
     if (-not (Test-Administrator)) { throw 'not_administrator' }
+    # W14-D5: the step that runs, for the setup program (spec 7.6).
+    Set-HelperProgressFile -Path ($script:outPath + '.progress')
 
     # Log: the state tree's setup folder when it exists and passes the quick check, else the
     # helper's own folder (before S07 creates the state tree, plan 10.1 item 4).
@@ -114,9 +116,9 @@ try {
         { $_ -in @('check', 'recheck') } {
             $pinned = [version]'0.0.0.0'
             try { $pinned = (Read-HelperVersion).wsl_version } catch { Write-RunLog 'helper.check' 'WARN' 'version.json not readable; C26 compares with 0.0.0.0' }
-            $facts = Get-PcCheckFacts
             $only = @()
             if ($Action -eq 'recheck') { $only = $SlateOpsCheck.RecheckIds }
+            $facts = Get-PcCheckFacts -ProgressJob $Action -ProgressIds $only
             $items = @(Invoke-PcCheck -Facts $facts -PinnedWsl $pinned -Only $only)
             foreach ($item in $items) { Write-RunLog ('check.{0}' -f $item.id.ToLowerInvariant()) 'INFO' ('{0} {1}' -f $item.class, $item.code) }
             $verdict = Get-PcVerdict -Results $items
@@ -353,9 +355,12 @@ try {
             $version = Read-HelperVersion
             $ready = Initialize-StateFolder -Layout $layout -ServiceSid $serviceSid
             if ($ready.code -ne 'ready') { $result = $ready; break }
+            Write-HelperProgress -Job 'pc' -Number 1 -Total 3 -Key 'vmp'
             $feature = Enable-VirtualMachinePlatform -Layout $layout
             $msi = Join-Path (Join-Path $helperRoot 'payload') $version.wsl_msi_name
+            Write-HelperProgress -Job 'pc' -Number 2 -Total 3 -Key 'wsl'
             $wsl = Install-WslPackage -Layout $layout -MsiPath $msi -Sha256 $version.wsl_msi_sha256 -PinnedVersion $version.wsl_version
+            Write-HelperProgress -Job 'pc' -Number 3 -Total 3 -Key 'check'
             $restart = [bool]$feature.values.restart_needed -or ($wsl.values.ContainsKey('restart_needed') -and [bool]$wsl.values.restart_needed)
             if (@('present', 'installed') -notcontains $wsl.code) { $result = $wsl }
             else { $result = New-StepResult -Code 'prepared' -MessageKey 'prepare.prepared' -Values @{ restart_needed = $restart; feature = $feature.code; wsl = $wsl.code } }
@@ -419,11 +424,17 @@ try {
             # P3-9: the address is the DNS host name in lower case.
             $hostName = ([string](Get-CimInstance -ClassName Win32_ComputerSystem).DNSHostName).ToLowerInvariant()
             $steps = @()
+            Write-HelperProgress -Job 'win' -Number 1 -Total 4 -Key 'firewall'
             $steps += Set-FirewallRules -Layout $layout -Cidr $cidr
+            Write-HelperProgress -Job 'win' -Number 2 -Total 4 -Key 'hosts'
             $steps += Set-HostsEntry -Layout $layout -HostName ('{0}.local' -f $hostName)
             $pem = [System.IO.File]::ReadAllText((Assert-InsideRoot $PemFile), [System.Text.Encoding]::ASCII)
+            Write-HelperProgress -Job 'win' -Number 3 -Total 4 -Key 'trust'
             $ca = Install-TrustedCa -Layout $layout -Pem $pem
             $steps += $ca
+            # 7.6: win.lid when the person chose it on S02 (C22), else win.power.
+            if ($Lid) { Write-HelperProgress -Job 'win' -Number 4 -Total 4 -Key 'lid' }
+            else { Write-HelperProgress -Job 'win' -Number 4 -Total 4 -Key 'power' }
             $steps += Set-KeepAwake -Layout $layout -Lid:$Lid
             $failed = @($steps | Where-Object { @('added', 'set') -notcontains $_.code })
             if ($failed.Count -gt 0) { $result = $failed[0] }

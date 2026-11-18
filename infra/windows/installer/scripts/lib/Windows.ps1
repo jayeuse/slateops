@@ -442,6 +442,8 @@ function Install-WslPackage {
         $outcome = Get-MsiOutcome -ExitCode $run.ExitCode
         if (($outcome -ne 'busy') -or ($attempt -eq 4)) { break }
         Write-RunLog 'prepare.wsl' 'WARN' ('another installation runs (1618); try {0} of 3 again in {1} s' -f $attempt, $BusyWaitSeconds)
+        # W14-D5 (spec 7.6 pc.busy): "Setup waits and tries again (2 of 3)."
+        Write-HelperProgress -Job 'pc' -Number $attempt -Total 3 -Key 'busy'
         Start-Sleep -Seconds $BusyWaitSeconds
     }
     switch ($outcome) {
@@ -832,6 +834,8 @@ function Remove-KitLeftovers {
         return New-StepResult -Code 'kit_folder_unsafe' -MessageKey 'check.c29.unknown_parts'
     }
     $productAccount = (Test-InstalledProgram) -or [bool](Get-ScheduledTask -TaskPath $SlateOps.TaskPath -ErrorAction SilentlyContinue)
+    # W14-D5 (spec 7.6 "S02 fixes", C29 test parts): 1 of 3 stop, 2 of 3 data, 3 of 3 account.
+    Write-HelperProgress -Job 'kit' -Number 1 -Total 3 -Key 'stop'
     $account = $null
     if ($productAccount) { Write-RunLog $step 'WARN' 'Slate Operations is installed: the account and the WSL service are not touched' }
     else { $account = Get-LocalUser -Name $Kit.AccountName -ErrorAction SilentlyContinue }
@@ -843,6 +847,7 @@ function Remove-KitLeftovers {
         Write-RunLog $step 'INFO' 'kit boot task disabled and stopped'
     }
     if (-not $productAccount) {
+        Write-HelperProgress -Job 'kit' -Number 2 -Total 3 -Key 'data'
         $vhdx = Join-Path $Kit.Root 'distro\vhd\ext4.vhdx'
         $gone = Invoke-KitUnregister -Kit $Kit
         if ((-not $gone) -and (Test-Path -LiteralPath $vhdx)) {
@@ -851,6 +856,7 @@ function Remove-KitLeftovers {
             Start-Sleep -Seconds 5
         }
     }
+    Write-HelperProgress -Job 'kit' -Number 3 -Total 3 -Key 'account'
     if ($account) { Disable-LocalUser -Name $Kit.AccountName; Write-RunLog $step 'INFO' 'account disabled' }
     foreach ($task in $tasks) { Unregister-ScheduledTask -TaskPath $Kit.TaskPath -TaskName $task.TaskName -Confirm:$false }
     if ($tasks.Count -gt 0) {

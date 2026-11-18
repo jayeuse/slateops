@@ -83,30 +83,35 @@ begin
   end;
 end;
 
-{ W14-D7: S07 on the owner's three fixed drives (C: 28 GB, D: 239 GB, E: 896 GB, in that
-  order); C: was selected before. The selected radio must be the C07 drive (E:), and the first
-  (largest) drive when the check named none. }
-procedure SelfDrives(Name: String; WithC07: Boolean);
+{ W14-D7 (closed; the part-1 reset is reverted): S07 on the owner's three fixed drives (C: 28 GB,
+  D: 239 GB, E: 896 GB, in that order). The first entry, with no folder chosen, selects the
+  largest drive (E:). A drive that the person chose (D:) stays when the list loads again after
+  Back and Next. }
+procedure SelfDrives;
 var
   Text: String;
 begin
   try
-    if not WithC07 then
-      SetArrayLength(Items, 0);
     Text := '{"code":"listed","message_key":"setup.drives.listed","values":{"drives":[' +
       '{"letter":"C:","drive_type":"Fixed","file_system":"NTFS","free_bytes":30064771072,"compressed":false,"encrypted":false},' +
       '{"letter":"D:","drive_type":"Fixed","file_system":"NTFS","free_bytes":256624295936,"compressed":false,"encrypted":false},' +
       '{"letter":"E:","drive_type":"Fixed","file_system":"NTFS","free_bytes":962072674304,"compressed":false,"encrypted":false}]}}';
-    DataRoot := 'C:\SlateOps';
+    DataRoot := '';
     DataPrepared := False;
     DataStarted := False;
     LoadDataDrives(Text);
     RenderData;
-    SelfRecord(Name, (DataRoot = 'E:\SlateOps') and (GetArrayLength(DriveRadios) = 3) and (DriveLetters[0] = 'E:')
-      and DriveRadios[0].Checked and (not DriveRadios[1].Checked) and (not DriveRadios[2].Checked),
+    SelfRecord('S07 first entry selects the largest drive', (DataRoot = 'E:\SlateOps') and (GetArrayLength(DriveRadios) = 3)
+      and (DriveLetters[0] = 'E:') and DriveRadios[0].Checked and (not DriveRadios[1].Checked) and (not DriveRadios[2].Checked),
       'selected ' + DataRoot + ', first ' + DriveLetters[0]);
+    DriveRadioClick(DriveRadios[1]);
+    LoadDataDrives(Text);
+    RenderData;
+    SelfRecord('S07 a chosen drive stays after Back and Next', (DataRoot = 'D:\SlateOps') and (not DriveRadios[0].Checked)
+      and DriveRadios[1].Checked and (not DriveRadios[2].Checked),
+      'selected ' + DataRoot);
   except
-    SelfRecord(Name, False, GetExceptionMessage);
+    SelfRecord('S07 drives', False, GetExceptionMessage);
   end;
 end;
 
@@ -197,6 +202,171 @@ begin
   end;
 end;
 
+{ W14-D5: the progress-line reader takes only the engine's line shape (and digits in the
+  helper's keys); every other standard error line is ignored. }
+procedure SelfProgressLines;
+var
+  J, K, S: String;
+  N, T: Integer;
+  Ok: Boolean;
+begin
+  try
+    Ok := ParseProgressLine('progress install 8/13 provision start', False, J, K, S, N, T);
+    Ok := Ok and (J = 'install') and (K = 'provision') and (N = 8) and (T = 13) and (S = 'start');
+    Ok := Ok and ParseProgressLine('progress smtp-test 1/2 send done', False, J, K, S, N, T);
+    Ok := Ok and (J = 'smtp-test') and (K = 'send') and (S = 'done');
+    Ok := Ok and ParseProgressLine('progress check 12/30 c12 start', True, J, K, S, N, T);
+    Ok := Ok and (K = 'c12') and (N = 12) and (T = 30);
+    Ok := Ok and not ParseProgressLine('progress check 12/30 c12 start', False, J, K, S, N, T);
+    Ok := Ok and not ParseProgressLine('progress install 8/13  provision start', False, J, K, S, N, T);
+    Ok := Ok and not ParseProgressLine('progress install 8/13 provision started', False, J, K, S, N, T);
+    Ok := Ok and not ParseProgressLine('progress Install 8/13 provision start', False, J, K, S, N, T);
+    Ok := Ok and not ParseProgressLine('progress install 8 provision start', False, J, K, S, N, T);
+    Ok := Ok and not ParseProgressLine('progress install 8/13 provision start extra', False, J, K, S, N, T);
+    Ok := Ok and not ParseProgressLine('Traceback (most recent call last):', False, J, K, S, N, T);
+    SelfRecord('W14-D5 progress lines', Ok, J + ' ' + K + ' ' + S);
+  except
+    SelfRecord('W14-D5 progress lines', False, GetExceptionMessage);
+  end;
+end;
+
+{ W14-D5: S12 shows the step that the install job's standard error names: the last complete
+  progress line counts; other lines and a line still being written do not. }
+procedure SelfEngineStep;
+var
+  Created: Boolean;
+begin
+  Created := not DirExists(ExpandConstant('{commonappdata}\SlateOps'));
+  try
+    try
+      ForceDirectories(ExpandConstant('{commonappdata}\SlateOps\svc-out'));
+      JobRequestId := '5d0c9a1e-2b7f-4c3a-8e61-0f2a9b3c4d5e';
+      SaveStringToFile(JobErrFile, 'progress install 1/13 release start' + #10 + 'progress install 2/13 folders done' + #10 +
+        'Traceback (most recent call last):' + #10 + 'progress install 8/13 provision start' + #13#10 + 'progress install 9/13 api st', False);
+      InstallStarted := True;
+      InstallDone := False;
+      InstallFailed := False;
+      InstallStep := 2;
+      InstallStartedAt := GetTickCount;
+      JobPurpose := 'install';
+      JobState := JOB_WAIT;
+      JobStepJob := '';
+      JobStepKey := '';
+      ReadJobProgress;
+      RenderInstall;
+      SelfRecord('W14-D5 S12 shows the engine step', (WaitNow <> nil) and (WaitNow.Caption = 'Now: Setting up the database.')
+        and (WaitDrawn = 4) and (WaitTime <> nil) and (Pos('Time so far: 0:0', WaitTime.Caption) = 1),
+        'key ' + JobStepKey + ', stage ' + IntToStr(WaitDrawn));
+    except
+      SelfRecord('W14-D5 S12 shows the engine step', False, GetExceptionMessage);
+    end;
+  finally
+    JobState := JOB_IDLE;
+    JobPurpose := '';
+    InstallStarted := False;
+    DeleteFile(JobErrFile);
+    if Created then
+      DelTree(ExpandConstant('{commonappdata}\SlateOps'), True, True, True);
+  end;
+end;
+
+{ W14-D5: S02 names the check that the helper reports (its progress file beside the result). }
+procedure SelfCheckStep;
+begin
+  try
+    CheckOut := ExpandConstant('{tmp}\selftest-check.json');
+    DeleteFile(CheckOut);
+    SaveStringToFile(ProgressFileOf(CheckOut), 'progress check 11/30 c11 start' + #10 + 'progress check 12/30 c12 start' + #10, False);
+    CheckRunning := True;
+    CheckDone := False;
+    CheckVerdict := '';
+    CheckStartedAt := GetTickCount;
+    RenderCheckBody;
+    SelfRecord('W14-D5 S02 names the check that runs', (WaitNow <> nil) and (WaitNow.Caption = 'Checking: Internet (12 of 30).')
+      and (WaitDrawn = 3), 'stage ' + IntToStr(WaitDrawn));
+  except
+    SelfRecord('W14-D5 S02 names the check that runs', False, GetExceptionMessage);
+  end;
+  CheckRunning := False;
+  CheckDone := True;
+end;
+
+{ W14-D5: the timer changes the labels of the page only; a redraw frees them, and the next tick
+  must not touch the freed ones. }
+procedure SelfWaitRedraw;
+begin
+  try
+    InstallStarted := True;
+    InstallStep := 3;
+    InstallStartedAt := GetTickCount;
+    RenderInstall;
+    RefreshWaitLabels;
+    BeginBody(P_INSTALL);
+    RefreshWaitLabels;
+    RenderInstall;
+    RefreshWaitLabels;
+    SelfRecord('W14-D5 a redraw leaves no freed label to the timer', (WaitTime <> nil) and (WaitDrawn = 8), 'stage ' + IntToStr(WaitDrawn));
+  except
+    SelfRecord('W14-D5 a redraw leaves no freed label to the timer', False, GetExceptionMessage);
+  end;
+  InstallStarted := False;
+end;
+
+{ W14-D9: a helper step runs from the timer; no call holds the window for 2 s. account-sid only
+  reads the state record. }
+procedure SelfStepRunner;
+var
+  Start, Call, Longest: Cardinal;
+begin
+  try
+    StepLastCode := '';
+    RunStep('account-sid', '', 'selftest', 'self-test', 0, 0, 60000);
+    Start := GetTickCount;
+    Longest := 0;
+    while StepRunning and (Elapsed(Start) < 90000) do
+    begin
+      Call := GetTickCount;
+      PollStep;
+      if Elapsed(Call) > Longest then
+        Longest := Elapsed(Call);
+      Sleep(200);
+    end;
+    SelfRecord('W14-D9 a helper step runs from the timer', (not StepRunning) and (Longest < 2000)
+      and ((StepLastCode = 'found') or (StepLastCode = 'missing')),
+      'code ' + StepLastCode + ', longest call ' + IntToStr(Longest) + ' ms');
+  except
+    SelfRecord('W14-D9 a helper step runs from the timer', False, GetExceptionMessage);
+  end;
+end;
+
+{ W14-D9: Save report runs from the timer and ends with its line; no call holds the window. }
+procedure SelfReport;
+var
+  Start, Call, Longest: Cardinal;
+begin
+  try
+    ServiceSid := '';
+    ReportLine := '';
+    SaveReport(nil);
+    Start := GetTickCount;
+    Longest := 0;
+    while (ReportPhase <> '') and (Elapsed(Start) < 300000) do
+    begin
+      Call := GetTickCount;
+      PollReport;
+      if Elapsed(Call) > Longest then
+        Longest := Elapsed(Call);
+      Sleep(200);
+    end;
+    SelfRecord('W14-D9 Save report never holds the window', (ReportPhase = '') and (Longest < 2000) and (ReportLine <> ''),
+      'phase ' + ReportPhase + ', longest call ' + IntToStr(Longest) + ' ms, line ' + ReportLine);
+    if ReportPath <> '' then
+      DeleteFile(ReportPath);
+  except
+    SelfRecord('W14-D9 Save report never holds the window', False, GetExceptionMessage);
+  end;
+end;
+
 procedure RunSelfTest;
 var
   Text, OutFile: String;
@@ -237,9 +407,16 @@ begin
   SelfPoll;
   SelfCloseFlow;
 
-  { S07 (W14-D7): the C07 drive of the ready fixture is E:. }
-  SelfDrives('S07 drive named by C07', True);
-  SelfDrives('S07 largest drive without C07', False);
+  { W14-D5 and W14-D9 (part 2). SelfPoll put the helper in place. }
+  SelfProgressLines;
+  SelfEngineStep;
+  SelfCheckStep;
+  SelfWaitRedraw;
+  SelfStepRunner;
+  SelfReport;
+
+  { S07 (W14-D7). }
+  SelfDrives;
 
   { Sample state for the other pages. }
   OrgName.Text := 'Riverside Learning Center';

@@ -17,6 +17,17 @@ var
   URadioKeep, URadioDelete: TNewRadioButton;
   UBackupsCheck, UConfirmCheck: TNewCheckBox;
   UConfirmButton: TNewButton;
+  { W14-D5 and W14-D9 (spec 7.6 "U03 uninstall", "Save report" U04): the uninstaller has no
+    page timer and waits in Exec. Inno's Exec keeps processing messages while it waits (Inno 6.7
+    Setup.InstFunc HandleProcessWait) but disables the windows (Setup.ScriptFunc
+    TWindowDisabler), so the window repaints and a timer runs; U03 has no button to press. The
+    stage line is set before each step, and the timer keeps its time current. }
+  UStageLine: String;
+  UStageNumber, UStageTotal: Integer;
+  UStageAt: Cardinal;
+  UTimerOn: Boolean;
+  UReportForm: TSetupForm;
+  UReportLabel: TNewStaticText;
 
 function URun(Action, ARunId, Extra: String): String;
 var
@@ -31,6 +42,7 @@ begin
     ' -RunId ' + ARunId + ' -OutFile ' + AddQuotes(OutFile) + ' ' + Extra, '', SW_HIDE, ewWaitUntilTerminated, Code);
   Result := ReadText(OutFile);
   DeleteFile(OutFile);
+  DeleteFile(OutFile + '.progress');
 end;
 
 function UText(Parent: TWinControl; Top: Integer; S: String; Bold: Boolean): TNewStaticText;
@@ -56,6 +68,46 @@ begin
   Result.SetBounds(Left, Parent.ClientHeight - ScaleY(40), ScaleX(130), ScaleY(26));
 end;
 
+{ The one line (7.6: "2 of 3: <stage>" and the time) in the report form or in Inno's uninstall
+  form. }
+procedure UShow;
+var
+  Text: String;
+begin
+  if UStageLine = '' then
+    Exit;
+  Text := OneLine(UStageNumber, UStageTotal, UStageLine, UStageAt);
+  if UReportLabel <> nil then
+    UReportLabel.Caption := Text
+  else
+  begin
+    UninstallProgressForm.StatusLabel.Caption := Text;
+    UninstallProgressForm.Update;
+  end;
+end;
+
+procedure UTick(H, Msg, Id, Tick: Longword);
+begin
+  UShow;
+end;
+
+procedure UStartTimer;
+begin
+  if UTimerOn then
+    Exit;
+  UTimerOn := True;
+  SetTimer(0, 0, 1000, CreateCallback(@UTick));
+end;
+
+{ U03: the stage before each step (7.6: 1 of 3 to 3 of 3). }
+procedure UStage(Number: Integer; Line: String);
+begin
+  UStageNumber := Number;
+  UStageTotal := 3;
+  UStageLine := Line;
+  UShow;
+end;
+
 procedure UReportSaved(Path: String);
 begin
   if Path <> '' then
@@ -65,11 +117,42 @@ end;
 { Save report from the uninstaller (plan 10.6), while the helper is still there. }
 procedure USaveReport;
 var
-  ReportRun: String;
+  ReportRun, Path, OldLine: String;
+  OldNumber, OldTotal: Integer;
+  OldAt: Cardinal;
 begin
   ReportRun := NewRunId('report');
-  URun('report-collect', ReportRun, '');
-  UReportSaved(JsonValue(URun('report-zip', ReportRun, ''), 'path'));
+  OldLine := UStageLine;
+  OldNumber := UStageNumber;
+  OldTotal := UStageTotal;
+  OldAt := UStageAt;
+  Path := '';
+  UReportForm := CreateCustomForm(ScaleX(440), ScaleY(90), False, False);
+  try
+    UReportForm.Caption := CM('btn_save_report');
+    UReportLabel := UText(UReportForm, ScaleY(16), '', False);
+    UReportForm.Show;
+    UStartTimer;
+    UStageAt := GetTickCount;
+    UStageTotal := 4;
+    UStageNumber := 3;
+    UStageLine := CM('report_stage3');
+    UShow;
+    URun('report-collect', ReportRun, '');
+    UStageNumber := 4;
+    UStageLine := CM('report_stage4');
+    UShow;
+    Path := JsonValue(URun('report-zip', ReportRun, ''), 'path');
+  finally
+    UReportLabel := nil;
+    UReportForm.Free;
+    UReportForm := nil;
+    UStageLine := OldLine;
+    UStageNumber := OldNumber;
+    UStageTotal := OldTotal;
+    UStageAt := OldAt;
+  end;
+  UReportSaved(Path);
 end;
 
 { F4c and F3: a stop with its sentence and, while the helper can run, Save report (W9 review
@@ -237,11 +320,6 @@ begin
   end;
 end;
 
-procedure UStatus(S: String);
-begin
-  UninstallProgressForm.StatusLabel.Caption := S;
-  UninstallProgressForm.Update;
-end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
@@ -249,14 +327,17 @@ var
 begin
   if (CurUninstallStep = usUninstall) and (UHelper <> '') then
   begin
+    UStageAt := GetTickCount;
+    UStartTimer;
     { U03 stage 1. }
-    UStatus(CM('u03_stop'));
+    UStage(1, CM('u03_stopping'));
     Extra := '';
     if UKeep then
       Extra := '-Keep';
     Code := JsonValue(URun('uninstall-stop', URunId, Extra), 'code');
     if Code <> 'stopped' then
     begin
+      UStageLine := '';
       { F3 (uninstall) or F4c: nothing was removed; Inno removes nothing either. }
       if UKeep then
         UStopped(CM('u04_keep_failed'), True)
@@ -266,9 +347,9 @@ begin
     end;
     { U03 stage 2. }
     if UKeep then
-      UStatus(FM1('u03_moving', UDataRoot + '\kept'))
+      UStage(2, FM1('u03_moving_line', UDataRoot + '\kept'))
     else
-      UStatus(CM('u03_remove'));
+      UStage(2, FM1('u03_deleting', UDataRoot));
     Extra := '';
     if UKeep then
       Extra := '-Keep'
@@ -277,13 +358,14 @@ begin
     Code := JsonValue(URun('uninstall-data', URunId, Extra), 'code');
     if UKeep and (Code <> 'kept') then
     begin
+      UStageLine := '';
       UStopped(CM('u04_keep_failed'), True);
       Abort;
     end;
     if (not UKeep) and (Code <> 'removed') then
       ULeft := 'data';
     { U03 stage 3: the Windows parts; each leftover is logged (W9-6). }
-    UStatus(CM('u03_remove'));
+    UStage(3, CM('u03_removing'));
     { W9 review item 4: with the data folder left over, the scripts stay for the U04 report. }
     Extra := '';
     if ULeft = 'data' then
@@ -291,6 +373,8 @@ begin
     Text := URun('remove-windows', URunId, Extra);
     if JsonValue(Text, 'code') = 'leftovers' then
       ULeft := ULeft + ' windows';
+    { Inno's own lines follow (its files). }
+    UStageLine := '';
   end;
   if (CurUninstallStep = usPostUninstall) and (UHelper <> '') then
   begin
