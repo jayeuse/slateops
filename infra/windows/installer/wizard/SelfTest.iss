@@ -1,7 +1,7 @@
 { SelfTest.iss - the [Code] self-test (W14-D1, TASK-0097). Compiled only with /DSelfTest; the
   windows-installer workflow runs the result with /VERYSILENT /SELFTESTOUT=<file>. It runs the
   message helpers, the check reader and the S02 draw on the owner's check result (fixture), and
-  the draw routines of S09, S11, S12, S14, S15, M01 and M05 with sample state, so that a runtime
+  the draw routines of S07, S09, S11, S12, S14, S15, M01 and M05 with sample state, so that a runtime
   fault (Type Mismatch, nil access) shows on the CI runner before the owner's next pass. Every
   step writes PASS or FAIL with the fault text; the last line is DONE. The pages stay hidden.
   With /DSelfTestRed one more step calls a routine that hands an "array of String" parameter on
@@ -83,6 +83,120 @@ begin
   end;
 end;
 
+{ W14-D7: S07 on the owner's three fixed drives (C: 28 GB, D: 239 GB, E: 896 GB, in that
+  order); C: was selected before. The selected radio must be the C07 drive (E:), and the first
+  (largest) drive when the check named none. }
+procedure SelfDrives(Name: String; WithC07: Boolean);
+var
+  Text: String;
+begin
+  try
+    if not WithC07 then
+      SetArrayLength(Items, 0);
+    Text := '{"code":"listed","message_key":"setup.drives.listed","values":{"drives":[' +
+      '{"letter":"C:","drive_type":"Fixed","file_system":"NTFS","free_bytes":30064771072,"compressed":false,"encrypted":false},' +
+      '{"letter":"D:","drive_type":"Fixed","file_system":"NTFS","free_bytes":256624295936,"compressed":false,"encrypted":false},' +
+      '{"letter":"E:","drive_type":"Fixed","file_system":"NTFS","free_bytes":962072674304,"compressed":false,"encrypted":false}]}}';
+    DataRoot := 'C:\SlateOps';
+    DataPrepared := False;
+    DataStarted := False;
+    LoadDataDrives(Text);
+    RenderData;
+    SelfRecord(Name, (DataRoot = 'E:\SlateOps') and (GetArrayLength(DriveRadios) = 3) and (DriveLetters[0] = 'E:')
+      and DriveRadios[0].Checked and (not DriveRadios[1].Checked) and (not DriveRadios[2].Checked),
+      'selected ' + DataRoot + ', first ' + DriveLetters[0]);
+  except
+    SelfRecord(Name, False, GetExceptionMessage);
+  end;
+end;
+
+{ W14-D8: the background loop after the service step, with the owner's exec-result.json
+  (rc.22, run install-20261118T032936Z-56cnu3) in svc-out: step 1 (wslconfig) must be collected
+  and step 2 must start. PollJob and PollBackground run as the timer runs them. }
+procedure SelfPoll;
+var
+  Start: Cardinal;
+  Created: Boolean;
+begin
+  Created := not DirExists(ExpandConstant('{commonappdata}\SlateOps'));
+  try
+    try
+      ExtractTemporaryFiles('{tmp}\scripts\*.ps1');
+      ExtractTemporaryFiles('{tmp}\scripts\lib\*.ps1');
+      HelperScript := ExpandConstant('{tmp}\scripts\setup-helper.ps1');
+      ForceDirectories(ExpandConstant('{commonappdata}\SlateOps\svc-out'));
+      SaveStringToFile(ExecResultFile, '{"stdout_file":"","job_class":"windows","message_key":"exec.wslconfig.written","job":"wslconfig","pipe_closed":false,"stdout_bytes":0,"stdout_sha256":"","finished_at":"2026-11-18T03:31:41Z","code":"written","exit_code":0,"request_id":"b6b02c87-f769-41b1-8c56-4aabfdc2dd94"}', False);
+      SetArrayLength(Items, 0);
+      KeptState := '';
+      DataPrepared := True;
+      BgFailed := False;
+      BgIndex := 1;
+      JobName := 'wslconfig';
+      JobPurpose := 'bg';
+      JobRequestId := 'b6b02c87-f769-41b1-8c56-4aabfdc2dd94';
+      JobResultOut := '';
+      JobPipeOut := False;
+      JobStartedAt := GetTickCount;
+      JobLimitMs := 15 * 60000;
+      JobPollAt := GetTickCount;
+      JobState := JOB_WAIT;
+      Start := GetTickCount;
+      while (BgIndex < 2) and (not BgFailed) and (Elapsed(Start) < 90000) do
+      begin
+        PollJob;
+        PollBackground;
+        Sleep(500);
+      end;
+      SelfRecord('W14-D8 background step 1 collected, step 2 started', BgIndex >= 2,
+        'step ' + IntToStr(BgIndex) + ', job state ' + IntToStr(JobState) + ', code ' + JobCode + ', failed ' + BgCode);
+    except
+      SelfRecord('W14-D8 background step 1 collected, step 2 started', False, GetExceptionMessage);
+    end;
+  finally
+    JobState := JOB_IDLE;
+    DataPrepared := False;
+    if Created then
+      DelTree(ExpandConstant('{commonappdata}\SlateOps'), True, True, True);
+  end;
+end;
+
+{ W14-D9: "Continue later" runs from the timer. Each call of PollCloseFlow returns at once (no
+  call holds the window for 2 s), and the flow ends within its limits. }
+procedure SelfCloseFlow;
+var
+  Start, Call, Longest: Cardinal;
+  Created: Boolean;
+begin
+  Created := not DirExists(ExpandConstant('{commonappdata}\SlateOps'));
+  try
+    try
+      JobState := JOB_IDLE;
+      DataPrepared := True;
+      StartCloseFlow('later', 'none');
+      Start := GetTickCount;
+      Longest := 0;
+      while CloseFlowRunning and (Elapsed(Start) < 180000) do
+      begin
+        Call := GetTickCount;
+        PollJob;
+        PollCloseFlow;
+        if Elapsed(Call) > Longest then
+          Longest := Elapsed(Call);
+        Sleep(200);
+      end;
+      SelfRecord('W14-D9 continue later never holds the window', (not CloseFlowRunning) and (Longest < 2000),
+        'running ' + IntToStr(Ord(CloseFlowRunning)) + ', longest call ' + IntToStr(Longest) + ' ms');
+    except
+      SelfRecord('W14-D9 continue later never holds the window', False, GetExceptionMessage);
+    end;
+  finally
+    JobState := JOB_IDLE;
+    DataPrepared := False;
+    if Created then
+      DelTree(ExpandConstant('{commonappdata}\SlateOps'), True, True, True);
+  end;
+end;
+
 procedure RunSelfTest;
 var
   Text, OutFile: String;
@@ -118,6 +232,14 @@ begin
   { S02 on the owner's check result (rc.20, C04 the only Fix row) and on a ready result. }
   SelfCheck('owner', 'check-owner.json', 'needs_fixes', 1);
   SelfCheck('ready', 'check-ready.json', 'ready', 0);
+
+  { W14-D8 and W14-D9. }
+  SelfPoll;
+  SelfCloseFlow;
+
+  { S07 (W14-D7): the C07 drive of the ready fixture is E:. }
+  SelfDrives('S07 drive named by C07', True);
+  SelfDrives('S07 largest drive without C07', False);
 
   { Sample state for the other pages. }
   OrgName.Text := 'Riverside Learning Center';

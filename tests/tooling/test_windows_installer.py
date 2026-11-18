@@ -611,17 +611,18 @@ class W9ReviewCorrectionTest(unittest.TestCase):
             r"if FileExists\(AddBackslash\(DataRoot\) \+ 'kept\\ext4\.vhdx'\) then\s+"
             r"BgIndex := 1\s+else\s+BgIndex := 3;",
         )
-        later = routine(self.raw, "procedure SaveContinueLater;")
+        later = routine(self.raw, "function LaterSaveExtra(Discarded: Boolean): String;")
         self.assertEqual(later.count("if KeptMode then\n    Extra := Extra + ' -KeptMark';"), 1)
         install = routine(self.raw, "procedure InstallNextStep;")
         self.assertIn("if KeptMode then\n      Extra := Extra + ' -KeptMark';", install)
-        remove = routine(self.raw, "procedure RemoveEverything;\nvar")
+        # W14-D9: "Remove everything" runs from the timer (PollCloseFlow).
+        remove = routine(self.raw, "procedure PollCloseFlow;\nvar")
         self.assertRegex(
             remove,
             r"if \(DataRoot <> ''\) and FileExists\(AddBackslash\(DataRoot\) \+ "
-            r"'kept\\kept\.json'\) then\s+NewOutRun\('kept-return', ''\)",
+            r"'kept\\kept\.json'\) then\s+CloseStep\('data', [^;]*'kept-return', ''\)",
         )
-        self.assertNotIn("if KeptMode then", remove)
+        self.assertNotIn("KeptMode", remove)
         helper = (INSTALLER / "scripts/setup-helper.ps1").read_text(encoding="ascii")
         self.assertIn("if ($KeptMark) { $marks.kept = $true }", helper)
 
@@ -713,7 +714,7 @@ class W9ReviewCorrectionTest(unittest.TestCase):
         self.assertIn("MaintNetwork := JsonLiteral(Text, 'network_changed') = 'true';", self.raw)
 
     def test_item_6_the_s09_resume_keeps_the_started_install(self) -> None:
-        later = routine(self.raw, "procedure SaveContinueLater;")
+        later = routine(self.raw, "function LaterSaveExtra(Discarded: Boolean): String;")
         self.assertIn(
             "if (InstallStep >= 2) or (EntryNext = 'S12') or (EntryNext = 'S09') then", later
         )
@@ -866,6 +867,71 @@ class W14DefectTest(unittest.TestCase):
         self.assertEqual(owner.count('{"id":"C'), 30)
         iss = ISS.read_text(encoding="ascii")
         self.assertIn('#ifdef SelfTest\n#include "wizard\\SelfTest.iss"\n#endif', iss)
+
+    def test_w14_d7_s07_preselects_the_c07_drive(self) -> None:
+        # W14-D7: S07 listed "E: · Most space" first but had C: selected. The default comes from
+        # the C07 drive (else the first, largest drive) whatever DataRoot held; the checked radio
+        # takes the focus, so no other radio is checked by focus; a click that changes nothing
+        # draws nothing.
+        load = routine(self.raw, "procedure LoadDataDrives(Text: String);")
+        self.assertRegex(load, r"Best := C07Drive;\s+DataRoot := '';")
+        self.assertIn(
+            "LoadDataDrives(ReadText(OutFile));", routine(self.raw, "procedure ReadDataDrives;")
+        )
+        render = routine(self.raw, "procedure RenderData;")
+        self.assertRegex(
+            render,
+            r"if DriveRadios\[I\]\.Checked and DriveRadios\[I\]\.CanFocus then\s+"
+            r"WizardForm\.ActiveControl := DriveRadios\[I\];",
+        )
+        click = routine(self.raw, "procedure DriveRadioClick(Sender: TObject);")
+        self.assertIn("if DataRendering then", click)
+        self.assertIn(
+            "if CompareText(Copy(DataRoot, 1, 2), "
+            "DriveLetters[TNewRadioButton(Sender).Tag]) = 0 then",
+            click,
+        )
+        selftest = (INSTALLER / "wizard/SelfTest.iss").read_text(encoding="ascii")
+        self.assertIn("SelfDrives(", selftest)
+
+    def test_w14_d9_continue_later_and_remove_everything_never_hold_the_window(self) -> None:
+        # W14-D9: "Continue later" froze the window (a Sleep loop waited for the stuck job). Both
+        # flows now run from the timer with time limits; no routine of theirs sleeps or waits.
+        self.assertNotIn("procedure SaveContinueLater;", self.raw)
+        self.assertNotIn("procedure RemoveEverything;", self.raw)
+        self.assertNotIn("KeepAndClose", self.raw)
+        for head in (
+            "procedure StartCloseFlow(Flow, After: String);\nbegin",
+            "procedure PollCloseFlow;\nvar",
+            "procedure CloseStep(Phase, Line, Action, Extra: String);\nbegin",
+        ):
+            with self.subTest(head=head):
+                body = routine(self.raw, head)
+                for blocking in ("Sleep(", "RunPipeJobBlocking(", "RunJobBlocking(", "NewOutRun("):
+                    self.assertNotIn(blocking, body)
+        self.assertIn(
+            "PollCloseFlow;", routine(self.raw, "procedure TimerTick(H, Msg, Id, Tick: Longword);")
+        )
+        for limit in ("CLOSE_WAIT_MS", "CLOSE_STEP_MS"):
+            self.assertIn(limit, routine(self.raw, "procedure PollCloseFlow;\nvar"))
+        cancel = routine(
+            self.raw,
+            "procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);",
+        )
+        self.assertIn("StartCloseFlow('later', 'close');", cancel)
+        self.assertIn("StartCloseFlow('remove', 'close');", cancel)
+
+    def test_w14_d8_the_job_poll_asks_the_helper_and_has_limits(self) -> None:
+        # W14-D8: the poll never collected a finished Windows-side result on the owner's PC. The
+        # job-result helper is asked every 15 s too; its answer and its start have limits.
+        poll = routine(self.raw, "procedure PollJob;\nvar")
+        self.assertIn("if (not Found) and (Elapsed(JobPollAt) < JOB_ASK_MS) then", poll)
+        self.assertIn("if not StartHelper('job-result', RunId, JobResultOut,", poll)
+        self.assertIn("(Elapsed(JobResultAt) > JOB_ANSWER_MS)", poll)
+        selftest = (INSTALLER / "wizard/SelfTest.iss").read_text(encoding="ascii")
+        self.assertIn('"request_id":"b6b02c87-f769-41b1-8c56-4aabfdc2dd94"', selftest)
+        self.assertIn("SelfPoll;", selftest)
+        self.assertIn("SelfCloseFlow;", selftest)
 
     def test_w14_d1_s02_offers_save_report(self) -> None:
         items = routine(self.raw, "procedure AddCheckItems(OnlyFix: Boolean);")

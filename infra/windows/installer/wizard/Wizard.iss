@@ -61,6 +61,10 @@ const
   CHECK_LIMIT_MS = 300000;
   DATA_LIMIT_MS = 1800000;
   SUBMIT_LIMIT_MS = 120000;
+  { W14-D8: the job-result helper answers in this time, and it is asked every 15 s while this
+    process does not see the result itself. }
+  JOB_ANSWER_MS = 120000;
+  JOB_ASK_MS = 15000;
   ERROR_BROKEN_PIPE = 109;
   ERROR_NO_DATA = 232;
   ERROR_PIPE_CONNECTED = 535;
@@ -170,6 +174,8 @@ var
   DriveFree: array of Int64;
   DriveRadios: array of TNewRadioButton;
   DataRoot, DataError, DataErrorValue: String;
+  { W14-D7: S07 is drawing; its radios change nothing then. }
+  DataRendering: Boolean;
   DataPrepared, DataStarted, BgFailed: Boolean;
   BgIndex: Integer;
   BgOut, BgCode: String;
@@ -221,6 +227,8 @@ var
   JobName, JobRequestId, JobOut, JobResultOut, JobText, JobCode, JobPurpose: String;
   JobState, JobExit: Integer;
   JobStartedAt, JobLimitMs: Cardinal;
+  { W14-D8: when the job-result helper last started, and when it was asked. }
+  JobPollAt, JobResultAt: Cardinal;
   PipeHandle: Longword;
   PipeFrame, PipeOutput: AnsiString;
   PipeConnected, PipeExpectOutput: Boolean;
@@ -264,7 +272,10 @@ procedure PollMaint; forward;
 function MaintNext(PageID: Integer): Boolean; forward;
 function MaintSkip(PageID: Integer): Boolean; forward;
 function AskCancelChoice: Integer; forward;
-procedure RemoveEverything; forward;
+{ W14-D9, in Maintenance.iss. }
+procedure StartCloseFlow(Flow, After: String); forward;
+procedure PollCloseFlow; forward;
+function CloseFlowRunning: Boolean; forward;
 function SettingsEntry: Boolean; forward;
 #ifdef SelfTest
 procedure RunSelfTest; forward;
@@ -902,6 +913,7 @@ end;
 procedure PollJob;
 var
   Code, Text: String;
+  Found: Boolean;
 begin
   if (JobState = JOB_IDLE) or (JobState = JOB_DONE) then
     Exit;
@@ -921,29 +933,53 @@ begin
       Exit;
     end;
     JobState := JOB_WAIT;
+    JobPollAt := GetTickCount;
+    Log('Job ' + JobName + ' ' + JobRequestId + ': submitted.');
   end;
   if JobState = JOB_WAIT then
   begin
     if JobResultOut = '' then
     begin
       { Cheap check first: the result file names this request (it holds no secret). }
-      Text := ReadText(ExecResultFile);
+      Text := Lowercase(ReadText(ExecResultFile));
+      Found := Pos('"request_id":"' + Lowercase(JobRequestId) + '"', Text) > 0;
       { W13b P2-5: no verdict at a limit on a running update either; the engine has its own. }
-      if (Pos('"request_id":"' + JobRequestId + '"', Text) = 0) and (JobPurpose <> 'install') and (JobPurpose <> 'update') and (Elapsed(JobStartedAt) > JobLimitMs) then
+      if (not Found) and (JobPurpose <> 'install') and (JobPurpose <> 'update') and (Elapsed(JobStartedAt) > JobLimitMs) then
       begin
         { W8 correction 5: at the limit, the task's last result once (spec 7.5). }
+        Log('Job ' + JobName + ': no result in its time.');
         JobCode := TaskTimeoutCode;
         JobState := JOB_DONE;
         ClosePipe;
         Exit;
       end;
-      if Pos('"request_id":"' + JobRequestId + '"', Text) = 0 then
+      { W14-D8: the job-result helper reads the result itself every 15 s too, so a result that
+        this process does not see (W14-D8 on the owner's PC) is still collected. }
+      if (not Found) and (Elapsed(JobPollAt) < JOB_ASK_MS) then
         Exit;
+      if (not Found) and FileExists(ExecResultFile) and (Text = '') then
+        Log('Job ' + JobName + ': the result file exists but this process cannot read it.');
+      JobPollAt := GetTickCount;
+      JobResultAt := GetTickCount;
       JobResultOut := NewOut('job-result');
-      StartHelper('job-result', RunId, JobResultOut, '-RequestId ' + JobRequestId);
+      if not StartHelper('job-result', RunId, JobResultOut, '-RequestId ' + JobRequestId) then
+      begin
+        Log('Job ' + JobName + ': the job-result helper did not start.');
+        JobCode := 'helper_failed';
+        JobState := JOB_DONE;
+        ClosePipe;
+      end;
       Exit;
     end;
     Code := ReadResultCode(JobResultOut);
+    if (Code = '') and (Elapsed(JobResultAt) > JOB_ANSWER_MS) then
+    begin
+      Log('Job ' + JobName + ': the job-result helper gave no answer in its time.');
+      JobCode := 'helper_timeout';
+      JobState := JOB_DONE;
+      ClosePipe;
+      Exit;
+    end;
     if Code = '' then
       Exit;
     if Code <> 'done' then
@@ -951,6 +987,7 @@ begin
       JobResultOut := '';
       Exit;
     end;
+    Log('Job ' + JobName + ': result collected.');
     Text := ReadText(JobResultOut);
     JobRaw := Text;
     JobCode := JsonValueFrom(Text, 'code', Pos('"exec":', Text));
@@ -1009,48 +1046,16 @@ begin
   end;
 end;
 
-{ A pipe job waited for here (W8 correction 2): the smtp-test discard goes through the pipe like
-  every smtp-test, so Exec's input_on_disk refusal stays. Returns the job's code. }
-function RunPipeJobBlocking(Name, InputJson: String; LimitSeconds: Integer): String;
-var
-  Start: Cardinal;
-begin
-  Start := GetTickCount;
-  while JobRunning and (Elapsed(Start) < 120000) do
-  begin
-    Sleep(500);
-    PollJob;
-  end;
-  if JobRunning then
-  begin
-    Result := 'exec_busy';
-    Exit;
-  end;
-  StartJob(Name, InputJson, 'blocking', True, False, (LimitSeconds div 60) + 1);
-  Start := GetTickCount;
-  while JobRunning and (Elapsed(Start) < Cardinal(LimitSeconds * 1000)) do
-  begin
-    Sleep(500);
-    PollJob;
-  end;
-  if JobRunning then
-    Result := 'job_timeout'
-  else
-    Result := JobCode;
-  JobState := JOB_IDLE;
-  ClosePipe;
-end;
 
 { "Keep it and continue later" (spec 4.5) and D2: the staged email settings go through the pipe
   (smtp-test discard); the mark email_discarded is saved only when the engine confirms it. The
   install_started stage is kept only once the install job ran (correction 6). }
-procedure SaveContinueLater;
+function LaterSaveExtra(Discarded: Boolean): String;
 var
-  OutFile, Extra: String;
-  Discarded: Boolean;
+  Extra: String;
 begin
-  Discarded := RunPipeJobBlocking('smtp-test', '{"run_id":"' + RunId + '","mode":"discard"}', 120) = 'smtp_discarded';
-  OutFile := NewOut('save');
+  { W14-D9: the discard and the save run from the timer (Maintenance.iss, PollCloseFlow); this
+    builds only the save-progress arguments. }
   { W9 review item 6 (D2): the S09 resume of a started install keeps install_started too. }
   if (InstallStep >= 2) or (EntryNext = 'S12') or (EntryNext = 'S09') then
   begin
@@ -1066,7 +1071,7 @@ begin
   end;
   if KeptMode then
     Extra := Extra + ' -KeptMark';
-  RunHelper('save-progress', RunId, OutFile, Extra);
+  Result := Extra;
 end;
 
 { ------------------------------------------------------------------------------------------- }
@@ -1412,11 +1417,15 @@ begin
     Exit;
   { D2: after S07 the check-restart stage is never saved. A started install keeps its stage;
     else the staged email settings go and "continue later" is saved (spec 4.1). }
-  if DataPrepared and (InstallStep < 2) and (EntryNext <> 'S12') and (EntryNext <> 'S14') then
-    SaveContinueLater;
   Extra := '';
   if Firmware then
     Extra := '-Firmware';
+  if DataPrepared and (InstallStep < 2) and (EntryNext <> 'S12') and (EntryNext <> 'S14') then
+  begin
+    { W14-D9: the save runs from the timer; the restart follows it there. }
+    if Firmware then StartCloseFlow('later', 'restart-firmware') else StartCloseFlow('later', 'restart');
+    Exit;
+  end;
   OutFile := NewOut('restart');
   RunHelper('restart', RunId, OutFile, Extra);
   if ReadResultCode(OutFile) = 'restarting' then
@@ -1872,9 +1881,23 @@ end;
 { S07 Where to keep your data, and the background preparation (plan page 4a)                    }
 { ------------------------------------------------------------------------------------------- }
 
-procedure ReadDataDrives;
+{ The drive that the check's C07 row names (the drive with the most space), or ''. }
+function C07Drive: String;
 var
-  OutFile, Text, Rest, Letter, DriveType, FileSystem: String;
+  I: Integer;
+begin
+  Result := '';
+  for I := 0 to GetArrayLength(Items) - 1 do
+    if Items[I].Id = 'C07' then
+      Result := Uppercase(JsonValue(Items[I].Raw, 'letter'));
+end;
+
+{ The S07 drive list from the helper's "drives" result, largest first. W14-D7: the selected
+  drive is the C07 drive when the list holds it, else the first (largest) one, whatever DataRoot
+  held before. }
+procedure LoadDataDrives(Text: String);
+var
+  Rest, Letter, DriveType, FileSystem, Best: String;
   Start, Count, I, J: Integer;
   FreeBytes: Int64;
   SwapS: String;
@@ -1882,9 +1905,6 @@ var
 begin
   SetArrayLength(DriveLetters, 0);
   SetArrayLength(DriveFree, 0);
-  OutFile := NewOut('drives');
-  RunHelper('drives', RunId, OutFile, '');
-  Text := ReadText(OutFile);
   Count := 0;
   Rest := Text;
   Start := Pos('"letter":"', Rest);
@@ -1915,8 +1935,25 @@ begin
         SwapS := DriveLetters[I]; DriveLetters[I] := DriveLetters[J]; DriveLetters[J] := SwapS;
         SwapF := DriveFree[I]; DriveFree[I] := DriveFree[J]; DriveFree[J] := SwapF;
       end;
-  if (DataRoot = '') and (Count > 0) then
-    DataRoot := DriveLetters[0] + '\SlateOps';
+  if not DataPrepared then
+  begin
+    Best := C07Drive;
+    DataRoot := '';
+    for I := 0 to Count - 1 do
+      if CompareText(DriveLetters[I], Best) = 0 then
+        DataRoot := DriveLetters[I] + '\SlateOps';
+    if (DataRoot = '') and (Count > 0) then
+      DataRoot := DriveLetters[0] + '\SlateOps';
+  end;
+end;
+
+procedure ReadDataDrives;
+var
+  OutFile: String;
+begin
+  OutFile := NewOut('drives');
+  RunHelper('drives', RunId, OutFile, '');
+  LoadDataDrives(ReadText(OutFile));
 end;
 
 function GB(Bytes: Int64): String;
@@ -1959,6 +1996,12 @@ end;
 
 procedure DriveRadioClick(Sender: TObject);
 begin
+  { W14-D7: no change while S07 draws, and no redraw for the drive that is already selected (a
+    radio that gets the focus is checked by Windows). }
+  if DataRendering then
+    Exit;
+  if CompareText(Copy(DataRoot, 1, 2), DriveLetters[TNewRadioButton(Sender).Tag]) = 0 then
+    Exit;
   DataRoot := DriveLetters[TNewRadioButton(Sender).Tag] + '\SlateOps';
   DataError := '';
   RenderPage(P_DATA);
@@ -2039,6 +2082,8 @@ var
   Link: TNewLinkLabel;
   Button: TNewButton;
 begin
+  DataRendering := True;
+  try
   BeginBody(P_DATA);
   AddStageLine(2);
   WizardForm.NextButton.Caption := CM('btn_next');
@@ -2138,6 +2183,13 @@ begin
   { W9-3: newer, older (W13b) or unreadable kept data, and "Start new" in a kept folder, keep
     Next off until the folder changes. }
   WizardForm.NextButton.Enabled := (DataRoot <> '') and not DataStarted and ((KeptState = '') or KeptMode);
+  { W14-D7: the selected drive takes the focus, so Windows checks no other radio. }
+  for I := 0 to GetArrayLength(DriveRadios) - 1 do
+    if DriveRadios[I].Checked and DriveRadios[I].CanFocus then
+      WizardForm.ActiveControl := DriveRadios[I];
+  finally
+    DataRendering := False;
+  end;
 end;
 
 { The folder that the person picked must be on a listed drive (spec S07 "drive too small"). }
@@ -4028,6 +4080,7 @@ begin
     PollKey;
     PollMaint;
     PollUpdate;
+    PollCloseFlow;
     if (Pages[P_EMAIL] <> nil) and (WizardForm.CurPageID = Pages[P_EMAIL].ID) and (MailChangedAt > 0) and (Elapsed(MailChangedAt) > 1500) then
     begin
       MailChangedAt := 0;
@@ -4049,17 +4102,10 @@ end;
 { Cancel (spec 4.5)                                                                             }
 { ------------------------------------------------------------------------------------------- }
 
-procedure KeepAndClose(EmailDiscarded: Boolean);
-begin
-  { Waits for the running step (spec 4.5), then the discard through the pipe and the stage. }
-  SaveContinueLater;
-end;
-
 procedure ContinueLaterClick(Sender: TObject; const Link: String; LinkType: TSysLinkType);
 begin
-  KeepAndClose(False);
-  ForceClose := True;
-  WizardForm.Close;
+  { W14-D9: from the timer; setup closes when the progress is saved. }
+  StartCloseFlow('later', 'close');
 end;
 
 procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);
@@ -4067,6 +4113,13 @@ var
   OutFile: String;
 begin
   Confirm := False;
+  { W14-D9: while "Continue later" or "Remove everything" runs, the window stays; it closes
+    by itself at the end. }
+  if CloseFlowRunning then
+  begin
+    Cancel := False;
+    Exit;
+  end;
   { W13b P2-4: M05 never removes anything. It closes when no step is in flight, after a result,
     and in the slow state of the engine job (UpdCanStop). }
   if EntryScreen = 'M05' then
@@ -4091,12 +4144,12 @@ begin
     { Spec 4.5 (W9): "Remove everything setup added" (default) or "Keep it and continue later". }
     case AskCancelChoice of
       1: begin
-           RemoveEverything;
-           Cancel := True;
+           StartCloseFlow('remove', 'close');
+           Cancel := False;
          end;
       2: begin
-           KeepAndClose(False);
-           Cancel := True;
+           StartCloseFlow('later', 'close');
+           Cancel := False;
          end;
     else
       Cancel := False;
@@ -4510,6 +4563,11 @@ begin
   Result := True;
   if SELF_TEST then
     Exit;
+  if CloseFlowRunning then
+  begin
+    Result := False;
+    Exit;
+  end;
   { W13b: M05 runs on its page; Inno moves on (its file copy) only after the engine succeeded. }
   if (EntryScreen = 'M05') and (CurPageID = Pages[P_UPDATE].ID) then
   begin

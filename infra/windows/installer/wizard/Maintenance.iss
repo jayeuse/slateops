@@ -839,28 +839,192 @@ begin
   end;
 end;
 
-{ "Remove everything setup added" (spec 4.5): the uninstall steps with "Delete everything". With
-  kept data the disk goes back to kept\ instead, never deleted (W9 kept-data branch). }
-procedure RemoveEverything;
+{ W14-D9: "Keep it and continue later" (spec 4.5, 7.6 "S09 Continue later") and "Remove everything
+  setup added" (7.6 "Cancel Remove everything") run from the wizard's timer, one step at a time,
+  each with its time limit; the window stays responsive and shows one line with the step and the
+  time so far. At the end setup closes (or restarts this PC); a step past its limit is logged and
+  the flow goes on, and a save that fails shows its message and gives the buttons back.
+  Flows: 'later' = wait for the running step, discard the staged email settings (smtp-test
+  discard through the pipe), save the progress; 'remove' = wait for the running step, stop
+  Slate Operations, remove the data (kept data goes back to kept\), remove the Windows settings. }
+const
+  CLOSE_WAIT_MS = 120000;
+  CLOSE_STEP_MS = 600000;
+
 var
-  Start: Cardinal;
+  CloseFlow, CloseAfter, ClosePhase, CloseOut, CloseLine: String;
+  CloseAt, CloseStartedAt: Cardinal;
+  CloseStatus: TNewStaticText;
+
+function CloseFlowRunning: Boolean;
 begin
-  Start := GetTickCount;
-  while JobRunning and (Elapsed(Start) < 120000) do
+  Result := ClosePhase <> '';
+end;
+
+function CloseTimeText: String;
+var
+  Seconds: Cardinal;
+begin
+  Seconds := Elapsed(CloseStartedAt) div 1000;
+  Result := IntToStr(Seconds div 60) + ':' + Copy(IntToStr(100 + (Seconds mod 60)), 2, 2);
+end;
+
+procedure ShowCloseStatus(Text: String);
+begin
+  if CloseStatus = nil then
   begin
-    Sleep(1000);
-    PollJob;
+    CloseStatus := TNewStaticText.Create(WizardForm);
+    CloseStatus.Parent := WizardForm;
+    CloseStatus.AutoSize := False;
+    CloseStatus.ShowAccelChar := False;
+    CloseStatus.WordWrap := True;
+    CloseStatus.SetBounds(WizardForm.InnerNotebook.Left, WizardForm.Bevel.Top - ScaleY(22),
+      WizardForm.InnerNotebook.Width, ScaleY(18));
   end;
-  WizardForm.BeveledLabel.Caption := ' ' + CM('u03_remove');
-  WizardForm.Refresh;
-  NewOutRun('uninstall-stop', '');
-  { W9 review item 1 (QA W9-B1): kept data in the folder goes back to kept\, never deleted,
-    whatever mode this run of setup is in. }
-  if (DataRoot <> '') and FileExists(AddBackslash(DataRoot) + 'kept\kept.json') then
-    NewOutRun('kept-return', '')
+  CloseStatus.Caption := Text;
+  CloseStatus.Visible := Text <> '';
+  CloseStatus.BringToFront;
+end;
+
+procedure CloseStep(Phase, Line, Action, Extra: String);
+begin
+  ClosePhase := Phase;
+  CloseAt := GetTickCount;
+  CloseOut := '';
+  CloseLine := Line;
+  if Action <> '' then
+  begin
+    CloseOut := NewOut(Action);
+    StartHelper(Action, RunId, CloseOut, Extra);
+  end;
+  ShowCloseStatus(Line + ' ' + CloseTimeText);
+  Log('Close flow ' + CloseFlow + ': ' + Phase);
+end;
+
+procedure StartCloseFlow(Flow, After: String);
+begin
+  if ClosePhase <> '' then
+    Exit;
+  CloseFlow := Flow;
+  CloseAfter := After;
+  CloseStartedAt := GetTickCount;
+  WizardForm.NextButton.Enabled := False;
+  WizardForm.BackButton.Enabled := False;
+  WizardForm.CancelButton.Enabled := False;
+  CloseStep('wait', CM('later_waiting'), '', '');
+end;
+
+procedure EndCloseFlow;
+var
+  OutFile, Extra: String;
+begin
+  ClosePhase := '';
+  { The self-test runs a flow with no end action. }
+  if CloseAfter = 'none' then
+    Exit;
+  if CloseAfter = 'close' then
+  begin
+    ForceClose := True;
+    WizardForm.Close;
+    Exit;
+  end;
+  Extra := '';
+  if CloseAfter = 'restart-firmware' then
+    Extra := '-Firmware';
+  ShowCloseStatus(CM('later_restarting'));
+  OutFile := NewOut('restart');
+  RunHelper('restart', RunId, OutFile, Extra);
+  if ReadResultCode(OutFile) = 'restarting' then
+  begin
+    ForceClose := True;
+    WizardForm.Close;
+  end;
+end;
+
+{ A failed save: the message stays, and the buttons come back. }
+procedure FailCloseFlow(Text: String);
+begin
+  ClosePhase := '';
+  ShowCloseStatus(Text);
+  WizardForm.NextButton.Enabled := True;
+  WizardForm.BackButton.Enabled := True;
+  WizardForm.CancelButton.Enabled := True;
+end;
+
+{ From the timer. }
+procedure PollCloseFlow;
+var
+  Code: String;
+begin
+  if ClosePhase = '' then
+    Exit;
+  if ClosePhase = 'wait' then
+  begin
+    if JobRunning and (Elapsed(CloseAt) < CLOSE_WAIT_MS) then
+    begin
+      ShowCloseStatus(CM('later_waiting') + ' ' + CloseTimeText);
+      Exit;
+    end;
+    if JobRunning then
+      Log('Close flow: the running step did not end in its time; setup goes on.');
+    JobState := JOB_IDLE;
+    ClosePipe;
+    if CloseFlow = 'later' then
+    begin
+      ClosePhase := 'discard';
+      CloseAt := GetTickCount;
+      ShowCloseStatus(CM('later_discarding') + ' ' + CloseTimeText);
+      StartJob('smtp-test', '{"run_id":"' + RunId + '","mode":"discard"}', 'discard', True, False, 2);
+    end
+    else
+      CloseStep('stop', CM('remove_stopping'), 'uninstall-stop', '');
+    Exit;
+  end;
+  if ClosePhase = 'discard' then
+  begin
+    if (JobState <> JOB_DONE) and (Elapsed(CloseAt) < CLOSE_WAIT_MS) then
+    begin
+      ShowCloseStatus(CM('later_discarding') + ' ' + CloseTimeText);
+      Exit;
+    end;
+    { The mark email_discarded only when the engine confirms the discard (D2). }
+    Code := '';
+    if JobState = JOB_DONE then
+      Code := JobCode;
+    JobState := JOB_IDLE;
+    ClosePipe;
+    CloseStep('save', CM('later_saving'), 'save-progress', LaterSaveExtra(Code = 'smtp_discarded'));
+    Exit;
+  end;
+  { The helper steps. }
+  Code := ReadResultCode(CloseOut);
+  if (Code = '') and (Elapsed(CloseAt) < CLOSE_STEP_MS) then
+  begin
+    ShowCloseStatus(CloseLine + ' ' + CloseTimeText);
+    Exit;
+  end;
+  if Code = '' then
+    Log('Close flow: ' + ClosePhase + ' gave no result in its time.');
+  if ClosePhase = 'save' then
+  begin
+    if Code <> 'saved' then
+      FailCloseFlow(CM('later_save_failed'))
+    else
+      EndCloseFlow;
+  end
+  else if ClosePhase = 'stop' then
+  begin
+    { W9 review item 1 (QA W9-B1): kept data in the folder goes back to kept\, never deleted,
+      whatever mode this run of setup is in. }
+    if (DataRoot <> '') and FileExists(AddBackslash(DataRoot) + 'kept\kept.json') then
+      CloseStep('data', FM1('remove_moving_kept', AddBackslash(DataRoot) + 'kept'), 'kept-return', '')
+    else
+      CloseStep('data', FM1('remove_data', DataRoot), 'uninstall-data', '');
+  end
+  else if ClosePhase = 'data' then
+    CloseStep('windows', CM('remove_windows'), 'remove-windows', '')
   else
-    NewOutRun('uninstall-data', '');
-  NewOutRun('remove-windows', '');
+    EndCloseFlow;
 end;
 
 { ------------------------------------------------------------------------------------------- }
