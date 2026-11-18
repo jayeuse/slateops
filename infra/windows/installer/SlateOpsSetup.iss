@@ -59,6 +59,11 @@ DisableReadyPage=yes
 UninstallDisplayName=Slate Operations
 
 [Files]
+#ifdef SelfTest
+; W14-D1: the self-test's check results (tests\fixtures; the owner's rc.20 C04 row).
+Source: "tests\fixtures\check-owner.json"; DestDir: "{tmp}"; Flags: dontcopy
+Source: "tests\fixtures\check-ready.json"; DestDir: "{tmp}"; Flags: dontcopy
+#endif
 #ifdef PayloadDir
 ; The payload first (help: files extracted on demand go at the top). dontcopy: the wizard
 ; extracts each part when its page needs it; the helper copies it into the admin-only tree.
@@ -117,3 +122,6 @@ UninstalledMost=Uninstall finished. Some items could not be removed. Setup remov
 #include "wizard\Wizard.iss"
 #include "wizard\Maintenance.iss"
 #include "wizard\Uninstall.iss"
+#ifdef SelfTest
+#include "wizard\SelfTest.iss"
+#endif

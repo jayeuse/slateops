@@ -51,6 +51,12 @@ const
 #else
   HAS_SETTINGS = False;
 #endif
+  { W14-D1: the [Code] self-test build (/DSelfTest, wizard\SelfTest.iss) installs nothing. }
+#ifdef SelfTest
+  SELF_TEST = True;
+#else
+  SELF_TEST = False;
+#endif
   UNINSTALL_KEY = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{8B0C1D7E-3F4A-4E52-9A61-5C2D7B9E0F13}_is1';
   CHECK_LIMIT_MS = 300000;
   DATA_LIMIT_MS = 1800000;
@@ -260,6 +266,9 @@ function MaintSkip(PageID: Integer): Boolean; forward;
 function AskCancelChoice: Integer; forward;
 procedure RemoveEverything; forward;
 function SettingsEntry: Boolean; forward;
+#ifdef SelfTest
+procedure RunSelfTest; forward;
+#endif
 { W9 review item 1: SaveContinueLater reads the kept mode. }
 function KeptMode: Boolean; forward;
 { W13b part 2, in Maintenance.iss. }
@@ -4120,6 +4129,15 @@ function InitializeSetup(): Boolean;
 var
   OutFile, Text, VersionText, StateText: String;
 begin
+#ifdef SelfTest
+  { The self-test reads no PC state and starts no helper. }
+  SetupVersion := '{#AppVersion}';
+  HostName := DnsHostName('');
+  RunId := NewRunId('install');
+  EntryScreen := 'S01';
+  Result := True;
+  Exit;
+#endif
   ExtractTemporaryFiles('{tmp}\scripts\*.ps1');
   ExtractTemporaryFiles('{tmp}\scripts\lib\*.ps1');
   try
@@ -4253,6 +4271,10 @@ begin
   ExtraButton.Visible := False;
   ExtraButton.SetBounds(WizardForm.BackButton.Left - ScaleX(130), WizardForm.BackButton.Top, ScaleX(120), WizardForm.BackButton.Height);
   WizardReady := True;
+#ifdef SelfTest
+  RunSelfTest;
+  Exit;
+#endif
   SetTimer(0, 0, 1000, CreateCallback(@TimerTick));
   if BgResume then
     StartBgStep;
@@ -4268,6 +4290,11 @@ var
   Resumed: Boolean;
 begin
   Result := False;
+  if SELF_TEST then
+  begin
+    Result := True;
+    Exit;
+  end;
   Resumed := EntryScreen = 'S06';
   { W13b: M05 shows its page, then Inno's file copy and the finished page; no key page. }
   if EntryScreen = 'M05' then
@@ -4308,10 +4335,40 @@ begin
     Result := True;
 end;
 
+{ S15 (spec S15); a procedure, so the W14 self-test draws it too. }
+procedure RenderFinishedPage;
+var
+  Text: String;
+begin
+  WizardForm.FinishedHeadingLabel.Caption := CM('s15_title');
+  { Design B9: after a resume the email address and the security code can be unknown. }
+  if KeptMode then
+    Text := ''
+  else if Trim(OrgEmail.Text) = '' then
+    Text := CM('s15_step1_no_address')
+  else
+    Text := FM1('s15_step1', Trim(OrgEmail.Text));
+  if Text <> '' then
+    Text := Text + #13#10#13#10;
+  Text := Text + CM('s15_step2') + #13#10#13#10 + CM('s15_step3') + #13#10 + 'http://' + HostName + '.local/trust';
+  if SecurityCode <> '' then
+    Text := Text + #13#10 + FM1('s15_security', SecurityCode);
+  WizardForm.FinishedLabel.Caption := Text + #13#10#13#10 + CM('s15_desk') + #13#10#13#10 + CM('s15_starts');
+  WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);
+  WizardForm.NextButton.Caption := CM('s15_finish');
+  ExtraButton.Parent := WizardForm;
+  ExtraButton.Caption := CM('s15_open');
+  ExtraButton.Width := WizardForm.CalculateButtonWidth([CM('s15_open')]);
+  ExtraButton.OnClick := @OpenAppClick;
+  ExtraButton.Visible := True;
+end;
+
 procedure CurPageChanged(CurPageID: Integer);
 var
   OutFile, Text: String;
 begin
+  if SELF_TEST then
+    Exit;
   WizardForm.BeveledLabel.Caption := '';
   if ExtraButton <> nil then
     ExtraButton.Visible := False;
@@ -4443,29 +4500,7 @@ begin
     WizardForm.NextButton.Caption := CM('s15_finish');
   end
   else if CurPageID = wpFinished then
-  begin
-    WizardForm.FinishedHeadingLabel.Caption := CM('s15_title');
-    { Design B9: after a resume the email address and the security code can be unknown. }
-    if KeptMode then
-      Text := ''
-    else if Trim(OrgEmail.Text) = '' then
-      Text := CM('s15_step1_no_address')
-    else
-      Text := FM1('s15_step1', Trim(OrgEmail.Text));
-    if Text <> '' then
-      Text := Text + #13#10#13#10;
-    Text := Text + CM('s15_step2') + #13#10#13#10 + CM('s15_step3') + #13#10 + 'http://' + HostName + '.local/trust';
-    if SecurityCode <> '' then
-      Text := Text + #13#10 + FM1('s15_security', SecurityCode);
-    WizardForm.FinishedLabel.Caption := Text + #13#10#13#10 + CM('s15_desk') + #13#10#13#10 + CM('s15_starts');
-    WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);
-    WizardForm.NextButton.Caption := CM('s15_finish');
-    ExtraButton.Parent := WizardForm;
-    ExtraButton.Caption := CM('s15_open');
-    ExtraButton.Width := WizardForm.CalculateButtonWidth([CM('s15_open')]);
-    ExtraButton.OnClick := @OpenAppClick;
-    ExtraButton.Visible := True;
-  end;
+    RenderFinishedPage;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -4473,6 +4508,8 @@ var
   OutFile: String;
 begin
   Result := True;
+  if SELF_TEST then
+    Exit;
   { W13b: M05 runs on its page; Inno moves on (its file copy) only after the engine succeeded. }
   if (EntryScreen = 'M05') and (CurPageID = Pages[P_UPDATE].ID) then
   begin

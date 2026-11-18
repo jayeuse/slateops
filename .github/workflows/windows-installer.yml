@@ -65,6 +65,39 @@ jobs:
           & (Join-Path $dir 'ISCC.exe') /Qp /DAppVersion=0.0.0 "/DSettingsExe=$settings" SlateOpsSetup.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-ChildItem -LiteralPath output | Format-Table -AutoSize Name, Length
+      - name: Run the setup program's [Code] self-test (W14-D1)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-Location infra\windows\installer
+          $iscc = Join-Path $env:RUNNER_TEMP 'innosetup\ISCC.exe'
+          # TASK-0097: each build runs hidden, writes one result file and installs nothing. The
+          # red build adds the W14-D1 pattern (an "array of String" handed to FmtMessage) and
+          # must report it as a fault.
+          foreach ($build in @(@{ Name = 'SlateOpsSelfTest'; Red = $false }, @{ Name = 'SlateOpsSelfTestRed'; Red = $true })) {
+            $defines = @('/DAppVersion=0.0.0', '/DSelfTest')
+            if ($build.Red) { $defines += '/DSelfTestRed' }
+            & $iscc /Qp @defines ('/F' + $build.Name) SlateOpsSetup.iss
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $result = Join-Path $env:RUNNER_TEMP ($build.Name + '.txt')
+            $log = Join-Path $env:RUNNER_TEMP ($build.Name + '.log')
+            $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/SELFTESTOUT="{0}"' -f $result), ('/LOG="{0}"' -f $log))
+            $process = Start-Process -FilePath ('output\' + $build.Name + '.exe') -ArgumentList $arguments -Wait -PassThru
+            Write-Host ('{0}: exit code {1}' -f $build.Name, $process.ExitCode)
+            if (-not (Test-Path -LiteralPath $result)) {
+              Get-Content -LiteralPath $log -ErrorAction SilentlyContinue
+              throw ('{0} wrote no result file.' -f $build.Name)
+            }
+            $lines = @(Get-Content -LiteralPath $result)
+            $lines | ForEach-Object { Write-Host $_ }
+            if ($lines -notcontains 'DONE') { throw ('{0} did not finish.' -f $build.Name) }
+            $failed = @($lines | Where-Object { $_ -like 'FAIL *' })
+            if ($build.Red) {
+              if (@($failed | Where-Object { $_ -like 'FAIL open-array*' }).Count -eq 0) { throw 'The open-array call did not fault: the W14-D1 cause is elsewhere.' }
+              $failed = @($failed | Where-Object { $_ -notlike 'FAIL open-array*' })
+            }
+            if ($failed.Count -gt 0) { throw ('{0}: {1} step(s) failed.' -f $build.Name, $failed.Count) }
+          }
       - name: Run the Windows-side script tests in Windows PowerShell 5.1
         shell: powershell
         run: |

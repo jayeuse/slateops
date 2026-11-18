@@ -897,4 +897,7 @@ begin
   Result := '';
   if SETTINGS_BUILD then
     Result := CM('m01_not_installed');
+  { W14-D1: the self-test build stops here; its result file is written. }
+  if SELF_TEST then
+    Result := 'Self-test finished.';
 end;

@@ -147,7 +147,8 @@ class WindowsInstallerWorkflowTest(unittest.TestCase):
         self.assertIn("runs-on: windows-latest", self.source)
         steps = re.findall(r"(?ms)^      - name: .*?(?=^      - |\Z)", self.source)
         run_steps = [step for step in steps if "run: |" in step]
-        self.assertEqual(len(run_steps), 2)
+        # Compile, the [Code] self-test (W14-D1, TASK-0097), the script tests.
+        self.assertEqual(len(run_steps), 3)
         for step in run_steps:
             with self.subTest(step=step.splitlines()[0]):
                 self.assertIn("shell: powershell\n", step)
@@ -825,6 +826,46 @@ class W14DefectTest(unittest.TestCase):
             r"if CheckDrawFailed then\s+begin\s+CheckDrawFailed := False;\s+"
             r"StartCheck\('check', 'S02'\);",
         )
+
+    def test_w14_d1_ci_runs_the_code_self_test_with_a_red_control(self) -> None:
+        # Parent decision: a /DSelfTest build runs the [Code] on the Windows runner (hidden) and
+        # fails the job on any fault; a /DSelfTestRed build must report the W14-D1 pattern.
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        step = workflow.split("name: Run the setup program's [Code] self-test (W14-D1)", 1)
+        self.assertEqual(len(step), 2, "the self-test step exists")
+        body = step[1].split("\n      - name:", 1)[0]
+        for text in ("/DSelfTest", "/DSelfTestRed", "/SELFTESTOUT=", "/VERYSILENT", "'DONE'"):
+            with self.subTest(text=text):
+                self.assertIn(text, body)
+        self.assertIn("FAIL open-array", body)
+        self.assertLess(workflow.index("self-test (W14-D1)"), workflow.index("run-tests.ps1"))
+        selftest = (INSTALLER / "wizard/SelfTest.iss").read_text(encoding="ascii")
+        for call in (
+            "FM1(",
+            "FM2(",
+            "FM3(",
+            "RenderCheckBody;",
+            "P_EMAIL",
+            "P_READY",
+            "P_INSTALL",
+            "P_KEY",
+            "RenderFinishedPage",
+            "P_MAINT",
+            "P_UPDATE",
+            "'check-owner.json'",
+            "'check-ready.json'",
+        ):
+            with self.subTest(call=call):
+                self.assertIn(call, selftest)
+        owner = (INSTALLER / "tests/fixtures/check-owner.json").read_text(encoding="ascii")
+        self.assertIn(
+            '{"id":"C04","class":"fix","code":"off","values":{"uefi":true,'
+            '"bitlocker_caution":false,"maker":"Gigabyte Technology Co., Ltd."}}',
+            owner,
+        )
+        self.assertEqual(owner.count('{"id":"C'), 30)
+        iss = ISS.read_text(encoding="ascii")
+        self.assertIn('#ifdef SelfTest\n#include "wizard\\SelfTest.iss"\n#endif', iss)
 
     def test_w14_d1_s02_offers_save_report(self) -> None:
         items = routine(self.raw, "procedure AddCheckItems(OnlyFix: Boolean);")
