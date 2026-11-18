@@ -1322,6 +1322,41 @@ class W14Part3Test(unittest.TestCase):
         self.assertEqual(copy.get("drive_local_disk"), "Local Disk")
         self.assertIn("external 'GetVolumeInformationW@kernel32.dll stdcall';", self.raw)
 
+    def test_w14_d3_s09_other_uses_two_rows_and_must_fit(self) -> None:
+        # Parent decision (2026-11-18, option 1): with Other, Server and Port share a row and User
+        # name and Password share a row; the only exception to the full-width rule (spec 6.1 rule
+        # 9). The self-test FAILs when that state does not end above the status line.
+        layout = routine(self.raw, "procedure LayoutMail;\nvar")
+        self.assertIn(
+            "MailPort.SetBounds(Full - PortWidth, Y, PortWidth, MailPort.Height);", layout
+        )
+        self.assertIn(
+            "MailPassword.SetBounds(Half + ScaleX(16), Y, Half, MailPassword.Height);", layout
+        )
+        # The wizard is 165% high (parent decision); Inno 6.7.4 caps WizardSizePercent at 150,
+        # so the [Code] adds the rest before any page is built.
+        start = routine(self.raw, "procedure InitializeWizard;")
+        self.assertLess(
+            start.index("WizardForm.ClientHeight := (WizardForm.ClientHeight * 165) div 150;"),
+            start.index("CreateCustomPage("),
+        )
+        self.assertIn("WizardSizePercent=150,150\n", ISS.read_text(encoding="ascii"))
+        # "Show" on the Password label's line (parent decision, 2026-11-18).
+        self.assertIn(
+            "MailShow.SetBounds(Full - ShowWidth, Y, ShowWidth, MailShow.Height);", layout
+        )
+        spec = (ROOT / "docs/specs/windows-installer-wizard.md").read_text(encoding="utf-8")
+        rule = spec.split("  9. **Forms (S08, S09, M02, M03).**", 1)[1].split("\n", 1)[0]
+        self.assertIn("The only exception to the full width: S09 with Other selected", rule)
+        self.assertIn('"Show" sits at the right end of the Password label\'s line', rule)
+        selftest = (INSTALLER / "wizard/SelfTest.iss").read_text(encoding="ascii")
+        forms = routine(selftest, "procedure SelfFormPages;")
+        self.assertIn(
+            "SelfRecord('W14-D3 S09 Other with every field fits above the status line', Ok,", forms
+        )
+        self.assertIn("MailLater.Top + MailLater.Height <= StatusBandTop - ScaleY(12)", forms)
+        self.assertNotIn("SelfInfo('W14-D3 S09 Other, every field'", forms)
+
     def test_w14_d6_the_copy_names_what_setup_did(self) -> None:
         copy = read_copy()
         for key, value in SPEC_NAMED_COPY.items():

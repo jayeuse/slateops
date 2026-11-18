@@ -110,6 +110,7 @@ begin
       Bad := Bad + ' content ' + IntToStr(CurY) + ' > ' + IntToStr(Limit);
     end;
     SelfRecord(Name + ' layout', Ok, Bad);
+    SelfInfo(Name + ' height', 'content ends at ' + IntToStr(CurY) + ', limit ' + IntToStr(Limit));
   except
     SelfRecord(Name + ' layout', False, GetExceptionMessage);
   end;
@@ -246,7 +247,10 @@ begin
       and (OrgNameLabel.Top >= OrgTop)
       and (OrgMoreHelp.Top + OrgMoreHelp.Height <= StatusBandTop - ScaleY(12));
     SelfRecord('W14-D3 S08 More options and the error under its field', Ok,
-      'error at ' + IntToStr(OrgError.Top) + ', email at ' + IntToStr(OrgEmail.Top));
+      'error at ' + IntToStr(OrgError.Top) + ', email at ' + IntToStr(OrgEmail.Top) + ', ends at '
+      + IntToStr(OrgMoreHelp.Top + OrgMoreHelp.Height) + ', limit ' + IntToStr(StatusBandTop - ScaleY(12)));
+    SelfInfo('S08 height', 'content ends at ' + IntToStr(OrgMoreHelp.Top + OrgMoreHelp.Height) + ', limit '
+      + IntToStr(StatusBandTop - ScaleY(12)) + ', page ' + IntToStr(Pages[P_ORG].SurfaceHeight));
     OrgError.Caption := '';
     OrgErrorAfter := nil;
     LayoutOrg;
@@ -261,12 +265,31 @@ begin
     Ok := (MailLater.Top > MailSender.Top) and (MailLater.Top + MailLater.Height <= StatusBandTop - ScaleY(12))
       and (MailM365.Left >= MailGmail.Left + MailGmail.Width + ScaleX(16)) and (MailFromLabel.Top >= MailTop);
     SelfRecord('W14-D3 S09 rhythm, radios and Continue later', Ok,
-      'later ends at ' + IntToStr(MailLater.Top + MailLater.Height) + ', status line at ' + IntToStr(StatusBandTop));
-    { The tallest state (Other, every field): measured for the open layout decision. }
+      'later ends at ' + IntToStr(MailLater.Top + MailLater.Height) + ', limit ' + IntToStr(StatusBandTop - ScaleY(12)));
+    SelfInfo('S09 Gmail height', 'content ends at ' + IntToStr(MailLater.Top + MailLater.Height) + ', limit '
+      + IntToStr(StatusBandTop - ScaleY(12)) + ', page ' + IntToStr(Pages[P_EMAIL].SurfaceHeight));
+    { The tallest state (parent decision, 2026-11-18): Other with every field, More options, an
+      error under the password and the status line. Server and Port share a row, User name and
+      Password share a row (6.1 rule 9, its only exception); it must end inside the page. }
     MailOther.Checked := True;
+    MailError.Caption := CM('s09_err_auth');
+    MailStatus.Caption := '';
+    ShowStatusLine(FM4('bg_line', '3', '7', CM('step_bg_import'), '2:10'));
     LayoutMail;
-    SelfInfo('W14-D3 S09 Other, every field', 'Continue later ends at ' + IntToStr(MailLater.Top + MailLater.Height)
-      + ', the status line starts at ' + IntToStr(StatusBandTop) + ', page height ' + IntToStr(Pages[P_EMAIL].SurfaceHeight));
+    Ok := (MailLater.Top + MailLater.Height <= StatusBandTop - ScaleY(12))
+      and (MailPort.Top = MailServer.Top) and (MailPassword.Top = MailUser.Top)
+      and (MailPort.Left >= MailServer.Left + MailServer.Width + ScaleX(16))
+      and (MailPassword.Left >= MailUser.Left + MailUser.Width + ScaleX(16))
+      and MailSender.Visible and MailUser.Visible and MailPort.Visible and MailError.Visible
+      and (MailError.Left = MailPassword.Left)
+      and (MailShow.Top < MailPassword.Top) and (MailShow.Left + MailShow.Width <= MailPassword.Left + MailPassword.Width)
+      and (MailPasswordLabel.Left + MailPasswordLabel.Width <= MailShow.Left);
+    SelfRecord('W14-D3 S09 Other with every field fits above the status line', Ok,
+      'Continue later ends at ' + IntToStr(MailLater.Top + MailLater.Height) + ', limit ' + IntToStr(StatusBandTop - ScaleY(12))
+      + ', page ' + IntToStr(Pages[P_EMAIL].SurfaceHeight));
+    SelfInfo('S09 Other height', 'content ends at ' + IntToStr(MailLater.Top + MailLater.Height) + ', limit '
+      + IntToStr(StatusBandTop - ScaleY(12)) + ', page ' + IntToStr(Pages[P_EMAIL].SurfaceHeight));
+    ShowStatusLine('');
     MailGmail.Checked := True;
     MailError.Caption := '';
     MailErrorAfter := nil;

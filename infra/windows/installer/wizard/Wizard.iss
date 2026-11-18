@@ -3764,13 +3764,15 @@ end;
   later" is the last line of the form, 16 px under the last block. }
 procedure LayoutMail;
 var
-  Y: Integer;
+  Y, Full, Half, PortWidth, ShowWidth: Integer;
   Gmail, M365, Other: Boolean;
 begin
   Gmail := MailGmail.Checked and not MailOutlook;
   M365 := MailM365.Checked and not MailOutlook;
   Other := MailOther.Checked;
   MailError.Visible := False;
+  { The error is full width except under the password of the Other rows. }
+  MailError.SetBounds(0, MailError.Top, MailFrom.Width, MailError.Height);
   Y := MailTop;
   Place(MailFromLabel, Y, True, ScaleY(4));
   Place(MailFrom, Y, True, ScaleY(4));
@@ -3801,12 +3803,23 @@ begin
     MailNote.Visible := False;
     if Other then
     begin
-      Place(MailServerLabel, Y, True, ScaleY(4));
-      Place(MailServer, Y, True, ScaleY(4));
+      { 6.1 rule 9, its only exception (parent decision, 2026-11-18): with Other, Server and
+        Port share one row and User name and Password share one row, so every field fits
+        above the status line. Each field keeps its block: label, 4 px, field, 4 px. }
+      Full := MailFrom.Width;
+      Half := (Full - ScaleX(16)) div 2;
+      PortWidth := ScaleX(80);
+      MailServerLabel.SetBounds(0, Y, Full - PortWidth - ScaleX(16), MailServerLabel.Height);
+      MailPortLabel.SetBounds(Full - PortWidth, Y, PortWidth, MailPortLabel.Height);
+      MailServerLabel.Visible := True;
+      MailPortLabel.Visible := True;
+      Y := Y + MailServerLabel.Height + ScaleY(4);
+      MailServer.SetBounds(0, Y, Full - PortWidth - ScaleX(16), MailServer.Height);
+      MailPort.SetBounds(Full - PortWidth, Y, PortWidth, MailPort.Height);
+      MailServer.Visible := True;
+      MailPort.Visible := True;
+      Y := Y + MailServer.Height + ScaleY(4);
       PlaceError(MailServer, Y);
-      Y := Y + ScaleY(8);
-      Place(MailPortLabel, Y, True, ScaleY(4));
-      Place(MailPort, Y, True, ScaleY(4));
       Y := Y + ScaleY(8);
       Place(MailSecurityLabel, Y, True, ScaleY(4));
       MailSsl.Visible := True;
@@ -3815,8 +3828,29 @@ begin
       Y := Y + MailSsl.Height + ScaleY(4);
       PlaceError(MailSsl, Y);
       Y := Y + ScaleY(8);
-      Place(MailUserLabel, Y, True, ScaleY(4));
-      Place(MailUser, Y, True, ScaleY(4));
+      { "Show" sits at the right end of the Password label's line (parent decision,
+        2026-11-18), so the row needs no line under the fields for it. }
+      MailPasswordLabel.Caption := CM('s09_password');
+      ShowWidth := RadioWidth(MailShow.Caption);
+      MailUserLabel.SetBounds(0, Y, Half, MailUserLabel.Height);
+      MailPasswordLabel.SetBounds(Half + ScaleX(16), Y, Half - ShowWidth - ScaleX(8), MailPasswordLabel.Height);
+      MailShow.SetBounds(Full - ShowWidth, Y, ShowWidth, MailShow.Height);
+      MailUserLabel.Visible := True;
+      MailPasswordLabel.Visible := True;
+      MailShow.Visible := True;
+      if MailShow.Height > MailUserLabel.Height then
+        Y := Y + MailShow.Height + ScaleY(4)
+      else
+        Y := Y + MailUserLabel.Height + ScaleY(4);
+      MailUser.SetBounds(0, Y, Half, MailUser.Height);
+      MailPassword.SetBounds(Half + ScaleX(16), Y, Half, MailPassword.Height);
+      MailUser.Visible := True;
+      MailPassword.Visible := True;
+      Y := Y + MailPassword.Height + ScaleY(4);
+      { The password's error in the password column. }
+      MailError.SetBounds(Half + ScaleX(16), MailError.Top, Half, MailError.Height);
+      PlaceError(MailPassword, Y);
+      MailHelpLink.Visible := False;
       Y := Y + ScaleY(8);
     end
     else
@@ -3830,20 +3864,24 @@ begin
       MailStartTls.Visible := False;
       Place(MailUserLabel, Y, False, 0);
       Place(MailUser, Y, False, 0);
+      { Gmail and Microsoft 365: the password block at full width. }
+      MailPasswordLabel.SetBounds(0, MailPasswordLabel.Top, MailFrom.Width, MailPasswordLabel.Height);
+      MailPassword.SetBounds(0, MailPassword.Top, MailFrom.Width, MailPassword.Height);
+      MailShow.SetBounds(0, MailShow.Top, ScaleX(120), MailShow.Height);
+      if Gmail then MailPasswordLabel.Caption := CM('s09_app_password') else MailPasswordLabel.Caption := CM('s09_password');
+      Place(MailPasswordLabel, Y, True, ScaleY(4));
+      { The help line ends with its link (Gmail: app password; Microsoft 365: the admin steps). }
+      if Gmail then
+        MailHelpLink.Caption := CM('s09_gmail_help') + ' <a href="help">' + CM('s09_gmail_link') + '</a>'
+      else if M365 then
+        MailHelpLink.Caption := CM('s09_m365_note') + ' <a href="help">' + CM('s09_m365_link') + '</a>';
+      MailHelpLink.AdjustHeight;
+      Place(MailHelpLink, Y, Gmail or M365, ScaleY(4));
+      Place(MailPassword, Y, True, ScaleY(4));
+      Place(MailShow, Y, True, ScaleY(4));
+      PlaceError(MailPassword, Y);
+      Y := Y + ScaleY(8);
     end;
-    if Gmail then MailPasswordLabel.Caption := CM('s09_app_password') else MailPasswordLabel.Caption := CM('s09_password');
-    Place(MailPasswordLabel, Y, True, ScaleY(4));
-    { The help line ends with its link (Gmail: app password; Microsoft 365: the admin steps). }
-    if Gmail then
-      MailHelpLink.Caption := CM('s09_gmail_help') + ' <a href="help">' + CM('s09_gmail_link') + '</a>'
-    else if M365 then
-      MailHelpLink.Caption := CM('s09_m365_note') + ' <a href="help">' + CM('s09_m365_link') + '</a>';
-    MailHelpLink.AdjustHeight;
-    Place(MailHelpLink, Y, Gmail or M365, ScaleY(4));
-    Place(MailPassword, Y, True, ScaleY(4));
-    Place(MailShow, Y, True, ScaleY(4));
-    PlaceError(MailPassword, Y);
-    Y := Y + ScaleY(8);
   end;
   Place(MailMoreLink, Y, not MailMore, ScaleY(4));
   Place(MailSenderLabel, Y, MailMore, ScaleY(4));
@@ -5522,6 +5560,12 @@ end;
 
 procedure InitializeWizard;
 begin
+  { W14-D3 (parent decision, 2026-11-18): the wizard is 165% high, so S09 with Other and every
+    field ends above the status line (6.1 L8, L12). Inno 6.7.4 accepts WizardSizePercent only
+    up to 150 (Compiler.SetupCompiler.pas, StrToPercentages 100..150), so the [Code] adds the
+    rest the way Inno applies the percentage: a taller client area, with the anchored controls
+    following. Before any page is built, so every surface has the new height. }
+  WizardForm.ClientHeight := (WizardForm.ClientHeight * 165) div 150;
   SetArrayLength(Pages, P_COUNT);
   SetArrayLength(Bodies, P_COUNT);
   Pages[P_MAINT] := CreateCustomPage(wpWelcome, CM('m01_title'), '');
