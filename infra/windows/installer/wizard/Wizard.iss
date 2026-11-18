@@ -3968,6 +3968,21 @@ begin
     Third.SetBounds(Second.Left + Second.Width + ScaleX(16), Y, RadioWidth(Third.Caption), Third.Height);
 end;
 
+{ W14-D10 (owner, rc.24): the Other fields are built at the top of the page. A state that does
+  not show them hides them all, so none stays at its build position over the form. }
+procedure HideMailOtherFields;
+begin
+  MailServerLabel.Visible := False;
+  MailServer.Visible := False;
+  MailPortLabel.Visible := False;
+  MailPort.Visible := False;
+  MailSecurityLabel.Visible := False;
+  MailSsl.Visible := False;
+  MailStartTls.Visible := False;
+  MailUserLabel.Visible := False;
+  MailUser.Visible := False;
+end;
+
 { Shows the fields of the chosen provider in order (spec S09 "Fields, in order"). W14-D3 (6.1
   L9): the field blocks with the 4 / 12 px rhythm; the help link ends its help line; "Continue
   later" is the last line of the form, 16 px under the last block. }
@@ -4005,6 +4020,7 @@ begin
     Place(MailPasswordLabel, Y, False, 0);
     Place(MailPassword, Y, False, 0);
     Place(MailShow, Y, False, 0);
+    HideMailOtherFields;
     Y := Y + ScaleY(8);
   end
   else

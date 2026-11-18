@@ -1436,6 +1436,30 @@ class W14RecheckTest(unittest.TestCase):
         self.assertIn(head, self.raw)
         return routine(self.raw, head)
 
+    def test_w14_d10_an_outlook_address_hides_every_other_field(self) -> None:
+        # Owner on rc.24: with an Outlook.com address, the User name box of the Other fields
+        # stayed at its build position at the top of S09, as an unlabeled empty field.
+        hide = self.part("procedure HideMailOtherFields;")
+        for name in (
+            "MailServerLabel",
+            "MailServer",
+            "MailPortLabel",
+            "MailPort",
+            "MailSecurityLabel",
+            "MailSsl",
+            "MailStartTls",
+            "MailUserLabel",
+            "MailUser",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(f"{name}.Visible := False;", hide)
+        layout = self.raw.split("procedure LayoutMail;\nvar", 1)[1]
+        outlook = layout.split("if MailOutlook and not Other then", 1)[1].split("  else\n", 1)[0]
+        self.assertIn("HideMailOtherFields;", outlook)
+        self.assertIn(
+            "'W14-D10 S09 Outlook address hides the password and the Other fields'", self.selftest
+        )
+
     def test_ac_1_a_resume_unpacks_and_prepares_the_data_folder_before_the_background(
         self,
     ) -> None:

@@ -231,6 +231,25 @@ begin
   end;
 end;
 
+{ W14-D10: the S09 fields that show, for the self-test detail. }
+function MailShownOne(C: TControl; Name: String): String;
+begin
+  Result := '';
+  if C.Visible then Result := Name + ' ';
+end;
+
+function MailShownNames: String;
+begin
+  Result := MailShownOne(MailServerLabel, 'ServerLabel') + MailShownOne(MailServer, 'Server')
+    + MailShownOne(MailPortLabel, 'PortLabel') + MailShownOne(MailPort, 'Port')
+    + MailShownOne(MailSecurityLabel, 'SecurityLabel') + MailShownOne(MailSsl, 'Ssl')
+    + MailShownOne(MailStartTls, 'StartTls') + MailShownOne(MailUserLabel, 'UserLabel')
+    + MailShownOne(MailUser, 'User') + MailShownOne(MailPasswordLabel, 'PasswordLabel')
+    + MailShownOne(MailPassword, 'Password') + MailShownOne(MailShow, 'Show')
+    + MailShownOne(MailHelpLink, 'HelpLink') + MailShownOne(MailNote, 'Note');
+  if Result = '' then Result := 'none';
+end;
+
 { W14-D3 (6.1 L9): S08 with More options open and an error under its field; S09 with "Continue
   later" under the form, inside the page. }
 procedure SelfFormPages;
@@ -306,6 +325,19 @@ begin
       'left ' + IntToStr(MailError.Left) + ', width ' + IntToStr(MailError.Width) + ' of ' + IntToStr(MailFrom.Width)
       + ', height ' + IntToStr(ErrorHeight) + ' needs ' + IntToStr(MailError.Height) + ', top ' + IntToStr(MailError.Top)
       + ', next label ' + IntToStr(MailSecurityLabel.Top));
+    { W14-D10 (owner, rc.24): an Outlook.com address shows the note and hides the password and
+      every Other field, also after Other showed them. }
+    MailError.Caption := '';
+    MailErrorAfter := nil;
+    ShowStatusLine('');
+    MailOutlook := True;
+    MailGmail.Checked := False;
+    MailM365.Checked := False;
+    MailOther.Checked := False;
+    LayoutMail;
+    Ok := MailNote.Visible and (MailNote.Top >= MailTop) and (MailShownNames = 'Note ');
+    SelfRecord('W14-D10 S09 Outlook address hides the password and the Other fields', Ok, MailShownNames);
+    MailOutlook := False;
     MailErrorAfter := MailPassword;
     ShowStatusLine('');
     MailGmail.Checked := True;
