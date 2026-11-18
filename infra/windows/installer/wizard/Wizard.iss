@@ -3336,18 +3336,6 @@ begin
   Result := FM4('bg_line', IntToStr(BgIndex + 1), IntToStr(BgCount), NoStop(Action), TimeText(BgBeganAt));
 end;
 
-{ W14-D11 (owner, rc.24): on a resume, the unpack and the data folder steps name themselves,
-  not the saved step that they lead to. }
-function BgPrepAction: String;
-begin
-  if BgPrep = 'unpack' then
-    Result := CM('step_data_unpack')
-  else if BgPrep = 'data' then
-    Result := FM1('step_data_folder', DataRoot)
-  else
-    Result := BgAction;
-end;
-
 { 7.6 background row, one-line form above the button row on S08 to S10 (and S11 of a kept
   reinstall): "Preparing the server part, 3 of 7: <action>" and the time; at the end "The server
   part is ready." The close flows use the same line and win. }
@@ -3366,7 +3354,7 @@ begin
   else if BgDone then
     ShowStatusLine(CM('s07_prepared'))
   else
-    ShowStatusLine(BgLineText(BgPrepAction));
+    ShowStatusLine(BgLineText(BgAction));
 end;
 
 { TASK-0097 AC-1 (QA B1, Architect A-B1): on a resume with the background not done, the parts
