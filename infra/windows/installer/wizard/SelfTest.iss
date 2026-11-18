@@ -10,6 +10,15 @@
 var
   SelfLog: String;
 
+{ The password character of an edit box, from the control (EM_GETPASSWORDCHAR); 0 when the text
+  shows. Windows CI on 2d290ced: Pascal Script reads no Char property through RTTI (the setter
+  takes a Char, the getter has no Char case: "Could not call proc"), so PasswordChar can be
+  written but never read. }
+function EditPasswordChar(Edit: TNewEdit): Integer;
+begin
+  Result := SendMessage(Edit.Handle, $00D2, 0, 0);
+end;
+
 procedure SelfRecord(Name: String; Ok: Boolean; Message: String);
 begin
   if Ok then
@@ -267,7 +276,7 @@ begin
     Ok := (OrgNameLabel.Top >= OrgTop) and (OrgName.Top < OrgYourNameLabel.Top) and (OrgYourName.Top < OrgEmailLabel.Top)
       and (OrgEmail.Top < OrgPasswordLabel.Top) and (OrgPassword.Top < OrgConfirmLabel.Top)
       and (OrgShow.Top = OrgPasswordLabel.Top) and (OrgShow.Left >= OrgPasswordLabel.Left + OrgPasswordLabel.Width)
-      and (OrgPassword.PasswordChar = '*') and (OrgConfirm.PasswordChar = '*')
+      and (EditPasswordChar(OrgPassword) = Ord('*')) and (EditPasswordChar(OrgConfirm) = Ord('*'))
       and OrgError.Visible and (OrgError.Top > OrgConfirm.Top)
       and (OrgError.Top + OrgError.Height <= StatusBandTop - ScaleY(12));
     SelfRecord('AC-W1 S08 fields in order, Show on the password line, the error inside the page', Ok,
@@ -276,9 +285,9 @@ begin
       + IntToStr(StatusBandTop - ScaleY(12)) + ', page ' + IntToStr(Pages[P_ORG].SurfaceHeight));
     OrgShow.Checked := True;
     OrgShowClick(nil);
-    Ok := (OrgPassword.PasswordChar = #0) and (OrgConfirm.PasswordChar = #0);
+    Ok := (EditPasswordChar(OrgPassword) = 0) and (EditPasswordChar(OrgConfirm) = 0);
     HideOrgShow;
-    Ok := Ok and (OrgPassword.PasswordChar = '*') and (OrgConfirm.PasswordChar = '*') and not OrgShow.Checked;
+    Ok := Ok and (EditPasswordChar(OrgPassword) = Ord('*')) and (EditPasswordChar(OrgConfirm) = Ord('*')) and not OrgShow.Checked;
     SelfRecord('AC-W1 S08 Show shows both passwords and hides them again', Ok, '');
     SelfRecord('AC-W1 S08 email format check (the engine shape)', ValidEmail('maria@example.com') and ValidEmail('a.b+c@mail.example-school.org')
       and (not ValidEmail('maria@example')) and (not ValidEmail('maria@-example.com')) and (not ValidEmail('maria@example-.com'))
@@ -843,7 +852,7 @@ begin
       ReadJobProgress;
       RenderInstall;
       SelfRecord('W14-D5 S12 shows the engine step', (WaitNow <> nil) and (WaitNow.Caption = 'Now: Setting up the database.')
-        and (WaitDrawn = 4) and (WaitTime <> nil) and (Pos('Time so far: 0:0', WaitTime.Caption) = 1),
+        and (WaitDrawn = PrepStageCount + 4) and (WaitTime <> nil) and (Pos('Time so far: 0:0', WaitTime.Caption) = 1),
         'key ' + JobStepKey + ', stage ' + IntToStr(WaitDrawn));
     except
       SelfRecord('W14-D5 S12 shows the engine step', False, GetExceptionMessage);
@@ -893,7 +902,7 @@ begin
     RefreshWaitLabels;
     RenderInstall;
     RefreshWaitLabels;
-    SelfRecord('W14-D5 a redraw leaves no freed label to the timer', (WaitTime <> nil) and (WaitDrawn = 8), 'stage ' + IntToStr(WaitDrawn));
+    SelfRecord('W14-D5 a redraw leaves no freed label to the timer', (WaitTime <> nil) and (WaitDrawn = PrepStageCount + 8), 'stage ' + IntToStr(WaitDrawn));
   except
     SelfRecord('W14-D5 a redraw leaves no freed label to the timer', False, GetExceptionMessage);
   end;

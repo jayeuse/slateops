@@ -1932,6 +1932,13 @@ class PascalBlockBalanceTest(unittest.TestCase):
         self.assertEqual(re.findall(r"\b\w*Form\.ModalResult\b", code), [])
         self.assertIn("RemoveForm.Close", routine(pascal_code(), "procedure EndCloseFlow("))
 
+    def test_no_code_reads_a_char_property(self) -> None:
+        # Windows CI on 2d290ced: "Could not call proc". Pascal Script reaches PasswordChar
+        # through RTTI; the setter takes a Char, the getter has no Char case (uPSRuntime.pas
+        # ClassCallProcProperty, Inno 6.7.4), so the property can be written, never read.
+        code = code_only(pascal_code() + SELFTEST.read_text(encoding="ascii"))
+        self.assertEqual(re.findall(r"\.PasswordChar\b(?!\s*:=)", code), [])
+
     def test_the_balance_check_finds_a_stray_end_and_a_missing_end(self) -> None:
         good = "[Code]\nprocedure A;\nbegin\n  case X of\n    1: begin end;\n  end;\nend;\n"
         self.assertEqual(block_balance_problems(good), [])
