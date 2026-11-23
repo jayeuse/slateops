@@ -22,6 +22,7 @@ from xlsxwriter.exceptions import FileCreateError
 
 from app.systems.openview.worksheets.schemas import (
     Cell,
+    SheetErrorCell,
     SheetLinkCell,
     SheetStateCell,
     SheetUnlinkedCell,
@@ -46,6 +47,7 @@ STATE_WORDS = {
     "column_removed": "Column removed",
     "multiple_matches": "Several matches",
 }
+ERROR_WORDS = "Division by zero"
 XlsxValue = str | int | float | bool | date | datetime | None
 
 
@@ -72,6 +74,8 @@ class CellFormat:
 
 
 def _words(cell: Cell) -> str | None:
+    if isinstance(cell, SheetErrorCell):
+        return ERROR_WORDS
     if isinstance(cell, SheetStateCell):
         return STATE_WORDS.get(cell.state, "No access")
     if isinstance(cell, SheetLinkCell):

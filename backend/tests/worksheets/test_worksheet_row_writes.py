@@ -447,3 +447,35 @@ def test_a_link_target_that_was_not_locked_is_refused(
     created = rows.create(world.owner, {"c1": {"record_id": str(students.alice.id)}})
     assert _code(created) == (422, "link_target_invalid")
     assert rows.order(world.owner) == []
+
+
+@pytest.mark.parametrize("author_left", [False, True])
+def test_a_conflict_names_who_changed_the_cell_when_the_saver_can_see_them(
+    integration_db: Session, world: SheetWorld, rows: Rows, author_left: bool,
+) -> None:
+    """The 412 `changed_by` is the author of the latest change to a conflicting key, or
+    null when the person saving cannot see that author (here: a disabled account)."""
+
+    from app.systems.manage.audit.context import set_audit_actor
+
+    db = integration_db
+    world.group_member.display_name = "Gina Group"
+    set_audit_actor(db, world.owner.id)
+    row_id = rows.create(world.owner, {"c3": "x", "c4": 1}).json()["id"]
+    set_audit_actor(db, world.group_member.id)
+    assert rows.patch(world.group_member, row_id, {
+        "c3": {"value": "y", "expected": {"value": "x"}},
+    }).status_code == 200
+    set_audit_actor(db, world.owner.id)
+    assert rows.patch(world.owner, row_id, {
+        "c4": {"value": 2, "expected": {"value": 1}},
+    }).status_code == 200
+    if author_left:
+        world.group_member.status = "disabled"
+        db.flush()
+    set_audit_actor(db, world.editor.id)
+    stale = rows.patch(world.editor, row_id, {"c3": {"value": "z", "expected": {"value": "x"}}})
+    assert _code(stale) == (412, "cell_changed")
+    assert stale.json()["detail"]["changed_by"] == (
+        None if author_left else {"id": str(world.group_member.id), "display_name": "Gina Group"}
+    )

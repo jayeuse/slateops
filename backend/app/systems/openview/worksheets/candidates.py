@@ -1,4 +1,9 @@
-"""Share candidates (route 25): people the owner can see, and the owner's own groups."""
+"""People a sheet person can see: share candidates (route 25) and the people list.
+
+Route 25 gives the owner the people they can see and their own groups; the people list
+gives an owner or Edit recipient the people they can put in a person cell, themselves
+included.
+"""
 
 from uuid import UUID
 
@@ -23,14 +28,17 @@ CANDIDATE_LIMIT = 20
 _PAGE = 200
 
 
-def _like(text: str) -> str:
+def like(text: str) -> str:
     escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
 
 
-def _visible_people(db: Session, owner: User, pattern: str) -> list[SheetPersonRef]:
+def visible_people(db: Session, actor: User, pattern: str, *,
+                   include_self: bool = False) -> list[SheetPersonRef]:
     """Matching active members in keyset pages, filtered by the visibility rule, until a
     page of visible people is full or the members run out (B3 review B-1)."""
+
+    owner = actor
 
     name = func.coalesce(func.nullif(User.display_name, ""), User.username)
     members = (
@@ -38,7 +46,7 @@ def _visible_people(db: Session, owner: User, pattern: str) -> list[SheetPersonR
         .join(Membership, bound_membership_join())
         .where(
             active_account_clause(),
-            User.id != owner.id,
+            *([] if include_self else [User.id != owner.id]),
             or_(
                 User.display_name.ilike(pattern, escape="\\"),
                 User.username.ilike(pattern, escape="\\"),
@@ -55,6 +63,8 @@ def _visible_people(db: Session, owner: User, pattern: str) -> list[SheetPersonR
         )
         rows = db.execute(page).tuples().all()
         visible = visible_person_ids(db, owner, [user_id for _name, user_id in rows])
+        if include_self:
+            visible |= {owner.id}
         people += [
             SheetPersonRef(id=user_id, display_name=label)
             for label, user_id in rows if user_id in visible
@@ -66,8 +76,8 @@ def _visible_people(db: Session, owner: User, pattern: str) -> list[SheetPersonR
 
 
 def share_candidates(db: Session, owner: User, text: str) -> SheetShareCandidates:
-    pattern = _like(text)
-    people = _visible_people(db, owner, pattern)
+    pattern = like(text)
+    people = visible_people(db, owner, pattern)
     groups = db.execute(
         select(Group.id, Group.name)
         .join(GroupMember, GroupMember.group_id == Group.id)

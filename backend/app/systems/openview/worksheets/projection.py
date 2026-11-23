@@ -38,8 +38,16 @@ from sqlalchemy.sql.selectable import FromClause
 from app.systems.access.policy.checks import module_filter, module_level
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
+from app.systems.openview.worksheets.compile import Operand, compile_expression
+from app.systems.openview.worksheets.expression import (
+    ExpressionError,
+    Node,
+    parse_stored,
+    references,
+)
 from app.systems.openview.worksheets.models import WorksheetRow, WorksheetRowLink
 from app.systems.openview.worksheets.structure import (
+    SheetComputedColumn,
     SheetDecimalColumn,
     SheetLinkColumn,
     SheetLookupColumn,
@@ -53,6 +61,7 @@ from app.systems.sandbox.records.models import Record
 
 CellState = Literal[
     "no_access", "deleted", "removed", "unavailable", "field_removed", "link", "unlinked",
+    "division_by_zero",
 ]
 NUMERIC_TYPES = frozenset({"int", "number", "decimal"})
 # A record decimal field stores a canonical decimal string; only that shape is read as a number.
@@ -343,6 +352,60 @@ def _lookup(db: Session, key: str, column: SheetLookupColumn, link: _Link,
     )
 
 
+def _computed_column(key: str, value: Expression, error: Expression,
+                     hidden: Expression) -> ColumnProjection:
+    text = sql_cast(func.trim_scale(value), Text)
+    return ColumnProjection(
+        key=key,
+        state=case((hidden, literal("no_access")), (error, literal("division_by_zero")),
+                   else_=_no_text()),
+        value=case((value.is_not(None), func.to_jsonb(text)), else_=_no_value()),
+        label=_no_text(), text=text, sort=value, number=value, hidden=hidden,
+        shown=value.is_not(None),
+    )
+
+
+def _computed(projection: RowProjection, structure: WorksheetStructure) -> None:
+    """One LATERAL per computed column, in dependency order (D7.2).
+
+    A column reads the columns before it by name, so no expression is copied into another
+    and the Python work stays the size of each column's own tree.
+    """
+
+    trees: dict[str, Node] = {}
+    for column in structure.columns:
+        if isinstance(column, SheetComputedColumn):
+            try:
+                trees[column.key] = parse_stored(column.computed.expression).node
+            except ExpressionError:
+                projection.columns.append(_blank(column.key))  # never saved like this
+    kinds = {column.key: column.type for column in structure.columns}
+    operands: dict[str, Operand] = {
+        projected.key: Operand(projected.number, projected.hidden, false())
+        for projected in projection.columns
+        if kinds[projected.key] in NUMERIC_TYPES or kinds[projected.key] == "lookup"
+    }
+    pending = dict(trees)
+    while pending:
+        ready = [key for key, tree in pending.items()
+                 if not any(ref in pending for ref in references(tree))]
+        if not ready:  # a loop, refused on save: leave the rest blank
+            projection.columns.extend(_blank(key) for key in pending)
+            return
+        for key in ready:
+            value, error, hidden = compile_expression(pending.pop(key), operands)
+            cell = (
+                select(value.label("value"), error.label("error"), hidden.label("hidden"))
+                .correlate_except(None)
+                .lateral(f"computed_{key}")
+            )
+            projection.source = projection.source.outerjoin(cell, true())
+            operands[key] = Operand(cell.c.value, cell.c.hidden, cell.c.error)
+            projection.columns.append(_computed_column(
+                key, cell.c.value, cell.c.error, cell.c.hidden,
+            ))
+
+
 def link_column_hidden(db: Session, user: User, module_id: UUID) -> bool:
     """A link column is hidden when its target module exists and the person cannot read it.
 
@@ -379,8 +442,9 @@ def project_rows(db: Session, user: User, structure: WorksheetStructure) -> RowP
             )
         elif isinstance(column, SheetPlainColumn | SheetSelectColumn | SheetDecimalColumn):
             projection.columns.append(_plain(column.key, column))
-        else:
-            projection.columns.append(_blank(column.key))  # computed (B10), sheet_lookup (B11)
+        elif not isinstance(column, SheetComputedColumn):
+            projection.columns.append(_blank(column.key))  # sheet_lookup (B11)
+    _computed(projection, structure)
     order = {column.key: index for index, column in enumerate(structure.columns)}
     projection.columns.sort(key=lambda item: order[item.key])
     return projection

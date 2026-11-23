@@ -125,6 +125,12 @@ class WorksheetDetail(WorksheetSummary):
     created_at: datetime
 
 
+class SheetPeople(BaseModel):
+    """The people list: active members the person can see, up to 20 (person cells)."""
+
+    people: list[SheetPersonRef]
+
+
 class SheetShareCandidates(BaseModel):
     people: list[SheetPersonRef]
     groups: list[SheetGroupRef]
@@ -155,7 +161,6 @@ class SheetRowsQuery(BaseModel):
 
 
 class SheetValueCell(BaseModel):
-    # B10 adds the computed error cell, {"value": null, "error": "division_by_zero"}.
     model_config = ConfigDict(extra="forbid")
 
     value: JsonValue
@@ -187,7 +192,16 @@ class SheetStateCell(BaseModel):
     ]
 
 
-Cell = SheetValueCell | SheetLinkCell | SheetUnlinkedCell | SheetStateCell
+class SheetErrorCell(BaseModel):
+    """A computed cell whose expression divides by zero, or reads a cell that does (K5)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: None
+    error: Literal["division_by_zero"]
+
+
+Cell = SheetValueCell | SheetLinkCell | SheetUnlinkedCell | SheetStateCell | SheetErrorCell
 
 
 class SheetRow(BaseModel):

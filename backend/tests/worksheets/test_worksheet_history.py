@@ -93,7 +93,8 @@ def test_a_reader_sees_each_change_with_values_author_and_time_newest_first(
         ("delete", 3, "Olive Owner"), ("update", 2, "Eddie Editor"), ("create", 1, "Olive Owner"),
     ]
     assert {item["row_id"] for item in items} == {row_id}
-    assert [item["changed_keys"] for item in items] == [[], ["c3"], ["c1", "c3"]]
+    # The viewer cannot read Student List, so its link column is never named as changed.
+    assert [item["changed_keys"] for item in items] == [[], ["c3"], ["c3"]]
     assert items[1]["cells"]["c3"] == {"value": "second"}
     assert all(item["created_at"] for item in items)
     assert response.json()["pagination"]["total"] == 3
@@ -153,3 +154,68 @@ def test_the_row_filter_keeps_one_row_and_never_reaches_another_sheet(
     paged = history.read(history.world.owner, limit=1, offset=1).json()
     assert [item["action"] for item in paged["items"]] == ["update"]
     assert paged["pagination"]["has_more"] is True
+
+
+def _unlinked_row(history: History) -> str:
+    created = history._as(history.world.owner).post(history.rows, json={"cells": {
+        "c1": {"unlinked": "Carol"}, "c3": "kept",
+    }})
+    assert created.status_code == 201, created.text
+    return str(created.json()["id"])
+
+
+@pytest.mark.parametrize("change", ["removed", "retyped"])
+def test_unlinked_text_shows_only_under_a_current_link_column_the_reader_sees(
+    integration_db: Session, history: History, change: str,
+) -> None:
+    """Security review (a): a link column on a module the viewer cannot read, holding
+    unlinked text, is removed, or cleared and changed to text; its old values stay hidden."""
+
+    row_id = _unlinked_row(history)
+    structure = dict(history.world.sheet.structure)
+    if change == "removed":
+        columns = [c for c in structure["columns"] if c["key"] not in {"c1", "c2"}]
+    else:
+        cleared = history._as(history.world.owner).patch(
+            f"{history.rows}/{row_id}",
+            json={"cells": {"c1": {"value": None, "expected": {"unlinked": "Carol"}}}},
+        )
+        assert cleared.status_code == 200, cleared.text
+        columns = [{"key": "c1", "name": "Student", "type": "text"} if c["key"] == "c1"
+                   else c for c in structure["columns"] if c["key"] != "c2"]
+    history.world.sheet.structure = {**structure, "columns": columns}
+    integration_db.flush()
+    viewer = history.read(history.world.viewer)
+    shown = [item["cells"].get("c1") for item in viewer.json()["items"]]
+    assert {"state": "no_access"} in shown
+    assert all(cell in (None, {"state": "no_access"}) for cell in shown)
+    assert "Carol" not in viewer.text
+
+
+def test_a_hidden_column_reads_no_access_in_every_revision_and_never_as_changed(
+    history: History,
+) -> None:
+    """Security review (b): whether a hidden cell held a value or changed stays unknown."""
+
+    history.write()  # a row linked to Alice, changed and deleted
+    empty = history._as(history.world.owner).post(history.rows, json={"cells": {}})
+    assert empty.status_code == 201, empty.text
+    items = history.read(history.world.viewer).json()["items"]
+    assert len(items) == 4
+    assert all(item["cells"]["c1"] == {"state": "no_access"} for item in items)
+    assert all("c1" not in item["changed_keys"] for item in items)
+    assert history.read(history.world.owner).json()["items"][-1]["changed_keys"] == ["c1", "c3"]
+
+
+def test_an_author_the_reader_cannot_see_is_not_named(
+    integration_db: Session, history: History,
+) -> None:
+    """Security review (d): a former Edit recipient whose account is disabled."""
+
+    history.write()
+    history.world.editor.status = "disabled"
+    integration_db.flush()
+    items = history.read(history.world.viewer).json()["items"]
+    assert [item["author"] and item["author"]["display_name"] for item in items] == [
+        "Olive Owner", None, "Olive Owner",
+    ]

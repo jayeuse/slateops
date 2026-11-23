@@ -3,14 +3,17 @@
 The rules the stored model cannot check need the database: a new or changed link column
 targets a live module the saver can read; a new or changed lookup reads a live field of its
 link column's module; a column with values keeps its type; a key is never used twice
-(``nextColumnSeq`` only grows). Computed and From another sheet columns are saved by B10
-and B11, which compile and check them; until then a new or changed one is refused.
+(``nextColumnSeq`` only grows). A computed column's expression is checked and stored with
+column keys (D7.1); From another sheet columns are saved by B11, so until then a new or
+changed one is refused.
 """
 
 import re
 from typing import Any
 from uuid import UUID
 
+from babel import Locale
+from babel.numbers import get_decimal_symbol
 from fastapi import status
 from pydantic import ValidationError
 from sqlalchemy import exists, func, select
@@ -19,7 +22,13 @@ from sqlalchemy.orm import Session
 from app.core.base_model import utc_now
 from app.systems.access.policy.checks import module_level
 from app.systems.access.users.models import User
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.openview.worksheets.cells import worksheet_limit
+from app.systems.openview.worksheets.expression import (
+    NUMERIC_TYPES,
+    ExpressionError,
+    check_expressions,
+)
 from app.systems.openview.worksheets.models import Worksheet, WorksheetRow, WorksheetRowLink
 from app.systems.openview.worksheets.row_writes import (
     authorize_edit,
@@ -31,6 +40,7 @@ from app.systems.openview.worksheets.serializers import worksheet_etag
 from app.systems.openview.worksheets.structure import (
     MAX_COLUMNS,
     Column,
+    SheetComputedColumn,
     SheetLinkColumn,
     SheetLookupColumn,
     WorksheetStructure,
@@ -39,7 +49,7 @@ from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 
 _SEQUENCED_KEY = re.compile(r"^c([0-9]{1,8})$")
-_LATER_UNITS = frozenset({"computed", "sheet_lookup"})
+_LATER_UNITS = frozenset({"sheet_lookup"})
 
 
 def _invalid(code: str, message: str) -> Any:
@@ -91,6 +101,43 @@ def _check_links(db: Session, user: User, old: dict[str, Column], columns: list[
                         or module_level(db, user, field.module_id) is None):
                     raise _invalid("lookup_field_invalid",
                                    f"{column.name}: choose a field of the linked module")
+
+
+def _decimal_mark(db: Session, sheet: Worksheet) -> str:
+    profile = db.get(WorkspaceProfile, sheet.org_id)
+    locale = profile.locale if profile is not None and profile.locale else "en-US"
+    return "," if get_decimal_symbol(Locale.parse(locale, sep="-")) == "," else "."
+
+
+def _with_stored_expressions(
+    db: Session, sheet: Worksheet, old: dict[str, Column], columns: list[Column],
+) -> list[Column]:
+    """Each computed column with its expression checked and in the stored form (D7.1)."""
+
+    numeric_lookups = set()
+    for column in columns:
+        if isinstance(column, SheetLookupColumn):
+            field = db.get(Field, column.lookup.fieldId)
+            if field is not None and field.type in NUMERIC_TYPES:
+                numeric_lookups.add(column.key)
+    unchanged = {
+        column.key for column in columns
+        if isinstance(column, SheetComputedColumn)
+        and isinstance(previous := old.get(column.key), SheetComputedColumn)
+        and previous.computed.expression == column.computed.expression
+    }
+    try:
+        stored = check_expressions(columns, numeric_lookups=numeric_lookups,
+                                   unchanged=unchanged, decimal_mark=_decimal_mark(db, sheet))
+    except ExpressionError as refused:
+        raise error(status.HTTP_422_UNPROCESSABLE_CONTENT, "expression_invalid",
+                    refused.message, key=refused.key, reason=refused.reason) from refused
+    return [
+        column.model_copy(update={"computed": column.computed.model_copy(
+            update={"expression": stored[column.key]},
+        )}) if isinstance(column, SheetComputedColumn) else column
+        for column in columns
+    ]
 
 
 def _old_module(old: dict[str, Column], key: str) -> UUID | None:
@@ -150,10 +197,11 @@ def save_structure(
     old_columns = {column.key: column for column in old.columns}
     sequence = _next_sequence(old, payload.columns)
     _check_links(db, user, old_columns, payload.columns)
+    columns = _with_stored_expressions(db, sheet, old_columns, payload.columns)
     try:
         structure = WorksheetStructure.model_validate({
             "structureVersion": 1, "nextColumnSeq": sequence,
-            "columns": [column.model_dump(mode="json") for column in payload.columns],
+            "columns": [column.model_dump(mode="json") for column in columns],
             "groups": [group.model_dump(mode="json") for group in payload.groups],
             "totals": payload.totals,
         })

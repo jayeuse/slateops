@@ -17,7 +17,11 @@ from app.common.dependencies import CurrentIdentity, get_current_identity, get_c
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
 from app.core.database import get_db
 from app.core.database.organization_scope import session_organization
-from app.systems.access.policy.checks import require_fresh_module_access
+from app.systems.access.policy.checks import (
+    forbidden,
+    module_level,
+    require_fresh_module_access,
+)
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
 from app.systems.openview.worksheets import export as sheet_export
@@ -101,7 +105,8 @@ def export_worksheet(
         db.rollback()
         raise HTTPException(503, detail="Unable to create export") from error
     # The authority again, held until the event commits: the module, the session, the
-    # exporter's shares, then the sheet through the access rule (D9.1).
+    # exporter's shares, the sheet through the access rule, then each linked module the
+    # file reads (D9.1).
     fresh = require_fresh_module_access(
         db, actor_id=actor_id, session_id=identity.session_id, module_id=module_id,
         level=AccessLevel.READ,
@@ -110,6 +115,9 @@ def export_worksheet(
     if load_visible_worksheet(db, fresh, worksheet_id) is None:
         db.rollback()
         raise not_found()
+    if any(module_level(db, fresh, module) is None for module in exported.link_modules):
+        db.rollback()  # a linked module read during the build is no longer readable
+        raise forbidden()
     commit_export_event(db, actor_id, worksheet_id, payload.format, exported)
     return Response(
         exported.content,

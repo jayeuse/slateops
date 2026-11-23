@@ -101,7 +101,7 @@ def test_a_relationship_column_is_refused(
         ("unreadable link module", "link_module_invalid"),
         ("lookup of another module", "lookup_field_invalid"),
         ("non-adjacent group", "structure_invalid"),
-        ("computed before B10", "column_type_unavailable"),
+        ("From another sheet before B11", "column_type_unavailable"),
     ],
 )
 def test_a_structure_that_breaks_a_column_rule_is_refused(
@@ -120,8 +120,10 @@ def test_a_structure_that_breaks_a_column_rule_is_refused(
     elif change == "non-adjacent group":
         structure["groups"] = [{"name": "Gap", "keys": ["c3", "c5"]}]
     else:
-        columns.append({"key": "c10", "name": "Total", "type": "computed",
-                        "computed": {"expression": "{c4}", "places": 0}})
+        columns.append({"key": "c10", "name": "Elsewhere", "type": "sheet_lookup",
+                        "sheet_lookup": {"sourceWorksheetId": str(world.sheet.id),
+                                         "sourceColumnKey": "c3", "linkKey": "c1",
+                                         "sourceLinkKey": "c1"}})
     assert _code(_save(application, db, world.owner, world, structure)) == (422, code)
 
 

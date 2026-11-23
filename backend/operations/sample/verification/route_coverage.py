@@ -31,6 +31,7 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         ("GET", "/api/modules/{module_id}/worksheets"),
         ("POST", "/api/worksheets"),
         ("POST", "/api/worksheets/{worksheet_id}/rows/query"),
+        ("GET", "/api/worksheets/{worksheet_id}/people"),
         ("PUT", "/api/worksheets/{worksheet_id}/structure"),
         ("POST", "/api/worksheets/{worksheet_id}/rows"),
         ("PATCH", "/api/worksheets/{worksheet_id}/rows/{row_id}"),

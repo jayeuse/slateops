@@ -163,8 +163,10 @@ def test_the_owner_sees_each_link_state_and_its_lookups(
         (BLANK, BLANK, BLANK, BLANK),
     ]
     assert cells[0]["c4"] == {"value": "alpha"} and cells[0]["c5"] == {"value": 10}
-    # Computed values arrive with B10; until then the cell is blank.
-    assert {row["c6"]["value"] for row in cells} == {None}
+    # Bonus is {Points} + 1, blank where Points is blank (K5).
+    assert [row["c6"] for row in cells] == [
+        {"value": "11"}, {"value": "6"}, BLANK, BLANK, {"value": "8"}, BLANK,
+    ]
     assert body["pagination"]["total"] == 6
 
 

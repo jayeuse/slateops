@@ -6,6 +6,7 @@ route journeys run on committed rows, because the snapshot is a separate connect
 
 import csv
 import io
+from datetime import timedelta
 from typing import Any
 from xml.etree import ElementTree
 from zipfile import ZipFile
@@ -19,6 +20,8 @@ from sqlalchemy.orm import Session
 from app.core.base_model import utc_now
 from app.systems.openview.worksheets import export as sheet_export
 from app.systems.openview.worksheets.export import ExportFile, build_export
+from app.systems.openview.worksheets.models import WorksheetRow
+from tests.conftest import membership_of
 from tests.rbac.support import _client
 from tests.worksheets.committed_support import CommittedSheet
 from tests.worksheets.export_support import ExportJourney
@@ -135,6 +138,44 @@ def test_a_sheet_over_the_export_row_cap_is_refused(
         _export(integration_db, found.owner, found.sheet.id, "csv")
     assert refused.value.status_code == 422
     assert refused.value.detail["code"] == "export_limit_exceeded"
+
+
+def test_a_person_the_exporter_cannot_see_exports_as_unavailable_user(
+    integration_db: Session, world: tuple[SheetWorld, Students],
+) -> None:
+    found, _students = world
+    found.outsider.display_name = "Hidden Person"  # shares no group or module with the owner
+    integration_db.add(WorksheetRow(
+        org_id=found.sheet.org_id, worksheet_id=found.sheet.id, position=9 * 1024,
+        data={"c7": str(found.outsider.id)}, data_bytes=48,
+    ))
+    integration_db.flush()
+    as_csv = _export(integration_db, found.owner, found.sheet.id, "csv")
+    assert [row[6] for row in _csv(as_csv)[1:]] == ["Vera Viewer", "", "Unavailable user"]
+    as_xlsx = _export(integration_db, found.owner, found.sheet.id, "xlsx")
+    with ZipFile(io.BytesIO(as_xlsx.content)) as archive:
+        sheet = archive.read("xl/worksheets/sheet1.xml").decode()
+    assert "Unavailable user" in sheet
+    for exported in (as_csv.content, as_xlsx.content):
+        assert b"Hidden Person" not in exported
+        assert str(found.outsider.id).encode() not in exported
+
+
+def test_a_reader_of_an_open_sheet_exports_it(
+    integration_db: Session, world: tuple[SheetWorld, Students],
+) -> None:
+    """X2: the owner left, so the sheet is open to readers of its record (D2)."""
+
+    found, _students = world
+    membership_of(integration_db, found.owner.id).worksheets_released_at = (
+        found.sheet.created_at + timedelta(seconds=1)
+    )
+    integration_db.flush()
+    rows = _csv(_export(integration_db, found.peer, found.sheet.id, "csv"))
+    assert [row[:3] for row in rows] == [
+        ["Student", "Name", "Note"], ["No access", "No access", "'=1+1"],
+        ["No access", "No access", "'-2"],
+    ]
 
 
 def _cell(world: CommittedSheet, value: str) -> None:

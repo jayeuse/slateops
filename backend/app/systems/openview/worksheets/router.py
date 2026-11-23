@@ -33,11 +33,13 @@ from app.systems.openview.worksheets.access import (
     visible_worksheet_clause,
     worksheet_states,
 )
-from app.systems.openview.worksheets.candidates import share_candidates
+from app.systems.openview.worksheets.candidates import like, share_candidates, visible_people
 from app.systems.openview.worksheets.locking import lock_anchor, lock_owner, lock_worksheet
 from app.systems.openview.worksheets.models import Worksheet
 from app.systems.openview.worksheets.query import query_rows, read_row
+from app.systems.openview.worksheets.row_writes import authorize_edit
 from app.systems.openview.worksheets.schemas import (
+    SheetPeople,
     SheetRow,
     SheetRowPage,
     SheetRowsQuery,
@@ -349,6 +351,18 @@ def list_share_candidates(
     sheet = _visible(db, user, worksheet_id)
     _require_owner(db, user, sheet)
     return share_candidates(db, user, (q or "").strip())
+
+
+@router.get("/worksheets/{worksheet_id}/people", response_model=SheetPeople)
+def list_sheet_people(
+    worksheet_id: UUID, user: Actor, db: Database,
+    q: Annotated[str | None, Query(max_length=100)] = None,
+) -> SheetPeople:
+    """People an owner or Edit recipient can put in a person cell, themselves included."""
+
+    authorize_edit(db, user, worksheet_id)  # 404 first, then 403 for read-only (R5)
+    return SheetPeople(people=visible_people(db, user, like((q or "").strip()),
+                                             include_self=True))
 
 
 @router.post("/worksheets/{worksheet_id}/rows/query", response_model=SheetRowPage)

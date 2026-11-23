@@ -121,7 +121,9 @@ class SheetLookupColumn(_Column):
 
 
 class SheetComputedOptions(_Strict):
-    expression: str = Field(min_length=1, max_length=MAX_EXPRESSION_CHARACTERS)
+    # A bound on the body only: route 6 refuses an expression above 1,000 characters with
+    # `expression_invalid` (D7.1), and the stored form with keys can be a little longer.
+    expression: str = Field(min_length=1, max_length=2 * MAX_EXPRESSION_CHARACTERS)
     places: Places | None = None
 
 

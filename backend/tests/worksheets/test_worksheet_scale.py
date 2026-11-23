@@ -22,7 +22,7 @@ from app.systems.openview.worksheets.access import (
 )
 from app.systems.openview.worksheets.models import Worksheet, WorksheetRow, WorksheetRowLink
 from app.systems.openview.worksheets.projection import project_rows
-from app.systems.openview.worksheets.query import _rows, query_rows
+from app.systems.openview.worksheets.query import projected_rows, query_rows
 from app.systems.openview.worksheets.schemas import SheetRowsQuery
 from app.systems.openview.worksheets.structure import WorksheetStructure
 from tests.worksheets.support import STRUCTURE, sheet_world
@@ -94,7 +94,7 @@ def test_a_grid_page_does_not_read_the_rows_of_other_sheets(
     projection = project_rows(db, world.owner, WorksheetStructure.model_validate(STRUCTURE))
 
     def page_pages() -> int:
-        statement = _rows(projection, world.sheet)
+        statement = projected_rows(projection, world.sheet)
         return _pages(db, statement.order_by(WorksheetRow.position, WorksheetRow.id).limit(201))
 
     add_rows(other, SMALL, 0)

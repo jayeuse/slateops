@@ -106,25 +106,7 @@ def lock_for_write(
             select(WorksheetShare.id).where(WorksheetShare.id.in_(changed))
             .order_by(WorksheetShare.id).with_for_update(of=WorksheetShare)
         ).all())
-    _locked(db, lambda: db.scalars(
-        select(WorksheetShare.id)
-        .where(
-            WorksheetShare.org_id == sheet.org_id,
-            WorksheetShare.worksheet_id == sheet.id,
-            WorksheetShare.is_deleted.is_(False),
-            or_(
-                WorksheetShare.user_id == actor_id,
-                WorksheetShare.group_id.in_(
-                    select(GroupMember.group_id).where(
-                        GroupMember.org_id == sheet.org_id,
-                        GroupMember.user_id == actor_id, GroupMember.is_deleted.is_(False),
-                    )
-                ),
-            ),
-        )
-        .order_by(WorksheetShare.id)
-        .with_for_update(read=True, of=WorksheetShare)
-    ).all())
+    lock_actor_shares(db, sheet.org_id, sheet.id, actor_id)
     locked = _locked(db, lambda: db.scalar(
         select(Worksheet)
         .where(Worksheet.id == sheet.id)
@@ -152,10 +134,10 @@ def lock_rows(db: Session, row_ids: Iterable[UUID]) -> list[WorksheetRow]:
 
 
 def lock_actor_shares(db: Session, org_id: UUID, worksheet_id: UUID, actor_id: UUID) -> None:
-    """The actor's live shares of the sheet, FOR SHARE, for a read that releases output.
+    """The actor's live shares of the sheet, FOR SHARE (step 3 of a write; an export).
 
-    An export holds them until it commits its event, so a share removal waits for the
-    export or commits first and the export's access check then fails (D9.1).
+    A share removal waits for the write or the export, or commits first and their access
+    check then fails (D3.3, D9.1).
     """
 
     _locked(db, lambda: db.scalars(

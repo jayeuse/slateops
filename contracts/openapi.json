@@ -21593,6 +21593,9 @@
               },
               {
                 "$ref": "#/components/schemas/SheetStateCell"
+              },
+              {
+                "$ref": "#/components/schemas/SheetErrorCell"
               }
             ],
             "title": "Expected"
@@ -21668,7 +21671,7 @@
         "additionalProperties": false,
         "properties": {
           "expression": {
-            "maxLength": 1000,
+            "maxLength": 2000,
             "minLength": 1,
             "title": "Expression",
             "type": "string"
@@ -21743,6 +21746,27 @@
           "places"
         ],
         "title": "SheetDecimalOptions",
+        "type": "object"
+      },
+      "SheetErrorCell": {
+        "additionalProperties": false,
+        "description": "A computed cell whose expression divides by zero, or reads a cell that does (K5).",
+        "properties": {
+          "error": {
+            "const": "division_by_zero",
+            "title": "Error",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "null"
+          }
+        },
+        "required": [
+          "value",
+          "error"
+        ],
+        "title": "SheetErrorCell",
         "type": "object"
       },
       "SheetExportRequest": {
@@ -22016,6 +22040,23 @@
         "title": "SheetLookupOptions",
         "type": "object"
       },
+      "SheetPeople": {
+        "description": "The people list: active members the person can see, up to 20 (person cells).",
+        "properties": {
+          "people": {
+            "items": {
+              "$ref": "#/components/schemas/SheetPersonRef"
+            },
+            "title": "People",
+            "type": "array"
+          }
+        },
+        "required": [
+          "people"
+        ],
+        "title": "SheetPeople",
+        "type": "object"
+      },
       "SheetPersonRef": {
         "properties": {
           "display_name": {
@@ -22089,6 +22130,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/SheetStateCell"
+                },
+                {
+                  "$ref": "#/components/schemas/SheetErrorCell"
                 }
               ]
             },
@@ -22323,6 +22367,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/SheetStateCell"
+                },
+                {
+                  "$ref": "#/components/schemas/SheetErrorCell"
                 }
               ]
             },
@@ -67340,6 +67387,90 @@
           }
         ],
         "summary": "List Worksheet History",
+        "tags": [
+          "worksheets"
+        ]
+      }
+    },
+    "/api/worksheets/{worksheet_id}/people": {
+      "get": {
+        "description": "People an owner or Edit recipient can put in a person cell, themselves included.",
+        "operationId": "list_sheet_people_api_worksheets__worksheet_id__people_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worksheet_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Worksheet Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SheetPeople"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Sheet People",
         "tags": [
           "worksheets"
         ]

@@ -2,8 +2,11 @@
 
 A revision stores a row's cells after the change, with each link as its record ID. The
 reader sees a link as the record's name only when they can read its module now (N4): any
-other link shows ``no_access`` with no ID and no name, and so does every cell of a link
-column whose module they cannot read. A stored value of an unknown shape fails closed.
+other link shows ``no_access`` with no ID and no name. A link column whose module they
+cannot read shows ``no_access`` in every revision, whether a value was there or not, and
+is never named as changed. Unlinked text shows only under a link column the reader sees
+now. An author is named only when the reader can see that person. A stored value of an
+unknown shape fails closed.
 """
 
 from typing import Any
@@ -14,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.systems.access.policy.checks import module_level
 from app.systems.access.users.models import User
+from app.systems.access.users.person_visibility import visible_person_ids
 from app.systems.openview.worksheets.models import Worksheet, WorksheetRowRevision
 from app.systems.openview.worksheets.projection import link_column_hidden
 from app.systems.openview.worksheets.schemas import (
@@ -69,15 +73,15 @@ def _targets(db: Session, user: User, ids: set[UUID]) -> dict[UUID, Cell]:
     return shown
 
 
-def _cell(value: Any, hidden: bool, targets: dict[UUID, Cell]) -> Cell:
-    if hidden:
-        return _NO_ACCESS
+def _cell(value: Any, linked: bool, targets: dict[UUID, Cell]) -> Cell:
+    """One stored value; ``linked`` says the key is a link column the reader sees now."""
+
     target = _link_target(value)
     if target is not None:
         return targets[target]
     if isinstance(value, dict):
         unlinked = value.get("unlinked")
-        if set(value) == {"unlinked"} and isinstance(unlinked, str):
+        if linked and set(value) == {"unlinked"} and isinstance(unlinked, str):
             return SheetUnlinkedCell(unlinked=unlinked)
         return _NO_ACCESS
     if value is None or isinstance(value, str | int | float | bool):
@@ -91,26 +95,28 @@ def history_items(
     """One page of revisions, masked for ``user``, in a fixed number of statements."""
 
     structure = WorksheetStructure.model_validate(sheet.structure)
-    hidden = {
-        column.key for column in structure.columns
-        if isinstance(column, SheetLinkColumn)
-        and link_column_hidden(db, user, column.link.moduleId)
-    }
+    links = {column.key: column.link.moduleId for column in structure.columns
+             if isinstance(column, SheetLinkColumn)}
+    hidden = {key for key, module_id in links.items()
+              if link_column_hidden(db, user, module_id)}
+    seen = set(links) - hidden
     named = {
         target for revision in revisions for key, value in revision.data.items()
         if key not in hidden and (target := _link_target(value)) is not None
     }
     targets = _targets(db, user, named)
-    authors = person_refs(
-        db, (revision.performed_by for revision in revisions if revision.performed_by)
-    )
+    named = {revision.performed_by for revision in revisions if revision.performed_by}
+    visible = visible_person_ids(db, user, named) | ({sheet.owner_id} & named)
+    authors = person_refs(db, visible)
     return [
         SheetRowRevision(
             id=revision.id, row_id=revision.row_id, revision=revision.revision,
-            action=revision.action, changed_keys=list(revision.changed_keys),
+            action=revision.action,
+            changed_keys=[key for key in revision.changed_keys if key not in hidden],
             cells={
-                key: _cell(value, key in hidden, targets)
-                for key, value in revision.data.items()
+                **{key: _cell(value, key in seen, targets)
+                   for key, value in revision.data.items() if key not in hidden},
+                **dict.fromkeys(sorted(hidden), _NO_ACCESS),
             },
             author=authors.get(revision.performed_by) if revision.performed_by else None,
             created_at=revision.created_at,

@@ -19,6 +19,7 @@ from app.systems.openview.worksheets.models import Worksheet, WorksheetRow
 from app.systems.openview.worksheets.projection import RowProjection, project_rows
 from app.systems.openview.worksheets.schemas import (
     Cell,
+    SheetErrorCell,
     SheetLinkCell,
     SheetLinkTarget,
     SheetRow,
@@ -38,7 +39,7 @@ def _like(text: str) -> str:
     return f"%{escaped}%"
 
 
-def _rows(projection: RowProjection, sheet: Worksheet) -> Select[Any]:
+def projected_rows(projection: RowProjection, sheet: Worksheet) -> Select[Any]:
     columns: list[Any] = [WorksheetRow.id, WorksheetRow.revision, WorksheetRow.position]
     for column in projection.columns:
         columns += [
@@ -57,7 +58,7 @@ def _rows(projection: RowProjection, sheet: Worksheet) -> Select[Any]:
     )
 
 
-def _cell(row: Any, key: str) -> Cell:
+def projected_cell(row: Any, key: str) -> Cell:
     state = row[f"{key}__state"]
     if state == "link":
         return SheetLinkCell(link=SheetLinkTarget(
@@ -65,6 +66,8 @@ def _cell(row: Any, key: str) -> Cell:
         ))
     if state == "unlinked":
         return SheetUnlinkedCell(unlinked=row[f"{key}__label"])
+    if state == "division_by_zero":
+        return SheetErrorCell(value=None, error="division_by_zero")
     if state is not None:
         return SheetStateCell(state=state)
     return SheetValueCell(value=row[f"{key}__value"])
@@ -73,7 +76,7 @@ def _cell(row: Any, key: str) -> Cell:
 def _view(row: Any, keys: list[str]) -> SheetRow:
     return SheetRow(
         id=row["id"], revision=row["revision"], etag=f'"{row["id"]}:{row["revision"]}"',
-        position=row["position"], cells={key: _cell(row, key) for key in keys},
+        position=row["position"], cells={key: projected_cell(row, key) for key in keys},
     )
 
 
@@ -102,7 +105,7 @@ def _totals(
             value = _AGGREGATES[function](column.number)
         aggregates += [value, func.count().filter(column.hidden)]
     found = db.execute(
-        _rows(projection, sheet).with_only_columns(*aggregates, maintain_column_froms=True)
+        projected_rows(projection, sheet).with_only_columns(*aggregates, maintain_column_froms=True)
     ).one()
     totals: dict[str, SheetTotal] = {}
     for index, (key, function) in enumerate(structure.totals.items()):
@@ -128,7 +131,7 @@ def query_rows(db: Session, user: User, sheet: Worksheet, request: SheetRowsQuer
     if request.sort is not None and request.sort.key not in keys:
         raise _invalid_sort()
     projection = project_rows(db, user, structure)
-    statement = _rows(projection, sheet)
+    statement = projected_rows(projection, sheet)
     if request.search is not None:
         pattern = _like(request.search)
         texts = [column.text.ilike(pattern, escape="\\") for column in projection.columns]
@@ -161,7 +164,7 @@ def read_row(db: Session, user: User, sheet: Worksheet, row_id: UUID) -> SheetRo
     structure = WorksheetStructure.model_validate(sheet.structure)
     projection = project_rows(db, user, structure)
     found = db.execute(
-        _rows(projection, sheet).where(WorksheetRow.id == row_id)
+        projected_rows(projection, sheet).where(WorksheetRow.id == row_id)
     ).mappings().one_or_none()
     return None if found is None else _view(found, [column.key for column in structure.columns])
 
@@ -177,6 +180,6 @@ def read_rows(
     projection = project_rows(db, user, structure)
     keys = [column.key for column in structure.columns]
     found = db.execute(
-        _rows(projection, sheet).where(WorksheetRow.id.in_(row_ids))
+        projected_rows(projection, sheet).where(WorksheetRow.id.in_(row_ids))
     ).mappings().all()
     return {row["id"]: _view(row, keys) for row in found}

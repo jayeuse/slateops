@@ -13,12 +13,14 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
 from app.systems.access.policy.checks import module_level
 from app.systems.access.policy.transaction_access import forget_access
 from app.systems.access.users.models import User
+from app.systems.access.users.person_visibility import visible_person_ids
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.openview.worksheets.access import load_visible_worksheet, worksheet_level
 from app.systems.openview.worksheets.cells import (
@@ -49,6 +51,7 @@ from app.systems.openview.worksheets.schemas import (
     SheetUnlinkedCell,
     SheetValueCell,
 )
+from app.systems.openview.worksheets.serializers import person_refs
 from app.systems.openview.worksheets.structure import (
     MAX_ROWS,
     MAX_SHEET_BYTES,
@@ -173,6 +176,22 @@ def _convert(db: Session, user: User, context: Context, key: str, value: Any) ->
         ):
             raise cell_error("link_target_invalid", key, "Choose a live record you can read")
     return converted
+
+
+def _changed_by(db: Session, user: User, row_id: UUID, keys: list[str]) -> Any:
+    """The author of the latest change to one of ``keys``, when ``user`` can see them."""
+
+    author = db.scalar(
+        select(WorksheetRowRevision.performed_by)
+        .where(WorksheetRowRevision.row_id == row_id,
+               WorksheetRowRevision.changed_keys.op("?|")(array(keys)))
+        .order_by(WorksheetRowRevision.revision.desc())
+        .limit(1)
+    )
+    if author is None or (author != user.id and not visible_person_ids(db, user, [author])):
+        return None
+    found = person_refs(db, [author]).get(author)
+    return None if found is None else found.model_dump(mode="json")
 
 
 def _canonical(cell: Any) -> tuple[str, Any]:
@@ -325,7 +344,8 @@ def update_row(
     if changed and conflict == "cell_changed":
         raise error(status.HTTP_412_PRECONDITION_FAILED, "cell_changed",
                     "Someone changed these cells", keys=changed,
-                    current=current.model_dump(mode="json"))
+                    current=current.model_dump(mode="json"),
+                    changed_by=_changed_by(db, user, row.id, changed))
     if changed:
         raise error(status.HTTP_409_CONFLICT, "row_changed", "Someone changed this row",
                     row_id=str(row.id), keys=changed)

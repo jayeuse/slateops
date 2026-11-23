@@ -9,7 +9,7 @@ are the bytes released.
 
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database.organization_scope import apply_connection_scope
+from app.systems.access.policy.checks import module_level
 from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.access.users.person_visibility import visible_person_ids
@@ -39,7 +40,7 @@ from app.systems.openview.worksheets.export_files import (
 from app.systems.openview.worksheets.models import Worksheet as SheetModel
 from app.systems.openview.worksheets.models import WorksheetRow
 from app.systems.openview.worksheets.projection import project_rows
-from app.systems.openview.worksheets.query import _cell, _rows
+from app.systems.openview.worksheets.query import projected_cell, projected_rows
 from app.systems.openview.worksheets.schemas import Cell, SheetValueCell
 from app.systems.openview.worksheets.serializers import person_refs
 from app.systems.openview.worksheets.structure import (
@@ -68,6 +69,8 @@ class ExportFile:
     filename: str
     row_count: int
     column_count: int
+    # The modules of link columns the snapshot let the exporter read; rechecked (D9.1).
+    link_modules: frozenset[UUID] = frozenset()
 
 
 def sheet_not_found() -> HTTPException:
@@ -95,7 +98,9 @@ def _export_column(db: Session, column: Column) -> ExportColumn:
         if kind in {FieldType.SELECT, FieldType.RELATIONSHIP}:
             kind = FieldType.TEXT
         return ExportColumn(column.name, kind)
-    if isinstance(column, SheetLinkColumn) or column.type in {"computed", "sheet_lookup"}:
+    if column.type == "computed":
+        return ExportColumn(column.name, FieldType.DECIMAL)
+    if isinstance(column, SheetLinkColumn) or column.type == "sheet_lookup":
         return ExportColumn(column.name, FieldType.TEXT)
     return ExportColumn(column.name, FieldType(column.type))
 
@@ -122,11 +127,11 @@ def _data_file(db: Session, reader: User, sheet: SheetModel, format: ExportForma
     keys = [column.key for column in structure.columns]
     columns = [_export_column(db, column) for column in structure.columns]
     statement = (
-        _rows(project_rows(db, reader, structure), sheet)
+        projected_rows(project_rows(db, reader, structure), sheet)
         .order_by(WorksheetRow.position, WorksheetRow.id)
         .limit(record_export.MAX_ROWS + 1)
     )
-    rows = [[_cell(row, key) for key in keys] for row in db.execute(statement).mappings()]
+    rows = [[projected_cell(row, key) for key in keys] for row in db.execute(statement).mappings()]
     if len(rows) > record_export.MAX_ROWS:
         raise record_export.limit_exceeded()
     rules = CellFormat(
@@ -151,17 +156,24 @@ def build_export(db: Session, *, reader_id: UUID, worksheet_id: UUID,
     sheet = None if reader is None else load_visible_worksheet(db, reader, worksheet_id)
     if reader is None or sheet is None:
         raise sheet_not_found()
+    structure = WorksheetStructure.model_validate(sheet.structure)
+    readable = frozenset(
+        column.link.moduleId for column in structure.columns
+        if isinstance(column, SheetLinkColumn)
+        and module_level(db, reader, column.link.moduleId) is not None
+    )
     if format == "template":
         template = build_template(db, reader, sheet)
         content = template_bytes(template)
         if len(content) > record_export.MAX_BYTES:
             raise record_export.limit_exceeded()
         return ExportFile(content, f"{_slug(sheet.title)}-template.json", 0,
-                          len(template.columns))
+                          len(template.columns), readable)
     profile = db.get(WorkspaceProfile, sheet.org_id)
     if profile is None:
         raise HTTPException(503, detail="Workspace configuration is unavailable")
-    return _data_file(db, reader, sheet, format, profile)
+    built = _data_file(db, reader, sheet, format, profile)
+    return replace(built, link_modules=readable)
 
 
 def export_snapshot(engine: Engine, *, reader_id: UUID, worksheet_id: UUID,

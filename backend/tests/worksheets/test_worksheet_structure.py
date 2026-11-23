@@ -134,7 +134,7 @@ def _add_column(column: dict[str, Any]):
             _set("c6.select.options", [{"id": "o1", "label": "A"}, {"id": "o2", "label": "A"}]),
             "Option IDs and labels must be unique",
         ),
-        (_set("c5.computed.expression", "1" * 1001), "at most 1000 characters"),
+        (_set("c5.computed.expression", "1" * 2001), "at most 2000 characters"),
         (_set("groups", [{"name": "P", "keys": ["c3", "c99"]}]), "Group keys must name columns"),
         (_set("groups", [{"name": "P", "keys": ["c3", "c5"]}]), "adjacent columns in order"),
         (_set("groups", [{"name": "P", "keys": ["c4", "c3"]}]), "adjacent columns in order"),
