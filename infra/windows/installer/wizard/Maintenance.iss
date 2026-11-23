@@ -318,12 +318,12 @@ begin
     AddText(CM('m01_email_not_set'), False);
   { W14-D5 (7.6 "M01 status"): full form, one stage; the sentence above names the action. }
   if MaintStatus = 'checking' then
-    AddProgress('maint', '', 1, '', MaintStatusAt, '');
+    AddProgress('maint', '', 1, '', MaintStatusAt);
   { 7.6 "M01 Repair" (TASK-0097 AC-5, Designer B2 option a): while Repair runs, its full form
     takes the place of the actions, so the page ends inside its frame; the actions come back
     with the result. The other M01 waits: one line under the actions. }
   if StepFor = 'repair' then
-    AddProgress('repair', CM('repair_stages'), WaitStage('repair'), WaitActionText('repair'), StepAt, '')
+    AddProgress('repair', CM('repair_stages'), WaitStage('repair'), WaitActionText('repair'), StepAt)
   else
   begin
     CurY := CurY + ScaleY(4);
@@ -634,9 +634,9 @@ begin
   if UpdWaiting then
     AddText(CM('m05_waiting'), False);
   if UpdPhase = 'done' then
-    AddProgress('update', UpdStages, 5, '', 0, '')
+    AddProgress('update', UpdStages, 5, '', 0)
   else
-    AddProgress('update', UpdStages, WaitStage('update'), WaitActionText('update'), UpdStartedAt, CM('wait_up_to_60'));
+    AddProgress('update', UpdStages, WaitStage('update'), WaitActionText('update'), UpdStartedAt);
   { P2-5: no verdict at a time limit; the slow line and Save report, and no Try again while the
     engine still works. }
   if (UpdPhase = 'update') and UpdSlowShown then
@@ -868,6 +868,7 @@ begin
   CurY := 0;
   RowX := 0;
   WaitTime := nil;
+  WaitBar := nil;
   WaitNow := nil;
   if CloseAfter = 'start' then
     AddText(CM('remove_start'), False)
@@ -875,13 +876,13 @@ begin
     AddText(CM('remove_text'), False);
   BlockGap;
   if ClosePhase <> '' then
-    AddProgress('remove', CM('remove_stages'), CloseNumber, FM1('wait_now', CloseLine), CloseStartedAt, '')
+    AddProgress('remove', CM('remove_stages'), CloseNumber, FM1('wait_now', CloseLine), CloseStartedAt)
   else
   begin
     if CloseEnd = 'done' then
-      AddProgress('remove', CM('remove_stages'), 6, '', 0, '')
+      AddProgress('remove', CM('remove_stages'), 6, '', 0)
     else
-      AddProgress('remove', CM('remove_stages'), CloseNumber, '', 0, '');
+      AddProgress('remove', CM('remove_stages'), CloseNumber, '', 0);
     if CloseEnd = 'limit' then AddText(CM('remove_limit'), False)
     else if CloseEnd = 'kept' then AddText(CM('remove_kept_failed'), False)
     else if CloseEnd = 'data' then AddText(CM('remove_data_failed'), False)
@@ -1040,7 +1041,8 @@ end;
 { The form, built without being shown (the self-test builds it too). }
 function BuildRemoveForm(After: String): TSetupForm;
 begin
-  Result := CreateCustomForm(ScaleX(480), ScaleY(330), False, False);
+  { TASK-0097 (spec 6.3): 30 px taller than before for the bar row over the stages. }
+  Result := CreateCustomForm(ScaleX(480), ScaleY(360), False, False);
   Result.Caption := CM('remove_title');
   RemoveForm := Result;
   CloseAfter := After;
@@ -1064,6 +1066,7 @@ begin
   Cur := nil;
   WaitKind := '';
   WaitTime := nil;
+  WaitBar := nil;
   WaitNow := nil;
   WaitDrawn := 0;
 end;
@@ -1556,6 +1559,127 @@ begin
 end;
 
 { The one line of the page's short wait (7.6 one-line form), or '' when none runs. }
+{ TASK-0097 (spec 6.3 per-surface table): the weights of each wait with a bar, in seconds
+  (planning values). '' for a wait with no bar. S12: the data folder, one weight per server part
+  step (fresh or kept data), then the eight install stages. }
+function BgWeight(Name: String): Integer;
+begin
+  if Name = 'service' then Result := 30
+  else if Name = 'wslconfig' then Result := 10
+  else if Name = 'import-distro' then Result := 60
+  else if Name = 'restore-kept' then Result := 120
+  else if Name = 'import-kept' then Result := 60
+  else if Name = 'start-boot' then Result := 60
+  else if Name = 'kept-status' then Result := 30
+  else if Name = 'receive' then Result := 540
+  else if Name = 'prepare' then Result := 30
+  else if Name = 'prefetch' then Result := 330
+  else Result := 30;
+end;
+
+function BarWeights(Kind: String): String;
+var
+  I: Integer;
+begin
+  if Kind = 'install' then
+  begin
+    Result := '120';
+    for I := 0 to BgCount - 1 do
+      Result := Result + '|' + IntToStr(BgWeight(BgStepName(I)));
+    Result := Result + '|60|15|10|120|30|15|180|120';
+  end
+  else if Kind = 'prep' then Result := '45|75|5|0|0'
+  else if Kind = 'remove' then Result := '5|15|60|60|40'
+  else if Kind = 'repair' then Result := '5|10|10|10|5|60|10'
+  else if Kind = 'update' then Result := '600|300|300|120'
+  else if Kind = 'rollback' then Result := '210'
+  else if Kind = 'report' then Result := '10|90|15|5'
+  else if Kind = 'mail' then Result := '3|3|20|60'
+  else if Kind = 'm03' then Result := '5|10|30|30'
+  else if Kind = 'uninstall' then Result := '20|60|30'
+  else if (Kind = 'check') or (Kind = 'recheck') then Result := '60'
+  else if Kind = 'key' then Result := '30'
+  else Result := '';
+end;
+
+{ The key share of the running stage: the checks started of all checks (S02, S06), and the
+  engine keys of the S12 stages "Receive the Slate Operations programs" (6 keys) and "Check the
+  server part" (10 keys). }
+procedure BarKeyShare(Kind: String; var Done, Total: Integer);
+var
+  Job, Key, Name: String;
+  Number, Count: Integer;
+begin
+  Done := 0;
+  Total := 0;
+  if (Kind = 'check') or (Kind = 'recheck') then
+  begin
+    HelperStep(CheckOut, Job, Key, Number, Count);
+    if Count > 0 then
+    begin
+      Done := Number;
+      Total := Count;
+    end;
+  end
+  else if (Kind = 'install') and (InstallStep = -1) and DataPrepared then
+  begin
+    Name := BgStepName(BgIndex);
+    if ((Name = 'receive') or (Name = 'prepare')) and (JobPurpose = 'bg') and (JobStepJob = Name) then
+    begin
+      Done := JobStepNumber;
+      Total := JobStepTotal;
+    end;
+  end;
+end;
+
+{ 6.3 rule 8: S05 while another installation runs (pc.busy) and M05 while Slate Operations is
+  busy (upd.idle): the bar holds, the time counts. }
+function BarBusy(Kind: String): Boolean;
+var
+  Job, Key: String;
+  Number, Total: Integer;
+begin
+  Result := False;
+  if (Kind = 'prep') and (PrepState = 'working') then
+  begin
+    HelperStep(PrepOut, Job, Key, Number, Total);
+    Result := Key = 'busy';
+  end
+  else if Kind = 'update' then
+    Result := (UpdPhase = 'idle') or (UpdPhase = 'pause');
+end;
+
+{ The compact bar of the page's one line (6.3): M02 Send test email (1 the channel self-test,
+  2 the security policy, 3 the test email, 4 set-email) and M03 (1 check the drive, 2 prepare
+  it, 3 set it, 4 the recovery key). False for a line with no bar. }
+function PageBarState(var Weights: String; var Stage: Integer; var Since: Cardinal; var KeyDone, KeyTotal: Integer): Boolean;
+begin
+  Result := True;
+  KeyDone := 0;
+  KeyTotal := 0;
+  Stage := 0;
+  if (StepFor = 'm03-check') or (StepFor = 'm03-prepare') or (MaintPhase = 'target') or (MaintPhase = 'key3') then
+  begin
+    Weights := BarWeights('m03');
+    Since := MaintAt;
+    if StepFor = 'm03-check' then Stage := 1
+    else if StepFor = 'm03-prepare' then Stage := 2
+    else if MaintPhase = 'target' then Stage := 3
+    else Stage := 4;
+  end
+  else if (MailPhase = 'selftest') or (StepFor = 'r7') or (MailPhase = 'sending') or (MaintPhase = 'setemail') then
+  begin
+    Weights := BarWeights('mail');
+    Since := MailAt;
+    if MailPhase = 'selftest' then Stage := 1
+    else if StepFor = 'r7' then Stage := 2
+    else if MailPhase = 'sending' then Stage := 3
+    else Stage := 4;
+  end
+  else
+    Result := False;
+end;
+
 function PageLineText: String;
 var
   Job, Key, Action: String;
@@ -1685,6 +1809,8 @@ begin
       ReportForm.ShowModal;
     finally
       ModalOpen := False;
+      if ReportBar.Lbl = ReportLabel then
+        LineBarForget(ReportBar);
       ReportLabel := nil;
       ReportForm.Free;
       ReportForm := nil;

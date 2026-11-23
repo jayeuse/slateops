@@ -40,6 +40,8 @@ var
   UTimerOn: Boolean;
   UReportForm: TSetupForm;
   UReportLabel: TNewStaticText;
+  { TASK-0097 (spec 6.3): U03's bar in the place of Inno's, and Save report's compact bar. }
+  UBar, UReportBar: TLineBar;
 
 { DEC-0041 (AC-W7): every helper step has a limit. The helper starts without a wait, and the
   uninstaller waits for its result file in one-second waits on ping.exe (Exec keeps the window
@@ -93,6 +95,36 @@ end;
 
 { The one line (7.6: "2 of 3: <stage>" and the time) in the report form or in Inno's uninstall
   form. }
+{ TASK-0097 (spec 6.3, U03): the bar of 6.3 at the bounds of Inno's uninstall bar, which stays
+  hidden from here on. Inno 6.7.4 only sets the Position of its own bar while it removes files
+  (Setup.UninstallProgressForm UpdateProgress), so nothing moves this bar back. Stages: 1 stop
+  Slate Operations, 2 move or delete the data, 3 remove the program and its Windows settings. }
+procedure UBarShow;
+var
+  Position: Integer;
+begin
+  if UBar.Bar = nil then
+  begin
+    UBar.Bar := TNewProgressBar.Create(UninstallProgressForm);
+    UBar.Bar.Parent := UninstallProgressForm.ProgressBar.Parent;
+    UBar.Bar.SetBounds(UninstallProgressForm.ProgressBar.Left, UninstallProgressForm.ProgressBar.Top,
+      UninstallProgressForm.ProgressBar.Width, UninstallProgressForm.ProgressBar.Height);
+    UBar.Bar.Min := 0;
+    UBar.Bar.Max := 1000;
+    UBar.Bar.Style := npbstNormal;
+    UninstallProgressForm.ProgressBar.Visible := False;
+  end;
+  if UStageNumber <> UBar.Stage then
+  begin
+    UBar.Stage := UStageNumber;
+    UBar.StageAt := BarNow;
+  end;
+  Position := BarPosition(BarWeights('uninstall'), UBar.Stage, (BarNow - UBar.StageAt) div 1000, 0, 0, 0, 0);
+  if Position > UBar.High then
+    UBar.High := Position;
+  UBar.Bar.Position := UBar.High;
+end;
+
 procedure UShow;
 var
   Text: String;
@@ -101,10 +133,15 @@ begin
     Exit;
   Text := OneLine(UStageNumber, UStageTotal, UStageLine, UStageAt);
   if UReportLabel <> nil then
-    UReportLabel.Caption := Text
+  begin
+    UReportLabel.Caption := Text;
+    { TASK-0097 (spec 6.3): Save report's compact bar (stages 3 and 4 of 4 here). }
+    LineBarShow(UReportBar, UReportLabel, BarWeights('report'), UStageNumber, UStageAt, 0, 0);
+  end
   else
   begin
     UninstallProgressForm.StatusLabel.Caption := Text;
+    UBarShow;
     UninstallProgressForm.Update;
   end;
 end;
@@ -167,6 +204,7 @@ begin
     UShow;
     Path := JsonValue(URun('report-zip', ReportRun, '', U_REPORT_SEC), 'path');
   finally
+    LineBarForget(UReportBar);
     UReportLabel := nil;
     UReportForm.Free;
     UReportForm := nil;
@@ -404,6 +442,10 @@ begin
   end;
   if (CurUninstallStep = usPostUninstall) and (UHelper <> '') then
   begin
+    { TASK-0097 (spec 6.3 rule 5): the bar is full only when the uninstall ended with nothing
+      left over. }
+    if (UBar.Bar <> nil) and (ULeft = '') then
+      UBar.Bar.Position := 1000;
     { U04. }
     if UKeep then
       Text := FM1('u04_kept', UDataRoot + '\kept')

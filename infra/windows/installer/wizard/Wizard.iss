@@ -32,6 +32,14 @@ type
     Size, Flags, Active, Focus, Capture, MenuOwner, MoveSize, CaretWindow: Longword;
     CaretLeft, CaretTop, CaretRight, CaretBottom: Integer;
   end;
+  { TASK-0097 (spec 6.3): the compact bar of a one-line wait and its state. }
+  TLineBar = record
+    Bar: TNewProgressBar;
+    Lbl: TNewStaticText;
+    High, Stage, BaseLeft, BaseWidth: Integer;
+    StageAt, Since: Cardinal;
+    Shifted: Boolean;
+  end;
   TCheckItem = record
     Id, Cls, Code, Raw: String;
   end;
@@ -348,9 +356,26 @@ var
   { W14-D5: the progress block of the page (spec 6.1). The body panel owns these labels, so
     BeginBody clears them; the timer changes only their captions. }
   WaitTime, WaitNow, StepLabel, ReportLabel: TNewStaticText;
+  { TASK-0097 (spec 6.2): the last strip drawn, for the self-test; S04 and S15 draw theirs once. }
+  StripCaps, StripMarks: array of TNewStaticText;
+  StripLines: array of TPanel;
+  StripColumn: Integer;
+  S15StripDone, S15StripShown: Boolean;
+  S04StripBottom: Integer;
+  S15StripDelta: Integer;
+  S15StripCaps, S15StripMarks: array of TNewStaticText;
+  S15StripLines: array of TPanel;
   WaitSince: Cardinal;
-  WaitLimit, WaitKind: String;
+  WaitKind: String;
   WaitDrawn: Integer;
+  { TASK-0097 (spec 6.3): the bar of the running wait and its state, kept outside the body panel
+    (a redraw rebuilds the panel; the bar never moves back within a wait). BarClock 0 is the
+    real clock; the self-test sets it. BarMbDone and BarMbTotal are the byte share of a stage. }
+  WaitBar: TNewProgressBar;
+  BarKind, BarElapsed: String;
+  BarSince, BarStageAt, BarClock: Cardinal;
+  BarStage, BarHigh, BarLeftShown, BarMbDone, BarMbTotal: Integer;
+  PageBar, ReportBar: TLineBar;
   { W14-D5: the last progress line of the running engine job (7.6), from its standard error. }
   JobStepJob, JobStepKey, JobRunId: String;
   JobStepNumber, JobStepTotal: Integer;
@@ -402,12 +427,19 @@ var
   UpdFailed, UpdRetry, UpdWaiting, UpdSlowShown, UpdEngineDone: Boolean;
 
 procedure RenderPage(Index: Integer); forward;
+{ TASK-0097 (spec 6.3), in Maintenance.iss: the weights, key share and busy state of a wait. }
+function BarWeights(Kind: String): String; forward;
+procedure BarKeyShare(Kind: String; var Done, Total: Integer); forward;
+function BarBusy(Kind: String): Boolean; forward;
+{ TASK-0097 (spec 6.3), below: a compact bar whose label went with its parent. }
+procedure LineBarForget(var B: TLineBar); forward;
 procedure SaveReport(Sender: TObject); forward;
 { W14-D5 and W14-D9, in Maintenance.iss: what follows a step, and the page's current wait. }
 procedure StepFinished(ForTag, Code: String); forward;
 function WaitStage(Kind: String): Integer; forward;
 function WaitActionText(Kind: String): String; forward;
 function PageLineText: String; forward;
+function PageBarState(var Weights: String; var Stage: Integer; var Since: Cardinal; var KeyDone, KeyTotal: Integer): Boolean; forward;
 procedure StartBackground; forward;
 { DEC-0041, in Maintenance.iss: the stage names, M02's set-email, the removal. }
 function StageName(Stages: String; Index: Integer): String; forward;
@@ -786,8 +818,15 @@ end;
 
 procedure BeginBody(Index: Integer);
 begin
+  { TASK-0097: a compact bar on a label of this panel goes with it. }
   if Bodies[Index] <> nil then
+  begin
+    if (PageBar.Lbl <> nil) and (PageBar.Lbl.Parent = Bodies[Index]) then
+      LineBarForget(PageBar);
+    if (ReportBar.Lbl <> nil) and (ReportBar.Lbl.Parent = Bodies[Index]) then
+      LineBarForget(ReportBar);
     Bodies[Index].Free;
+  end;
   Bodies[Index] := TPanel.Create(WizardForm);
   Bodies[Index].Parent := Pages[Index].Surface;
   Bodies[Index].BevelOuter := bvNone;
@@ -804,6 +843,7 @@ begin
   LastVerdict := nil;
   { W14-D5: the old panel took its labels with it. }
   WaitTime := nil;
+  WaitBar := nil;
   WaitNow := nil;
   StepLabel := nil;
   ReportLabel := nil;
@@ -1002,12 +1042,310 @@ begin
   Result := IntToStr(Seconds div 60) + ':' + Copy(IntToStr(100 + (Seconds mod 60)), 2, 2);
 end;
 
-function TimeLine: String;
+{ TASK-0097 (spec 6.3, owner item 3): the progress bar and the time of a wait. Each stage has a
+  weight (expected seconds); the bar is 1000 x (finished weights + current weight x fill) / all
+  weights. The fill of the running stage is the largest of its byte share, its key share and
+  its time share, at most 0.9, so a stage that has not ended never fills. The wait keeps its
+  highest position (BarHigh), so the bar never moves back; a new wait starts at 0. }
+function BarNow: Cardinal;
 begin
-  if WaitLimit <> '' then
-    Result := FM2('wait_time_limit', TimeText(WaitSince), WaitLimit)
+  if BarClock <> 0 then
+    Result := BarClock
   else
-    Result := FM1('wait_time', TimeText(WaitSince));
+    Result := GetTickCount;
+end;
+
+function SecondsText(Seconds: Integer): String;
+begin
+  if Seconds < 0 then
+    Seconds := 0;
+  Result := IntToStr(Seconds div 60) + ':' + Copy(IntToStr(100 + (Seconds mod 60)), 2, 2);
+end;
+
+{ The weight of stage Index (1-based) in "w1|w2|..."; 0 when absent. }
+function WeightAt(Weights: String; Index: Integer): Integer;
+var
+  Rest: String;
+  I, Cut: Integer;
+begin
+  Result := 0;
+  Rest := Weights;
+  I := 0;
+  while Rest <> '' do
+  begin
+    I := I + 1;
+    Cut := Pos('|', Rest);
+    if Cut = 0 then
+    begin
+      if I = Index then
+        Result := StrToIntDef(Rest, 0);
+      Exit;
+    end;
+    if I = Index then
+    begin
+      Result := StrToIntDef(Copy(Rest, 1, Cut - 1), 0);
+      Exit;
+    end;
+    Rest := Copy(Rest, Cut + 1, Length(Rest));
+  end;
+end;
+
+function WeightCount(Weights: String): Integer;
+var
+  I: Integer;
+begin
+  Result := 0;
+  if Weights = '' then
+    Exit;
+  Result := 1;
+  for I := 1 to Length(Weights) do
+    if Copy(Weights, I, 1) = '|' then
+      Result := Result + 1;
+end;
+
+function WeightSum(Weights: String; First, Last: Integer): Integer;
+var
+  I: Integer;
+begin
+  Result := 0;
+  for I := First to Last do
+    Result := Result + WeightAt(Weights, I);
+end;
+
+{ The position (0 to 999) of a wait that has not ended; 1000 only at the end (rule 5). }
+function BarPosition(Weights: String; Stage, StageSeconds, KeyDone, KeyTotal, MbDone, MbTotal: Integer): Integer;
+var
+  All, W, Fill, Share: Integer;
+begin
+  Result := 0;
+  All := WeightSum(Weights, 1, WeightCount(Weights));
+  if All <= 0 then
+    Exit;
+  W := WeightAt(Weights, Stage);
+  Fill := 0;
+  if W > 0 then
+  begin
+    Fill := (StageSeconds * 1000) div W;
+    if KeyTotal > 0 then
+    begin
+      Share := (KeyDone * 1000) div KeyTotal;
+      if Share > Fill then
+        Fill := Share;
+    end;
+    if MbTotal > 0 then
+    begin
+      Share := (MbDone * 1000) div MbTotal;
+      if Share > Fill then
+        Fill := Share;
+    end;
+    if Fill > 900 then
+      Fill := 900;
+    if Fill < 0 then
+      Fill := 0;
+  end;
+  Result := (WeightSum(Weights, 1, Stage - 1) * 1000 + W * Fill) div All;
+  if Result > 999 then
+    Result := 999;
+end;
+
+{ Seconds left: the stages not started and the rest of the running one (its weight less its
+  seconds, or its weight times the bytes not done). }
+function BarSecondsLeft(Weights: String; Stage, StageSeconds, MbDone, MbTotal: Integer): Integer;
+var
+  W, Rest: Integer;
+begin
+  W := WeightAt(Weights, Stage);
+  if MbTotal > 0 then
+    Rest := (W * (MbTotal - MbDone)) div MbTotal
+  else
+    Rest := W - StageSeconds;
+  if Rest < 0 then
+    Rest := 0;
+  Result := Rest + WeightSum(Weights, Stage + 1, WeightCount(Weights));
+end;
+
+{ The time text's kind per wait (6.3 per-surface table): 'left' (time left), 'usually1',
+  'usually2', or 'sofar'. }
+function BarMode(Kind: String): String;
+begin
+  if (Kind = 'install') or (Kind = 'update') then Result := 'left'
+  else if Kind = 'check' then Result := 'usually1'
+  else if Kind = 'prep' then Result := 'usually2'
+  else Result := 'sofar';
+end;
+
+function BarTimeText(Kind, Weights: String; Seconds, StageSeconds: Integer): String;
+var
+  SoFar, Mode: String;
+  W, Minutes: Integer;
+begin
+  SoFar := FM1('wait_so_far', SecondsText(Seconds));
+  Result := SoFar;
+  { 6.3 rule 8: waiting without progress shows the time only. }
+  if BarBusy(Kind) then
+    Exit;
+  Mode := BarMode(Kind);
+  if Mode = 'usually1' then
+    Result := FM2('wait_join', SoFar, CM('wait_usually_1'))
+  else if Mode = 'usually2' then
+    Result := FM2('wait_join', SoFar, FM1('wait_usually', '2'))
+  else if Mode = 'left' then
+  begin
+    W := WeightAt(Weights, BarStage);
+    if (W > 0) and (StageSeconds > W) and (BarMbTotal = 0) then
+      Result := FM2('wait_join', SoFar, CM('wait_longer'))
+    else
+    begin
+      Minutes := (BarSecondsLeft(Weights, BarStage, StageSeconds, BarMbDone, BarMbTotal) + 59) div 60;
+      if Minutes < 1 then
+        Minutes := 1;
+      { The minutes left never go up within a wait. }
+      if (BarLeftShown > 0) and (Minutes > BarLeftShown) then
+        Minutes := BarLeftShown;
+      BarLeftShown := Minutes;
+      if Minutes = 1 then
+        Result := FM2('wait_join', SoFar, CM('wait_left_1'))
+      else
+        Result := FM2('wait_join', SoFar, FM1('wait_left', IntToStr(Minutes)));
+    end;
+  end;
+end;
+
+{ The widest time text that this wait can show, with "88:88" for the time (6.3 bar row). }
+function BarTimeWidth(Parent: TWinControl; Kind: String): Integer;
+var
+  Texts: array of String;
+  Probe: TNewStaticText;
+  I: Integer;
+begin
+  SetArrayLength(Texts, 3);
+  Texts[0] := FM1('wait_so_far', '88:88');
+  Texts[1] := FM1('wait_finished', '88:88');
+  Texts[2] := '';
+  if BarMode(Kind) = 'left' then
+  begin
+    Texts[0] := FM2('wait_join', FM1('wait_so_far', '88:88'), FM1('wait_left', '88'));
+    Texts[2] := FM2('wait_join', FM1('wait_so_far', '88:88'), CM('wait_longer'));
+  end
+  else if BarMode(Kind) = 'usually1' then
+    Texts[0] := FM2('wait_join', FM1('wait_so_far', '88:88'), CM('wait_usually_1'))
+  else if BarMode(Kind) = 'usually2' then
+    Texts[0] := FM2('wait_join', FM1('wait_so_far', '88:88'), FM1('wait_usually', '2'));
+  Result := 0;
+  for I := 0 to 2 do
+    if Texts[I] <> '' then
+    begin
+      Probe := TNewStaticText.Create(Parent);
+      Probe.Parent := Parent;
+      Probe.ShowAccelChar := False;
+      Probe.Caption := Texts[I];
+      if Probe.Width > Result then
+        Result := Probe.Width;
+      Probe.Free;
+    end;
+  Result := Result + ScaleX(4);
+end;
+
+{ Each timer tick: the time text and the bar position of the running wait, captions only. }
+procedure BarRefresh;
+var
+  Weights: String;
+  Seconds, StageSeconds, Position, KeyDone, KeyTotal: Integer;
+begin
+  if (WaitSince = 0) or (BarKind = '') then
+    Exit;
+  Weights := BarWeights(BarKind);
+  Seconds := (BarNow - WaitSince) div 1000;
+  StageSeconds := (BarNow - BarStageAt) div 1000;
+  BarElapsed := SecondsText(Seconds);
+  if (Weights <> '') and not BarBusy(BarKind) then
+  begin
+    KeyDone := 0;
+    KeyTotal := 0;
+    BarKeyShare(BarKind, KeyDone, KeyTotal);
+    Position := BarPosition(Weights, BarStage, StageSeconds, KeyDone, KeyTotal, BarMbDone, BarMbTotal);
+    if Position > BarHigh then
+      BarHigh := Position;
+  end;
+  if (WaitBar <> nil) and (WaitBar.Position <> BarHigh) then
+    WaitBar.Position := BarHigh;
+  if WaitTime <> nil then
+    WaitTime.Caption := BarTimeText(BarKind, Weights, Seconds, StageSeconds);
+end;
+
+{ The compact bar of a one-line wait (6.3): 96 x 8 px at the start of the line, 8 px before
+  the text; the bar belongs to the label's parent, so it goes with it. }
+procedure LineBarForget(var B: TLineBar);
+begin
+  B.Bar := nil;
+  B.Lbl := nil;
+  B.Since := 0;
+  B.Shifted := False;
+end;
+
+{ The label goes back to its own bounds (the ones it had, or that its page set since). }
+procedure LineBarDrop(var B: TLineBar);
+begin
+  if B.Bar = nil then
+    Exit;
+  if (B.Lbl <> nil) and B.Shifted and (B.Lbl.Left = B.BaseLeft + ScaleX(104)) then
+  begin
+    B.Lbl.Left := B.BaseLeft;
+    B.Lbl.Width := B.BaseWidth;
+    B.Lbl.AdjustHeight;
+  end;
+  B.Bar.Free;
+  LineBarForget(B);
+end;
+
+procedure LineBarShow(var B: TLineBar; Lbl: TNewStaticText; Weights: String; Stage: Integer; Since: Cardinal; KeyDone, KeyTotal: Integer);
+var
+  Position: Integer;
+begin
+  if Lbl = nil then
+    Exit;
+  if (B.Bar <> nil) and (B.Lbl <> Lbl) then
+    LineBarForget(B);
+  if B.Bar = nil then
+  begin
+    B.Bar := TNewProgressBar.Create(Lbl.Parent);
+    B.Bar.Parent := Lbl.Parent;
+    B.Bar.Min := 0;
+    B.Bar.Max := 1000;
+    B.Bar.Style := npbstNormal;
+    B.Lbl := Lbl;
+    B.Shifted := False;
+  end;
+  { The page can set the label's bounds again (LayoutMail moves the M02 line, S01 places its
+    line): its own bounds are read again, and the bar follows the label on every call. }
+  if B.Shifted and (Lbl.Left <> B.BaseLeft + ScaleX(104)) then
+    B.Shifted := False;
+  if not B.Shifted then
+  begin
+    B.BaseLeft := Lbl.Left;
+    B.BaseWidth := Lbl.Width;
+    Lbl.Left := B.BaseLeft + ScaleX(104);
+    Lbl.Width := B.BaseWidth - ScaleX(104);
+    Lbl.AdjustHeight;
+    B.Shifted := True;
+  end;
+  B.Bar.SetBounds(B.BaseLeft, Lbl.Top + ScaleY(3), ScaleX(96), ScaleY(8));
+  if Since <> B.Since then
+  begin
+    B.Since := Since;
+    B.High := 0;
+    B.Stage := 0;
+  end;
+  if Stage <> B.Stage then
+  begin
+    B.Stage := Stage;
+    B.StageAt := BarNow;
+  end;
+  Position := BarPosition(Weights, Stage, (BarNow - B.StageAt) div 1000, KeyDone, KeyTotal, 0, 0);
+  if Position > B.High then
+    B.High := Position;
+  if B.Bar.Position <> B.High then
+    B.Bar.Position := B.High;
 end;
 
 { TASK-0097 AC-8 (Designer 4): an action inside a one-line text loses its own full stop, so the
@@ -1029,16 +1367,87 @@ begin
     Result := FM2('wait_line_one', NoStop(Action), TimeText(Since));
 end;
 
-{ The full form. Stages: names split by "|" ('' for a wait with one stage, which shows no list);
-  Current: the stage that runs now (1-based). Action: the current action, shown as given; ''
-  shows none. Since: the start of the wait. Limit: the "This can take ..." sentence, or ''.
-  Kind names the wait for WaitStage and WaitActionText (Maintenance.iss). }
-procedure AddProgress(Kind, Stages: String; Current: Integer; Action: String; Since: Cardinal; Limit: String);
+{ The full form (6.1, 6.3). First the bar row: the bar and the time text (a wait that 6.3
+  gives no bar shows the time text alone); then the stages, names split by "|" ('' for a wait
+  with one stage, which shows no list), Current the stage that runs now (1-based); then the
+  current action ('' shows none). Since: the start of the wait; 0 when it is over (all stages
+  done: a full bar and "Finished in"; the removal stopped at a limit: the bar stays). Kind names
+  the wait for WaitStage, WaitActionText and the bar (Maintenance.iss). }
+procedure AddProgress(Kind, Stages: String; Current: Integer; Action: String; Since: Cardinal);
 var
-  Rest, Name, StateWord: String;
-  I, Cut: Integer;
+  Rest, Name, StateWord, Model, Weights: String;
+  I, Cut, Stage, RowTop, TimeW, BarW: Integer;
   Row: TNewStaticText;
+  Ended: Boolean;
 begin
+  { The bar's model: S02, S06 and S14 are one stage filled by their count; going back in M05
+    is a new wait (6.3 rule 6). }
+  Model := Kind;
+  Stage := Current;
+  if (Kind = 'check') or (Kind = 'recheck') or (Kind = 'key') then
+    Stage := 1;
+  if (Kind = 'update') and (Current > 4) and (Since <> 0) then
+  begin
+    Model := 'rollback';
+    Stage := 1;
+  end;
+  Weights := BarWeights(Model);
+  if (Model <> BarKind) or ((Since <> 0) and (Since <> BarSince)) then
+  begin
+    BarKind := Model;
+    BarSince := Since;
+    BarHigh := 0;
+    BarLeftShown := 0;
+    BarStage := 0;
+    BarElapsed := SecondsText(0);
+    BarMbDone := 0;
+    BarMbTotal := 0;
+  end;
+  if Stage <> BarStage then
+  begin
+    BarStage := Stage;
+    BarStageAt := BarNow;
+  end;
+  Ended := (Since = 0) and not ((Model = 'remove') and (Current <= 5));
+  if Ended then
+    BarHigh := 1000;
+  WaitBar := nil;
+  WaitTime := nil;
+  if (Weights <> '') or (Since <> 0) then
+  begin
+    RowTop := CurY;
+    WaitTime := AddTextTo(Cur, RowTop, FM1('wait_so_far', SecondsText(0)), False);
+    TimeW := BarTimeWidth(Cur, Model);
+    if Weights <> '' then
+    begin
+      WaitBar := TNewProgressBar.Create(WizardForm);
+      WaitBar.Parent := Cur;
+      WaitBar.Min := 0;
+      WaitBar.Max := 1000;
+      WaitBar.Style := npbstNormal;
+      BarW := Cur.Width - TimeW - ScaleX(12);
+      if BarW >= Cur.Width div 2 then
+      begin
+        WaitBar.SetBounds(0, RowTop + (WaitTime.Height - ScaleY(12)) div 2, BarW, ScaleY(12));
+        WaitTime.SetBounds(BarW + ScaleX(12), RowTop, TimeW, WaitTime.Height);
+        CurY := RowTop + WaitTime.Height + ScaleY(12);
+      end
+      else
+      begin
+        { The time text goes in its own row under the bar (4 px). }
+        WaitBar.SetBounds(0, RowTop, Cur.Width, ScaleY(12));
+        WaitTime.Top := RowTop + ScaleY(12) + ScaleY(4);
+        CurY := WaitTime.Top + WaitTime.Height + ScaleY(12);
+      end;
+      WaitBar.Position := BarHigh;
+    end
+    else
+      CurY := RowTop + WaitTime.Height + ScaleY(12);
+    if Ended then
+      WaitTime.Caption := FM1('wait_finished', BarElapsed)
+    else if Since = 0 then
+      WaitTime.Caption := FM1('wait_so_far', BarElapsed);
+  end;
   Rest := Stages;
   I := 0;
   while Rest <> '' do
@@ -1074,11 +1483,8 @@ begin
   if Action <> '' then
     WaitNow := AddText(Action, False);
   WaitSince := Since;
-  WaitLimit := Limit;
-  WaitTime := nil;
-  { Since 0: the wait is over (all stages done), so no time line. }
   if Since <> 0 then
-    WaitTime := AddText(TimeLine, False);
+    BarRefresh;
 end;
 
 { W14-D3 (6.1 L12): the bottom band of the page in page coordinates (the place of the old status
@@ -1099,36 +1505,113 @@ begin
   StepLabel := AddText(Text, False);
 end;
 
-{ The stage line under the header on S02 to S12 (spec 6.1) on Parent at Top; returns the top of
-  the content under it (16 px under the line). }
-function StageLineAt(Parent: TWinControl; Top, Stage: Integer): Integer;
+{ TASK-0097 (spec 6.2, owner item 4): the step strip under the header. Four equal columns
+  across Width from Left at Top; Current is the step of the page (1 to 4), the steps before it
+  are finished. Finished: the mark (Segoe UI Symbol) and the name, regular, a 1 px underline.
+  Current: "<n> <name>", bold, a 3 px underline. Next: "<n> <name>", regular, grey, no
+  underline. Static text only: no tab stop, no link look. Returns the top of the content under
+  it: the strip's text height plus 16 px, the value of the old stage line (no added height). }
+function StripAt(Parent: TWinControl; Left, Top, Width, Current: Integer): Integer;
 var
-  Labels: array of TNewStaticText;
-  I, Left: Integer;
+  I, ColW, X, TextH: Integer;
+  Cap, Mark: TNewStaticText;
+  Line: TPanel;
 begin
-  SetArrayLength(Labels, 3);
-  Left := 0;
-  for I := 1 to 3 do
+  SetArrayLength(StripCaps, 4);
+  SetArrayLength(StripMarks, 4);
+  SetArrayLength(StripLines, 4);
+  ColW := Width div 4;
+  TextH := 0;
+  for I := 1 to 4 do
   begin
-    Labels[I - 1] := TNewStaticText.Create(WizardForm);
-    Labels[I - 1].Parent := Parent;
-    Labels[I - 1].ShowAccelChar := False;
-    Labels[I - 1].Caption := CM('stage_' + IntToStr(I));
-    if I < 3 then
-      Labels[I - 1].Caption := Labels[I - 1].Caption + '  ' + CM('stage_sep') + '  ';
-    if I = Stage then
-      Labels[I - 1].Font.Style := [fsBold];
-    Labels[I - 1].Left := Left;
-    Labels[I - 1].Top := Top;
-    Left := Left + Labels[I - 1].Width;
+    X := Left + (I - 1) * ColW;
+    Mark := nil;
+    Cap := TNewStaticText.Create(WizardForm);
+    Cap.Parent := Parent;
+    Cap.ShowAccelChar := False;
+    Cap.TabStop := False;
+    if I < Current then
+    begin
+      Mark := TNewStaticText.Create(WizardForm);
+      Mark.Parent := Parent;
+      Mark.ShowAccelChar := False;
+      Mark.TabStop := False;
+      Mark.Font.Name := 'Segoe UI Symbol';
+      Mark.Font.Size := Cap.Font.Size;
+      Mark.Font.Color := clWindowText;
+      Mark.Caption := CM('strip_done_mark');
+      Mark.Left := X;
+      Mark.Top := Top;
+      Cap.Caption := CM('strip_name_' + IntToStr(I));
+      Cap.Left := X + Mark.Width + ScaleX(4);
+      Cap.Font.Color := clWindowText;
+    end
+    else
+    begin
+      Cap.Caption := CM('stage_' + IntToStr(I));
+      Cap.Left := X;
+      if I = Current then
+      begin
+        Cap.Font.Style := [fsBold];
+        Cap.Font.Color := clWindowText;
+      end
+      else
+        Cap.Font.Color := clGrayText;
+    end;
+    Cap.Top := Top;
+    if Cap.Height > TextH then
+      TextH := Cap.Height;
+    Line := nil;
+    if I <= Current then
+    begin
+      Line := TPanel.Create(WizardForm);
+      Line.Parent := Parent;
+      Line.BevelOuter := bvNone;
+      Line.ParentBackground := False;
+      Line.Caption := '';
+      Line.Color := clHighlight;
+    end;
+    StripCaps[I - 1] := Cap;
+    StripMarks[I - 1] := Mark;
+    StripLines[I - 1] := Line;
   end;
-  { 6.1 L4: the stage line is a block (16 px under it). }
-  Result := Top + Labels[0].Height + ScaleY(16);
+  for I := 1 to 4 do
+    if StripLines[I - 1] <> nil then
+    begin
+      if I = Current then
+        StripLines[I - 1].SetBounds(Left + (I - 1) * ColW, Top + TextH + ScaleY(3), ColW - ScaleX(8), ScaleY(3))
+      else
+        StripLines[I - 1].SetBounds(Left + (I - 1) * ColW, Top + TextH + ScaleY(3), ColW - ScaleX(8), ScaleY(1));
+    end;
+  StripColumn := ColW;
+  { 6.1 L4: the strip is a block (16 px under its text); the underlines sit in that gap. }
+  Result := Top + TextH + ScaleY(16);
+end;
+
+function StageLineAt(Parent: TWinControl; Top, Stage: Integer): Integer;
+begin
+  Result := StripAt(Parent, 0, Top, Parent.Width, Stage);
+end;
+
+{ TASK-0097 (spec 6.2 page table): the step that a page shows, a pure function of the page and
+  its state. S06 before S14 shows step 4; the maintenance pages and forms have no strip (0). }
+function StripStep(Index: Integer): Integer;
+begin
+  Result := 0;
+  if (Index = P_CHECK) or (Index = P_RESTART) then Result := 1
+  else if Index = P_BACK then
+  begin
+    if EntryNext = 'S14' then Result := 4 else Result := 1;
+  end
+  else if (Index = P_DATA) or (Index = P_ORG) or (Index = P_BACKUP) or (Index = P_READY) then Result := 2
+  else if Index = P_INSTALL then Result := 3
+  else if Index = P_KEY then Result := 4;
 end;
 
 procedure AddStageLine(Stage: Integer);
 begin
-  CurY := StageLineAt(Cur, CurY, Stage);
+  if Stage > 0 then
+    CurY := StageLineAt(Cur, CurY, Stage);
 end;
 
 { ------------------------------------------------------------------------------------------- }
@@ -1892,6 +2375,8 @@ end;
 procedure ShowReportLine;
 var
   Text: String;
+  Target: TNewStaticText;
+  Stage, KeyDone, KeyTotal: Integer;
 begin
   if ReportPhase <> '' then
     Text := ReportProgressText
@@ -1909,6 +2394,36 @@ begin
     S01Line.Caption := Text;
     WizardForm.AdjustLabelHeight(S01Line);
   end;
+  { TASK-0097 (spec 6.3): Save report's compact bar, on the line that shows it (the S13 form
+    first, then the page, then S01): 1 the setup logs, 2 the server part's logs (key share),
+    3 remove passwords and personal details, 4 save the file. }
+  Target := nil;
+  if FailureStatus <> nil then
+    Target := FailureStatus
+  else if ReportLabel <> nil then
+    Target := ReportLabel
+  else if WizardReady and (WizardForm.CurPageID = wpWelcome) and StateUnsafe and (S01Line <> nil) then
+    Target := S01Line;
+  if (ReportPhase <> '') and (Target <> nil) then
+  begin
+    KeyDone := 0;
+    KeyTotal := 0;
+    if ReportPhase = 'linux' then
+    begin
+      Stage := 2;
+      if JobPurpose = 'report' then
+      begin
+        KeyDone := JobStepNumber;
+        KeyTotal := JobStepTotal;
+      end;
+    end
+    else if ReportPhase = 'collect' then Stage := 3
+    else if ReportPhase = 'zip' then Stage := 4
+    else Stage := 1;
+    LineBarShow(ReportBar, Target, BarWeights('report'), Stage, ReportAt, KeyDone, KeyTotal);
+  end
+  else
+    LineBarDrop(ReportBar);
 end;
 
 { W14-D9: the server part's logs need the one Exec job. They are left out (report.txt says so)
@@ -2158,6 +2673,8 @@ begin
     Result := Form.ShowModal = mrRetry;
   finally
     ModalOpen := False;
+    if ReportBar.Lbl = FailureStatus then
+      LineBarForget(ReportBar);
     FailureStatus := nil;
     Form.Free;
   end;
@@ -2636,7 +3153,7 @@ begin
   WizardForm.NextButton.Visible := True;
   SetNextCaption(CM('btn_next'));
   SetCancelCaption(SetupMessage(msgButtonCancel));
-  AddStageLine(1);
+  AddStageLine(StripStep(P_CHECK));
   { AC-W9: a check restart that setup asked for before S05 goes on here. }
   if EntryWelcomeBack then
     AddText(CM('s02_welcome_back'), False);
@@ -2657,7 +3174,7 @@ begin
   if CheckRunning or not CheckDone then
   begin
     { W14-D5 (7.6 "S02 PC check"): four stages, the check that runs (N of 30), the time. }
-    AddProgress('check', CM('s02_stages'), WaitStage('check'), WaitActionText('check'), CheckStartedAt, CM('wait_about_1'));
+    AddProgress('check', CM('s02_stages'), WaitStage('check'), WaitActionText('check'), CheckStartedAt);
     WizardForm.NextButton.Enabled := False;
     Exit;
   end;
@@ -2849,14 +3366,14 @@ begin
   { Design B8: the header comes back after a failure and Try again. }
   WizardForm.PageNameLabel.Caption := CM('s05_title');
   WizardForm.PageDescriptionLabel.Caption := CM(S05SubtitleKey);
-  AddStageLine(1);
+  AddStageLine(StripStep(P_RESTART));
   SetNextCaption(CM('btn_next'));
   if ExtraButton <> nil then
     ExtraButton.Visible := False;
   if (PrepState = 'unpack') or (PrepState = 'working') or (PrepState = 'saving') then
   begin
     { W14-D5 (7.6 "S05 prepare"): the stages, the current action and the time so far. }
-    AddProgress('prep', CM('s05_stages'), WaitStage('prep'), WaitActionText('prep'), PrepStartedAt, CM('wait_about_2'));
+    AddProgress('prep', CM('s05_stages'), WaitStage('prep'), WaitActionText('prep'), PrepStartedAt);
     WizardForm.NextButton.Enabled := False;
   end
   else if PrepState = 'failed' then
@@ -2873,7 +3390,7 @@ begin
   begin
     { W14-D3 (rule 2.8, spec S05): the stage list stays; the verdict names both components,
       one line of why for each; the steps; Details holds only the version and the codes. }
-    AddProgress('', S05DoneStages, 3, '', 0, '');
+    AddProgress('prep', S05DoneStages, 3, '', 0);
     BlockGap;
     AddVerdict(CM(S05VerdictKey(PrepFeature, PrepWsl)));
     AddText(CM('s05_why_vmp'), False);
@@ -2902,7 +3419,7 @@ begin
   begin
     { No restart happened, so the subtitle says so, also when setup installed WSL just now (spec S05). }
     WizardForm.PageDescriptionLabel.Caption := CM('s05_subtitle_ready');
-    AddProgress('', S05NoRestartStages, 3, '', 0, '');
+    AddProgress('prep', S05NoRestartStages, 3, '', 0);
     BlockGap;
     AddVerdict(CM('s05_done_no_restart'));
     WizardForm.NextButton.Enabled := True;
@@ -2916,7 +3433,7 @@ end;
 procedure RenderWelcomeBack;
 begin
   BeginBody(P_BACK);
-  AddStageLine(1);
+  AddStageLine(StripStep(P_BACK));
   SetNextCaption(CM('btn_continue'));
   { W14-D3: the subtitle already says where setup continues; a body line only when it adds to
     it (screenshot 6 showed the same sentence twice, both bold). }
@@ -2933,7 +3450,7 @@ begin
   if CheckRunning or not CheckDone then
   begin
     { W14-D5 (7.6 "S06 and S11 recheck"): full on S06, one stage. }
-    AddProgress('recheck', '', 1, WaitActionText('recheck'), CheckStartedAt, '');
+    AddProgress('recheck', '', 1, WaitActionText('recheck'), CheckStartedAt);
     WizardForm.NextButton.Enabled := False;
     Exit;
   end;
@@ -3183,7 +3700,7 @@ var
   Button: TNewButton;
 begin
   BeginBody(P_DATA);
-  AddStageLine(2);
+  AddStageLine(StripStep(P_DATA));
   SetNextCaption(CM('btn_next'));
   AddText(CM('s07_first'), False);
   { 7.6 "S07 drives, kept data": the one line while the list, the kept data or the chosen folder
@@ -3827,7 +4344,7 @@ var
   Surface: TWinControl;
 begin
   Surface := Pages[P_ORG].Surface;
-  OrgTop := StageLineAt(Surface, 0, 2);
+  OrgTop := StageLineAt(Surface, 0, StripStep(P_ORG));
   OrgNameLabel := AddTextTo(Surface, 0, CM('s08_name'), True);
   OrgNameHelp := AddTextTo(Surface, 0, CM('s08_name_help'), False);
   OrgName := NewEditAt(Surface, 0); OrgName.MaxLength := 200; OrgName.OnChange := @OrgNameChanged;
@@ -4299,7 +4816,8 @@ var
 begin
   Surface := Pages[P_EMAIL].Surface;
   Third := Surface.Width div 3;
-  MailTop := StageLineAt(Surface, 0, 2);
+  { TASK-0097 (spec 6.2): M02 is a maintenance form; it has no strip. }
+  MailTop := 0;
   MailFromLabel := AddTextTo(Surface, 0, CM('s09_from'), True);
   MailFrom := NewEditAt(Surface, 0); MailFrom.MaxLength := 254; MailFrom.OnChange := @MailChanged;
   MailProviderLabel := AddTextTo(Surface, 0, CM('s09_provider'), True);
@@ -4572,7 +5090,7 @@ var
   Removable, OnData, Found: Boolean;
 begin
   BeginBody(P_BACKUP);
-  AddStageLine(2);
+  AddStageLine(StripStep(P_BACKUP));
   AddText(CM('s10_first'), False);
   List := OtherDrives;
   BackupSeen := List;
@@ -4722,7 +5240,7 @@ var
   Backups: String;
 begin
   BeginBody(P_READY);
-  AddStageLine(3);
+  AddStageLine(StripStep(P_READY));
   SetNextCaption(CM('s11_next'));
   if CheckRunning and (CheckFor = 'S11') then
   begin
@@ -5103,7 +5621,7 @@ begin
   WizardForm.PageNameLabel.Caption := CM('s12_title');
   WizardForm.PageDescriptionLabel.Caption := CM('s12_subtitle');
   SetNextCaption(CM('btn_next'));
-  AddStageLine(3);
+  AddStageLine(StripStep(P_INSTALL));
   if InstallFailed then
   begin
     { AC-W3: Save report first (in the row), then Next removes everything and closes setup. }
@@ -5120,9 +5638,9 @@ begin
   end;
   { W14-D5 (7.6 "S12 install"): every stage, the action that runs now, the time so far. }
   if InstallDone then
-    AddProgress('install', S12Stages, PrepStageCount + 9, '', 0, '')
+    AddProgress('install', S12Stages, PrepStageCount + 9, '', 0)
   else
-    AddProgress('install', S12Stages, WaitStage('install'), WaitActionText('install'), InstallStartedAt, CM('wait_up_to_30'));
+    AddProgress('install', S12Stages, WaitStage('install'), WaitActionText('install'), InstallStartedAt);
   BlockGap;
   AddText(CM('s12_box'), False);
   WizardForm.NextButton.Enabled := InstallDone;
@@ -5325,6 +5843,8 @@ var
   List, Item: String;
 begin
   BeginBody(P_KEY);
+  { TASK-0097 (spec 6.2): S14 shows step 4. }
+  AddStageLine(StripStep(P_KEY));
   { Design B8: the header comes back after a failure and Try again. }
   WizardForm.PageNameLabel.Caption := CM('s14_title');
   WizardForm.PageDescriptionLabel.Caption := CM('s14_subtitle');
@@ -5334,7 +5854,7 @@ begin
   if KeyState = 'making' then
   begin
     { W14-D5 (7.6 "S14 key"): full form, one stage. }
-    AddProgress('key', '', 1, WaitActionText('key'), KeyStartedAt, '');
+    AddProgress('key', '', 1, WaitActionText('key'), KeyStartedAt);
     WizardForm.NextButton.Enabled := False;
     Exit;
   end;
@@ -5469,10 +5989,12 @@ end;
 { W14-D5: the labels of the running waits; captions only, the page is not drawn again (6.1). }
 procedure RefreshWaitLabels;
 var
-  Line: String;
+  Line, Weights: String;
+  Stage, KeyDone, KeyTotal: Integer;
+  Since: Cardinal;
 begin
-  if WaitTime <> nil then
-    WaitTime.Caption := TimeLine;
+  { TASK-0097 (spec 6.3): the time text and the bar position only. }
+  BarRefresh;
   if (WaitNow <> nil) and (WaitKind <> '') then
   begin
     Line := WaitActionText(WaitKind);
@@ -5485,6 +6007,11 @@ begin
     if Line <> '' then
       StepLabel.Caption := Line;
   end;
+  { TASK-0097 (spec 6.3): the compact bar of M02 and M03. }
+  if (StepLabel <> nil) and PageBarState(Weights, Stage, Since, KeyDone, KeyTotal) then
+    LineBarShow(PageBar, StepLabel, Weights, Stage, Since, KeyDone, KeyTotal)
+  else
+    LineBarDrop(PageBar);
   if ReportPhase <> '' then
     ShowReportLine;
 end;
@@ -5799,6 +6326,8 @@ begin
 end;
 
 procedure InitializeWizard;
+var
+  StripTop, StripBottom: Integer;
 begin
   { W14-D3 (parent decision, 2026-11-18): the wizard is 165% high, so S09 with Other and every
     field ends above the status line (6.1 L8, L12). Inno 6.7.4 accepts WizardSizePercent only
@@ -5826,6 +6355,13 @@ begin
   WizardForm.LicenseLabel1.Visible := False;
   WizardForm.LicenseMemo.Height := WizardForm.LicenseMemo.Height + (WizardForm.LicenseMemo.Top - WizardForm.LicenseLabel1.Top);
   WizardForm.LicenseMemo.Top := WizardForm.LicenseLabel1.Top;
+  { TASK-0097 (spec 6.2): S04 shows step 1; the license text moves down by the strip and gets
+    shorter by the same amount, so the page height stays. }
+  StripTop := WizardForm.LicenseMemo.Top;
+  StripBottom := StripAt(WizardForm.LicensePage, WizardForm.LicenseMemo.Left, StripTop, WizardForm.LicenseMemo.Width, 1);
+  S04StripBottom := StripBottom;
+  WizardForm.LicenseMemo.Top := StripBottom;
+  WizardForm.LicenseMemo.Height := WizardForm.LicenseMemo.Height - (StripBottom - StripTop);
   { Spec S04: a link-style button to the third-party notices, under the license text. }
   NoticesLink := TNewLinkLabel.Create(WizardForm);
   NoticesLink.Parent := WizardForm.LicensePage;
@@ -5935,8 +6471,29 @@ end;
 procedure RenderFinishedPage;
 var
   Step1, Step3: String;
-  Y: Integer;
+  Y, StripTop, StripBottom, I: Integer;
 begin
+  { TASK-0097 (spec 6.2): S15 shows step 4, above the title; the text column moves down by the
+    strip, once (the page is never rebuilt). }
+  if not S15StripDone then
+  begin
+    S15StripDone := True;
+    S15StripShown := True;
+    StripTop := WizardForm.FinishedHeadingLabel.Top;
+    StripBottom := StripAt(WizardForm.FinishedPage, WizardForm.FinishedHeadingLabel.Left, StripTop, WizardForm.FinishedHeadingLabel.Width, 4);
+    SetArrayLength(S15StripCaps, 4);
+    SetArrayLength(S15StripMarks, 4);
+    SetArrayLength(S15StripLines, 4);
+    for I := 0 to 3 do
+    begin
+      S15StripCaps[I] := StripCaps[I];
+      S15StripMarks[I] := StripMarks[I];
+      S15StripLines[I] := StripLines[I];
+    end;
+    S15StripDelta := StripBottom - StripTop;
+    WizardForm.FinishedHeadingLabel.Top := StripBottom;
+    WizardForm.FinishedLabel.Top := WizardForm.FinishedLabel.Top + S15StripDelta;
+  end;
   WizardForm.FinishedHeadingLabel.Caption := CM('s15_title');
   { DEC-0041 (QA N1): the administrator signs in with the S08 email address and password; no
     invitation email. Design B9: after a resume the address can be unknown. A kept reinstall
@@ -5975,6 +6532,24 @@ begin
   PlaceFinishedText(3, CM('s15_desk'), Y);
   PlaceFinishedText(4, CM('s15_starts'), Y);
   SetNextCaption(CM('s15_finish'));
+  { TASK-0097 (spec 6.2 "S15 fit"): when the text ends less than 12 px above the page bottom,
+    the strip leaves S15 and the text moves back up (the spec's fallback); the log says so. }
+  if S15StripShown and (S15Steps[4].Top + S15Steps[4].Height > WizardForm.FinishedPage.Height - ScaleY(12)) then
+  begin
+    S15StripShown := False;
+    for I := 0 to GetArrayLength(S15StripCaps) - 1 do
+    begin
+      S15StripCaps[I].Visible := False;
+      if S15StripMarks[I] <> nil then
+        S15StripMarks[I].Visible := False;
+      if S15StripLines[I] <> nil then
+        S15StripLines[I].Visible := False;
+    end;
+    WizardForm.FinishedHeadingLabel.Top := WizardForm.FinishedHeadingLabel.Top - S15StripDelta;
+    WizardForm.FinishedLabel.Top := WizardForm.FinishedLabel.Top - S15StripDelta;
+    Log('S15: the text ends ' + IntToStr(S15Steps[4].Top + S15Steps[4].Height) + ' of ' + IntToStr(WizardForm.FinishedPage.Height) + '; the strip leaves S15 (spec 6.2).');
+    RenderFinishedPage;
+  end;
 end;
 
 procedure CurPageChanged(CurPageID: Integer);

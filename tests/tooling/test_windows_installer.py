@@ -286,7 +286,7 @@ class WizardCopyTest(unittest.TestCase):
         code = pascal_code()
         self.assertNotRegex(code, r"\bTLabel\b")
         used = set(re.findall(r"\b(?:CM|FM[1-3])\('([a-z0-9_]+)'", code))
-        prefixed = {"s12_stage", "s12_fail", "stage_", "bg_stage_", "s01_state_"}
+        prefixed = {"s12_stage", "s12_fail", "stage_", "bg_stage_", "s01_state_", "strip_name_"}
         missing = {key for key in used - set(self.copy()) if key not in prefixed}
         self.assertEqual(missing, set())
 
@@ -1107,11 +1107,14 @@ class W14Part2Test(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(name, body)
         refresh = routine(self.raw, "procedure RefreshWaitLabels;")
-        self.assertIn("if WaitTime <> nil then", refresh)
+        # Spec 6.3 (7334a07c): a tick sets the time text and the bar position only (BarRefresh).
+        self.assertIn("BarRefresh;", refresh)
+        self.assertIn("if WaitTime <> nil then", routine(self.raw, "procedure BarRefresh;"))
         self.assertNotIn("RenderPage(", refresh)
         copy = read_copy()
         self.assertEqual(copy.get("wait_line"), "%1 of %2: %3 · %4")
-        self.assertEqual(copy.get("wait_time"), "Time so far: %1.")
+        # Spec 6.3 (7334a07c): the time text of a wait is "<time> so far" (wait_so_far).
+        self.assertEqual(copy.get("wait_so_far"), "%1 so far")
         self.assertEqual(copy.get("wait_now"), "Now: %1")
 
     def test_w14_d5_d9_the_self_test_covers_the_new_waits(self) -> None:
@@ -1211,9 +1214,10 @@ class W14Part3Test(unittest.TestCase):
         self.assertNotIn("WizardForm.Color", code_only(self.raw))
         self.assertIn("external 'HideCaret@user32.dll stdcall';", self.raw)
         self.assertIn("HideCaret(Verdict.Handle);", routine(self.raw, "procedure FocusVerdict("))
-        # S08 and S09 sit on the page surface: their stage line is built there (6.1, S02 to S12).
-        self.assertIn("OrgTop := StageLineAt(Surface, 0, 2);", self.raw)
-        self.assertIn("MailTop := StageLineAt(Surface, 0, 2);", self.raw)
+        # S08 sits on the page surface: its strip is built there (spec 6.2, 7334a07c); M02 is a
+        # maintenance form and has no strip.
+        self.assertIn("OrgTop := StageLineAt(Surface, 0, StripStep(P_ORG));", self.raw)
+        self.assertIn("MailTop := 0;", self.raw)
         self.assertIn("Y := OrgTop;", routine(self.raw, "procedure LayoutOrg;\nvar"))
         self.assertIn("Y := MailTop;", routine(self.raw, "procedure LayoutMail;\nvar"))
 
@@ -1493,7 +1497,7 @@ class W14RecheckTest(unittest.TestCase):
         self.assertIn(
             "WizardForm.PageDescriptionLabel.Caption := CM('s05_subtitle_ready');", render
         )
-        self.assertIn("AddProgress('', S05NoRestartStages, 3, '', 0, '');", render)
+        self.assertIn("AddProgress('prep', S05NoRestartStages, 3, '', 0);", render)
         self.assertIn("FM3('s05_details', S05WslVersion, PrepFeature, PrepWsl)", render)
         self.assertIn("StepText('pc', Key, S05WslVersion, '', '')", self.raw)
         for check in (
@@ -2559,7 +2563,10 @@ class OwnerRc28Test(unittest.TestCase):
         )
 
     def test_s12_copy_has_no_second_time_line_and_no_drive_before_a_stop(self) -> None:
-        self.assertNotEqual(self.copy["s12_subtitle"], self.copy["wait_up_to_30"])
+        # Spec 6.3 (7334a07c): the subtitle keeps "This can take up to 30 minutes."; the time
+        # text of S12 no longer repeats it (the wait passes no limit sentence).
+        self.assertEqual(self.copy["s12_subtitle"], "This can take up to 30 minutes.")
+        self.assertNotIn("wait_up_to_30", self.raw)
         # Each line whose value is a drive letter ("D:") names it as "the D: drive", so no
         # sentence ends in "D:." (owner, rc.28).
         drives = {
@@ -2581,3 +2588,144 @@ class OwnerRc28Test(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertRegex(self.copy[key], rf"the {value} (backup )?drive")
                 self.assertNotIn(f"{value}.", self.copy[key])
+
+
+class StripAndBarTest(unittest.TestCase):
+    """Owner items 3 and 4 (TASK-0097): spec 7334a07c 6.2 (step strip) and 6.3 (progress bar
+    with the time). Behavior: the self-test checks named "TASK-0097 ..." on Windows CI."""
+
+    def setUp(self) -> None:
+        self.raw = pascal_code()
+        self.selftest = SELFTEST.read_text(encoding="ascii")
+        self.copy = read_copy()
+
+    def test_6_3_copy_keys_hold_the_spec_strings(self) -> None:
+        expected = {
+            "stage_1": "1 Check this PC",
+            "stage_2": "2 Your details",
+            "stage_3": "3 Install",
+            "stage_4": "4 Done",
+            "strip_name_1": "Check this PC",
+            "strip_name_2": "Your details",
+            "strip_name_3": "Install",
+            "strip_name_4": "Done",
+            "strip_done_mark": "\u2713",
+            "wait_so_far": "%1 so far",
+            "wait_join": "%1 \u00b7 %2",
+            "wait_left": "About %1 minutes left",
+            "wait_left_1": "About 1 minute left",
+            "wait_longer": "This step takes longer than usual",
+            "wait_usually": "Usually about %1 minutes",
+            "wait_usually_1": "Usually about 1 minute",
+            "wait_finished": "Finished in %1",
+            "s12_subtitle": "This can take up to 30 minutes.",
+            "step_install_backup": "Making the first backup on the %3 drive.",
+        }
+        for key, value in expected.items():
+            with self.subTest(key=key):
+                self.assertEqual(self.copy.get(key), value)
+        self.assertIn("Copy the server part to the %1 drive", self.copy["bg_stages"].split("|"))
+        for retired in (
+            "stage_sep",
+            "wait_time",
+            "wait_time_limit",
+            "wait_about_1",
+            "wait_about_2",
+        ):
+            with self.subTest(retired=retired):
+                self.assertNotIn(retired, self.copy)
+                self.assertNotIn(f"'{retired}'", self.raw)
+
+    def test_6_3_no_drive_letter_before_a_stop_and_no_marquee(self) -> None:
+        for key, value in self.copy.items():
+            with self.subTest(key=key):
+                self.assertNotRegex(value, r"[A-Z]:\.")
+        self.assertNotIn("npbstMarquee", self.raw)
+        self.assertNotIn("npbstMarquee", self.selftest)
+
+    def test_6_2_the_strip_is_static_text_on_every_setup_page(self) -> None:
+        self.assertIn("function StripAt(", self.raw)
+        strip = routine(self.raw, "function StripAt(")
+        self.assertIn("function StripStep(Index: Integer): Integer;", self.raw)
+        for fact in (
+            "Cap.TabStop := False;",
+            "Mark.Font.Name := 'Segoe UI Symbol';",
+            "Line.Color := clHighlight;",
+            "Cap.Font.Color := clGrayText;",
+            "Result := Top + TextH + ScaleY(16);",
+        ):
+            with self.subTest(fact=fact):
+                self.assertIn(fact, strip)
+        step = routine(self.raw, "function StripStep(Index: Integer): Integer;")
+        self.assertIn("if EntryNext = 'S14' then Result := 4 else Result := 1;", step)
+        for page in (
+            "P_CHECK",
+            "P_RESTART",
+            "P_BACK",
+            "P_DATA",
+            "P_BACKUP",
+            "P_READY",
+            "P_INSTALL",
+            "P_KEY",
+        ):
+            with self.subTest(page=page):
+                self.assertIn(f"AddStageLine(StripStep({page}));", self.raw)
+        self.assertIn("OrgTop := StageLineAt(Surface, 0, StripStep(P_ORG));", self.raw)
+        self.assertIn("MailTop := 0;", self.raw)
+        self.assertIn("StripAt(WizardForm.LicensePage, WizardForm.LicenseMemo.Left", self.raw)
+        finished = routine(self.raw, "procedure RenderFinishedPage;")
+        self.assertIn(
+            "StripAt(WizardForm.FinishedPage, WizardForm.FinishedHeadingLabel.Left", finished
+        )
+        self.assertIn("the strip leaves S15 (spec 6.2)", finished)
+        self.assertNotIn("CM('stage_sep')", self.raw)
+
+    def test_6_3_one_bar_per_wait_that_never_moves_back(self) -> None:
+        self.assertIn("function BarPosition(", self.raw)
+        position = routine(self.raw, "function BarPosition(")
+        self.assertIn("if Fill > 900 then", position)
+        self.assertIn("if Result > 999 then", position)
+        refresh = routine(self.raw, "procedure BarRefresh;")
+        self.assertIn("if Position > BarHigh then", refresh)
+        self.assertIn("WaitBar.Position := BarHigh;", refresh)
+        progress = routine(self.raw, "procedure AddProgress(")
+        for fact in (
+            "WaitBar := TNewProgressBar.Create(WizardForm);",
+            "WaitBar.Max := 1000;",
+            "WaitBar.Style := npbstNormal;",
+            "if BarW >= Cur.Width div 2 then",
+            "WaitTime.Caption := FM1('wait_finished', BarElapsed)",
+        ):
+            with self.subTest(fact=fact):
+                self.assertIn(fact, progress)
+        self.assertIn("BarRefresh;", routine(self.raw, "procedure RefreshWaitLabels;"))
+        line = routine(self.raw, "procedure LineBarShow(")
+        self.assertIn(
+            "B.Bar.SetBounds(B.BaseLeft, Lbl.Top + ScaleY(3), ScaleX(96), ScaleY(8));", line
+        )
+        self.assertIn("Lbl.Left := B.BaseLeft + ScaleX(104);", line)
+        self.assertIn("if B.Shifted and (Lbl.Left <> B.BaseLeft + ScaleX(104)) then", line)
+        self.assertIn("UninstallProgressForm.ProgressBar.Visible := False;", self.raw)
+        self.assertIn(
+            "Result := CreateCustomForm(ScaleX(480), ScaleY(360), False, False);", self.raw
+        )
+        weights = routine(self.raw, "function BarWeights(Kind: String): String;\nvar")
+        for fact in (
+            "Result := Result + '|60|15|10|120|30|15|180|120';",
+            "else if Kind = 'prep' then Result := '45|75|5|0|0'",
+            "else if Kind = 'remove' then Result := '5|15|60|60|40'",
+            "else if Kind = 'm03' then Result := '5|10|30|30'",
+        ):
+            with self.subTest(fact=fact):
+                self.assertIn(fact, weights)
+        for record in (
+            "'TASK-0097 strip state per page'",
+            "'TASK-0097 fit with the strip and the bar'",
+            "'TASK-0097 the bar never moves back'",
+            "'TASK-0097 time left never goes up'",
+            "'TASK-0097 a tick changes only the time and the bar'",
+            "'TASK-0097 no drive letter before a full stop'",
+            "'TASK-0097 a compact bar follows its label and gives it back'",
+        ):
+            with self.subTest(record=record):
+                self.assertIn(record, self.selftest)

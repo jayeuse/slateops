@@ -9,6 +9,8 @@
 
 var
   SelfLog: String;
+  { TASK-0097 (spec 6.3 self-test check 2): the pages that end less than 12 px above the bottom. }
+  SelfFitFails: String;
 
 { The password character of an edit box, from the control (EM_GETPASSWORDCHAR); 0 when the text
   shows. Windows CI on 2d290ced: Pascal Script reads no Char property through RTTI (the setter
@@ -121,6 +123,11 @@ begin
     end;
     SelfRecord(Name + ' layout', Ok, Bad);
     SelfInfo(Name + ' height', 'content ends at ' + IntToStr(CurY) + ', limit ' + IntToStr(Limit));
+    { TASK-0097 (spec 6.3 check 2): at least 12 px above the page bottom (the band on S10, S11). }
+    if ((Index = P_BACKUP) or (Index = P_READY)) and (CurY > Limit) then
+      SelfFitFails := SelfFitFails + ' ' + Name + ' ' + IntToStr(CurY) + ' > ' + IntToStr(Limit)
+    else if (Index <> P_BACKUP) and (Index <> P_READY) and (CurY > Bodies[Index].Height - ScaleY(12)) then
+      SelfFitFails := SelfFitFails + ' ' + Name + ' ' + IntToStr(CurY) + ' > ' + IntToStr(Bodies[Index].Height - ScaleY(12));
   except
     SelfRecord(Name + ' layout', False, GetExceptionMessage);
   end;
@@ -216,6 +223,8 @@ begin
           Bad := Bad + ' "' + FormButtons[I].Caption + '"';
         end;
     finally
+      if ReportBar.Lbl = FailureStatus then
+        LineBarForget(ReportBar);
       FailureStatus := nil;
       Form.Free;
     end;
@@ -931,7 +940,8 @@ begin
       ReadJobProgress;
       RenderInstall;
       SelfRecord('W14-D5 S12 shows the engine step', (WaitNow <> nil) and (WaitNow.Caption = 'Now: Setting up the database.')
-        and (WaitDrawn = PrepStageCount + 4) and (WaitTime <> nil) and (Pos('Time so far: 0:0', WaitTime.Caption) = 1),
+        and (WaitDrawn = PrepStageCount + 4) and (WaitTime <> nil) and (WaitBar <> nil) and (Pos('0:0', WaitTime.Caption) = 1)
+        and (Pos(' so far', WaitTime.Caption) > 0),
         'key ' + JobStepKey + ', stage ' + IntToStr(WaitDrawn));
     except
       SelfRecord('W14-D5 S12 shows the engine step', False, GetExceptionMessage);
@@ -1117,11 +1127,425 @@ begin
   end;
 end;
 
+{ TASK-0097 (spec 6.2, self-test check 1): the step of each page and state, and the strip of
+  each step: finished steps with the mark and a 1 px underline, the current step bold with a
+  3 px underline, the next steps grey with none; no tab stop; the content starts where the old
+  stage line put it; each caption fits its column. }
+procedure SelfStrip;
+var
+  Panel: TPanel;
+  Probe: TNewStaticText;
+  Ok: Boolean;
+  Detail, Saved: String;
+  N, I, Bottom, Expected, ColLeft: Integer;
+begin
+  try
+    Ok := True;
+    Detail := '';
+    Saved := EntryNext;
+    EntryNext := '';
+    if (StripStep(P_CHECK) <> 1) or (StripStep(P_RESTART) <> 1) or (StripStep(P_BACK) <> 1) then
+    begin
+      Ok := False;
+      Detail := Detail + ' step 1 pages';
+    end;
+    if (StripStep(P_DATA) <> 2) or (StripStep(P_ORG) <> 2) or (StripStep(P_BACKUP) <> 2) or (StripStep(P_READY) <> 2) then
+    begin
+      Ok := False;
+      Detail := Detail + ' step 2 pages';
+    end;
+    if (StripStep(P_INSTALL) <> 3) or (StripStep(P_KEY) <> 4) then
+    begin
+      Ok := False;
+      Detail := Detail + ' S12 or S14';
+    end;
+    EntryNext := 'S14';
+    if StripStep(P_BACK) <> 4 then
+    begin
+      Ok := False;
+      Detail := Detail + ' S06 before S14';
+    end;
+    EntryNext := Saved;
+    if (StripStep(P_EMAIL) <> 0) or (StripStep(P_MAINT) <> 0) or (StripStep(P_UPDATE) <> 0) or (MailTop <> 0) then
+    begin
+      Ok := False;
+      Detail := Detail + ' a maintenance page has a strip';
+    end;
+    Panel := TPanel.Create(WizardForm);
+    try
+      Panel.Parent := Pages[P_INSTALL].Surface;
+      Panel.BevelOuter := bvNone;
+      Panel.SetBounds(0, 0, Pages[P_INSTALL].SurfaceWidth, Pages[P_INSTALL].SurfaceHeight);
+      Probe := TNewStaticText.Create(WizardForm);
+      Probe.Parent := Panel;
+      Probe.Caption := CM('stage_1');
+      Expected := Probe.Height + ScaleY(16);
+      Probe.Free;
+      for N := 1 to 4 do
+      begin
+        Bottom := StripAt(Panel, 0, 0, Panel.Width, N);
+        if Bottom <> Expected then
+        begin
+          Ok := False;
+          Detail := Detail + ' step ' + IntToStr(N) + ' content at ' + IntToStr(Bottom) + ' not ' + IntToStr(Expected);
+        end;
+        for I := 1 to 4 do
+        begin
+          ColLeft := (I - 1) * StripColumn;
+          if StripCaps[I - 1].TabStop then
+          begin
+            Ok := False;
+            Detail := Detail + ' tab stop';
+          end;
+          if StripCaps[I - 1].Left + StripCaps[I - 1].Width > ColLeft + StripColumn - ScaleX(8) then
+          begin
+            Ok := False;
+            Detail := Detail + ' ' + StripCaps[I - 1].Caption + ' does not fit';
+          end;
+          if I < N then
+          begin
+            if (StripMarks[I - 1] = nil) or (fsBold in StripCaps[I - 1].Font.Style) or (StripLines[I - 1] = nil)
+              or (StripLines[I - 1].Height <> ScaleY(1)) or (StripCaps[I - 1].Caption <> CM('strip_name_' + IntToStr(I))) then
+            begin
+              Ok := False;
+              Detail := Detail + ' finished ' + IntToStr(I) + ' of ' + IntToStr(N);
+            end;
+          end
+          else if I = N then
+          begin
+            if (StripMarks[I - 1] <> nil) or not (fsBold in StripCaps[I - 1].Font.Style) or (StripLines[I - 1] = nil)
+              or (StripLines[I - 1].Height <> ScaleY(3)) or (StripCaps[I - 1].Caption <> CM('stage_' + IntToStr(I))) then
+            begin
+              Ok := False;
+              Detail := Detail + ' current ' + IntToStr(N);
+            end;
+          end
+          else if (StripMarks[I - 1] <> nil) or (StripLines[I - 1] <> nil) or (StripCaps[I - 1].Font.Color <> clGrayText) then
+          begin
+            Ok := False;
+            Detail := Detail + ' next ' + IntToStr(I) + ' of ' + IntToStr(N);
+          end;
+        end;
+      end;
+    finally
+      Panel.Free;
+    end;
+    SelfRecord('TASK-0097 strip state per page', Ok, Detail);
+  except
+    SelfRecord('TASK-0097 strip state per page', False, GetExceptionMessage);
+  end;
+end;
+
+{ The minutes in "About 29 minutes left" (1 for "About 1 minute left"), -1 when none. }
+function SelfMinutes(Text: String): Integer;
+var
+  At: Integer;
+  Digits: String;
+begin
+  Result := -1;
+  if Pos(CM('wait_left_1'), Text) > 0 then
+  begin
+    Result := 1;
+    Exit;
+  end;
+  At := Pos('About ', Text);
+  if At = 0 then
+    Exit;
+  Digits := '';
+  At := At + 6;
+  while (At <= Length(Text)) and (Pos(Copy(Text, At, 1), '0123456789') > 0) do
+  begin
+    Digits := Digits + Copy(Text, At, 1);
+    At := At + 1;
+  end;
+  Result := StrToIntDef(Digits, -1);
+end;
+
+{ One event of the bar fixture: the bar never moves back, stays below 1000 until the end and
+  within the 0.9 fill of the highest stage reached; the minutes left never go up; the S12
+  subtitle never shows in the time text. }
+procedure SelfBarEvent(What: String; Ceiling: Integer; var Last, LastMinutes: Integer; var Ok3, Ok4: Boolean; var Detail3, Detail4: String);
+var
+  Position, Minutes: Integer;
+  Text: String;
+begin
+  if (WaitBar = nil) or (WaitTime = nil) then
+  begin
+    Ok3 := False;
+    Detail3 := Detail3 + ' ' + What + ': no bar row';
+    Exit;
+  end;
+  Position := WaitBar.Position;
+  if (Position < Last) or (Position >= 1000) or (Position > Ceiling) then
+  begin
+    Ok3 := False;
+    Detail3 := Detail3 + ' ' + What + ': ' + IntToStr(Position) + ' after ' + IntToStr(Last) + ', ceiling ' + IntToStr(Ceiling);
+  end;
+  if Position > Last then
+    Last := Position;
+  Text := WaitTime.Caption;
+  Minutes := SelfMinutes(Text);
+  if Minutes > 0 then
+  begin
+    if (LastMinutes > 0) and (Minutes > LastMinutes) then
+    begin
+      Ok4 := False;
+      Detail4 := Detail4 + ' ' + What + ': ' + IntToStr(Minutes) + ' after ' + IntToStr(LastMinutes);
+    end;
+    LastMinutes := Minutes;
+  end;
+  if Pos(CM('s12_subtitle'), Text) > 0 then
+  begin
+    Ok4 := False;
+    Detail4 := Detail4 + ' ' + What + ': the subtitle shows';
+  end;
+end;
+
+function SelfCeiling(Weights: String; Stage: Integer): Integer;
+begin
+  Result := (WeightSum(Weights, 1, Stage - 1) * 1000 + WeightAt(Weights, Stage) * 900) div WeightSum(Weights, 1, WeightCount(Weights));
+end;
+
+{ The S12 fixture of one stage set (spec 6.3 self-test checks 3, 4, 5). }
+procedure SelfBarRun(Kept: Boolean; StartText: String; var Ok3, Ok4, Ok5: Boolean; var Detail3, Detail4, Detail5: String);
+var
+  Since: Cardinal;
+  Weights, Stages, Before, Finished: String;
+  Last, LastMinutes, Count, ByteStage, Top, Late, Controls, Drawn, I: Integer;
+begin
+  if Kept then
+  begin
+    KeptState := 'kept';
+    KeptUse := True;
+    Since := 7000001;
+  end
+  else
+  begin
+    KeptState := '';
+    Since := 5000001;
+  end;
+  BarClock := Since;
+  BarMbDone := 0;
+  BarMbTotal := 0;
+  Stages := S12Stages;
+  Weights := BarWeights('install');
+  Count := WeightCount(Weights);
+  Last := 0;
+  LastMinutes := 0;
+  BeginBody(P_INSTALL);
+  AddProgress('install', Stages, 1, '', Since);
+  if Pos(StartText, WaitTime.Caption) = 0 then
+  begin
+    Ok4 := False;
+    Detail4 := Detail4 + ' start [' + WaitTime.Caption + '] not ' + StartText;
+  end;
+  SelfBarEvent('start', SelfCeiling(Weights, 1), Last, LastMinutes, Ok3, Ok4, Detail3, Detail4);
+  { Check 5: a tick creates and frees no control and does not draw the stages again. }
+  Controls := Bodies[P_INSTALL].ControlCount;
+  Drawn := WaitDrawn;
+  Before := WaitTime.Caption;
+  BarClock := BarClock + 60000;
+  RefreshWaitLabels;
+  if (Bodies[P_INSTALL].ControlCount <> Controls) or (WaitDrawn <> Drawn) or (WaitTime.Caption = Before) then
+  begin
+    Ok5 := False;
+    Detail5 := Detail5 + ' controls ' + IntToStr(Controls) + ' to ' + IntToStr(Bodies[P_INSTALL].ControlCount) + ', stage ' + IntToStr(Drawn) + ' to ' + IntToStr(WaitDrawn) + ', time [' + Before + '] to [' + WaitTime.Caption + ']';
+  end;
+  SelfBarEvent('tick at 60 s', SelfCeiling(Weights, 1), Last, LastMinutes, Ok3, Ok4, Detail3, Detail4);
+  BeginBody(P_INSTALL);
+  AddProgress('install', Stages, 2, '', Since);
+  SelfBarEvent('stage 2', SelfCeiling(Weights, 2), Last, LastMinutes, Ok3, Ok4, Detail3, Detail4);
+  { Stage 3 did not run: its "done" line moves the bar to stage 4 at once. }
+  BeginBody(P_INSTALL);
+  AddProgress('install', Stages, 4, '', Since);
+  SelfBarEvent('stage 3 skipped', SelfCeiling(Weights, 4), Last, LastMinutes, Ok3, Ok4, Detail3, Detail4);
+  BeginBody(P_INSTALL);
+  AddProgress('install', Stages, 4, '', Since);
+  SelfBarEvent('repeated line', SelfCeiling(Weights, 4), Last, LastMinutes, Ok3, Ok4, Detail3, Detail4);
+  Late := Last;
+  BeginBody(P_INSTALL);
+  AddProgress('install', Stages, 3, '', Since);
+  SelfBarEvent('late line of stage 3', SelfCeiling(Weights, 4), Last, LastMinutes, Ok3, Ok4, Detail3, Detail4);
+  if WaitBar.Position < Late then
+  begin
+    Ok3 := False;
+    Detail3 := Detail3 + ' the late line moved the bar back';
+  end;
+  Top := 4;
+  { The byte stage (fresh only): the download of stage "Download the database and sign-in
+    programs"; bytes_total grows during the pull, so the share falls. }
+  ByteStage := 0;
+  for I := 0 to BgCount - 1 do
+    if BgStepName(I) = 'prefetch' then
+      ByteStage := I + 2;
+  if ByteStage > 0 then
+  begin
+    BeginBody(P_INSTALL);
+    AddProgress('install', Stages, ByteStage, '', Since);
+    Top := ByteStage;
+    BarMbDone := 1000;
+    BarMbTotal := 2000;
+    BarRefresh;
+    SelfBarEvent('1.0 GB of 2.0 GB', SelfCeiling(Weights, Top), Last, LastMinutes, Ok3, Ok4, Detail3, Detail4);
+    BarMbDone := 1100;
+    BarMbTotal := 3400;
+    BarRefresh;
+    SelfBarEvent('1.1 GB of 3.4 GB', SelfCeiling(Weights, Top), Last, LastMinutes, Ok3, Ok4, Detail3, Detail4);
+    BarMbDone := 0;
+    BarMbTotal := 0;
+  end;
+  { Ticks past the weight of a stage with no byte share. }
+  Top := Top + 1;
+  BeginBody(P_INSTALL);
+  AddProgress('install', Stages, Top, '', Since);
+  BarClock := BarClock + Cardinal((WeightAt(Weights, Top) + 30) * 1000);
+  BarRefresh;
+  SelfBarEvent('past the weight of stage ' + IntToStr(Top), SelfCeiling(Weights, Top), Last, LastMinutes, Ok3, Ok4, Detail3, Detail4);
+  if Pos(CM('wait_longer'), WaitTime.Caption) = 0 then
+  begin
+    Ok4 := False;
+    Detail4 := Detail4 + ' past the weight [' + WaitTime.Caption + ']';
+  end;
+  { The end: a full bar and "Finished in". }
+  BeginBody(P_INSTALL);
+  AddProgress('install', Stages, Count + 1, '', 0);
+  Finished := Copy(CM('wait_finished'), 1, Pos('%1', CM('wait_finished')) - 1);
+  if (WaitBar = nil) or (WaitBar.Position <> 1000) then
+  begin
+    Ok3 := False;
+    Detail3 := Detail3 + ' the end is not a full bar';
+  end;
+  if (WaitTime = nil) or (Pos(Finished, WaitTime.Caption) <> 1) then
+  begin
+    Ok4 := False;
+    Detail4 := Detail4 + ' the end does not say Finished in';
+  end;
+  KeptState := '';
+  BarClock := 0;
+end;
+
+procedure SelfBar;
+var
+  Ok3, Ok4, Ok5: Boolean;
+  Detail3, Detail4, Detail5: String;
+begin
+  Ok3 := True;
+  Ok4 := True;
+  Ok5 := True;
+  Detail3 := '';
+  Detail4 := '';
+  Detail5 := '';
+  try
+    try
+      SelfBarRun(False, FM1('wait_left', '29'), Ok3, Ok4, Ok5, Detail3, Detail4, Detail5);
+      SelfBarRun(True, FM1('wait_left', '26'), Ok3, Ok4, Ok5, Detail3, Detail4, Detail5);
+    finally
+      KeptState := '';
+      BarClock := 0;
+      BarMbDone := 0;
+      BarMbTotal := 0;
+    end;
+    SelfRecord('TASK-0097 the bar never moves back', Ok3, Detail3);
+    SelfRecord('TASK-0097 time left never goes up', Ok4, Detail4);
+    SelfRecord('TASK-0097 a tick changes only the time and the bar', Ok5, Detail5);
+  except
+    SelfRecord('TASK-0097 the bar never moves back', False, GetExceptionMessage);
+  end;
+end;
+
+{ TASK-0097 (spec 6.3): a compact bar follows its label when the page moves or places the
+  label again, and dropping it gives the label back its own bounds. }
+procedure SelfLineBar;
+var
+  Panel: TPanel;
+  Lbl: TNewStaticText;
+  B: TLineBar;
+  Ok: Boolean;
+  Detail: String;
+begin
+  try
+    Panel := TPanel.Create(WizardForm);
+    try
+      Panel.Parent := Pages[P_INSTALL].Surface;
+      Panel.SetBounds(0, 0, ScaleX(400), ScaleY(200));
+      Lbl := AddTextTo(Panel, ScaleY(10), FM4('wait_line', '2', '4', 'Collecting the server part''s logs', '0:12'), False);
+      LineBarForget(B);
+      LineBarShow(B, Lbl, BarWeights('report'), 1, 1, 0, 0);
+      Ok := (B.Bar <> nil) and (Lbl.Left = ScaleX(104)) and (B.Bar.Left = 0);
+      Detail := 'attached: label ' + IntToStr(Lbl.Left);
+      { The page moves the label down and places it again at its own bounds. }
+      Lbl.SetBounds(0, ScaleY(60), Panel.Width, Lbl.Height);
+      LineBarShow(B, Lbl, BarWeights('report'), 2, 1, 0, 0);
+      Ok := Ok and (Lbl.Left = ScaleX(104)) and (B.Bar.Top = Lbl.Top + ScaleY(3)) and (B.Bar.Left = 0);
+      Detail := Detail + ', moved: label ' + IntToStr(Lbl.Left) + ', bar top ' + IntToStr(B.Bar.Top);
+      LineBarDrop(B);
+      Ok := Ok and (B.Bar = nil) and (Lbl.Left = 0) and (Lbl.Width = Panel.Width);
+      Detail := Detail + ', dropped: label ' + IntToStr(Lbl.Left) + ', width ' + IntToStr(Lbl.Width);
+    finally
+      Panel.Free;
+    end;
+    SelfRecord('TASK-0097 a compact bar follows its label and gives it back', Ok, Detail);
+  except
+    SelfRecord('TASK-0097 a compact bar follows its label and gives it back', False, GetExceptionMessage);
+  end;
+end;
+
+{ TASK-0097 (spec 6.3, self-test check 6): every line that takes a drive gives no ":." with
+  "D:" in each placeholder. }
+procedure SelfDriveStops;
+var
+  Keys, Key, Text, Bad: String;
+  I: Integer;
+begin
+  try
+    Keys := 'c07_too_small|s10_not_writable|s12_backup_failed|bg_stages|step_bg_import|step_upd_copy|step_backup_check|'
+      + 'step_install_backup|step_repair_backup|step_new_recovery_key_mount|m03_key_line|m03_mount_line|'
+      + 'step_set_backup_target_unmount|step_set_backup_target_mount|step_set_backup_target_repository';
+    Bad := '';
+    for I := 1 to WeightCount(Keys) do
+    begin
+      Key := StageName(Keys, I);
+      Text := FM3(Key, 'D:', 'D:', 'D:');
+      if (Text = '') or (Pos(':.', Text) > 0) then
+        Bad := Bad + ' ' + Key + ' [' + Text + ']';
+    end;
+    SelfRecord('TASK-0097 no drive letter before a full stop', Bad = '', Bad);
+  except
+    SelfRecord('TASK-0097 no drive letter before a full stop', False, GetExceptionMessage);
+  end;
+end;
+
+{ TASK-0097 (spec 6.3, self-test check 2): every page that SelfFits measured, plus S04 and S15,
+  ends at least 12 px above the page bottom. }
+procedure SelfFitAll;
+var
+  Bad: String;
+begin
+  Bad := SelfFitFails;
+  { S04: the strip moves the license text down and makes it shorter by the same amount; the
+    notices link and the choices stay where Inno put them (their distance to the bottom is
+    Inno's, recorded for the designer). }
+  if (S04StripBottom = 0) or (WizardForm.LicenseMemo.Top <> S04StripBottom) or (NoticesLink.Top + NoticesLink.Height > WizardForm.LicenseAcceptedRadio.Top) then
+    Bad := Bad + ' S04 text at ' + IntToStr(WizardForm.LicenseMemo.Top) + ', strip ends ' + IntToStr(S04StripBottom) + ', link ends ' + IntToStr(NoticesLink.Top + NoticesLink.Height) + ', choices at ' + IntToStr(WizardForm.LicenseAcceptedRadio.Top);
+  SelfInfo('TASK-0097 S04 height', 'the last choice ends at ' + IntToStr(WizardForm.LicenseNotAcceptedRadio.Top + WizardForm.LicenseNotAcceptedRadio.Height) + ' of ' + IntToStr(WizardForm.LicensePage.Height));
+  if (GetArrayLength(S15Steps) > 4) and (S15Steps[4] <> nil) and (S15Steps[4].Top + S15Steps[4].Height > WizardForm.FinishedPage.Height - ScaleY(12)) then
+    Bad := Bad + ' S15 ends at ' + IntToStr(S15Steps[4].Top + S15Steps[4].Height) + ' of ' + IntToStr(WizardForm.FinishedPage.Height);
+  SelfRecord('TASK-0097 fit with the strip and the bar', Bad = '', Bad);
+  if S15StripDone then
+  begin
+    if S15StripShown then
+      SelfInfo('TASK-0097 S15 strip', 'shown; the text ends at ' + IntToStr(S15Steps[4].Top + S15Steps[4].Height) + ' of ' + IntToStr(WizardForm.FinishedPage.Height))
+    else
+      SelfInfo('TASK-0097 S15 strip', 'left S15 (spec 6.2 fallback): the text did not fit with it');
+  end;
+end;
+
 procedure RunSelfTest;
 var
   Text, OutFile: String;
 begin
   SelfLog := '';
+  SelfFitFails := '';
   try
     Text := FM1('s02_needs', '2');
     SelfRecord('FM1', Pos('2', Text) > 0, Text);
@@ -1183,6 +1607,11 @@ begin
   SelfLinks;
   SelfCaret;
   SelfFailDetail;
+  { TASK-0097 (spec 6.2, 6.3): the strip, the bar and the drive lines. }
+  SelfStrip;
+  SelfBar;
+  SelfLineBar;
+  SelfDriveStops;
 
   { Sample state for the other pages. }
   OrgName.Text := 'Riverside Learning Center';
@@ -1262,6 +1691,8 @@ begin
   UpdFailStage := CM('m05_stage4');
   UpdFailText := FM1('m05_rolled_back', InstalledVersion);
   SelfDraw('M05 rolled back', P_UPDATE);
+  { TASK-0097 (spec 6.3 check 2): after every page above was measured. }
+  SelfFitAll;
 
   SelfLog := SelfLog + 'DONE' + #13#10;
   OutFile := ExpandConstant('{param:SelfTestOut|}');
