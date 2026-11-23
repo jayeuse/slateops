@@ -149,3 +149,31 @@ def lock_rows(db: Session, row_ids: Iterable[UUID]) -> list[WorksheetRow]:
         .execution_options(populate_existing=True)
         .with_for_update(of=WorksheetRow)
     ).all()))
+
+
+def lock_actor_shares(db: Session, org_id: UUID, worksheet_id: UUID, actor_id: UUID) -> None:
+    """The actor's live shares of the sheet, FOR SHARE, for a read that releases output.
+
+    An export holds them until it commits its event, so a share removal waits for the
+    export or commits first and the export's access check then fails (D9.1).
+    """
+
+    _locked(db, lambda: db.scalars(
+        select(WorksheetShare.id)
+        .where(
+            WorksheetShare.org_id == org_id,
+            WorksheetShare.worksheet_id == worksheet_id,
+            WorksheetShare.is_deleted.is_(False),
+            or_(
+                WorksheetShare.user_id == actor_id,
+                WorksheetShare.group_id.in_(
+                    select(GroupMember.group_id).where(
+                        GroupMember.org_id == org_id,
+                        GroupMember.user_id == actor_id, GroupMember.is_deleted.is_(False),
+                    )
+                ),
+            ),
+        )
+        .order_by(WorksheetShare.id)
+        .with_for_update(read=True, of=WorksheetShare)
+    ).all())

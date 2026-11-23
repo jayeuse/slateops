@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
-from app.common.listing import StandardListRequest
+from app.common.listing import SortOrder, StandardListRequest
 from app.systems.openview.worksheets.access import WorksheetLevel
 from app.systems.openview.worksheets.structure import Column, SheetColumnGroup, TotalFunction
 
@@ -328,4 +328,36 @@ class SheetShare(BaseModel):
     user: SheetPersonRef | None
     group: SheetGroupRef | None
     level: Literal["view", "edit"]
+    created_at: datetime
+
+
+class SheetExportRequest(BaseModel):
+    """Route 20: a data file (CSV or Excel) or the structure only (template, D9.2)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    format: Literal["csv", "xlsx", "template"]
+
+
+class SheetHistorySort(StrEnum):
+    CREATED_AT = "created_at"
+
+
+class SheetHistoryRequest(StandardListRequest[SheetHistorySort]):
+    """Route 15: newest first by default; ``row_id`` keeps one row's changes."""
+
+    sort_order: SortOrder = SortOrder.DESC
+    row_id: UUID | None = None
+
+
+class SheetRowRevision(BaseModel):
+    """One row change with the row's cells after it, masked for the reader (H3, N4)."""
+
+    id: UUID
+    row_id: UUID
+    revision: int
+    action: Literal["create", "update", "delete", "restore"]
+    changed_keys: list[str]
+    cells: dict[str, Cell]
+    author: SheetPersonRef | None
     created_at: datetime
