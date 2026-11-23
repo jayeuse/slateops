@@ -108,6 +108,12 @@ type LiveRecordInspectorProps = {
    * card's "On this board" (BR64) is the one caller; OpenView passes none.
    */
   leadingTab?: { value: string; label: string; content: ReactNode };
+  /**
+   * A tab after the record's own tabs: the last one, after History, or after
+   * Files when History is hidden. OpenView's Sheets tab (docs/specs/sheets.md
+   * P2) is the one caller; the Boards card sheet passes none.
+   */
+  trailingTab?: { value: string; label: ReactNode; content: ReactNode };
 };
 
 function readableValue(value: unknown): string {
@@ -160,6 +166,7 @@ export function LiveRecordInspector({
   onRetryRecord,
   controls,
   leadingTab,
+  trailingTab,
 }: LiveRecordInspectorProps) {
   const rowPrefix = useId();
   const firstTab = leadingTab?.value ?? "details";
@@ -275,6 +282,11 @@ export function LiveRecordInspector({
                     History
                   </TabsTrigger>
                 ) : null}
+                {trailingTab ? (
+                  <TabsTrigger value={trailingTab.value} className="shrink-0">
+                    {trailingTab.label}
+                  </TabsTrigger>
+                ) : null}
               </TabsList>
             </div>
             {leadingTab ? (
@@ -346,6 +358,11 @@ export function LiveRecordInspector({
                   manages={controls.managesHistory}
                   version={`${record.updatedAt}:${String(record.isDeleted)}`}
                 />
+              </TabsContent>
+            ) : null}
+            {trailingTab ? (
+              <TabsContent value={trailingTab.value} className={panelClassName}>
+                {trailingTab.content}
               </TabsContent>
             ) : null}
           </Tabs>

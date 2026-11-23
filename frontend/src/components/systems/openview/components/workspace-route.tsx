@@ -22,12 +22,28 @@ function OpenViewRouteContent() {
   const isLegacySampleRecordLink = Boolean(
     urlState.section === "views" && urlState.record?.startsWith("sample-"),
   );
-  const section = isLegacySampleRecordLink ? null : urlState.section;
+  // A sheet's own address (P6). Its page arrives with TASK-0102 F3; until
+  // then the address holds and says the sheet cannot be shown.
+  const sheetAddress = query.get("sheet") !== null;
+  const section =
+    isLegacySampleRecordLink || sheetAddress ? null : urlState.section;
   // On the module page a file dropped beside the record Files tab opens
   // nothing (DR-SI-7.4).
   usePageFileDropGuard(section === "views");
   let content;
-  if (section === "views")
+  if (sheetAddress)
+    content = (
+      <Alert className="flex flex-wrap items-center justify-between gap-3">
+        <p>This sheet cannot be shown here yet</p>
+        <Link
+          href="/openview?section=sheets"
+          className="text-action-text inline-flex min-h-11 items-center font-medium underline underline-offset-4"
+        >
+          My sheets
+        </Link>
+      </Alert>
+    );
+  else if (section === "views")
     content = (
       <ServerBackedViewsWorkspace invalidUrl={Boolean(urlState.invalid)} />
     );

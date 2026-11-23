@@ -35,8 +35,9 @@ export type OpenViewUrlState = {
   record?: string;
   report?: string;
   run?: string;
-  /** The module page's view: Records (the default) or Reports (DC1). */
-  tab?: "records" | "reports";
+  /** The module page's view: Records (the default), Reports (DC1) or its
+   *  module sheets (docs/specs/sheets.md P2). */
+  tab?: "records" | "reports" | "sheets";
   /** The report copy open in the module page's Reports view (DC5). */
   copy?: string;
   /** Temporary View changes (`domain/temporary-view.ts`); never saved. */
@@ -91,10 +92,11 @@ export function parseOpenViewUrl(
   if (invalidReportSelection) invalid = true;
   // The module page names its Reports view, report and copy (DC1).
   const reportsTab = section === "views" && tabValue === "reports";
+  const sheetsTab = section === "views" && tabValue === "sheets";
   const copy = z.string().uuid().safeParse(copyValue);
   if (
     section === "views" &&
-    ((tabValue !== null && !reportsTab) ||
+    ((tabValue !== null && !reportsTab && !sheetsTab) ||
       (reportValue !== null && !report.success) ||
       (copyValue !== null && (!copy.success || !report.success)))
   )
@@ -123,6 +125,7 @@ export function parseOpenViewUrl(
     result.report = report.data;
   if (result.section === "reports" && report.success && run.success)
     result.run = run.data;
+  if (sheetsTab && result.section === "views") result.tab = "sheets";
   if (reportsTab && result.section === "views") {
     result.tab = "reports";
     if (report.success) result.report = report.data;
@@ -162,6 +165,8 @@ export function serializeOpenViewUrl(state: OpenViewUrlState): string {
   }
   const reportsTab = state.section === "views" && state.tab === "reports";
   if (reportsTab) parameters.set("tab", "reports");
+  if (state.section === "views" && state.tab === "sheets")
+    parameters.set("tab", "sheets");
   if (state.view) parameters.set("view", state.view);
   if (
     state.section === "dashboards" &&
