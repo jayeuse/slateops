@@ -3,13 +3,16 @@
 SH-29, SH-40, SH-56, SH-68.
 """
 
+from collections.abc import Iterator
 from uuid import UUID
 
 import pytest
+from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
+from app.systems.access.policy.models import AccessLevel
 from app.systems.openview.worksheets.access import worksheet_level
 from app.systems.openview.worksheets.models import (
     Worksheet,
@@ -29,7 +32,13 @@ from app.systems.sandbox.lifecycle.service import (
     reopen_lifecycle,
 )
 from tests.lifecycle_integration.lifecycle_integration_support import close_rows
-from tests.rbac.support import organization
+from tests.rbac.support import (
+    _client,
+    add_department,
+    add_module,
+    make_group_access,
+    organization,
+)
 from tests.sandbox_designs.fixtures import create_document
 from tests.worksheets.support import (
     STRUCTURE,
@@ -197,3 +206,54 @@ def test_a_sheet_made_after_the_preview_stops_the_purge(integration_db: Session)
         purge_lifecycle(db, LifecycleTargetType.RECORD, world.record.id, None, plan=plan)
     assert db.get(Worksheet, world.sheet.id) is not None
     assert db.get(Worksheet, late.id) is not None
+
+
+@pytest.fixture(scope="module")
+def application() -> Iterator[FastAPI]:
+    from app.main import create_app
+
+    built = create_app()
+    yield built
+    built.dependency_overrides.clear()
+
+
+def _sheet_linking_into(db: Session, world: SheetWorld) -> tuple[Worksheet, UUID, UUID]:
+    """A sheet in another department whose link column points into the world's module."""
+
+    department = add_department(db)
+    module = add_module(db, department)
+    make_group_access(db, [world.owner], department, module, level=AccessLevel.READ)
+    other = add_sheet(db, world.owner, module=module)
+    other.structure = {**LINKED, "columns": [{**LINKED["columns"][0],
+                                              "link": {"moduleId": str(world.module.id)}}]}
+    linked, _link = _row_with_link(db, other, world.record.id)
+    unlinked = WorksheetRow(org_id=other.org_id, worksheet_id=other.id, position=2048,
+                            data={"c1": {"unlinked": "Carol"}}, data_bytes=26)
+    db.add(unlinked)
+    db.flush()
+    return other, linked.id, unlinked.id
+
+
+@pytest.mark.parametrize("target", [LifecycleTargetType.MODULE, LifecycleTargetType.DEPARTMENT])
+def test_links_into_a_purged_module_read_removed_and_can_be_cleared(
+    integration_db: Session, application: FastAPI, target: LifecycleTargetType,
+) -> None:
+    """B8-B1 (N6, SH-29): the target module row is gone, so the column is not hidden."""
+
+    db = integration_db
+    world = _world(db)
+    other, linked_id, unlinked_id = _sheet_linking_into(db, world)
+    db.commit()
+    target_id = world.module.id if target is LifecycleTargetType.MODULE else world.department.id
+    close_lifecycle(db, target, target_id, None)
+    purge_lifecycle(db, target, target_id, None, plan=_purge_plan(db, target, target_id))
+    linked = read_row(db, world.owner, other, linked_id)
+    unlinked = read_row(db, world.owner, other, unlinked_id)
+    assert linked is not None and linked.cells["c1"].model_dump() == {"state": "removed"}
+    assert unlinked is not None and unlinked.cells["c1"].model_dump() == {"unlinked": "Carol"}
+    response = _client(application, world.owner, db).patch(
+        f"/api/worksheets/{other.id}/rows/{linked_id}",
+        json={"cells": {"c1": {"value": None, "expected": {"state": "removed"}}}},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["cells"]["c1"] == {"value": None}

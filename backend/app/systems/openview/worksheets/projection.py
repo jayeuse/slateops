@@ -343,6 +343,17 @@ def _lookup(db: Session, key: str, column: SheetLookupColumn, link: _Link,
     )
 
 
+def link_column_hidden(db: Session, user: User, module_id: UUID) -> bool:
+    """A link column is hidden when its target module exists and the person cannot read it.
+
+    After a module or department purge the module row is gone with its grants, so no one
+    has a level on it; its cells then show their own state (``removed`` for a stripped link,
+    unlinked text as typed), never a whole-column ``no_access`` (B8-B1, N6, SH-29).
+    """
+
+    return module_level(db, user, module_id) is None and db.get(Module, module_id) is not None
+
+
 def project_rows(db: Session, user: User, structure: WorksheetStructure) -> RowProjection:
     """Compile every column of ``structure`` for ``user`` over ``worksheet_rows``."""
 
@@ -350,7 +361,7 @@ def project_rows(db: Session, user: User, structure: WorksheetStructure) -> RowP
     links: dict[str, tuple[_Link, UUID] | None] = {}
     for column in structure.columns:
         if isinstance(column, SheetLinkColumn):
-            if module_level(db, user, column.link.moduleId) is None:
+            if link_column_hidden(db, user, column.link.moduleId):
                 links[column.key] = None
                 projection.columns.append(_hidden(column.key))
                 continue

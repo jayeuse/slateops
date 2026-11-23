@@ -37,6 +37,7 @@ from app.systems.openview.worksheets.models import (
     WorksheetRowLink,
     WorksheetRowRevision,
 )
+from app.systems.openview.worksheets.projection import link_column_hidden
 from app.systems.openview.worksheets.query import read_rows
 from app.systems.openview.worksheets.schemas import (
     SheetCellChange,
@@ -103,6 +104,8 @@ class Context:
     locale: str
     hidden: frozenset[str]
     links: dict[UUID, dict[str, WorksheetRowLink]] = field(default_factory=dict)
+    # The records this write holds FOR SHARE; a link to any other record is refused (N-1).
+    locked: frozenset[UUID] = frozenset()
 
     @classmethod
     def read(cls, db: Session, user: User, sheet: Worksheet) -> "Context":
@@ -111,7 +114,7 @@ class Context:
         hidden_links = {
             column.key for column in structure.columns
             if isinstance(column, SheetLinkColumn)
-            and module_level(db, user, column.link.moduleId) is None
+            and link_column_hidden(db, user, column.link.moduleId)
         }
         organization = db.get(WorkspaceProfile, sheet.org_id)
         locale = organization.locale if organization and organization.locale else "en-US"
@@ -162,7 +165,8 @@ def _convert(db: Session, user: User, context: Context, key: str, value: Any) ->
         record = db.get(Record, converted.record_id)
         module = db.get(Module, record.module_id) if record is not None else None
         if (
-            record is None or module is None or record.org_id != context.sheet.org_id
+            converted.record_id not in context.locked
+            or record is None or module is None or record.org_id != context.sheet.org_id
             or record.is_deleted or module.is_deleted
             or record.module_id != column.link.moduleId
             or module_level(db, user, record.module_id) is None
@@ -380,6 +384,7 @@ def write_rows(
         raise error(status.HTTP_409_CONFLICT, "structure_changed",
                     "The columns changed; reload the sheet")
     context = Context.read(db, user, sheet)
+    context.locked = frozenset(targets)
     rows = locked_rows(db, context, row_ids, seen)
     written = []
     shown = read_rows(db, user, sheet, row_ids)  # one statement for every updated row

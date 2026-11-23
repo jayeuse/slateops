@@ -434,3 +434,16 @@ def test_a_batch_that_names_one_row_twice_is_refused(
     )
     assert answer.status_code == 422
     assert "row_repeated" in answer.text
+
+
+def test_a_link_target_that_was_not_locked_is_refused(
+    world: SheetWorld, students: Students, rows: Rows, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B8 review N-1: a target that turns readable after the pre-lock read is never written."""
+
+    from app.systems.openview.worksheets import row_writes
+
+    monkeypatch.setattr(row_writes, "readable_records", lambda *_args: set())
+    created = rows.create(world.owner, {"c1": {"record_id": str(students.alice.id)}})
+    assert _code(created) == (422, "link_target_invalid")
+    assert rows.order(world.owner) == []
