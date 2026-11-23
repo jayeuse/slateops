@@ -322,6 +322,9 @@ Each criterion names its rules. "Not found" means the same response as for a she
 | SH-66 | Presence messages carry only the person's ID and cell position, never a cell value. No presence row reaches the database or the audit log. | PR2, PR6 |
 | SH-67 | A member with `read` on a module creates a module sheet from the module page. It is private until shared, its rows can link to records, and it shows in the module page list and My sheets. A person who cannot read the module gets "not found". | P1, P2, C1, V4 |
 | SH-68 | When the owner of a module sheet leaves, everyone who can read the module can read it, read-only. A module close hides it, a reopen returns it, and a purge removes it. | L2, F1 |
+| SH-70 | A View recipient and a reader of an open sheet who cannot read a linked module or see a source sheet get no source sheet ID and no module, department or field names from the sheet, its 412 body or its template export. The owner gets everything. Saving with a hidden source and with a missing source gives identical 422 bodies. | D14 |
+| SH-71 | The presence token joins only its own sheet topic; the OpenComms token is refused on a sheet topic even with a live grant; a presence token is refused on a conversation topic, on another sheet's topic and with another organization's prefix; a broadcast on a sheet topic is refused. | D13 |
+| SH-72 | A computed-column chain whose expanded size exceeds the budget is refused at save in under 1 second; 1,000 characters of nested brackets give 422. | D7.1 |
 | SH-69 | A From another sheet column shows the source value for each linked record. A viewer who cannot see the source sheet sees "No access". A removed source column shows "Column removed", and two matching source rows show "2 matches". A computed column that reads it uses the same values. | K9 |
 
 ## Screens
@@ -405,7 +408,7 @@ From TASK-0099 (Product Designer). Its decisions are in Decisions, items 4, 10, 
 **4. Share** (SH-10, SH-11, SH-12; SH-8 and SH-9 levels)
 - Dialog "Share Class 1A", subtitle "View reads and exports. Edit also changes rows and columns."
 - Top row: "Add people or groups", a level (View or Edit), and **Share**.
-- List: the owner ("Owner"), each person and group with a level control and Remove. A group shows "Group · 12 people". No guest is offered (V9; Decisions, item 3).
+- List: the owner ("Owner"), each person and group with a level control and Remove. A group shows "Group · 12 people". Guests are offered at View only (V9; Decisions, item 3). The picker lists the people the owner can see in the bound organization and the groups the owner belongs to (route 25).
 - Two lines at the bottom:
   - "People see this sheet only while they can read Andrea Villamor's record."
   - "If you leave Larkspur College, this sheet opens read-only to everyone who can read Andrea Villamor's record."
@@ -523,7 +526,7 @@ Column IDs are **sheet-local keys**, `^c[0-9a-z]{1,8}$` (for example `c1`, `c2`)
 - The two counters are changed in each row write, under the sheet lock (D3.3). The CHECKs enforce the row and size limits in the database (postgres-patterns rule 2).
 - Indexes: `ix_worksheets_record (org_id, record_id)` serves the Sheets tab, the purge scope and the record FK check. The FK check covers deleted rows, so the index has no filter (the reason in `relationships/models.py:57-60`). `ix_worksheets_owner (owner_id, org_id)` serves My sheets and the leave count.
 - Soft delete: the owner's delete (F3) sets `is_deleted`. Record delete writes nothing here (D4).
-- `__audit_redacted_fields__ = {"title", "structure", "record_id"}`.
+- `__audit_redacted_fields__ = {"title", "structure", "record_id", "module_id"}`.
 
 #### D1.2 `worksheet_rows`
 
@@ -787,7 +790,7 @@ NUMBER   := digit+ ("." digit+)?
 
 - `ROUND(x, n)` takes an integer literal `n` from 0 to 10. The other functions take 1 to 50 arguments.
 - The stored form uses column keys and the canonical separators `.` and `,`. The editor accepts names and the separators of the organization's locale, and converts them on save. In a comma-decimal locale, `;` separates arguments.
-- Refused on save, with 422 `expression_invalid` and the reason (SH-21): a bare identifier such as `B2` ("cell references are not supported"), an unknown name, a non-numeric column, another function, a reference loop, more than 1,000 characters, more than 100 nodes, a nesting depth above 20, or a chain of computed columns deeper than 10.
+- Refused on save, with 422 `expression_invalid` and the reason (SH-21): a bare identifier such as `B2` ("cell references are not supported"), an unknown name, a non-numeric column, another function, a reference loop, more than 1,000 characters, more than 100 nodes, a nesting depth above 20, or a chain of computed columns deeper than 10. The parser enforces the depth limit while it parses, so deep brackets give 422, never a recursion error. At save, the server also computes the expanded node count across the column graph, including "From another sheet" steps, and refuses more than 2,000 expanded nodes (422 `expression_invalid`), so one save cannot make every read build a huge expression.
 - Numeric inputs: `number`, `decimal`, `int`, a lookup of a numeric field, and other computed columns (K4).
 
 #### D7.2 Safe evaluation (K5, K6)
@@ -966,6 +969,7 @@ Conventions for every route (`backend/AGENTS.md`, "API conventions"; `fastapi-ap
 | 21 | `POST /worksheet-import-files?tab=<n>` | non-guest | `.xlsx` bytes, ≤ 10 MiB | 200 parse result (D9.3) | 413, 422 `import_file_invalid` or `worksheet_limit`, 503 `files_busy` | file upload routes in `file_transfer_policy` (`file_transfers.py:37-60`); `validate_bounded` (`validation_worker.py:17-43`) |
 | 22 | `POST /worksheet-import-matches` | module reader | `{module_id, field_id, keys}` | 200 matches and counts | 404, 422 | record import preview mode (`import_router.py:119-150`); the key match is new |
 | 23 | `GET /records/{record_id}/worksheet-rows` (Appears in) | record reader | list params | 200 list of `{worksheet_id, worksheet_title, row_id, column_key, column_name, cells}`, exact total | 404 | `require_readable_link` both-ends rule (`relationships/access.py:24-41`); route is new |
+| 25 | `GET /worksheets/{id}/share-candidates?q=` | owner | `q` (search text) | 200 people the owner can see (`visible_person_ids`, active members of the bound organization) and the groups the owner belongs to | 403, 404 | `visible_person_ids` (`access/users/person_visibility.py`); route is new |
 | 24 | `GET /users/{user_id}/worksheet-impact` | admin | | 200 `{opening_count}` | 403, 404 | `require_admin` routes in `account_operations.py` (`:53-54`); route is new |
 | 25 | Lifecycle impact (existing) | admin | | adds `worksheet_count: int` | | `LifecycleImpactResponse` (`lifecycle/planning_scope.py:70-83`); additive field |
 
@@ -1025,12 +1029,26 @@ Risks:
 
 **Proposed.** Presence uses Supabase Realtime Presence on a private topic per sheet, `org:<org>:worksheet:<id>`. Cursor moves travel over the websocket and never touch PostgreSQL. The database is checked only when a person gets a token and joins. This is faster than the HTTP heartbeat design, which needed a database write and a read for every viewer on each cursor move.
 
-- **Join.** The browser asks FastAPI for a presence token for the sheet (the `POST /api/realtime/token` pattern, `platform/realtime/router.py`). FastAPI checks `visible` (D2) and refreshes a per-sheet join grant, as OpenComms does with `CommsRealtimeGrant` (`comms/realtime/grants.py`). An RLS policy on `realtime.messages` admits a join only with a matching, unexpired grant and `extension = 'presence'`.
+- **Join.** The browser asks FastAPI for a presence token for the sheet: `POST /api/worksheets/{id}/presence-token` returns `{token, topic, expires_at, viewers}` (60 s). The token carries `purpose = 'realtime_presence'` and `topic = 'org:<org>:worksheet:<id>'`. FastAPI checks `visible` (D2) with fresh reads and upserts a per-sheet join grant in `worksheet_realtime_grants` (audit off, organization RLS, unique per organization, user and sheet, grant expiry equal to token expiry, own advisory lock key, expired rows swept). The join function checks the purpose per branch: a `worksheet:` topic accepts only a `realtime_presence` token whose `topic` claim equals the topic exactly, with a matching live grant for the same organization and user on a sheet that is not deleted; the existing branches keep requiring `realtime`. The write rule allows `extension = 'presence'` only on `worksheet:` topics; conversation, user and organization-presence topics stay read-only. The client always joins with `private: true`, on a connection that carries no OpenComms channels. Token issuance has its own per-person rate budget, separate from the OpenComms token limit.
 - **Revocation.** Realtime checks access once at join and caches it for the connection (Supabase Realtime Authorization docs). The token therefore lasts 60 seconds. The client refreshes it every 45 seconds; a refused refresh makes the client leave. A person who lost access stops within 60 seconds (PR5).
-- **Payload.** The presence state is `{row_id, column_key}` only. Names and avatars come from the people list the viewer already has. No value, title or column name is sent (PR2).
+- **Payload.** The presence state is `{row_id, column_key}` only. Names and avatars come from the people list the viewer already has. No value, title or column name is sent (PR2). The receiving client accepts an entry only when its key is in the token response's `viewers` list (or is the viewer), `row_id` is a loaded row and `column_key` matches `^c[0-9a-z]{1,8}$`; it never renders payload text. A current viewer could still move another current viewer's outline; this Low residual is accepted (DEC-0047).
 - **Storage.** None. Presence lives in the Realtime channel only (PR6). The grant rows follow the Comms grant cleanup (`revoke_stale`).
 - **Security change.** Today browsers publish nothing on Realtime; OpenComms presence goes through HTTP. Here browsers publish their own presence state. The Security Engineer reviews this before build, including whether a client can claim another person's presence key.
 - **Cost.** One token request per viewer every 45 seconds, and one join query per join. Cursor moves cost no database work.
+
+### D14. Security constraints (Security Engineer design review, 2026-11-24)
+
+Each constraint is part of the unit that builds it; a missing one is a BLOCKING review finding for that unit.
+
+- **Structure masking (S1).** One per-viewer structure serializer serves route 4, the route 3 and 6 responses, the 412 body and template export. A "From another sheet" column whose source the viewer cannot see carries no source sheet ID or column key (state `no_access`). Template export writes module, department and field names only for modules the exporter can read; otherwise the column exports as `text`. A "From another sheet" column never goes into a template: it exports as `text`, and template import refuses `sheet_lookup` with 422. Saving a "From another sheet" column needs the source sheet to be visible to the person saving; a hidden source and a missing source give identical 422 bodies.
+- **Share targets (R1).** Routes 17 and 18 accept a person only with an active membership in the bound organization whom `visible_person_ids` returns for the actor, and a group only when it is live and in the bound organization. Anyone else gets the same 404 as a random UUID, and no response carries their name.
+- **Per-cell saves (R2).** `expected` is compared with the actor's masked value. A change to a cell the actor sees as `no_access` is refused (403). The 412 `current` row and Appears in `cells` use the actor's masking.
+- **Recheck after locks (R4).** After the authority locks (D3.3), `worksheet_level` is computed again with fresh reads.
+- **Error order (R5).** The 404 loader runs before every 403, 428, 412, 409 and semantic 422 check.
+- **My sheets deleted list (R6).** `deleted=only` keeps every `base` condition except the sheet's own deleted flag.
+- **SSE (C1–C5).** The `worksheets` branch in `hub._can_receive` sits after the organization checks and before `all_authenticated` and the admin pass, and tests only `entity_id in viewer.worksheet_ids`. `EventViewer.worksheet_ids` is a `frozenset[UUID]`, never optional, filled from `visible_worksheet_clause` with an explicit organization filter. `_access_signature` adds `worksheet:<id>` entries before the admin early return. All five sheet tables map to `worksheets` with the sheet ID; any other `worksheet*` table publishes nothing. A `worksheets` payload must carry a UUID `entity_id` and no other key. No existing entity's delivery changes (a captured before/after table proves it).
+- **Excel child (E1–E7).** The child reads the exact checked bytes from memory; a streaming defusedxml pre-scan refuses more than 10,001 rows, more than 100 columns or any cell outside the used range, and archives that contain `xl/workbook.bin`, `content.xml` or `mimetype`; output and each cell (4,000 characters) are capped while writing, the parent reads through a bounded read and kills the child on overflow; limits as `validation_child.py` plus core size 0, a minimal environment, stderr to `DEVNULL`, 60 s timeout; the route has CSRF, exact Origin, a `file_transfer_policy` entry, the shared file slots, 413 before buffering past 10 MiB, `tab` bounds; python-calamine is locked with hashes and installed from wheels only.
+- **Documentation (P6, SEC-R6).** The same PR updates the `SECURITY.md` control rows for SSE and Realtime, the Comms boundary text, and the "browsers do not publish … presence" lines in architecture 04 and 14, with the reason.
 
 ## Slices
 
@@ -1039,7 +1057,7 @@ Each slice ends with tests that fail first, one code review, a `webapp-security-
 | Slice | Content | Criteria | Proof |
 | --- | --- | --- | --- |
 | S1 Record sheets | Sheets tab, module sheets, per-cell saves, full-page grid, phone layout, column types, link and lookup columns, totals, sort and search, View and Edit sharing, My sheets, CSV and Excel data export, the leave event (open read-only, Edit to View, re-enable, confirmation count, share-dialog sentence), audit redaction, sheet history, lifecycle with the record | SH-1 to SH-16, SH-18 to SH-20, SH-24, SH-26, SH-27, SH-29 to SH-31, SH-38, SH-40 to SH-57, SH-60 to SH-62, SH-67, SH-68 | PostgreSQL integration tests for the access rule (every surface in V7, for each account level); leave-path tests for the four code paths; isolated Playwright for the tab, page and phone; a hands-on pass with two accounts for sharing and live refresh |
-| S2 Structure and data reuse | Appears in, computed columns, column groups, templates (JSON export and import, New sheet from this structure), CSV and Excel import with the matching preview, Make a copy, sample packs, presence, From another sheet column | SH-17, SH-21 to SH-23, SH-25, SH-28, SH-32 to SH-37, SH-39, SH-58, SH-59, SH-63 to SH-66, SH-69; re-run SH-5, SH-6, SH-7, SH-38 and SH-43 for the actions and surfaces that S2 adds | Parser tests with hostile files (size, zip expansion, macros, formula text); import preview tests on a real database; sample runs for School and Manufacturer |
+| S2 Structure and data reuse | Appears in, computed columns, column groups, templates (JSON export and import, New sheet from this structure), CSV and Excel import with the matching preview, Make a copy, sample packs, presence, From another sheet column | SH-17, SH-21 to SH-23, SH-25, SH-28, SH-32 to SH-37, SH-39, SH-58, SH-59, SH-63 to SH-66, SH-69 to SH-72; re-run SH-5, SH-6, SH-7, SH-38 and SH-43 for the actions and surfaces that S2 adds | Parser tests with hostile files (size, zip expansion, macros, formula text); import preview tests on a real database; sample runs for School and Manufacturer |
 
 **Why the leave event is in S1.** If S1 reaches users without it, a creator who leaves before S3 ships leaves sheets that stay closed to everyone. That is option 2b, which DEC-0044 rejected. Otherwise the sheets would open later, on terms the creator never saw. The leave transition, its confirmation count and the share-dialog sentence therefore ship with sharing. Make a copy moves to S2, because it uses the same copy work as New sheet from this structure.
 
