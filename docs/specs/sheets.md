@@ -950,7 +950,7 @@ Conventions for every route (`backend/AGENTS.md`, "API conventions"; `fastapi-ap
 | 2a | `GET /modules/{module_id}/worksheets` (module page) | module reader | list params | 200 list of `WorksheetSummary` for the module sheets that are `visible` (owned, shared, or open), exact total | 404 | as route 2, with `module_filter` on the module |
 | 3 | `POST /worksheets` | non-guest record or module reader | `{record_id \| module_id (exactly one), title, source: {kind: "blank"} \| {kind: "structure", worksheet_id} \| {kind: "copy", worksheet_id} \| {kind: "template", template, module_mapping}}` | 201, `Location`, `ETag`, `WorksheetDetail` | 403 guest, 404, 409 `record_not_active`, 422 | `POST /records` 201 (`records/router.py:272`); discriminated `source` is new |
 | 4 | `GET /worksheets/{id}` | `visible` | | 200 `WorksheetDetail`, `ETag` | 404 | `GET /records/{id}` (`records/router.py:260`); `group_etag` (`policy/service.py:65-66`) |
-| 5 | `PATCH /worksheets/{id}` | owner, not open | `{title}` + `If-Match` | 200 | 403, 404, 412, 428 | `PATCH /access/groups/{id}` with `If-Match` (`configuration_router.py:299-313`) |
+| 5 | `PATCH /worksheets/{id}` | owner, not open | `{title}` + `If-Match` | 200 | 403, 404, 409 `worksheet_open`, 412, 428 | `PATCH /access/groups/{id}` with `If-Match` (`configuration_router.py:299-313`) |
 | 6 | `PUT /worksheets/{id}/structure` | owner or Edit | `{columns, groups, totals}` + `If-Match` | 200 `WorksheetDetail` | 403, 404, 409 `column_has_values` (type change on a column with values), 412, 422 `expression_invalid` or `worksheet_limit`, 428 | `PUT /access/groups/{id}/access` with `If-Match` (`configuration_router.py:408-429`) |
 | 7 | `DELETE /worksheets/{id}` | owner, not open | `If-Match` | 204 | 403, 404, 409 `worksheet_open`, 412, 428 | `DELETE /records/{id}` (`records/router.py:348-365`); `delete_group` `If-Match` (`policy/service.py:309-313`) |
 | 8 | `POST /worksheets/{id}/restore` | owner, record live | | 200 | 404, 409 | `POST /records/{id}/restore` (`records/router.py:368-391`) |
@@ -969,9 +969,9 @@ Conventions for every route (`backend/AGENTS.md`, "API conventions"; `fastapi-ap
 | 21 | `POST /worksheet-import-files?tab=<n>` | non-guest | `.xlsx` bytes, ≤ 10 MiB | 200 parse result (D9.3) | 413, 422 `import_file_invalid` or `worksheet_limit`, 503 `files_busy` | file upload routes in `file_transfer_policy` (`file_transfers.py:37-60`); `validate_bounded` (`validation_worker.py:17-43`) |
 | 22 | `POST /worksheet-import-matches` | module reader | `{module_id, field_id, keys}` | 200 matches and counts | 404, 422 | record import preview mode (`import_router.py:119-150`); the key match is new |
 | 23 | `GET /records/{record_id}/worksheet-rows` (Appears in) | record reader | list params | 200 list of `{worksheet_id, worksheet_title, row_id, column_key, column_name, cells}`, exact total | 404 | `require_readable_link` both-ends rule (`relationships/access.py:24-41`); route is new |
-| 25 | `GET /worksheets/{id}/share-candidates?q=` | owner | `q` (search text) | 200 people the owner can see (`visible_person_ids`, active members of the bound organization) and the groups the owner belongs to | 403, 404 | `visible_person_ids` (`access/users/person_visibility.py`); route is new |
+| 25 | `GET /worksheets/{id}/share-candidates?q=` | owner | `q` (search text) | 200 people the owner can see (`visible_person_ids`, active members of the bound organization) and the groups the owner belongs to; paged until 20 visible people are found | 403, 404, 409 `worksheet_open` | `visible_person_ids` (`access/users/person_visibility.py`); route is new |
 | 24 | `GET /users/{user_id}/worksheet-impact` | admin | | 200 `{opening_count}` | 403, 404 | `require_admin` routes in `account_operations.py` (`:53-54`); route is new |
-| 25 | Lifecycle impact (existing) | admin | | adds `worksheet_count: int` | | `LifecycleImpactResponse` (`lifecycle/planning_scope.py:70-83`); additive field |
+| 26 | Lifecycle impact (existing) | admin | | adds `worksheet_count: int` | | `LifecycleImpactResponse` (`lifecycle/planning_scope.py:70-83`); additive field |
 
 Shapes:
 
