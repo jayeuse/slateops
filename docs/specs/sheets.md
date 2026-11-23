@@ -343,7 +343,7 @@ From TASK-0099 (Product Designer). Its decisions are in Decisions, items 4, 10, 
 - The record panel keeps its 540px width. The Sheets tab has two sections.
 - **On this record:**
   - A header with the count and a **New sheet** button. The button is hidden for guests (C3).
-  - One row per visible sheet: title, "15 rows · changed Nov 21 by you", and the access on the right ("Shared", "Only you", "Edit", "View").
+  - One row per visible sheet: title, "15 rows · changed Nov 21" (the summary carries no last changer), and the access on the right ("Shared", "Only you", "Edit", "View").
   - Empty state, same frame with a dashed border: "No sheets on this record yet" / "A new sheet is visible only to you until you share it."
 - **Appears in** follows (screen 6). Empty: "No rows link here" / "Rows of sheets you can see that link to this record show here."
 - The record panel shows no Edit action for a member with read only. A member with read only can still create a sheet (C1).
@@ -416,7 +416,7 @@ From TASK-0099 (Product Designer). Its decisions are in Decisions, items 4, 10, 
 
 **5. Open sheet after the owner left** (SH-13, SH-17, SH-18, SH-31; UI side only)
 - The viewer is a reader of the record. Chip: **Read-only**.
-- Directly under the title: "Andrea Villamor left Larkspur College on Nov 22. Everyone who can read Andrea Villamor's record can read this sheet. Nobody can change it."
+- Directly under the title: "Andrea Villamor no longer has access to Larkspur College. Everyone who can read Andrea Villamor's record can read this sheet. Nobody can change it." (no date; Decision 10)
 - Actions: only **Export ▾** and **Make a copy** (primary). There is no Share, Import, More, Add row or "+".
 - **Make a copy** opens a dialog:
   - Name: "Class 1A (copy)", with "On Andrea Villamor · Faculty Members, the same record."
