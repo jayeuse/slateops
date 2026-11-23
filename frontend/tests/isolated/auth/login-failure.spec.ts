@@ -11,7 +11,7 @@ import { installFetch } from "../access/fixtures";
 
 // A refused sign-in shows one message and never the server's detail. Wrong or
 // malformed credentials (401, 422) are the person's own to fix, so they say
-// "Invalid email or password." with no support reference (Human Owner,
+// "Wrong email, username or password." with no support reference (Human Owner,
 // 2026-11-14); other failures keep the request's reference. A 429
 // names the wait in whole minutes (at least one) only when Retry-After is a
 // whole number of seconds; any other value, or none, says "later". The http
@@ -38,18 +38,18 @@ const rows: {
   {
     name: "wrong credentials",
     status: 401,
-    message: "Invalid email or password.",
+    message: "Wrong email, username or password.",
   },
   {
     name: "a 401 with a network code is still wrong credentials",
     status: 401,
     code: "ip_not_allowed",
-    message: "Invalid email or password.",
+    message: "Wrong email, username or password.",
   },
   {
     name: "an email the server refuses as malformed (422) is wrong credentials",
     status: 422,
-    message: "Invalid email or password.",
+    message: "Wrong email, username or password.",
   },
   {
     name: "a delay of 75 seconds rounds up to 2 minutes",

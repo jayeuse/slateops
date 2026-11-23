@@ -1559,7 +1559,9 @@ test.describe("Sandbox", () => {
     page.setDefaultTimeout(30_000);
     const credentials = runFixture.admin;
     await page.goto("/login");
-    await page.getByLabel("Email", { exact: true }).fill(credentials.email);
+    await page
+      .getByLabel("Email or username", { exact: true })
+      .fill(credentials.email);
     await page.getByLabel("Password").fill(credentials.password);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page).toHaveURL(/\/(openview|sandbox)$/);

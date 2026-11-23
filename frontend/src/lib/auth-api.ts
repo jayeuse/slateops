@@ -213,10 +213,11 @@ export async function acceptOrganizationInvitation(
   );
 }
 
-export async function signIn(email: string, password: string) {
+/** `login` is an email address or a username; the server's field stays `email`. */
+export async function signIn(login: string, password: string) {
   const session = await apiFetch("/auth/login", authenticatedResponse, {
     method: "POST",
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email: login, password }),
     refreshOnUnauthorized: false,
   });
   announceIdentityChange();

@@ -99,7 +99,9 @@ async function signIn(
   credentials: Identity,
 ): Promise<void> {
   await page.goto(new URL("/login", origin).href);
-  await page.getByLabel("Email", { exact: true }).fill(credentials.email);
+  await page
+    .getByLabel("Email or username", { exact: true })
+    .fill(credentials.email);
   await page.getByLabel("Password", { exact: true }).fill(credentials.password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(

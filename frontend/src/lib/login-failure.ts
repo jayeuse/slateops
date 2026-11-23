@@ -13,7 +13,8 @@ function isCredentialFailure(error: unknown): boolean {
 /** The sign-in form's message for a refused or failed sign-in. */
 export function loginFailureMessage(error: unknown): string {
   if (isCredentialFailure(error)) {
-    return "Invalid email or password.";
+    // The same words for every refusal, so they never tell which part was wrong.
+    return "Wrong email, username or password.";
   } else if (error instanceof ApiError && error.status === 429) {
     if (error.retryAfter === undefined)
       return "Too many attempts. Try again later.";

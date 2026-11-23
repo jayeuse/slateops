@@ -12,6 +12,28 @@ const COPIED_MILLISECONDS = 4000;
 type CopyState = "idle" | "copied" | "failed";
 
 /**
+ * One copy button's state: "copied" for a few seconds after a copy, or
+ * "failed" when the browser refused it.
+ */
+export function useCopyText(): [CopyState, (text: string) => void] {
+  const [copy, setCopy] = useState<CopyState>("idle");
+  useEffect(() => {
+    if (copy !== "copied") return;
+    const timer = window.setTimeout(() => setCopy("idle"), COPIED_MILLISECONDS);
+    return () => window.clearTimeout(timer);
+  }, [copy]);
+  function copyText(text: string) {
+    const copied = navigator.clipboard?.writeText(text);
+    if (!copied) {
+      setCopy("failed");
+      return;
+    }
+    copied.then(() => setCopy("copied")).catch(() => setCopy("failed"));
+  }
+  return [copy, copyText];
+}
+
+/**
  * A value the server shows once (DEC-0042): an invitation link or a
  * temporary password. It sits in a read-only field the person can select,
  * with Copy beside it, and the lines under it say what the value does. The
@@ -30,12 +52,7 @@ export function OneTimeSecret({
   children: React.ReactNode;
 }) {
   const id = useId();
-  const [copy, setCopy] = useState<CopyState>("idle");
-  useEffect(() => {
-    if (copy !== "copied") return;
-    const timer = window.setTimeout(() => setCopy("idle"), COPIED_MILLISECONDS);
-    return () => window.clearTimeout(timer);
-  }, [copy]);
+  const [copy, copyText] = useCopyText();
   return (
     <div className="flex min-w-0 flex-col gap-2">
       <label htmlFor={id} className="text-sm font-medium">
@@ -54,14 +71,7 @@ export function OneTimeSecret({
           type="button"
           variant="outline"
           className="min-h-11 shrink-0"
-          onClick={() => {
-            const copied = navigator.clipboard?.writeText(value);
-            if (!copied) {
-              setCopy("failed");
-              return;
-            }
-            copied.then(() => setCopy("copied")).catch(() => setCopy("failed"));
-          }}
+          onClick={() => copyText(value)}
         >
           {copy === "copied" ? (
             <Check aria-hidden="true" />

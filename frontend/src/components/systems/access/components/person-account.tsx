@@ -33,6 +33,14 @@ import { useAccessVerifying, verifyingReason } from "../state/draft-navigation";
 import { ActionError } from "./editor-conflicts";
 import { useErrorText } from "@/lib/use-error-text";
 import { OneTimeSecret } from "./one-time-secret";
+import {
+  InvitationMessageCopy,
+  useInvitingOrganizationName,
+} from "./invitation-message-copy";
+import {
+  INVITATION_LINK_LIFETIME,
+  invitationMessage,
+} from "../helpers/invitation-message";
 
 type AccountAction =
   | "reconcile"
@@ -223,6 +231,7 @@ export function PersonAccount({
   const [now] = useState(() => Date.now());
   // The new invitation link, shown once in the dialog until it closes.
   const [link, setLink] = useState<string | null>(null);
+  const organizationName = useInvitingOrganizationName();
   const mounted = useRef(false);
   const pendingRef = useRef(false);
   const buttons = useRef(new Map<AccountAction, HTMLButtonElement>());
@@ -456,17 +465,30 @@ export function PersonAccount({
                   The earlier link or invitation email no longer works.
                 </AlertDialogDescription>
               </AlertDialogHeader>
+              <InvitationMessageCopy
+                message={invitationMessage({
+                  organization: organizationName,
+                  link,
+                  email: person.email,
+                  username: person.username,
+                })}
+              />
               <OneTimeSecret
                 label={`Invitation link for ${person.email}`}
                 value={link}
                 copyLabel="Copy link"
               >
-                It works once, for 24 hours, and shows only now. Send it to them
-                by any channel.
+                It works once, for {INVITATION_LINK_LIFETIME}, and shows only
+                now. Send it to them by any channel.
               </OneTimeSecret>
               <AlertDialogFooter>
-                <Button className="min-h-11" onClick={closeDialog}>
-                  Done
+                {/* The copy above is the one filled button (parent D4). */}
+                <Button
+                  variant="secondary"
+                  className="min-h-11"
+                  onClick={closeDialog}
+                >
+                  Close
                 </Button>
               </AlertDialogFooter>
             </>

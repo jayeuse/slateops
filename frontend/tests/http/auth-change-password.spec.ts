@@ -98,7 +98,9 @@ test("AC-F-UI signing in with a temporary password opens Choose a new password, 
 }) => {
   const state = await forcedChange(page, false);
   await page.goto("/login");
-  await page.getByLabel("Email", { exact: true }).fill("ben@example.com");
+  await page
+    .getByLabel("Email or username", { exact: true })
+    .fill("ben@example.com");
   await page.getByLabel("Password", { exact: true }).fill(TEMPORARY_PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
 

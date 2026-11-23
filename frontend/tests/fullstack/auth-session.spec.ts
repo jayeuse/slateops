@@ -221,7 +221,9 @@ test("the same-origin gateway authenticates, serves the session, and revokes it 
   const credentials = fixture().admin;
 
   await page.goto("/login");
-  await page.getByLabel("Email", { exact: true }).fill(credentials.email);
+  await page
+    .getByLabel("Email or username", { exact: true })
+    .fill(credentials.email);
   await page.getByLabel("Password").fill(credentials.password);
   await page.getByRole("button", { name: "Sign in" }).click();
 
@@ -278,7 +280,7 @@ test("a returning tab conceals the old account until the shared cookie session i
 }) => {
   const { admin, member } = fixture();
   await tabA.goto("/login");
-  await tabA.getByLabel("Email", { exact: true }).fill(admin.email);
+  await tabA.getByLabel("Email or username", { exact: true }).fill(admin.email);
   await tabA.getByLabel("Password").fill(admin.password);
   await tabA.getByRole("button", { name: "Sign in" }).click();
   await expect(tabA).toHaveURL(/\/(openview|sandbox)$/);
@@ -315,7 +317,9 @@ test("a returning tab conceals the old account until the shared cookie session i
   await tabB.getByRole("button", { name: "Account" }).click();
   await tabB.getByRole("menuitem", { name: "Sign out" }).click();
   await expect(tabB).toHaveURL(/\/login$/);
-  await tabB.getByLabel("Email", { exact: true }).fill(member.email);
+  await tabB
+    .getByLabel("Email or username", { exact: true })
+    .fill(member.email);
   await tabB.getByLabel("Password").fill(member.password);
   await tabB.getByRole("button", { name: "Sign in" }).click();
   await expect(tabB).toHaveURL(/\/(openview|sandbox)$/);
@@ -393,7 +397,9 @@ test("provider invitation and recovery emails complete through rendered forms", 
   const replayPassword = `Replay!${randomUUID()}`;
 
   await page.goto("/login");
-  await page.getByLabel("Email", { exact: true }).fill(fullstack.admin.email);
+  await page
+    .getByLabel("Email or username", { exact: true })
+    .fill(fullstack.admin.email);
   await page.getByLabel("Password").fill(fullstack.admin.password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByLabel("Slate Operations workspace")).toBeVisible();
@@ -480,12 +486,12 @@ test("provider invitation and recovery emails complete through rendered forms", 
   await page.getByRole("button", { name: "Set password" }).click();
   expect((await invitationCompletion).status()).toBe(204);
   await expect(page).toHaveURL(
-    new URL("/login?completed=password", browserOrigin).href,
+    new URL("/login?completed=invitation", browserOrigin).href,
   );
   await expect(
     page.getByRole("heading", { name: "Welcome back" }),
   ).toBeVisible();
-  await page.getByLabel("Email", { exact: true }).fill(email);
+  await page.getByLabel("Email or username", { exact: true }).fill(email);
   await page.getByLabel("Password").fill(invitationPassword);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByLabel("Slate Operations workspace")).toBeVisible();
@@ -552,7 +558,7 @@ test("provider invitation and recovery emails complete through rendered forms", 
   );
 
   await page.goto("/login");
-  await page.getByLabel("Email", { exact: true }).fill(email);
+  await page.getByLabel("Email or username", { exact: true }).fill(email);
   await page.getByLabel("Password").fill(replacementPassword);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByLabel("Slate Operations workspace")).toBeVisible();

@@ -1,7 +1,14 @@
 "use client";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 
-import { useCallback, useId, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link2, Send, X } from "lucide-react";
 
@@ -65,6 +72,14 @@ import { apiErrorReference } from "@/lib/api-errors";
 import { emailSetupStatusOptions } from "@/components/systems/manage/adapters/manage-queries";
 import { emailNotSetUp } from "@/components/systems/manage/domain/email-setup-rules";
 import { OneTimeSecret } from "./one-time-secret";
+import {
+  InvitationMessageCopy,
+  useInvitingOrganizationName,
+} from "./invitation-message-copy";
+import {
+  INVITATION_LINK_LIFETIME,
+  invitationMessage,
+} from "../helpers/invitation-message";
 
 type InviteForm = InviteDraft;
 type Delivery = "email" | "link";
@@ -141,6 +156,7 @@ export function InvitePersonDialog({
   const region = useWorkspaceDisplayRegion();
   const client = useQueryClient();
   const signedInId = useVerifiedWorkspaceUserId();
+  const organizationName = useInvitingOrganizationName();
   const settings = useQuery({ ...invitationSettingsOptions(), enabled: open });
   // An unsent invitation comes back from the journal, for example after
   // Back and Forward.
@@ -163,8 +179,18 @@ export function InvitePersonDialog({
   // The link the server made, shown once until the dialog closes.
   const [created, setCreated] = useState<{
     email: string;
+    username: string;
     url: string;
   } | null>(null);
+  // The result replaces the long form in the same scrolling dialog; it
+  // opens at its title, not at the form's scroll position.
+  const resultRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!created) return;
+    resultRef.current
+      ?.closest<HTMLElement>('[data-slot="dialog-content"]')
+      ?.scrollTo({ top: 0 });
+  }, [created]);
 
   const username = form.username ?? usernameFromEmail(form.email);
   const days = form.days ?? defaultGuestDays(settings.data);
@@ -296,6 +322,7 @@ export function InvitePersonDialog({
         reset();
         setCreated({
           email: response.user.email,
+          username: response.user.username,
           url: response.invitation_url,
         });
         void afterAccessUserChange(client);
@@ -356,27 +383,37 @@ export function InvitePersonDialog({
             </DialogTitle>
           </DialogHeader>
           {created ? (
-            <div className="mt-4 flex flex-col gap-5">
+            <div ref={resultRef} className="mt-4 flex flex-col gap-5">
+              <InvitationMessageCopy
+                message={invitationMessage({
+                  organization: organizationName,
+                  link: created.url,
+                  email: created.email,
+                  username: created.username,
+                })}
+              />
               <OneTimeSecret
                 label={`Invitation link for ${created.email}`}
                 value={created.url}
                 copyLabel="Copy link"
               >
                 <p>
-                  It works once, for 24 hours, and shows only now. Send it to
-                  them by any channel.
+                  It works once, for {INVITATION_LINK_LIFETIME}, and shows only
+                  now. Send it to them by any channel.
                 </p>
                 <p>
                   If it is lost, open them in People and choose Copy a new link.
                 </p>
               </OneTimeSecret>
               <DialogFooter className="bg-card sticky -bottom-5 z-10 -mx-5 mt-0 -mb-5 border-t px-5 pt-3 pb-8">
+                {/* The copy above is the one filled button (parent D4). */}
                 <Button
                   type="button"
+                  variant="secondary"
                   className="min-h-11"
                   onClick={requestClose}
                 >
-                  Done
+                  Close
                 </Button>
               </DialogFooter>
             </div>

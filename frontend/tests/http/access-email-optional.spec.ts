@@ -1,6 +1,12 @@
 import { randomBytes } from "node:crypto";
 
-import { expect, test, type Page } from "./helpers/test";
+import {
+  authMeBody,
+  defaultOrganization,
+  expect,
+  test,
+  type Page,
+} from "./helpers/test";
 import { created, ids, mockAccessApi } from "./helpers/access-api";
 import { openedSheet } from "./helpers/settled";
 
@@ -117,8 +123,124 @@ test("AC-L-UI with email not set up an administrator invites by a link that show
   await result.getByRole("button", { name: "Copy link" }).click();
   await expect(result.getByRole("button", { name: "Copied" })).toBeVisible();
   expect(await copied()).toBe(link);
-  await result.getByRole("button", { name: "Done" }).click();
+  // D4: the copy is the one filled button; closing is secondary.
+  await expect(
+    result.getByRole("button", { name: "Close", exact: true }),
+  ).toHaveAttribute("data-variant", "secondary");
+  await result.getByRole("button", { name: "Close", exact: true }).click();
   await expect(result).toBeHidden();
+});
+
+test("AC-I2 the administrator copies a ready-to-send message that names the organization, the link and both sign-in names", async ({
+  page,
+}) => {
+  const copied = await recordClipboard(page);
+  const api = await setupAccess(page, "not_set_up");
+  api.on("GET", "/api/auth/me", (route) =>
+    route.fulfill({
+      json: authMeBody({
+        id: ids.rosa,
+        role: "admin",
+        current_organization: {
+          ...defaultOrganization,
+          name: "Harbor Logistics",
+          role: "admin",
+          access: [],
+        },
+      }),
+    }),
+  );
+  await page.goto("/access?view=people");
+  await page.getByRole("button", { name: "Invite person" }).click();
+  const dialog = page.getByRole("dialog", { name: "Invite a person" });
+  await dialog.getByLabel("Email").fill("eve.stone@example.com");
+  await dialog.getByRole("button", { name: "Create invitation link" }).click();
+
+  const result = page.getByRole("dialog", {
+    name: "Send this invitation link",
+  });
+  const message =
+    "You are invited to join Harbor Logistics on Slate Operations. " +
+    `Open this link to choose your password: ${link} — it works once, for 24 hours. ` +
+    "Then sign in with eve.stone@example.com or your username eve_stone.";
+  // The message shows as the person will read it, and the link stays.
+  await expect(
+    result.getByRole("textbox", { name: "Message to send" }),
+  ).toHaveValue(message);
+  await expect(
+    result.getByRole("textbox", {
+      name: "Invitation link for eve.stone@example.com",
+    }),
+  ).toHaveValue(link);
+  await result.getByRole("button", { name: "Copy invitation message" }).click();
+  await expect(result.getByRole("button", { name: "Copied" })).toHaveCount(1);
+  expect(await copied()).toBe(message);
+  // The link alone can still be copied.
+  await result.getByRole("button", { name: "Copy link" }).click();
+  await expect.poll(copied).toBe(link);
+});
+
+test("AC-I2 on a phone the invitation message opens at its title, not at the form's scroll position", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const api = await setupAccess(page, "set_up");
+  // A real link (56-character token), a long organization name and a long
+  // address make the result taller than the phone's dialog, so it can keep
+  // the form's scroll position.
+  api.on("GET", "/api/auth/me", (route) =>
+    route.fulfill({
+      json: authMeBody({
+        id: ids.rosa,
+        role: "admin",
+        current_organization: {
+          ...defaultOrganization,
+          name: "Harbor Operations Group",
+          role: "admin",
+          access: [],
+        },
+      }),
+    }),
+  );
+  api.on("POST", "/api/auth/invitations", (route, call) =>
+    route.fulfill({
+      status: 201,
+      json: {
+        user: {
+          ...api.users.get(ids.cy)!,
+          id: "00000000-0000-4000-8000-000000000199",
+          email: (call.body as { email: string }).email,
+          username: (call.body as { username: string }).username,
+          invitation_sent_at: created,
+        },
+        delivery: "link",
+        invitation_url: `http://localhost:3000/auth/setup#token_hash=${"0123456789abcdef".repeat(3)}01234567&type=invite`,
+      },
+    }),
+  );
+  await page.goto("/access?view=people");
+  await page.getByRole("button", { name: "Invite person" }).click();
+  const dialog = page.getByRole("dialog", { name: "Invite a person" });
+  await dialog.getByLabel("Email").fill("handson.1795443593151@openslate.test");
+  await dialog
+    .getByRole("radio", { name: "Copy a link to send yourself" })
+    .click();
+  // With many groups the form is long: the person scrolls to its end.
+  await dialog.hover();
+  await page.mouse.wheel(0, 3000);
+  await expect(
+    dialog.getByRole("heading", { name: "Invite a person" }),
+  ).not.toBeInViewport();
+  await dialog.getByRole("button", { name: "Create invitation link" }).click();
+  const result = page.getByRole("dialog", {
+    name: "Send this invitation link",
+  });
+  await expect(
+    result.getByRole("textbox", { name: "Message to send" }),
+  ).toBeVisible();
+  await expect(
+    result.getByRole("heading", { name: "Send this invitation link" }),
+  ).toBeInViewport();
 });
 
 test("AC-L-UI with email set up an administrator chooses email or an invitation link", async ({
@@ -139,7 +261,9 @@ test("AC-L-UI with email set up an administrator chooses email or an invitation 
   await expect(
     page
       .getByRole("dialog", { name: "Send this invitation link" })
-      .getByRole("textbox"),
+      .getByRole("textbox", {
+        name: "Invitation link for eve.stone@example.com",
+      }),
   ).toHaveValue(link);
   expect(api.sent("POST", "/api/auth/invitations")[0]?.body).toMatchObject({
     delivery: "link",
@@ -149,7 +273,22 @@ test("AC-L-UI with email set up an administrator chooses email or an invitation 
 test("AC-L-UI a pending invitation gets Copy a new link, and the old link stops", async ({
   page,
 }) => {
+  const copied = await recordClipboard(page);
   const api = await setupAccess(page, "not_set_up");
+  api.on("GET", "/api/auth/me", (route) =>
+    route.fulfill({
+      json: authMeBody({
+        id: ids.rosa,
+        role: "admin",
+        current_organization: {
+          ...defaultOrganization,
+          name: "Harbor Logistics",
+          role: "admin",
+          access: [],
+        },
+      }),
+    }),
+  );
   const cy = api.users.get(ids.cy)!;
   api.users.set(ids.cy, { ...cy, invitation_sent_at: created });
   api.on("POST", `/api/auth/invitations/${ids.cy}/link`, (route) =>
@@ -179,6 +318,19 @@ test("AC-L-UI a pending invitation gets Copy a new link, and the old link stops"
   await expect(
     result.getByRole("textbox", { name: "Invitation link for cy@example.com" }),
   ).toHaveValue(newLink);
+  // D2: a new link comes with the same ready-to-send message.
+  const message =
+    "You are invited to join Harbor Logistics on Slate Operations. " +
+    `Open this link to choose your password: ${newLink} — it works once, for 24 hours. ` +
+    "Then sign in with cy@example.com or your username cy.";
+  await expect(
+    result.getByRole("textbox", { name: "Message to send" }),
+  ).toHaveValue(message);
+  await result.getByRole("button", { name: "Copy invitation message" }).click();
+  await expect(result.getByRole("button", { name: "Copied" })).toHaveCount(1);
+  expect(await copied()).toBe(message);
+  await result.getByRole("button", { name: "Copy link" }).click();
+  await expect.poll(copied).toBe(newLink);
   expect(api.sent("POST", `/api/auth/invitations/${ids.cy}/link`)).toEqual([
     {
       method: "POST",
@@ -186,7 +338,10 @@ test("AC-L-UI a pending invitation gets Copy a new link, and the old link stops"
       body: {},
     },
   ]);
-  await result.getByRole("button", { name: "Done" }).click();
+  await expect(
+    result.getByRole("button", { name: "Close", exact: true }),
+  ).toHaveAttribute("data-variant", "secondary");
+  await result.getByRole("button", { name: "Close", exact: true }).click();
   await expect(result).toBeHidden();
   await expect(
     sheet.getByRole("button", { name: "Copy a new link" }),
