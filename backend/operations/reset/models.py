@@ -110,6 +110,11 @@ APPLICATION_TABLES = (
     "system_health_signals",
     "update_statuses",
     "users",
+    "worksheet_row_links",
+    "worksheet_row_revisions",
+    "worksheet_rows",
+    "worksheet_shares",
+    "worksheets",
 )
 NON_PRESERVED_TABLES = tuple(
     table
@@ -167,6 +172,12 @@ DELETE_ORDER = (
     "comms_direct_blocks",
     # Derived links restrict their department, group, dashboard, category and channel.
     "sandbox_derived_objects",
+    # Sheet children first; shares restrict their group, sheets their record and module.
+    "worksheet_row_revisions",
+    "worksheet_row_links",
+    "worksheet_shares",
+    "worksheet_rows",
+    "worksheets",
     "board_groups",
     "group_access",
     "group_members",
@@ -315,7 +326,9 @@ LOCK TABLE public.alembic_version, public.audit_logs, public.audit_seals,
  public.sandbox_test_runs, public.sandbox_versions,
  public.saved_views, public.scheduled_work,
   public.security_events, public.server_errors, public.system_health_samples,
-  public.system_health_signals, public.users
+  public.system_health_signals, public.users,
+  public.worksheet_row_links, public.worksheet_row_revisions, public.worksheet_rows,
+  public.worksheet_shares, public.worksheets
  IN ACCESS EXCLUSIVE MODE NOWAIT
 """
 

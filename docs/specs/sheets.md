@@ -729,7 +729,7 @@ The count and the security event cover the bound organization only, because RLS 
 
 | Table | Redacted | The admin audit log still shows |
 | --- | --- | --- |
-| `worksheets` | `title`, `structure`, `record_id` | entity ID, owner ID, revision, counters, actor, time |
+| `worksheets` | `title`, `structure`, `record_id`, `module_id` | entity ID, owner ID, revision, counters, actor, time |
 | `worksheet_rows` | `data` | row ID, sheet ID, position, revision, actor, time |
 | `worksheet_shares` | `user_id`, `group_id` | share ID, sheet ID, level, actor, time |
 | `worksheet_row_links` | `target_record_id`, `column_key` | link ID, row ID, sheet ID |

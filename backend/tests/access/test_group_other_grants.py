@@ -40,6 +40,9 @@ GROUP_REFERENCES = {
     "comms_channel_access": "a Comms channel or category grant: has_other_grants",
     "comms_capability_grants": "a Comms capability: has_other_grants",
     "sandbox_derived_objects": "the publish's link to a derived group; gives a member nothing",
+    # Sheets spec D1.3: a share gives View or Edit on one private sheet. Administrators see no
+    # sheet they are not shared on (V3, Decision 1), so the flag does not reveal it.
+    "worksheet_shares": "a private sheet share; not in has_other_grants",
 }
 
 

@@ -28,25 +28,32 @@ _LOG_FORMAT = "%(levelname)-5.5s [%(name)s] %(message)s"
 _REVISION_COMMANDS = {"upgrade": command.upgrade, "downgrade": command.downgrade}
 
 
-# The current `User` model maps this column from revision 4f8324236e1e on. A test that runs
-# application code below that revision adds it first and drops it before an upgrade adds it.
-_LATER_USER_COLUMN = "password_change_required_at"
+# The current models map these columns from later revisions on: `User` from 4f8324236e1e,
+# `Membership` from 37bba4c7658e. A test that runs application code below those revisions
+# adds them first and drops them before an upgrade adds them.
+_LATER_COLUMNS = (
+    ("users", "password_change_required_at"),
+    ("memberships", "worksheets_released_at"),
+)
 
 
 def add_later_user_column(owner: Engine) -> None:
-    """Let the current `User` model load rows at a revision below 4f8324236e1e."""
+    """Let the current `User` and `Membership` models load rows at an older revision."""
     with owner.begin() as connection:
-        connection.execute(
-            text(f"ALTER TABLE public.users ADD COLUMN {_LATER_USER_COLUMN} timestamptz")
-        )
+        for table, column in _LATER_COLUMNS:
+            connection.execute(
+                text(f"ALTER TABLE public.{table} ADD COLUMN {column} timestamptz")
+            )
 
 
 def drop_later_user_column(owner: Engine) -> None:
-    """Undo `add_later_user_column` before the upgrade through 4f8324236e1e adds it."""
+    """Undo `add_later_user_column` before the upgrade that adds the columns."""
     with owner.begin() as connection:
-        connection.execute(
-            text(f"ALTER TABLE public.users DROP COLUMN IF EXISTS {_LATER_USER_COLUMN}")
-        )
+        for table, column in _LATER_COLUMNS:
+            connection.execute(
+                text(f"ALTER TABLE public.{table} DROP COLUMN IF EXISTS {column}")
+            )
+
 
 def guarded_migration_environment() -> dict[str, str]:
     runtime_url = os.getenv("TEST_DATABASE_URL", "")
