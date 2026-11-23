@@ -615,7 +615,7 @@ This table copies `CommsMessageRevision` (`comms/messages/models.py:172-176`): a
 }
 ```
 
-- Types: K1's twelve field types, plus `link`, `lookup` and `computed`. `relationship` is refused (422). Cell values are checked by the existing field validators (`sandbox/fields/validation.py`: decimal digits `:15-31`, option labels `:149-153`, min and max length `:288-290`) and the import converter (`sandbox/records/importing.py`, `_converted_cell`) with the organization's `locale` (O4).
+- Types: K1's twelve field types, plus `link`, `lookup`, `computed` and `sheet_lookup` (K9; payload `{"sourceWorksheetId", "sourceColumnKey", "linkKey", "sourceLinkKey"}`, D7.3a). `relationship` is refused (422). Cell values are checked by the existing field validators (`sandbox/fields/validation.py`: decimal digits `:15-31`, option labels `:149-153`, min and max length `:288-290`) and the import converter (`sandbox/records/importing.py`, `_converted_cell`) with the organization's `locale` (O4).
 - Column names are unique in a sheet, case-insensitive. Expressions resolve names in braces. A link cell holds either a row link (D1.4) or unlinked text, `{"unlinked": "<text>"}`, for import rows that the person keeps unmatched (X8).
 - Groups hold adjacent keys and do not overlap (K8).
 
@@ -944,7 +944,8 @@ Conventions for every route (`backend/AGENTS.md`, "API conventions"; `fastapi-ap
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | `GET /worksheets` (My sheets) | signed-in | list params; `sort_by`: `title`, `updated_at`, `created_at`; `search` on title; `deleted`: `exclude` or `only` (own) | 200 list of `WorksheetSummary` | 422 | `GET /records` list (`records/router.py:235`); saved view list spec (`openview/views/router.py:64-73`) |
 | 2 | `GET /records/{record_id}/worksheets` (Sheets tab) | record reader | list params | 200 list of `WorksheetSummary`, exact total | 404 | record-prefixed routers (`query_router.py:49`); `record_access` (`records/access.py:13-23`) |
-| 3 | `POST /worksheets` | non-guest record reader | `{record_id, title, source: {kind: "blank"} \| {kind: "structure", worksheet_id} \| {kind: "copy", worksheet_id} \| {kind: "template", template, module_mapping}}` | 201, `Location`, `ETag`, `WorksheetDetail` | 403 guest, 404, 409 `record_not_active`, 422 | `POST /records` 201 (`records/router.py:272`); discriminated `source` is new |
+| 2a | `GET /modules/{module_id}/worksheets` (module page) | module reader | list params | 200 list of `WorksheetSummary` for the module sheets that are `visible` (owned, shared, or open), exact total | 404 | as route 2, with `module_filter` on the module |
+| 3 | `POST /worksheets` | non-guest record or module reader | `{record_id \| module_id (exactly one), title, source: {kind: "blank"} \| {kind: "structure", worksheet_id} \| {kind: "copy", worksheet_id} \| {kind: "template", template, module_mapping}}` | 201, `Location`, `ETag`, `WorksheetDetail` | 403 guest, 404, 409 `record_not_active`, 422 | `POST /records` 201 (`records/router.py:272`); discriminated `source` is new |
 | 4 | `GET /worksheets/{id}` | `visible` | | 200 `WorksheetDetail`, `ETag` | 404 | `GET /records/{id}` (`records/router.py:260`); `group_etag` (`policy/service.py:65-66`) |
 | 5 | `PATCH /worksheets/{id}` | owner, not open | `{title}` + `If-Match` | 200 | 403, 404, 412, 428 | `PATCH /access/groups/{id}` with `If-Match` (`configuration_router.py:299-313`) |
 | 6 | `PUT /worksheets/{id}/structure` | owner or Edit | `{columns, groups, totals}` + `If-Match` | 200 `WorksheetDetail` | 403, 404, 409 `column_has_values` (type change on a column with values), 412, 422 `expression_invalid` or `worksheet_limit`, 428 | `PUT /access/groups/{id}/access` with `If-Match` (`configuration_router.py:408-429`) |
@@ -977,7 +978,7 @@ Shapes:
   - `{"value": ...}`;
   - `{"link": {"record_id", "label"}}`;
   - `{"unlinked": "<text>"}`;
-  - `{"state": "no_access" | "deleted" | "removed" | "unavailable" | "field_removed"}`;
+  - `{"state": "no_access" | "deleted" | "removed" | "unavailable" | "field_removed" | "column_removed" | "multiple_matches"}` (the last two for `sheet_lookup` columns, D7.3a);
   - `{"value": null, "error": "division_by_zero"}`.
 
   A `no_access` cell carries no ID and no label (N4).
