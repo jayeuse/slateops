@@ -96,6 +96,15 @@ BOARD_SCOPED_ENTITIES = frozenset(
     }
 )
 
+# Sheet events name only the sheet and reach only the people who can see it (sheets spec D6).
+# Every sheet table publishes as `worksheets`; any other `worksheet*` name publishes nothing.
+WORKSHEET_SCOPED_ENTITIES = frozenset({"worksheets"})
+_WORKSHEET_PREFIX = "worksheet"
+
+
+def _unclassified_worksheet_entity(entity: str) -> bool:
+    return entity.startswith(_WORKSHEET_PREFIX) and entity not in WORKSHEET_SCOPED_ENTITIES
+
 
 @dataclass(frozen=True, slots=True)
 class InvalidationEvent:
@@ -120,6 +129,17 @@ class InvalidationEvent:
         if (
             not _ENTITY_PATTERN.fullmatch(self.entity)
             or self.entity in _PRIVATE_INVALIDATION_ENTITIES
+        ):
+            raise ValueError("invalid invalidation payload")
+        if _unclassified_worksheet_entity(self.entity):
+            raise ValueError("invalid invalidation payload")
+        if self.entity in WORKSHEET_SCOPED_ENTITIES and (
+            not isinstance(self.entity_id, UUID)
+            or self.module_id is not None
+            or self.recipient_id is not None
+            or self.board_id is not None
+            or self.administrators_only
+            or self.all_authenticated
         ):
             raise ValueError("invalid invalidation payload")
         if self.entity in BOARD_SCOPED_ENTITIES:
@@ -196,6 +216,13 @@ def event_for_entity(
 
     if entity == "dashboard_widgets":
         entity = "dashboards"
+    if entity in WORKSHEET_SCOPED_ENTITIES:
+        return (
+            InvalidationEvent(entity=entity, entity_id=entity_id, org_id=org_id)
+            if entity_id is not None else None
+        )
+    if _unclassified_worksheet_entity(entity):
+        return None
     if entity in BOARD_SCOPED_ENTITIES:
         return (
             InvalidationEvent(entity=entity, board_id=board_id, org_id=org_id)
@@ -248,6 +275,10 @@ def parse_invalidation_payload(payload: object) -> InvalidationEvent:
     board_id = payload.get("board_id")
     org_id = payload.pop("org_id", None)
     if not isinstance(entity, str) or not _ENTITY_PATTERN.fullmatch(entity):
+        raise ValueError("invalid invalidation payload")
+    if _unclassified_worksheet_entity(entity) or (
+        entity in WORKSHEET_SCOPED_ENTITIES and set(payload) != {"entity", "entity_id"}
+    ):
         raise ValueError("invalid invalidation payload")
     if entity in BOARD_SCOPED_ENTITIES and set(payload) != {"entity", "board_id"}:
         raise ValueError("invalid invalidation payload")

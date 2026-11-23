@@ -1,0 +1,1201 @@
+{
+ "audit_logs|account": {
+  "payload": {
+   "entity": "audit_logs",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "audit_logs|org": {
+  "payload": {
+   "entity": "audit_logs",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "audit_seals|account": {
+  "payload": {
+   "entity": "audit_seals",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "audit_seals|org": {
+  "payload": {
+   "entity": "audit_seals",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "backup_export_operations|account": {
+  "payload": {
+   "entity": "backup_export_operations",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "operator"
+  ]
+ },
+ "backup_export_operations|org": {
+  "payload": {
+   "entity": "backup_export_operations",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "backup_policies|account": {
+  "payload": {
+   "entity": "backup_policies",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "operator"
+  ]
+ },
+ "backup_policies|org": {
+  "payload": {
+   "entity": "backup_policies",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "backup_runs|account": {
+  "payload": {
+   "entity": "backup_runs",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "operator"
+  ]
+ },
+ "backup_runs|org": {
+  "payload": {
+   "entity": "backup_runs",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "board_attachments|account": "no event",
+ "board_attachments|org": "no event",
+ "board_calendar_sources|account": {
+  "payload": {
+   "board_id": "01900000-0000-7000-8000-0000000000b2",
+   "entity": "board_calendar_sources"
+  },
+  "receivers": []
+ },
+ "board_calendar_sources|org": {
+  "payload": {
+   "board_id": "01900000-0000-7000-8000-0000000000b2",
+   "entity": "board_calendar_sources"
+  },
+  "receivers": [
+   "admin",
+   "guest",
+   "member"
+  ]
+ },
+ "board_card_checklist_items|account": "no event",
+ "board_card_checklist_items|org": "no event",
+ "board_card_labels|account": "no event",
+ "board_card_labels|org": "no event",
+ "board_cards|account": {
+  "payload": {
+   "board_id": "01900000-0000-7000-8000-0000000000b2",
+   "entity": "board_cards"
+  },
+  "receivers": []
+ },
+ "board_cards|org": {
+  "payload": {
+   "board_id": "01900000-0000-7000-8000-0000000000b2",
+   "entity": "board_cards"
+  },
+  "receivers": [
+   "admin",
+   "guest",
+   "member"
+  ]
+ },
+ "board_event_reminders|account": "no event",
+ "board_event_reminders|org": "no event",
+ "board_events|account": {
+  "payload": {
+   "board_id": "01900000-0000-7000-8000-0000000000b2",
+   "entity": "board_events"
+  },
+  "receivers": []
+ },
+ "board_events|org": {
+  "payload": {
+   "board_id": "01900000-0000-7000-8000-0000000000b2",
+   "entity": "board_events"
+  },
+  "receivers": [
+   "admin",
+   "guest",
+   "member"
+  ]
+ },
+ "board_groups|account": "no event",
+ "board_groups|org": "no event",
+ "board_labels|account": {
+  "payload": {
+   "board_id": "01900000-0000-7000-8000-0000000000b2",
+   "entity": "board_labels"
+  },
+  "receivers": []
+ },
+ "board_labels|org": {
+  "payload": {
+   "board_id": "01900000-0000-7000-8000-0000000000b2",
+   "entity": "board_labels"
+  },
+  "receivers": [
+   "admin",
+   "guest",
+   "member"
+  ]
+ },
+ "board_post_revision_attachments|account": "no event",
+ "board_post_revision_attachments|org": "no event",
+ "board_post_revision_record_links|account": "no event",
+ "board_post_revision_record_links|org": "no event",
+ "board_post_revisions|account": "no event",
+ "board_post_revisions|org": "no event",
+ "board_posts|account": {
+  "payload": {
+   "board_id": "01900000-0000-7000-8000-0000000000b2",
+   "entity": "board_posts"
+  },
+  "receivers": []
+ },
+ "board_posts|org": {
+  "payload": {
+   "board_id": "01900000-0000-7000-8000-0000000000b2",
+   "entity": "board_posts"
+  },
+  "receivers": [
+   "admin",
+   "guest",
+   "member"
+  ]
+ },
+ "board_record_links|account": "no event",
+ "board_record_links|org": "no event",
+ "board_stages|account": {
+  "payload": {
+   "board_id": "01900000-0000-7000-8000-0000000000b2",
+   "entity": "board_stages"
+  },
+  "receivers": []
+ },
+ "board_stages|org": {
+  "payload": {
+   "board_id": "01900000-0000-7000-8000-0000000000b2",
+   "entity": "board_stages"
+  },
+  "receivers": [
+   "admin",
+   "guest",
+   "member"
+  ]
+ },
+ "boards|account": {
+  "payload": {
+   "board_id": "01900000-0000-7000-8000-0000000000b2",
+   "entity": "boards"
+  },
+  "receivers": []
+ },
+ "boards|org": {
+  "payload": {
+   "board_id": "01900000-0000-7000-8000-0000000000b2",
+   "entity": "boards"
+  },
+  "receivers": [
+   "admin",
+   "guest",
+   "member"
+  ]
+ },
+ "charts|account": {
+  "payload": {
+   "entity": "charts",
+   "module_id": "01900000-0000-7000-8000-0000000000b1"
+  },
+  "receivers": []
+ },
+ "charts|org": {
+  "payload": {
+   "entity": "charts",
+   "module_id": "01900000-0000-7000-8000-0000000000b1"
+  },
+  "receivers": [
+   "admin",
+   "guest",
+   "member"
+  ]
+ },
+ "comms_capability_grants|account": "no event",
+ "comms_capability_grants|org": "no event",
+ "comms_categories|account": "no event",
+ "comms_categories|org": "no event",
+ "comms_channel_access|account": "no event",
+ "comms_channel_access|org": "no event",
+ "comms_conversation_counters|account": "no event",
+ "comms_conversation_counters|org": "no event",
+ "comms_conversations|account": "no event",
+ "comms_conversations|org": "no event",
+ "comms_direct_blocks|account": "no event",
+ "comms_direct_blocks|org": "no event",
+ "comms_expired_sends|account": {
+  "payload": {
+   "entity": "comms_expired_sends",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "comms_expired_sends|org": {
+  "payload": {
+   "entity": "comms_expired_sends",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "comms_export_entries|account": {
+  "payload": {
+   "entity": "comms_export_entries",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "comms_export_entries|org": {
+  "payload": {
+   "entity": "comms_export_entries",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "comms_export_sources|account": {
+  "payload": {
+   "entity": "comms_export_sources",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "comms_export_sources|org": {
+  "payload": {
+   "entity": "comms_export_sources",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "comms_exports|account": "no event",
+ "comms_exports|org": "no event",
+ "comms_member_preferences|account": "no event",
+ "comms_member_preferences|org": "no event",
+ "comms_members|account": "no event",
+ "comms_members|org": "no event",
+ "comms_mentions|account": "no event",
+ "comms_mentions|org": "no event",
+ "comms_message_attachments|account": "no event",
+ "comms_message_attachments|org": "no event",
+ "comms_message_record_links|account": "no event",
+ "comms_message_record_links|org": "no event",
+ "comms_message_revisions|account": "no event",
+ "comms_message_revisions|org": "no event",
+ "comms_messages|account": "no event",
+ "comms_messages|org": "no event",
+ "comms_personal_preferences|account": "no event",
+ "comms_personal_preferences|org": "no event",
+ "comms_presence|account": {
+  "payload": {
+   "entity": "comms_presence",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "comms_presence|org": {
+  "payload": {
+   "entity": "comms_presence",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "comms_reactions|account": "no event",
+ "comms_reactions|org": "no event",
+ "comms_read_states|account": "no event",
+ "comms_read_states|org": "no event",
+ "comms_realtime_admissions|account": {
+  "payload": {
+   "entity": "comms_realtime_admissions",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "comms_realtime_admissions|org": {
+  "payload": {
+   "entity": "comms_realtime_admissions",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "comms_realtime_grants|account": {
+  "payload": {
+   "entity": "comms_realtime_grants",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "comms_realtime_grants|org": {
+  "payload": {
+   "entity": "comms_realtime_grants",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "comms_reports|account": "no event",
+ "comms_reports|org": "no event",
+ "comms_retention_policies|account": "no event",
+ "comms_retention_policies|org": "no event",
+ "comms_retention_sweeps|account": "no event",
+ "comms_retention_sweeps|org": "no event",
+ "comms_schedules|account": "no event",
+ "comms_schedules|org": "no event",
+ "comms_setting_locks|account": "no event",
+ "comms_setting_locks|org": "no event",
+ "comms_settings|account": "no event",
+ "comms_settings|org": "no event",
+ "comms_templates|account": "no event",
+ "comms_templates|org": "no event",
+ "comms_thread_follows|account": "no event",
+ "comms_thread_follows|org": "no event",
+ "comms_threads|account": "no event",
+ "comms_threads|org": "no event",
+ "comms_typing|account": {
+  "payload": {
+   "entity": "comms_typing",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "comms_typing|org": {
+  "payload": {
+   "entity": "comms_typing",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "dashboard_widgets|account": {
+  "payload": {
+   "entity": "dashboards"
+  },
+  "receivers": []
+ },
+ "dashboard_widgets|org": {
+  "payload": {
+   "entity": "dashboards"
+  },
+  "receivers": [
+   "admin",
+   "guest",
+   "member",
+   "operator"
+  ]
+ },
+ "dashboards|account": {
+  "payload": {
+   "entity": "dashboards"
+  },
+  "receivers": []
+ },
+ "dashboards|org": {
+  "payload": {
+   "entity": "dashboards"
+  },
+  "receivers": [
+   "admin",
+   "guest",
+   "member",
+   "operator"
+  ]
+ },
+ "departments|account": {
+  "payload": {
+   "entity": "departments"
+  },
+  "receivers": []
+ },
+ "departments|org": {
+  "payload": {
+   "entity": "departments"
+  },
+  "receivers": [
+   "admin",
+   "guest",
+   "member",
+   "operator"
+  ]
+ },
+ "fields|account": {
+  "payload": {
+   "entity": "fields",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3",
+   "module_id": "01900000-0000-7000-8000-0000000000b1"
+  },
+  "receivers": []
+ },
+ "fields|org": {
+  "payload": {
+   "entity": "fields",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3",
+   "module_id": "01900000-0000-7000-8000-0000000000b1"
+  },
+  "receivers": [
+   "admin",
+   "guest",
+   "member"
+  ]
+ },
+ "files|account": {
+  "payload": {
+   "entity": "files"
+  },
+  "receivers": []
+ },
+ "files|org": {
+  "payload": {
+   "entity": "files"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "group_access|account": {
+  "payload": {
+   "entity": "group_access"
+  },
+  "receivers": []
+ },
+ "group_access|org": {
+  "payload": {
+   "entity": "group_access"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "group_members|account": {
+  "payload": {
+   "entity": "group_members"
+  },
+  "receivers": []
+ },
+ "group_members|org": {
+  "payload": {
+   "entity": "group_members"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "groups|account": {
+  "payload": {
+   "entity": "groups"
+  },
+  "receivers": []
+ },
+ "groups|org": {
+  "payload": {
+   "entity": "groups"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "identity_mfa_observations|account": {
+  "payload": {
+   "entity": "identity_mfa_observations",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "identity_mfa_observations|org": {
+  "payload": {
+   "entity": "identity_mfa_observations",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "identity_rate_limit_buckets|account": {
+  "payload": {
+   "entity": "identity_rate_limit_buckets",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "identity_rate_limit_buckets|org": {
+  "payload": {
+   "entity": "identity_rate_limit_buckets",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "identity_sessions|account": {
+  "payload": {
+   "entity": "identity_sessions",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "identity_sessions|org": {
+  "payload": {
+   "entity": "identity_sessions",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "in_app_notifications|account": {
+  "payload": {
+   "entity": "in_app_notifications"
+  },
+  "receivers": [
+   "member"
+  ]
+ },
+ "in_app_notifications|org": {
+  "payload": {
+   "entity": "in_app_notifications"
+  },
+  "receivers": [
+   "member"
+  ]
+ },
+ "lifecycle_confirmation_challenges|account": {
+  "payload": {
+   "entity": "lifecycle_confirmation_challenges",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "lifecycle_confirmation_challenges|org": {
+  "payload": {
+   "entity": "lifecycle_confirmation_challenges",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "lifecycle_rate_limit_buckets|account": {
+  "payload": {
+   "entity": "lifecycle_rate_limit_buckets",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "lifecycle_rate_limit_buckets|org": {
+  "payload": {
+   "entity": "lifecycle_rate_limit_buckets",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "lifecycle_rate_limit_failures|account": {
+  "payload": {
+   "entity": "lifecycle_rate_limit_failures",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "lifecycle_rate_limit_failures|org": {
+  "payload": {
+   "entity": "lifecycle_rate_limit_failures",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "memberships|account": {
+  "payload": {
+   "entity": "memberships",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "memberships|org": {
+  "payload": {
+   "entity": "memberships",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "modules|account": {
+  "payload": {
+   "entity": "modules",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3",
+   "module_id": "01900000-0000-7000-8000-0000000000b1"
+  },
+  "receivers": []
+ },
+ "modules|org": {
+  "payload": {
+   "entity": "modules",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3",
+   "module_id": "01900000-0000-7000-8000-0000000000b1"
+  },
+  "receivers": [
+   "admin",
+   "guest",
+   "member"
+  ]
+ },
+ "organizations|account": {
+  "payload": {
+   "entity": "organizations",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "organizations|org": {
+  "payload": {
+   "entity": "organizations",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "platform_operators|account": {
+  "payload": {
+   "entity": "platform_operators",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "operator"
+  ]
+ },
+ "platform_operators|org": {
+  "payload": {
+   "entity": "platform_operators",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "platform_settings|account": {
+  "payload": {
+   "entity": "platform_settings",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "operator"
+  ]
+ },
+ "platform_settings|org": {
+  "payload": {
+   "entity": "platform_settings",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "record_trigger_actions|account": {
+  "payload": {
+   "entity": "record_trigger_actions",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "record_trigger_actions|org": {
+  "payload": {
+   "entity": "record_trigger_actions",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "record_trigger_conditions|account": {
+  "payload": {
+   "entity": "record_trigger_conditions",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "record_trigger_conditions|org": {
+  "payload": {
+   "entity": "record_trigger_conditions",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "record_trigger_events|account": {
+  "payload": {
+   "entity": "record_trigger_events",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "record_trigger_events|org": {
+  "payload": {
+   "entity": "record_trigger_events",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "record_trigger_runs|account": {
+  "payload": {
+   "entity": "record_trigger_runs",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "record_trigger_runs|org": {
+  "payload": {
+   "entity": "record_trigger_runs",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "record_triggers|account": {
+  "payload": {
+   "entity": "record_triggers",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "record_triggers|org": {
+  "payload": {
+   "entity": "record_triggers",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "records|account": {
+  "payload": {
+   "entity": "records",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3",
+   "module_id": "01900000-0000-7000-8000-0000000000b1"
+  },
+  "receivers": []
+ },
+ "records|org": {
+  "payload": {
+   "entity": "records",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3",
+   "module_id": "01900000-0000-7000-8000-0000000000b1"
+  },
+  "receivers": [
+   "admin",
+   "guest",
+   "member"
+  ]
+ },
+ "relationship_edges|account": {
+  "payload": {
+   "entity": "relationship_edges",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3",
+   "module_id": "01900000-0000-7000-8000-0000000000b1"
+  },
+  "receivers": []
+ },
+ "relationship_edges|org": {
+  "payload": {
+   "entity": "relationship_edges",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3",
+   "module_id": "01900000-0000-7000-8000-0000000000b1"
+  },
+  "receivers": [
+   "admin",
+   "guest",
+   "member"
+  ]
+ },
+ "report_run_eligible_users|account": {
+  "payload": {
+   "entity": "report_run_eligible_users",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "report_run_eligible_users|org": {
+  "payload": {
+   "entity": "report_run_eligible_users",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "report_run_rows|account": "no event",
+ "report_run_rows|org": "no event",
+ "report_runs|account": "no event",
+ "report_runs|org": "no event",
+ "report_schedules|account": "no event",
+ "report_schedules|org": "no event",
+ "reports|account": "no event",
+ "reports|org": "no event",
+ "resync|account": {
+  "payload": {
+   "entity": "resync",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "resync|org": {
+  "payload": {
+   "entity": "resync",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "sandbox_bindings|account": {
+  "payload": {
+   "entity": "sandbox_bindings",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "sandbox_bindings|org": {
+  "payload": {
+   "entity": "sandbox_bindings",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "sandbox_derived_objects|account": {
+  "payload": {
+   "entity": "sandbox_derived_objects",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "sandbox_derived_objects|org": {
+  "payload": {
+   "entity": "sandbox_derived_objects",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "sandbox_documents|account": {
+  "payload": {
+   "entity": "sandbox_documents",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "sandbox_documents|org": {
+  "payload": {
+   "entity": "sandbox_documents",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "sandbox_publications|account": {
+  "payload": {
+   "entity": "sandbox_publications",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "sandbox_publications|org": {
+  "payload": {
+   "entity": "sandbox_publications",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "sandbox_test_runs|account": {
+  "payload": {
+   "entity": "sandbox_test_runs",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "sandbox_test_runs|org": {
+  "payload": {
+   "entity": "sandbox_test_runs",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "sandbox_versions|account": {
+  "payload": {
+   "entity": "sandbox_versions",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "sandbox_versions|org": {
+  "payload": {
+   "entity": "sandbox_versions",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "saved_views|account": {
+  "payload": {
+   "entity": "saved_views",
+   "module_id": "01900000-0000-7000-8000-0000000000b1"
+  },
+  "receivers": []
+ },
+ "saved_views|org": {
+  "payload": {
+   "entity": "saved_views",
+   "module_id": "01900000-0000-7000-8000-0000000000b1"
+  },
+  "receivers": [
+   "admin",
+   "guest",
+   "member"
+  ]
+ },
+ "scheduled_work|account": {
+  "payload": {
+   "entity": "scheduled_work",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "scheduled_work|org": {
+  "payload": {
+   "entity": "scheduled_work",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "security_events|account": {
+  "payload": {
+   "entity": "security_events",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "security_events|org": {
+  "payload": {
+   "entity": "security_events",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "server_errors|account": {
+  "payload": {
+   "entity": "server_errors",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "server_errors|org": {
+  "payload": {
+   "entity": "server_errors",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "signatures": {
+  "admin": [
+   "org:01900000-0000-7000-8000-0000000000a1",
+   "admin"
+  ],
+  "guest": [
+   "org:01900000-0000-7000-8000-0000000000a1",
+   "guest",
+   "module:01900000-0000-7000-8000-0000000000b1",
+   "board:01900000-0000-7000-8000-0000000000b2"
+  ],
+  "member": [
+   "org:01900000-0000-7000-8000-0000000000a1",
+   "member",
+   "module:01900000-0000-7000-8000-0000000000b1",
+   "board:01900000-0000-7000-8000-0000000000b2"
+  ],
+  "operator": [
+   "org:01900000-0000-7000-8000-0000000000a1",
+   "member",
+   "operator"
+  ],
+  "other_org_admin": [
+   "org:01900000-0000-7000-8000-0000000000a2",
+   "admin"
+  ]
+ },
+ "system_health_samples|account": {
+  "payload": {
+   "entity": "system_health_samples",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "system_health_samples|org": {
+  "payload": {
+   "entity": "system_health_samples",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "system_health_signals|account": {
+  "payload": {
+   "entity": "system_health_signals",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "system_health_signals|org": {
+  "payload": {
+   "entity": "system_health_signals",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "update_statuses|account": {
+  "payload": {
+   "entity": "update_statuses",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "operator"
+  ]
+ },
+ "update_statuses|org": {
+  "payload": {
+   "entity": "update_statuses",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "users|account": {
+  "payload": {
+   "entity": "users",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "users|org": {
+  "payload": {
+   "entity": "users",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": [
+   "admin"
+  ]
+ },
+ "work_scheduled|account": {
+  "payload": {
+   "entity": "work_scheduled",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "work_scheduled|org": {
+  "payload": {
+   "entity": "work_scheduled",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "work_triggers|account": {
+  "payload": {
+   "entity": "work_triggers",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "work_triggers|org": {
+  "payload": {
+   "entity": "work_triggers",
+   "entity_id": "01900000-0000-7000-8000-0000000000b3"
+  },
+  "receivers": []
+ },
+ "workspace_profiles|account": {
+  "payload": {
+   "entity": "workspace_profiles"
+  },
+  "receivers": []
+ },
+ "workspace_profiles|org": {
+  "payload": {
+   "entity": "workspace_profiles"
+  },
+  "receivers": [
+   "admin",
+   "guest",
+   "member",
+   "operator"
+  ]
+ }
+}

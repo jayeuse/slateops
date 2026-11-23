@@ -176,6 +176,18 @@ def _event_module_id(instance: Any, edge_modules: dict[UUID, UUID]) -> UUID | No
     return module_id if isinstance(module_id, UUID) else None
 
 
+# Every sheet table publishes the sheet ID as `worksheets` (sheets spec D6, D14 C4).
+_WORKSHEET_CHILD_TABLES = frozenset(
+    {"worksheet_rows", "worksheet_shares", "worksheet_row_links", "worksheet_row_revisions"}
+)
+
+
+def _event_entity_id(instance: Any, entity: str) -> Any:
+    if entity in _WORKSHEET_CHILD_TABLES:
+        return instance.worksheet_id
+    return getattr(instance, "id", None)
+
+
 def _event_entity(instance: Any, entity: str) -> str:
     if entity in {"board_attachments", "board_record_links"}:
         if instance.card_id is not None:
@@ -190,6 +202,7 @@ def _event_entity(instance: Any, entity: str) -> str:
         "board_post_revisions": "board_posts",
         "board_post_revision_attachments": "board_posts",
         "board_post_revision_record_links": "board_posts",
+        **dict.fromkeys(_WORKSHEET_CHILD_TABLES, "worksheets"),
     }.get(entity, entity)
 
 
@@ -298,7 +311,7 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
                 proof[discriminator] = getattr(change.instance, discriminator)
         invalidation = event_for_entity(
             _event_entity(change.instance, entity_type),
-            getattr(change.instance, "id", None),
+            _event_entity_id(change.instance, entity_type),
             recipient_id=getattr(change.instance, "recipient_id", None),
             module_id=_event_module_id(change.instance, edge_modules),
             board_id=change.board.id if isinstance(change.board, Board) else change.board,
