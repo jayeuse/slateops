@@ -296,6 +296,8 @@ export async function installSheetPageApi(
       { fn: string; value: unknown; hidden_count: number }
     >;
     recordTitle?: string;
+    /** More readable modules, for link columns. */
+    modules?: { id: string; name: string; titleFieldId: string }[];
   },
 ) {
   const state = {
@@ -436,10 +438,277 @@ export async function installSheetPageApi(
               department_id: sheetPlace.department,
               title_field_id: null,
             },
+            ...(sheet.modules ?? []).map((module) => ({
+              id: module.id,
+              name: module.name,
+              department_id: sheetPlace.department,
+              title_field_id: module.titleFieldId,
+            })),
           ],
           new URL(route.request().url()),
         ),
       }),
   );
   return state;
+}
+
+// ------------------------------------------------------------- sheet edits
+
+type CellChange = { value: unknown; expected: WireSheetCell | undefined };
+type ColumnWire = { key: string; type: string; [option: string]: unknown };
+
+/** The one comparison the server makes for `expected` (`_canonical`). */
+function canonical(cell: WireSheetCell | undefined): string {
+  if (!cell) return JSON.stringify(["value", null]);
+  if ("link" in cell) return JSON.stringify(["link", cell.link.record_id]);
+  if ("unlinked" in cell) return JSON.stringify(["unlinked", cell.unlinked]);
+  if ("state" in cell) return JSON.stringify(["state", cell.state]);
+  return JSON.stringify(["value", cell.value ?? null]);
+}
+
+/** A record a link column can point to: its module, id and title. */
+export type SheetLinkTarget = {
+  moduleId: string;
+  titleFieldId: string;
+  id: string;
+  title: string;
+};
+
+/**
+ * The writes of an editable sheet page (routes 6, 10, 12 and 13) on top of
+ * `installSheetPageApi`, keeping the server's rules: a cell save compares
+ * `expected` with the stored cell and answers 412 `cell_changed` with the
+ * current row; each write bumps the revision; deletes and structure saves
+ * need the current ETag; a new column's key comes from `nextColumnSeq`.
+ * Numbers arrive as text in the en-US locale here.
+ */
+export async function installSheetEditApi(
+  page: Page,
+  sheetState: Awaited<ReturnType<typeof installSheetPageApi>>,
+  options: {
+    linkTargets?: SheetLinkTarget[];
+    moduleFields?: Record<string, { id: string; name: string; type: string }[]>;
+  } = {},
+) {
+  const sheetId = sheetState.detail?.id ?? "";
+  const writes = {
+    patches: [] as { rowId: string; cells: Record<string, CellChange> }[],
+    creates: [] as Record<string, unknown>[],
+    deletes: [] as { rowId: string; ifMatch: string | null }[],
+    structures: [] as {
+      ifMatch: string | null;
+      body: Record<string, unknown>;
+    }[],
+    searches: [] as string[],
+    refuseNextPatch: null as null | {
+      status: number;
+      code: string;
+      message: string;
+    },
+  };
+  const columns = () =>
+    ((sheetState.detail?.structure as { columns?: ColumnWire[] } | undefined)
+      ?.columns ?? []) as ColumnWire[];
+  const stored = (key: string, value: unknown): WireSheetCell => {
+    const column = columns().find((item) => item.key === key);
+    if (value === null || value === "") return { value: null };
+    if (column?.type === "link" && typeof value === "object" && value) {
+      const id = (value as { record_id?: string }).record_id ?? "";
+      const target = options.linkTargets?.find((item) => item.id === id);
+      return { link: { record_id: id, label: target?.title ?? id } };
+    }
+    if (column?.type === "int" && typeof value === "string")
+      return { value: Number(value.replaceAll(",", "")) };
+    if (column?.type === "decimal" && typeof value === "string")
+      return { value: value.replaceAll(",", "") };
+    return { value };
+  };
+  const bump = (row: WireSheetRow) => {
+    row.revision += 1;
+    row.etag = `"${row.id}:${row.revision}"`;
+  };
+  await page.route(
+    (url) =>
+      url.pathname.startsWith(`/api/worksheets/${sheetId}/rows`) &&
+      !url.pathname.endsWith("/query"),
+    async (route) => {
+      const request = route.request();
+      const method = request.method();
+      const rowId = new URL(request.url()).pathname.split("/")[5];
+      if (method === "POST" && !rowId) {
+        const body = (request.postDataJSON() ?? {}) as Record<string, unknown>;
+        writes.creates.push(body);
+        const created = wireSheetRow(sheetState.rows.length + 1000, {});
+        if (body.after_row_id === null) sheetState.rows.unshift(created);
+        else sheetState.rows.push(created);
+        return route.fulfill({ status: 201, json: created });
+      }
+      const row = sheetState.rows.find((item) => item.id === rowId);
+      if (!row)
+        return route.fulfill({
+          status: 404,
+          json: { detail: { code: "row_not_found", message: "Row not found" } },
+        });
+      if (method === "DELETE") {
+        const ifMatch = request.headers()["if-match"] ?? null;
+        writes.deletes.push({ rowId, ifMatch });
+        if (ifMatch !== row.etag)
+          return route.fulfill({
+            status: 412,
+            json: {
+              detail: { code: "row_changed", message: "The row changed" },
+            },
+          });
+        sheetState.rows.splice(sheetState.rows.indexOf(row), 1);
+        return route.fulfill({ status: 204, body: "" });
+      }
+      const body = request.postDataJSON() as {
+        cells: Record<string, CellChange>;
+      };
+      writes.patches.push({ rowId, cells: body.cells });
+      const refusal = writes.refuseNextPatch;
+      if (refusal) {
+        writes.refuseNextPatch = null;
+        return route.fulfill({
+          status: refusal.status,
+          json: {
+            detail: {
+              code: refusal.code,
+              message: refusal.message,
+              key: Object.keys(body.cells)[0],
+            },
+          },
+        });
+      }
+      const changed = Object.entries(body.cells)
+        .filter(
+          ([key, change]) =>
+            canonical(change.expected) !== canonical(row.cells[key]),
+        )
+        .map(([key]) => key)
+        .sort();
+      if (changed.length)
+        return route.fulfill({
+          status: 412,
+          json: {
+            detail: {
+              code: "cell_changed",
+              message: "Someone changed these cells",
+              keys: changed,
+              current: row,
+            },
+          },
+        });
+      for (const [key, change] of Object.entries(body.cells))
+        row.cells[key] = stored(key, change.value);
+      bump(row);
+      return route.fulfill({ json: row });
+    },
+  );
+  await page.route(
+    (url) => url.pathname === `/api/worksheets/${sheetId}/structure`,
+    (route) => {
+      const request = route.request();
+      const ifMatch = request.headers()["if-match"] ?? null;
+      const body = request.postDataJSON() as {
+        columns: ColumnWire[];
+        groups: unknown[];
+        totals: Record<string, string>;
+      };
+      writes.structures.push({ ifMatch, body });
+      const detail = sheetState.detail;
+      if (!detail || ifMatch !== detail.etag)
+        return route.fulfill({
+          status: 412,
+          json: {
+            detail: {
+              code: "worksheet_changed",
+              message: "The sheet changed; reload it",
+            },
+          },
+        });
+      const previous = detail.structure as { nextColumnSeq: number };
+      let next = previous.nextColumnSeq;
+      for (const column of body.columns) {
+        const sequence = Number(/^c(\d+)$/.exec(column.key)?.[1] ?? 0);
+        if (sequence >= next) next = sequence + 1;
+      }
+      detail.structure = {
+        structureVersion: 1,
+        nextColumnSeq: next,
+        columns: body.columns,
+        groups: body.groups,
+        totals: body.totals,
+      };
+      detail.revision += 1;
+      detail.etag = `"${detail.id}:${detail.revision}"`;
+      return route.fulfill({ headers: { ETag: detail.etag }, json: detail });
+    },
+  );
+  await page.route(
+    (url) => url.pathname === "/api/records/query",
+    (route) => {
+      const body = route.request().postDataJSON() as {
+        module_id: string;
+        definition: { search?: string | null };
+      };
+      const needle = body.definition.search?.toLowerCase() ?? "";
+      writes.searches.push(needle);
+      const items = (options.linkTargets ?? [])
+        .filter(
+          (target) =>
+            target.moduleId === body.module_id &&
+            target.title.toLowerCase().includes(needle),
+        )
+        .map((target) =>
+          wireRecord({
+            id: target.id,
+            module_id: target.moduleId,
+            data: { [target.titleFieldId]: target.title },
+            created_at: "2026-11-01T08:00:00Z",
+            updated_at: "2026-11-01T08:00:00Z",
+          }),
+        );
+      return route.fulfill({
+        json: {
+          items,
+          pagination: {
+            limit: 50,
+            offset: 0,
+            count: items.length,
+            total: items.length,
+            has_more: false,
+            total_is_capped: false,
+          },
+        },
+      });
+    },
+  );
+  await page.route(
+    (url) => /^\/api\/views\/data-sources\/[^/]+\/fields$/.test(url.pathname),
+    (route) => {
+      const moduleId = new URL(route.request().url()).pathname.split("/")[4];
+      const fields = options.moduleFields?.[moduleId] ?? [];
+      return route.fulfill({
+        json: {
+          items: fields.map((field, position) => ({
+            ...field,
+            module_id: moduleId,
+            required: false,
+            position,
+            config: {},
+          })),
+          pagination: {
+            limit: 100,
+            offset: 0,
+            count: fields.length,
+            total: fields.length,
+            has_more: false,
+            total_is_capped: false,
+          },
+        },
+      });
+    },
+  );
+  return writes;
 }

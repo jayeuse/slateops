@@ -2341,6 +2341,18 @@
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "createWorksheetRow",
+    "method": "POST",
+    "path": "/api/worksheets/{param}/rows"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "deleteWorksheetRow",
+    "method": "DELETE",
+    "path": "/api/worksheets/{param}/rows/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
     "function": "getWorksheet",
     "method": "GET",
     "path": "/api/worksheets/{param}"
@@ -2374,6 +2386,18 @@
     "function": "restoreWorksheet",
     "method": "POST",
     "path": "/api/worksheets/{param}/restore"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "saveWorksheetStructure",
+    "method": "PUT",
+    "path": "/api/worksheets/{param}/structure"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "updateWorksheetCells",
+    "method": "PATCH",
+    "path": "/api/worksheets/{param}/rows/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/platform/adapters/account-api.ts",

@@ -11,29 +11,16 @@ import {
 import type { Route } from "next";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import {
-  AlignLeft,
+  AlertTriangle,
   ArrowUpDown,
-  Calendar,
   Check,
-  CheckSquare,
   Eye,
-  Hash,
-  Link2,
-  List,
   Lock,
-  Mail,
   Pencil,
   Search,
-  Sheet as SheetIcon,
-  Sigma,
-  Trash2,
-  Type,
-  UserRound,
   Users,
   X,
-  type LucideIcon,
 } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
@@ -51,7 +38,6 @@ import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { subscribeWorkspaceInvalidations } from "@/components/systems/shared/adapters/invalidation-events";
 import { ApiError } from "@/lib/api";
 import { apiErrorReference } from "@/lib/api-errors";
-import { cn } from "@/lib/utils";
 
 import {
   worksheetDetailOptions,
@@ -59,26 +45,44 @@ import {
   worksheetPlaceOptions,
 } from "../adapters/worksheet-queries";
 import {
+  createWorksheetRow,
+  deleteWorksheetRow,
   queryWorksheetRows,
+  updateWorksheetCells,
+  type WorksheetCell,
+  type WorksheetCellChange,
   type WorksheetDetail,
+  type WorksheetRow,
   type WorksheetRowSort,
   type WorksheetTotal,
 } from "../adapters/worksheets-api";
 import {
-  cellView,
+  SheetGridView,
+  type SaveOutcome,
+  type SheetConflict,
+} from "./sheet-grid-view";
+import { SheetRowForm } from "./sheet-row-form";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  cellConflict,
+  inputValue,
+  storeRow,
   emptyRowStore,
-  gridBands,
   gridColumns,
   pagesForRange,
   rowAt,
   rowQueryKey,
   sortLabel,
   storeRowPage,
-  totalView,
   type GridColumn,
   type GridFormat,
   type RowStore,
-  type SheetColumnType,
 } from "../domain/sheet-grid";
 
 // A sheet's own page (docs/specs/sheets.md P3, P6, F7, N4, N6 to N8,
@@ -88,30 +92,6 @@ import {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SEARCH_DELAY_MS = 300;
-// The fixed band: row number and first column. On a phone the two make one
-// 160px first column (Screens 9).
-const ROW_NUMBER_WIDTH = 56;
-const PHONE_ROW_NUMBER_WIDTH = 40;
-
-const TYPE_ICONS: Record<SheetColumnType, LucideIcon> = {
-  text: Type,
-  long_text: AlignLeft,
-  email: Mail,
-  url: Link2,
-  number: Hash,
-  int: Hash,
-  decimal: Hash,
-  boolean: CheckSquare,
-  date: Calendar,
-  datetime: Calendar,
-  user: UserRound,
-  select: List,
-  link: Link2,
-  lookup: Eye,
-  computed: Sigma,
-  sheet_lookup: SheetIcon,
-};
-
 function isNotFound(error: unknown) {
   return error instanceof ApiError && error.status === 404;
 }
@@ -218,276 +198,6 @@ function SheetMeta({ sheet }: { sheet: WorksheetDetail }) {
   );
 }
 
-function CellContent({
-  column,
-  view,
-}: {
-  column: GridColumn;
-  view: ReturnType<typeof cellView>;
-}) {
-  if (view.kind === "blank") return null;
-  if (view.kind === "link")
-    return column.linkModuleId ? (
-      <GuardedWorkspaceLink
-        href={
-          `/openview?section=views&module=${encodeURIComponent(column.linkModuleId)}&record=${encodeURIComponent(view.recordId)}` as Route
-        }
-        className="text-action-text block truncate font-medium hover:underline"
-      >
-        {view.label}
-      </GuardedWorkspaceLink>
-    ) : (
-      <span className="block truncate">{view.label}</span>
-    );
-  if (view.kind === "state")
-    return (
-      <span className="text-muted-foreground inline-flex min-w-0 items-center gap-1.5 italic">
-        {view.state === "no_access" ? (
-          <Lock aria-hidden="true" className="size-3.5 shrink-0" />
-        ) : view.state === "deleted" ? (
-          <Trash2 aria-hidden="true" className="size-3.5 shrink-0" />
-        ) : null}
-        <span className="truncate">{view.words}</span>
-      </span>
-    );
-  return (
-    <span className="block truncate">
-      {view.kind === "unlinked" ? view.text : view.text}
-    </span>
-  );
-}
-
-type GridProps = {
-  sheet: WorksheetDetail;
-  store: RowStore;
-  totals: Record<string, WorksheetTotal>;
-  searching: boolean;
-  format: GridFormat;
-  phone: boolean;
-  onRange: (start: number, end: number) => void;
-};
-
-function SheetGrid({
-  sheet,
-  store,
-  totals,
-  searching,
-  format,
-  phone,
-  onRange,
-}: GridProps) {
-  "use no memo"; // TanStack's mutable virtualizer must be read on every range update.
-  const pane = useRef<HTMLDivElement | null>(null);
-  const columns = useMemo(() => gridColumns(sheet.structure), [sheet]);
-  const bands = useMemo(() => gridBands(columns), [columns]);
-  const rowHeight = phone ? 44 : 40;
-  const numberWidth = phone ? PHONE_ROW_NUMBER_WIDTH : ROW_NUMBER_WIDTH;
-  const firstWidth = phone ? 160 - PHONE_ROW_NUMBER_WIDTH : 220;
-  const widthOf = (column: GridColumn, index: number) =>
-    index === 0 ? firstWidth : column.numeric ? 128 : 176;
-  const tableWidth =
-    numberWidth +
-    columns.reduce((sum, column, index) => sum + widthOf(column, index), 0);
-  const count = store.total ?? 0;
-  // eslint-disable-next-line react-hooks/incompatible-library -- This component explicitly opts out above; no virtualizer method is memoized or passed to memoized children.
-  const virtual = useVirtualizer({
-    count,
-    getScrollElement: () => pane.current,
-    estimateSize: () => rowHeight,
-    overscan: 12,
-  });
-  const items = virtual.getVirtualItems();
-  const first = items[0]?.index ?? 0;
-  const last = items.at(-1)?.index ?? 0;
-  useEffect(() => {
-    onRange(first, last);
-  }, [first, last, count, onRange]);
-  const top = items[0]?.start ?? 0;
-  const bottom = Math.max(0, virtual.getTotalSize() - (items.at(-1)?.end ?? 0));
-  const totalKeys = Object.keys(totals);
-  const grouped = bands.some((band) => band.label !== null);
-  const pinned = "sticky z-10 bg-card";
-  return (
-    <div
-      ref={pane}
-      role="region"
-      aria-label={`${sheet.title} rows`}
-      tabIndex={0}
-      className="bg-card focus-visible:outline-ring relative min-h-0 flex-1 overflow-auto rounded-md border outline-offset-2 focus-visible:outline-2"
-    >
-      <table
-        aria-label={sheet.title}
-        aria-rowcount={count + 1}
-        className="table-fixed border-separate border-spacing-0 text-sm"
-        style={{ width: tableWidth }}
-      >
-        <colgroup>
-          <col style={{ width: numberWidth }} />
-          {columns.map((column, index) => (
-            <col key={column.key} style={{ width: widthOf(column, index) }} />
-          ))}
-        </colgroup>
-        <thead className="bg-card sticky top-0 z-20">
-          {grouped ? (
-            <tr>
-              <th
-                aria-hidden="true"
-                className={cn(pinned, "left-0 h-8 border-b")}
-              />
-              {bands.map((band, index) => (
-                <th
-                  key={`${band.label ?? "none"}-${index}`}
-                  colSpan={band.span}
-                  scope={band.label ? "colgroup" : undefined}
-                  className="text-muted-foreground h-8 border-b border-l px-3 text-left text-xs font-semibold"
-                >
-                  {band.label}
-                </th>
-              ))}
-            </tr>
-          ) : null}
-          <tr>
-            <th
-              scope="col"
-              className={cn(pinned, "left-0 h-9 border-b px-2 text-right")}
-            >
-              <span className="sr-only">Row</span>
-            </th>
-            {columns.map((column, index) => {
-              const Icon = TYPE_ICONS[column.type];
-              return (
-                <th
-                  key={column.key}
-                  scope="col"
-                  className={cn(
-                    "text-muted-foreground h-9 border-b border-l px-3 text-left text-xs font-medium",
-                    index === 0 && pinned,
-                    column.numeric && "text-right",
-                  )}
-                  style={index === 0 ? { left: numberWidth } : undefined}
-                >
-                  <span
-                    className={cn(
-                      "flex min-w-0 items-center gap-1.5",
-                      column.numeric && "justify-end",
-                    )}
-                  >
-                    <Icon aria-hidden="true" className="size-3.5 shrink-0" />
-                    <span className="truncate">{column.name}</span>
-                    {column.readOnly ? (
-                      <span className="sr-only">, read-only</span>
-                    ) : null}
-                  </span>
-                </th>
-              );
-            })}
-          </tr>
-        </thead>
-        <tbody>
-          {top > 0 ? (
-            <tr aria-hidden="true">
-              <td colSpan={columns.length + 1} style={{ height: top }} />
-            </tr>
-          ) : null}
-          {items.map((item) => {
-            const row = rowAt(store, item.index);
-            return (
-              <tr
-                key={row?.id ?? `pending-${item.index}`}
-                aria-rowindex={item.index + 2}
-                style={{ height: rowHeight }}
-                className="hover:bg-tint-hover group"
-              >
-                <td
-                  className={cn(
-                    pinned,
-                    "text-muted-foreground group-hover:bg-tint-hover left-0 border-b px-2 text-right text-xs tabular-nums",
-                  )}
-                >
-                  {item.index + 1}
-                </td>
-                {columns.map((column, index) => {
-                  const view = row
-                    ? cellView(column, row.cells[column.key], format)
-                    : null;
-                  return (
-                    <td
-                      key={column.key}
-                      className={cn(
-                        "min-w-0 border-b border-l px-3",
-                        index === 0 && pinned,
-                        index === 0 && "group-hover:bg-tint-hover",
-                        column.readOnly && "bg-muted/40",
-                        column.numeric && "text-right tabular-nums",
-                      )}
-                      style={index === 0 ? { left: numberWidth } : undefined}
-                    >
-                      {view ? (
-                        <CellContent column={column} view={view} />
-                      ) : (
-                        <Skeleton className="h-3 w-3/4" />
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            );
-          })}
-          {bottom > 0 ? (
-            <tr aria-hidden="true">
-              <td colSpan={columns.length + 1} style={{ height: bottom }} />
-            </tr>
-          ) : null}
-        </tbody>
-        {totalKeys.length > 0 ? (
-          <tfoot className="bg-card sticky bottom-0 z-20">
-            <tr>
-              <td className={cn(pinned, "left-0 border-t")} />
-              {columns.map((column, index) => {
-                const total = totals[column.key];
-                const view = total
-                  ? totalView(
-                      column,
-                      total,
-                      {
-                        first: column.key === totalKeys[0],
-                        searching,
-                        allRows: sheet.liveRowCount,
-                      },
-                      format,
-                    )
-                  : null;
-                return (
-                  <td
-                    key={column.key}
-                    className={cn(
-                      "h-12 border-t border-l px-3 align-middle",
-                      index === 0 && pinned,
-                      column.numeric && "text-right",
-                    )}
-                    style={index === 0 ? { left: numberWidth } : undefined}
-                  >
-                    {view ? (
-                      <span className="flex flex-col leading-tight">
-                        <span className="text-muted-foreground text-xs">
-                          {view.label}
-                        </span>
-                        <span className="font-semibold tabular-nums">
-                          {view.text}
-                        </span>
-                      </span>
-                    ) : null}
-                  </td>
-                );
-              })}
-            </tr>
-          </tfoot>
-        ) : null}
-      </table>
-    </div>
-  );
-}
-
 function SortControl({
   columns,
   sort,
@@ -566,6 +276,150 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
   // Each request is numbered, so a slow, older answer never wins (sheet-grid).
   const sequence = useRef(0);
   const range = useRef<[number, number]>([0, 0]);
+  const [conflict, setConflict] = useState<SheetConflict | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [pasteNote, setPasteNote] = useState<string | null>(null);
+  const [savingCount, setSavingCount] = useState(0);
+  const [deleting, setDeleting] = useState<{
+    row: WorksheetRow;
+    index: number;
+  } | null>(null);
+  const [formRow, setFormRow] = useState<number | null>(null);
+  // A saved column list rereads the rows: new columns have cells.
+  const seenRevision = useRef(sheet.revision);
+  useEffect(() => {
+    if (seenRevision.current === sheet.revision) return;
+    seenRevision.current = sheet.revision;
+    setGeneration((value) => value + 1);
+  }, [sheet.revision]);
+
+  /** Saves cells of one row (route 12); `expected` is what the person saw. */
+  const saveCells = async (
+    row: WorksheetRow,
+    cells: Record<string, WorksheetCellChange>,
+    conflictOf: { key: string; columnName: string; draft: string },
+  ): Promise<SaveOutcome> => {
+    sequence.current += 1;
+    const asked = sequence.current;
+    setSavingCount((value) => value + 1);
+    try {
+      const saved = await updateWorksheetCells(sheet.id, row.id, cells);
+      setStore((current) => storeRow(current, saved, asked));
+      setSaveError(null);
+      setConflict((current) => (current?.rowId === row.id ? null : current));
+      return "saved";
+    } catch (error) {
+      const found = cellConflict(error);
+      if (found) {
+        setStore((current) => storeRow(current, found.current, asked));
+        setConflict({ rowId: row.id, ...conflictOf });
+        return "conflict";
+      }
+      if (isNotFound(error)) {
+        setGone(true);
+        return "refused";
+      }
+      setSaveError(
+        `${conflictOf.columnName}: ${
+          error instanceof ApiError &&
+          (error.status === 403 || error.status === 422)
+            ? error.message
+            : "The change could not be saved. Try again."
+        }`,
+      );
+      return "refused";
+    } finally {
+      setSavingCount((value) => value - 1);
+    }
+  };
+
+  const saveCell = (
+    row: WorksheetRow,
+    column: GridColumn,
+    value: unknown,
+    expected: WorksheetCell,
+    draft: string,
+  ) =>
+    saveCells(
+      row,
+      { [column.key]: { value, expected } },
+      { key: column.key, columnName: column.name, draft },
+    );
+
+  const saveRow = async (cells: Record<string, WorksheetCellChange>) => {
+    const row = formRow === null ? undefined : rowAt(store, formRow);
+    const key = Object.keys(cells)[0];
+    const column = columns.find((item) => item.key === key);
+    if (!row || !key || !column) return false;
+    const outcome = await saveCells(row, cells, {
+      key,
+      columnName: column.name,
+      draft: String(cells[key]?.value ?? ""),
+    });
+    return outcome === "saved";
+  };
+
+  const addRow = async () => {
+    try {
+      await createWorksheetRow(sheet.id);
+      // The new row is at the end of the saved order: show that order.
+      setTyped("");
+      setSearch("");
+      setSort(null);
+      setGeneration((value) => value + 1);
+    } catch {
+      setSaveError("The row could not be added. Try again.");
+    }
+  };
+
+  const deleteRow = async () => {
+    if (!deleting) return;
+    const { row } = deleting;
+    setDeleting(null);
+    try {
+      await deleteWorksheetRow(sheet.id, row);
+      setGeneration((value) => value + 1);
+    } catch {
+      setSaveError("The row could not be deleted. Try again.");
+    }
+  };
+
+  /** A pasted block fills cells from the focused one, row by row (X11). */
+  const paste = async (index: number, start: number, grid: string[][]) => {
+    let pasted = 0;
+    for (const [offset, line] of grid.entries()) {
+      const row = rowAt(store, index + offset);
+      if (!row) break;
+      const cells: Record<string, WorksheetCellChange> = {};
+      for (const [step, text] of line.entries()) {
+        const column = columns[start + step];
+        if (
+          !column ||
+          column.readOnly ||
+          column.type === "user" ||
+          column.type === "link"
+        )
+          continue;
+        cells[column.key] = {
+          value: inputValue(column, text),
+          expected: row.cells[column.key] ?? { value: null },
+        };
+      }
+      const first = Object.keys(cells)[0];
+      const column = columns.find((item) => item.key === first);
+      if (!first || !column) continue;
+      const outcome = await saveCells(row, cells, {
+        key: first,
+        columnName: column.name,
+        draft: line.join(" "),
+      });
+      if (outcome === "saved") pasted += Object.keys(cells).length;
+      else break;
+    }
+    setPasteNote(
+      pasted ? `Pasted ${pasted} ${pasted === 1 ? "cell" : "cells"}.` : null,
+    );
+  };
   if (store.queryKey !== queryKey) setStore(emptyRowStore(queryKey));
 
   // The search waits for typing to pause; sort and search are never saved.
@@ -683,7 +537,10 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
 
   if (gone) return <SheetNotFound />;
   const searching = search.length > 0;
-  const readOnly = sheet.state === "open" || sheet.myLevel === "view";
+  const canEdit = sheet.state !== "open" && sheet.myLevel !== "view";
+  // Route 6 takes every column back; a masked one cannot be sent (D14 S1).
+  const canChangeColumns =
+    canEdit && !sheet.structure.columns.some((column) => "state" in column);
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-4 sm:px-5 sm:py-4">
       <header className="flex min-w-0 flex-wrap items-start justify-between gap-3">
@@ -738,10 +595,21 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
             {store.total} of {sheet.liveRowCount} rows
           </span>
         ) : null}
-        {readOnly ? null : (
-          <span className="text-muted-foreground ml-auto inline-flex items-center gap-1.5 text-sm max-sm:hidden">
+        {!canEdit ? null : conflict ? (
+          <span
+            role="status"
+            className="text-warn-text ml-auto inline-flex items-center gap-1.5 text-sm"
+          >
+            <AlertTriangle aria-hidden="true" className="size-4" />1 change not
+            saved
+          </span>
+        ) : (
+          <span
+            role="status"
+            className="text-muted-foreground ml-auto inline-flex items-center gap-1.5 text-sm max-sm:hidden"
+          >
             <Check aria-hidden="true" className="size-4" />
-            Saved
+            {savingCount > 0 ? "Saving…" : "Saved"}
           </span>
         )}
       </div>
@@ -761,15 +629,91 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
           </Button>
         </Alert>
       ) : null}
-      <SheetGrid
+      {saveError ? (
+        <Alert
+          variant="destructive"
+          className="flex flex-wrap items-center gap-x-4 gap-y-2"
+        >
+          <p className="min-w-0 flex-1">{saveError}</p>
+          <Button
+            variant="ghost"
+            className="min-h-11 shrink-0 xl:h-8 xl:min-h-8"
+            onClick={() => setSaveError(null)}
+          >
+            Dismiss
+          </Button>
+        </Alert>
+      ) : null}
+      {pasteNote ? (
+        <p role="status" className="text-muted-foreground text-sm">
+          {pasteNote}
+        </p>
+      ) : null}
+      <SheetGridView
         sheet={sheet}
+        columns={columns}
         store={store}
         totals={totals}
         searching={searching}
         format={format}
         phone={phone}
+        canEdit={canEdit}
+        canChangeColumns={canChangeColumns}
+        conflict={conflict}
         onRange={onRange}
+        onSave={saveCell}
+        onDismissConflict={() => setConflict(null)}
+        onAddRow={() => void addRow()}
+        onDeleteRow={(row, index) => setDeleting({ row, index })}
+        onOpenRow={setFormRow}
+        onPaste={(index, column, grid) => void paste(index, column, grid)}
       />
+      {formRow !== null && rowAt(store, formRow) ? (
+        <SheetRowForm
+          key={rowAt(store, formRow)?.id}
+          row={rowAt(store, formRow) as WorksheetRow}
+          index={formRow}
+          total={store.total ?? 0}
+          sheetTitle={sheet.title}
+          columns={columns}
+          format={format}
+          readOnly={!canEdit}
+          onSave={saveRow}
+          onMove={(index) => {
+            if (rowAt(store, index)) setFormRow(index);
+          }}
+          onClose={() => setFormRow(null)}
+        />
+      ) : null}
+      <AlertDialog
+        open={deleting !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleting(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogTitle>
+            Delete row {deleting ? deleting.index + 1 : ""}?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            The row leaves this sheet for everyone who can see it.
+          </AlertDialogDescription>
+          <div className="flex justify-end gap-2">
+            <AlertDialogCancel
+              render={<Button variant="ghost" className="min-h-11" />}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <Button
+              variant="destructive"
+              className="min-h-11"
+              onClick={() => void deleteRow()}
+            >
+              Delete row
+            </Button>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

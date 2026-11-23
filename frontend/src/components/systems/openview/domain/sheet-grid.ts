@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { ApiError } from "@/lib/api";
 import {
   WORKSHEET_ROW_PAGE,
   type WorksheetCell,
@@ -300,4 +302,107 @@ export function rowAt(
 ): WorksheetRow | undefined {
   const offset = Math.floor(index / WORKSHEET_ROW_PAGE) * WORKSHEET_ROW_PAGE;
   return store.pages[offset]?.[index - offset];
+}
+
+// ---------------------------------------------------------------- editing
+
+/** A pasted block: one array per line, cells split at tabs (F4, X11). */
+export function parsePastedGrid(text: string): string[][] {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  if (lines.length > 1 && lines.at(-1) === "") lines.pop();
+  return lines.map((line) => line.split("\t"));
+}
+
+const YES = new Set(["true", "yes", "1", "checked"]);
+const NO = new Set(["false", "no", "0", ""]);
+
+/**
+ * What a typed or pasted text sends for a column. Numbers go as text in the
+ * organization's locale, so the server is their one parser (O4). Text that
+ * starts like a formula stays text: nothing is evaluated (X11).
+ */
+export function inputValue(column: GridColumn, text: string): unknown {
+  const trimmed = text.trim();
+  if (column.type === "boolean") {
+    const word = trimmed.toLowerCase();
+    if (YES.has(word)) return true;
+    if (NO.has(word)) return false;
+    return trimmed;
+  }
+  if (trimmed === "") return null;
+  if (column.numeric) return trimmed;
+  return column.type === "long_text" ? text : trimmed;
+}
+
+/** The edit box's first text: the value as the organization writes it. */
+export function editInput(
+  column: GridColumn,
+  cell: WorksheetCell | undefined,
+  format: GridFormat,
+): string {
+  if (!cell || !("value" in cell) || cell.value === null) return "";
+  const value = cell.value;
+  if (column.numeric) {
+    const number = typeof value === "number" ? value : Number(value);
+    if (Number.isFinite(number))
+      return new Intl.NumberFormat(format.locale, {
+        useGrouping: false,
+        minimumFractionDigits: column.places ?? 0,
+        maximumFractionDigits: column.places ?? 20,
+      }).format(number);
+  }
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+const conflictSchema = z.object({
+  keys: z.array(z.string()),
+  current: z.object({
+    id: z.string(),
+    revision: z.number(),
+    etag: z.string(),
+    position: z.number(),
+    cells: z.record(z.string(), z.unknown()),
+  }),
+});
+
+/** A 412 `cell_changed`: the cells someone else changed, and the newer row. */
+export function cellConflict(
+  error: unknown,
+): { keys: string[]; current: WorksheetRow } | null {
+  if (!(error instanceof ApiError) || error.status !== 412) return null;
+  const parsed = conflictSchema.safeParse(error.details);
+  return parsed.success
+    ? {
+        keys: parsed.data.keys,
+        current: parsed.data.current as WorksheetRow,
+      }
+    : null;
+}
+
+/**
+ * A saved or refreshed row replaces its copy where the store holds it. Its
+ * page takes the newer request number, so an older refresh cannot undo it.
+ */
+export function storeRow(
+  store: RowStore,
+  row: WorksheetRow,
+  sequence: number,
+): RowStore {
+  for (const [key, rows] of Object.entries(store.pages)) {
+    const index = rows.findIndex((item) => item.id === row.id);
+    if (index < 0) continue;
+    const offset = Number(key);
+    const next = [...rows];
+    next[index] = row;
+    return {
+      ...store,
+      pages: { ...store.pages, [offset]: next },
+      sequences: {
+        ...store.sequences,
+        [offset]: Math.max(sequence, store.sequences[offset] ?? -1),
+      },
+    };
+  }
+  return store;
 }

@@ -116,7 +116,7 @@ function sheet(options: {
 const address = `/openview?sheet=${sheetId}`;
 
 function grid(page: Page) {
-  return page.getByRole("table", { name: "Class roster" });
+  return page.getByRole("grid", { name: "Class roster" });
 }
 
 test("the owner reads a sheet as one still page with fixed headers and totals", async ({
@@ -331,7 +331,7 @@ test("a sheet that becomes hidden while open leaves no rows and no title", async
   await expect(page.getByText("Class roster")).toHaveCount(0);
 });
 
-test("a link reached by Tab is never under the fixed header, column or totals", async ({
+test("a cell reached by the keyboard is never under the fixed header, column or totals", async ({
   page,
 }) => {
   await signedInAs(page, reader);
@@ -345,24 +345,26 @@ test("a link reached by Tab is never under the fixed header, column or totals", 
     element.scrollTop = 4_000;
     element.scrollLeft = 400;
   });
-  await expect(
-    grid(page).getByRole("link", { name: "Student 101", exact: true }),
-  ).toBeAttached();
-  await pane.focus();
+  // One tab stop: Tab from Sort reaches the grid's active cell, which the
+  // grid scrolls back into view; arrows then move it.
+  await page.getByRole("button", { name: "Sort" }).focus();
   await page.keyboard.press("Tab");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowRight");
 
   const focused = page.locator(":focus");
-  await expect(focused).toHaveAttribute("href", /record=/);
+  await expect(focused).toHaveAttribute("data-cell", "2:c2");
   const box = await focused.boundingBox();
-  if (!box) throw new Error("The focused link has no box");
-  const landsOnLink = await page.evaluate(
+  if (!box) throw new Error("The focused cell has no box");
+  const landsOnCell = await page.evaluate(
     ([x, y]) => {
       const hit = document.elementFromPoint(x, y);
-      return Boolean(hit && hit.closest("a") === document.activeElement);
+      return Boolean(hit && hit.closest("td") === document.activeElement);
     },
     [box.x + box.width / 2, box.y + box.height / 2],
   );
-  expect(landsOnLink).toBe(true);
+  expect(landsOnCell).toBe(true);
 });
 
 test("the page stays still at 1280×720", async ({ page }) => {

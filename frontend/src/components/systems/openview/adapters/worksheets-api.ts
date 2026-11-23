@@ -454,3 +454,76 @@ export function queryWorksheetRows(
     },
   );
 }
+
+// ------------------------------------------------------------------ writes
+
+/** One cell's new value and the cell as the person saw it (F4). */
+export type WorksheetCellChange = { value: unknown; expected: WorksheetCell };
+
+/**
+ * Saves changed cells of one row (route 12). A cell someone else changed
+ * since the person saw it answers 412 `cell_changed` with the newer row
+ * (`cellConflict` reads it); other cells of the row save normally.
+ */
+export function updateWorksheetCells(
+  sheetId: string,
+  rowId: string,
+  cells: Record<string, WorksheetCellChange>,
+): Promise<WorksheetRow> {
+  return apiFetch(
+    `/worksheets/${encodeURIComponent(sheetId)}/rows/${encodeURIComponent(rowId)}`,
+    rowSchema,
+    { method: "PATCH", body: JSON.stringify({ cells }) },
+  );
+}
+
+/** A blank row at the end of the sheet (route 10). */
+export function createWorksheetRow(sheetId: string): Promise<WorksheetRow> {
+  return apiFetch(
+    `/worksheets/${encodeURIComponent(sheetId)}/rows`,
+    rowSchema,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+/** Deletes a row at the version the person saw (route 13). */
+export function deleteWorksheetRow(
+  sheetId: string,
+  row: { id: string; etag: string },
+): Promise<null> {
+  return apiFetch(
+    `/worksheets/${encodeURIComponent(sheetId)}/rows/${encodeURIComponent(row.id)}`,
+    z.null(),
+    { method: "DELETE", headers: { "If-Match": row.etag } },
+  );
+}
+
+/** A column as route 6 takes it: the stored column, never a masked one. */
+export type WorksheetColumnInput = Exclude<
+  WorksheetStructure["columns"][number],
+  { state: "no_access" }
+>;
+
+/**
+ * Saves the whole column list, groups and totals at the sheet's version
+ * (route 6, `If-Match`). A new column's key comes from `nextColumnSeq`.
+ */
+export function saveWorksheetStructure(
+  sheetId: string,
+  etag: string,
+  structure: {
+    columns: WorksheetColumnInput[];
+    groups: WorksheetStructure["groups"];
+    totals: WorksheetStructure["totals"];
+  },
+): Promise<WorksheetDetail> {
+  return apiFetch(
+    `/worksheets/${encodeURIComponent(sheetId)}/structure`,
+    detailSchema,
+    {
+      method: "PUT",
+      headers: { "If-Match": etag },
+      body: JSON.stringify(structure),
+    },
+  );
+}
