@@ -1,4 +1,4 @@
-import { answeredHeaders, type Page } from "./test";
+import { answeredHeaders, type Page, type Route } from "./test";
 import { wireRecord } from "../../helpers/wire";
 
 // The sheet routes of docs/specs/sheets.md D10 that the frontend calls:
@@ -53,7 +53,7 @@ export function wireSheetSummary(
     module_id: moduleId,
     title,
     owner: { id: owner.id, display_name: owner.name },
-    state: "private" as const,
+    state: "private" as "private" | "open",
     my_level: level,
     live_row_count: options.rows ?? 0,
     revision: 1,
@@ -488,6 +488,8 @@ export async function installSheetEditApi(
   options: {
     linkTargets?: SheetLinkTarget[];
     moduleFields?: Record<string, { id: string; name: string; type: string }[]>;
+    /** People the editor can see (the people route). */
+    people?: { id: string; display_name: string }[];
   } = {},
 ) {
   const sheetId = sheetState.detail?.id ?? "";
@@ -505,6 +507,9 @@ export async function installSheetEditApi(
       code: string;
       message: string;
     },
+    /** Who a 412 names (null: someone the editor cannot see). */
+    changedBy: null as null | { id: string; display_name: string },
+    peopleSearches: [] as string[],
   };
   const columns = () =>
     ((sheetState.detail?.structure as { columns?: ColumnWire[] } | undefined)
@@ -596,6 +601,7 @@ export async function installSheetEditApi(
               message: "Someone changed these cells",
               keys: changed,
               current: row,
+              changed_by: writes.changedBy,
             },
           },
         });
@@ -603,6 +609,22 @@ export async function installSheetEditApi(
         row.cells[key] = stored(key, change.value);
       bump(row);
       return route.fulfill({ json: row });
+    },
+  );
+  await page.route(
+    (url) => url.pathname === `/api/worksheets/${sheetId}/people`,
+    (route) => {
+      const needle = (
+        new URL(route.request().url()).searchParams.get("q") ?? ""
+      ).toLowerCase();
+      writes.peopleSearches.push(needle);
+      return route.fulfill({
+        json: {
+          people: (options.people ?? []).filter((person) =>
+            person.display_name.toLowerCase().includes(needle),
+          ),
+        },
+      });
     },
   );
   await page.route(
@@ -711,4 +733,264 @@ export async function installSheetEditApi(
     },
   );
   return writes;
+}
+
+// ---------------------------------------------------------- sheet actions
+
+export type WireSheetShare = {
+  id: string;
+  subject: "user" | "group";
+  user: { id: string; display_name: string } | null;
+  group: { id: string; name: string } | null;
+  level: "view" | "edit";
+  created_at: string;
+};
+
+export type WireSheetRevision = {
+  id: string;
+  row_id: string;
+  revision: number;
+  action: "create" | "update" | "delete" | "restore";
+  changed_keys: string[];
+  cells: Record<string, unknown>;
+  author: { id: string; display_name: string } | null;
+  created_at: string;
+};
+
+type Refusal = { status: number; code: string; message: string };
+
+/**
+ * The sheet actions of docs/specs/sheets.md D10: rename (5), delete (7),
+ * history (15), shares (16 to 19), export (20) and share candidates (25).
+ * Register it after `installSheetPageApi`, so its routes win.
+ */
+export async function installSheetActionsApi(
+  page: Page,
+  sheetState: Awaited<ReturnType<typeof installSheetPageApi>>,
+  options: {
+    shares?: WireSheetShare[];
+    candidates?: {
+      people: { id: string; display_name: string }[];
+      groups: { id: string; name: string }[];
+    };
+    history?: WireSheetRevision[];
+  } = {},
+) {
+  const sheetId = sheetState.detail?.id ?? "";
+  const base = `/api/worksheets/${sheetId}`;
+  const state = {
+    shares: [...(options.shares ?? [])],
+    shareReads: 0,
+    shareWrites: [] as { method: string; path: string; body: unknown }[],
+    renames: [] as { ifMatch: string | null; body: unknown }[],
+    deletes: [] as (string | null)[],
+    exports: [] as unknown[],
+    historyReads: [] as string[],
+    candidateSearches: [] as string[],
+    refuseNextShare: null as Refusal | null,
+    refuseNextExport: null as Refusal | null,
+    refuseNextRename: null as Refusal | null,
+  };
+  // An empty code answers the plain detail FastAPI's `forbidden()` sends.
+  const refuse = (route: Route, refusal: Refusal) =>
+    route.fulfill({
+      status: refusal.status,
+      json: {
+        detail: refusal.code
+          ? { code: refusal.code, message: refusal.message }
+          : refusal.message,
+      },
+    });
+  await page.route(
+    (url) => url.pathname === base,
+    async (route) => {
+      const request = route.request();
+      const method = request.method();
+      const detail = sheetState.detail;
+      if (method !== "PATCH" && method !== "DELETE") return route.fallback();
+      const ifMatch = request.headers()["if-match"] ?? null;
+      if (!detail)
+        return refuse(route, {
+          status: 404,
+          code: "worksheet_not_found",
+          message: "Sheet not found",
+        });
+      if (method === "DELETE") {
+        state.deletes.push(ifMatch);
+        if (ifMatch !== detail.etag)
+          return refuse(route, {
+            status: 412,
+            code: "worksheet_changed",
+            message: "The sheet changed",
+          });
+        sheetState.detail = null;
+        return route.fulfill({ status: 204, body: "" });
+      }
+      const body = request.postDataJSON() as { title: string };
+      state.renames.push({ ifMatch, body });
+      const refusal = state.refuseNextRename;
+      if (refusal) {
+        state.refuseNextRename = null;
+        return refuse(route, refusal);
+      }
+      if (ifMatch !== detail.etag)
+        return refuse(route, {
+          status: 412,
+          code: "worksheet_changed",
+          message: "The sheet changed",
+        });
+      detail.title = body.title;
+      detail.revision += 1;
+      detail.etag = `"${detail.id}:${detail.revision}"`;
+      return route.fulfill({ headers: { ETag: detail.etag }, json: detail });
+    },
+  );
+  await page.route(
+    (url) =>
+      url.pathname === `${base}/shares` ||
+      url.pathname.startsWith(`${base}/shares/`),
+    async (route) => {
+      const request = route.request();
+      const method = request.method();
+      const url = new URL(request.url());
+      if (method === "GET") {
+        state.shareReads += 1;
+        return route.fulfill({
+          json: {
+            items: state.shares,
+            pagination: {
+              limit: Number(url.searchParams.get("limit") ?? 25),
+              offset: 0,
+              count: state.shares.length,
+              total: state.shares.length,
+              has_more: false,
+              total_is_capped: false,
+            },
+          },
+        });
+      }
+      const body = method === "DELETE" ? null : request.postDataJSON();
+      state.shareWrites.push({ method, path: url.pathname, body });
+      const refusal = state.refuseNextShare;
+      if (refusal) {
+        state.refuseNextShare = null;
+        return refuse(route, refusal);
+      }
+      if (method === "POST") {
+        const wire = body as {
+          subject: "user" | "group";
+          user_id?: string;
+          group_id?: string;
+          level: "view" | "edit";
+        };
+        const person = options.candidates?.people.find(
+          (item) => item.id === wire.user_id,
+        );
+        const group = options.candidates?.groups.find(
+          (item) => item.id === wire.group_id,
+        );
+        const share: WireSheetShare = {
+          id: `00000000-0000-4000-8000-${String(900000 + state.shareWrites.length).padStart(12, "0")}`,
+          subject: wire.subject,
+          user: person ?? null,
+          group: group ?? null,
+          level: wire.level,
+          created_at: "2026-11-24T08:00:00Z",
+        };
+        state.shares.push(share);
+        if (sheetState.detail) sheetState.detail.shared = true;
+        return route.fulfill({ status: 201, json: share });
+      }
+      const shareId = url.pathname.split("/").at(-1);
+      const share = state.shares.find((item) => item.id === shareId);
+      if (!share)
+        return refuse(route, {
+          status: 404,
+          code: "share_not_found",
+          message: "Share not found",
+        });
+      if (method === "DELETE") {
+        state.shares.splice(state.shares.indexOf(share), 1);
+        if (sheetState.detail)
+          sheetState.detail.shared = state.shares.length > 0;
+        return route.fulfill({ status: 204, body: "" });
+      }
+      share.level = (body as { level: "view" | "edit" }).level;
+      return route.fulfill({ json: share });
+    },
+  );
+  await page.route(
+    (url) => url.pathname === `${base}/share-candidates`,
+    (route) => {
+      const needle = (
+        new URL(route.request().url()).searchParams.get("q") ?? ""
+      ).toLowerCase();
+      state.candidateSearches.push(needle);
+      const people = (options.candidates?.people ?? []).filter((person) =>
+        person.display_name.toLowerCase().includes(needle),
+      );
+      const groups = (options.candidates?.groups ?? []).filter((group) =>
+        group.name.toLowerCase().includes(needle),
+      );
+      return route.fulfill({ json: { people, groups } });
+    },
+  );
+  await page.route(
+    (url) => url.pathname === `${base}/history`,
+    (route) => {
+      const url = new URL(route.request().url());
+      state.historyReads.push(url.search);
+      const items = options.history ?? [];
+      return route.fulfill({
+        json: {
+          items,
+          pagination: {
+            limit: Number(url.searchParams.get("limit") ?? 25),
+            offset: Number(url.searchParams.get("offset") ?? 0),
+            count: items.length,
+            total: items.length,
+            has_more: false,
+            total_is_capped: false,
+          },
+        },
+      });
+    },
+  );
+  await page.route(
+    (url) => url.pathname === `${base}/export`,
+    (route) => {
+      const body = route.request().postDataJSON() as { format: string };
+      state.exports.push(body);
+      const refusal = state.refuseNextExport;
+      if (refusal) {
+        state.refuseNextExport = null;
+        return refuse(route, refusal);
+      }
+      const files: Record<string, [string, string, string]> = {
+        csv: [
+          "text/csv; charset=utf-8",
+          "class-roster-2026-11-24.csv",
+          "Student\r\n",
+        ],
+        xlsx: [
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "class-roster-2026-11-24.xlsx",
+          "PK",
+        ],
+        template: ["application/json", "class-roster-template.json", "{}"],
+      };
+      const [type, name, content] = files[body.format] ?? files.csv;
+      return route.fulfill({
+        status: 200,
+        headers: {
+          "Content-Type": type,
+          "Content-Disposition": `attachment; filename="${name}"`,
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        },
+        body: content,
+      });
+    },
+  );
+  return state;
 }

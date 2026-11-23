@@ -394,9 +394,11 @@ test.describe("on a phone", () => {
     await expect(
       page.getByRole("searchbox", { name: "Search this sheet" }),
     ).toBeVisible();
+    // On a phone the name is text; the row form carries the record link.
     await expect(
-      grid(page).getByRole("link", { name: "Student 1", exact: true }),
+      grid(page).getByRole("gridcell", { name: "Student 1", exact: true }),
     ).toBeVisible();
+    await expect(grid(page).getByRole("link")).toHaveCount(0);
     await expectNoPageScroll(page);
     await expectNoHorizontalScroll(page);
     // One 160px first column, the row number with the name, stays fixed.

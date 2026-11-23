@@ -98,7 +98,22 @@ test("a refused save reads the changed columns and the newer row", () => {
         current,
       }),
     ),
-  ).toEqual({ keys: ["c2"], current });
+  ).toEqual({ keys: ["c2"], current, changedBy: null });
+  // The person who changed the cells, when the editor can see them.
+  expect(
+    cellConflict(
+      new ApiError(412, "Someone changed these cells", {
+        code: "cell_changed",
+        message: "Someone changed these cells",
+        keys: ["c2"],
+        current,
+        changed_by: {
+          id: "00000000-0000-4000-8000-000000000c01",
+          display_name: "Diego Navarro",
+        },
+      }),
+    )?.changedBy,
+  ).toBe("Diego Navarro");
   expect(cellConflict(new ApiError(422, "Enter a number"))).toBeNull();
 });
 

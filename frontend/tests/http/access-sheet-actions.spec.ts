@@ -352,6 +352,15 @@ test("an administrator adds a person to a group and removes them from the person
   adding.release();
   await expect(groups).toContainText("Finance readers");
   await expect(panel).toHaveCount(0);
+  // The panel's focused button leaves with it; focus lands on Add to group
+  // and stays there after the sheet's next frames.
+  await expect(
+    ana.getByRole("button", { name: "Add to group", exact: true }),
+  ).toBeFocused();
+  await page.clock.runFor(100);
+  await expect(
+    ana.getByRole("button", { name: "Add to group", exact: true }),
+  ).toBeFocused();
   const put = api.sent("PUT", `/api/access/groups/${ids.readers}/members`);
   expect(put).toHaveLength(1);
   expect(memberIds(put[0]?.body)).toEqual([ids.ana, ids.ben].sort());

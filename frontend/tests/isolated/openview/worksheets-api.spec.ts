@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { ApiContractError } from "../../../src/lib/api";
+import { ApiContractError, ApiError } from "../../../src/lib/api";
 import {
   createWorksheet,
   getWorksheet,
@@ -8,6 +8,16 @@ import {
   listRecordWorksheets,
   queryWorksheetRows,
   restoreWorksheet,
+  renameWorksheet,
+  deleteWorksheet,
+  listWorksheetHistory,
+  listWorksheetShares,
+  shareWorksheet,
+  changeWorksheetShare,
+  removeWorksheetShare,
+  searchWorksheetShareCandidates,
+  searchWorksheetPeople,
+  exportWorksheet,
 } from "../../../src/components/systems/openview/adapters/worksheets-api";
 import { wirePagination } from "../../helpers/pagination";
 import { installSyncFetch as installFetch } from "../helpers/fake-fetch";
@@ -367,6 +377,379 @@ test("an empty search and no sort are not sent", async () => {
     expect(JSON.parse(String(mock.requests[0]?.init?.body))).toEqual({
       limit: 200,
       offset: 0,
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+// ---------------------------------------------------------------- F5
+
+const personId = "00000000-0000-4000-8000-0000000005c1";
+const groupId = "00000000-0000-4000-8000-0000000005c2";
+const shareOne = "00000000-0000-4000-8000-0000000005c3";
+const shareTwo = "00000000-0000-4000-8000-0000000005c4";
+
+function sent(mock: ReturnType<typeof installFetch>) {
+  return mock.requests.map(({ input, init }) => ({
+    url: String(input),
+    method: init?.method ?? "GET",
+    ifMatch: new Headers(init?.headers).get("If-Match"),
+    body: init?.body ? JSON.parse(String(init.body)) : null,
+  }));
+}
+
+test("rename and delete send the sheet's version, and delete expects no body", async () => {
+  const detail = {
+    ...wireSummary(9, { title: "Class 1B" }),
+    structure: {
+      structureVersion: 1,
+      nextColumnSeq: 1,
+      columns: [],
+      groups: [],
+      totals: {},
+    },
+    etag: `"${sheetId(9)}:4"`,
+    created_at: "2026-11-01T08:30:00Z",
+  };
+  const mock = installFetch((_input, init) =>
+    init?.method === "DELETE"
+      ? new Response(null, { status: 204 })
+      : json(detail),
+  );
+  try {
+    const renamed = await renameWorksheet(
+      sheetId(9),
+      `"${sheetId(9)}:3"`,
+      "  Class 1B ",
+    );
+    const deleted = await deleteWorksheet(sheetId(9), `"${sheetId(9)}:4"`);
+    expect(sent(mock)).toEqual([
+      {
+        url: `/api/worksheets/${sheetId(9)}`,
+        method: "PATCH",
+        ifMatch: `"${sheetId(9)}:3"`,
+        body: { title: "Class 1B" },
+      },
+      {
+        url: `/api/worksheets/${sheetId(9)}`,
+        method: "DELETE",
+        ifMatch: `"${sheetId(9)}:4"`,
+        body: null,
+      },
+    ]);
+    expect(renamed).toMatchObject({
+      title: "Class 1B",
+      etag: `"${sheetId(9)}:4"`,
+    });
+    expect(deleted).toBeNull();
+  } finally {
+    mock.restore();
+  }
+});
+
+test("history is read newest first, with an unknown author kept as null", async () => {
+  const mock = installFetch(() =>
+    json({
+      items: [
+        {
+          id: shareOne,
+          row_id: shareTwo,
+          revision: 2,
+          action: "update",
+          changed_keys: ["c3"],
+          cells: {
+            c1: { link: { record_id: personId, label: "Alyssa Mercado" } },
+            c2: { state: "no_access" },
+            c3: { value: 18 },
+            c4: { value: null, error: "division_by_zero" },
+          },
+          author: null,
+          created_at: "2026-11-22T09:00:00Z",
+        },
+      ],
+      pagination: wirePagination({
+        limit: 50,
+        count: 1,
+        total: 51,
+        has_more: true,
+      }),
+    }),
+  );
+  try {
+    const page = await listWorksheetHistory(sheetId(9), { offset: 0 });
+    expect(sent(mock).map((request) => request.url)).toEqual([
+      `/api/worksheets/${sheetId(9)}/history?limit=50&offset=0&sort_order=desc`,
+    ]);
+    expect(page).toEqual({
+      hasMore: true,
+      items: [
+        {
+          id: shareOne,
+          rowId: shareTwo,
+          revision: 2,
+          action: "update",
+          changedKeys: ["c3"],
+          cells: {
+            c1: { link: { record_id: personId, label: "Alyssa Mercado" } },
+            c2: { state: "no_access" },
+            c3: { value: 18 },
+            c4: { value: null, error: "division_by_zero" },
+          },
+          author: null,
+          createdAt: "2026-11-22T09:00:00Z",
+        },
+      ],
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("shares are read in full and keep a person who is no longer listed", async () => {
+  const share = (id: string, extra: Record<string, unknown>) => ({
+    id,
+    level: "view",
+    created_at: "2026-11-20T08:00:00Z",
+    user: null,
+    group: null,
+    ...extra,
+  });
+  const mock = installFetch((input) =>
+    new URL(String(input), "http://app.test").searchParams.get("offset") === "0"
+      ? json({
+          items: [
+            share(shareOne, {
+              subject: "user",
+              level: "edit",
+              user: { id: personId, display_name: "Diego Navarro" },
+            }),
+          ],
+          pagination: wirePagination({
+            limit: 100,
+            count: 1,
+            total: 3,
+            has_more: true,
+          }),
+        })
+      : json({
+          items: [
+            share(shareTwo, {
+              subject: "group",
+              group: { id: groupId, name: "CCS Faculty" },
+            }),
+            share(sheetId(77), { subject: "user" }),
+          ],
+          pagination: wirePagination({
+            limit: 100,
+            offset: 1,
+            count: 2,
+            total: 3,
+          }),
+        }),
+  );
+  try {
+    const shares = await listWorksheetShares(sheetId(9));
+    expect(sent(mock).map((request) => request.url)).toEqual([
+      `/api/worksheets/${sheetId(9)}/shares?limit=100&offset=0`,
+      `/api/worksheets/${sheetId(9)}/shares?limit=100&offset=1`,
+    ]);
+    expect(shares).toEqual([
+      {
+        id: shareOne,
+        level: "edit",
+        subject: "user",
+        person: { id: personId, displayName: "Diego Navarro" },
+      },
+      {
+        id: shareTwo,
+        level: "view",
+        subject: "group",
+        group: { id: groupId, name: "CCS Faculty" },
+      },
+      { id: sheetId(77), level: "view", subject: "user", person: null },
+    ]);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("a share names one person or one group, and a level change or removal names the share", async () => {
+  const mock = installFetch((_input, init) =>
+    init?.method === "DELETE"
+      ? new Response(null, { status: 204 })
+      : json(
+          {
+            id: shareOne,
+            subject: "group",
+            user: null,
+            group: { id: groupId, name: "CCS Faculty" },
+            level: "view",
+            created_at: "2026-11-20T08:00:00Z",
+          },
+          init?.method === "POST" ? 201 : 200,
+        ),
+  );
+  try {
+    await shareWorksheet(sheetId(9), { subject: "user", id: personId }, "edit");
+    const made = await shareWorksheet(
+      sheetId(9),
+      { subject: "group", id: groupId },
+      "view",
+    );
+    await changeWorksheetShare(sheetId(9), shareOne, "edit");
+    await removeWorksheetShare(sheetId(9), shareOne);
+    expect(
+      sent(mock).map(({ url, method, body }) => [method, url, body]),
+    ).toEqual([
+      [
+        "POST",
+        `/api/worksheets/${sheetId(9)}/shares`,
+        { subject: "user", user_id: personId, level: "edit" },
+      ],
+      [
+        "POST",
+        `/api/worksheets/${sheetId(9)}/shares`,
+        { subject: "group", group_id: groupId, level: "view" },
+      ],
+      [
+        "PATCH",
+        `/api/worksheets/${sheetId(9)}/shares/${shareOne}`,
+        { level: "edit" },
+      ],
+      ["DELETE", `/api/worksheets/${sheetId(9)}/shares/${shareOne}`, null],
+    ]);
+    expect(made).toEqual({
+      id: shareOne,
+      level: "view",
+      subject: "group",
+      group: { id: groupId, name: "CCS Faculty" },
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("share candidates and the people list search by trimmed text", async () => {
+  const mock = installFetch((input) =>
+    String(input).includes("/people")
+      ? json({ people: [{ id: personId, display_name: "Diego Navarro" }] })
+      : json({
+          people: [{ id: personId, display_name: "Diego Navarro" }],
+          groups: [{ id: groupId, name: "CCS Faculty" }],
+        }),
+  );
+  try {
+    const candidates = await searchWorksheetShareCandidates(
+      sheetId(9),
+      "  die & co ",
+    );
+    const people = await searchWorksheetPeople(sheetId(9), "");
+    expect(sent(mock).map((request) => request.url)).toEqual([
+      `/api/worksheets/${sheetId(9)}/share-candidates?q=die+%26+co`,
+      `/api/worksheets/${sheetId(9)}/people?q=`,
+    ]);
+    expect(candidates).toEqual({
+      people: [{ id: personId, displayName: "Diego Navarro" }],
+      groups: [{ id: groupId, name: "CCS Faculty" }],
+    });
+    expect(people).toEqual([{ id: personId, displayName: "Diego Navarro" }]);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("an export is a named attachment of the asked type, and a refusal keeps its code", async () => {
+  const file = (type: string, name: string) =>
+    new Response("Student,Quiz 1\nAlyssa,17\n", {
+      status: 200,
+      headers: {
+        "Content-Type": type,
+        "Content-Disposition": `attachment; filename="${name}"`,
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  const answers = [
+    file("text/csv; charset=utf-8", "class-1a-2026-11-24.csv"),
+    file("application/json", "class-1a-template.json"),
+    file("text/csv; charset=utf-8", "class-1a-2026-11-24.xlsx"),
+    json(
+      { detail: { code: "export_limit_exceeded", message: "Too many rows" } },
+      422,
+    ),
+  ];
+  const mock = installFetch(() => answers.shift() ?? json({}, 500));
+  try {
+    const csv = await exportWorksheet(sheetId(9), "csv");
+    const template = await exportWorksheet(sheetId(9), "template");
+    expect(csv.filename).toBe("class-1a-2026-11-24.csv");
+    expect(await csv.blob.text()).toContain("Alyssa,17");
+    expect(template.filename).toBe("class-1a-template.json");
+    // An Excel request answered with a CSV file is not a download.
+    await expect(exportWorksheet(sheetId(9), "xlsx")).rejects.toBeInstanceOf(
+      ApiContractError,
+    );
+    const refused = await exportWorksheet(sheetId(9), "csv").catch(
+      (error: unknown) => error,
+    );
+    expect(refused).toBeInstanceOf(ApiError);
+    expect(refused).toMatchObject({
+      status: 422,
+      code: "export_limit_exceeded",
+    });
+    expect(
+      sent(mock).map(({ method, url, body }) => [method, url, body]),
+    ).toEqual(
+      ["csv", "template", "xlsx", "csv"].map((format) => [
+        "POST",
+        `/api/worksheets/${sheetId(9)}/export`,
+        { format },
+      ]),
+    );
+  } finally {
+    mock.restore();
+  }
+});
+
+test("a computed cell that cannot be worked out, and a lookup with several matches, keep their marks instead of failing the page", async () => {
+  const mock = installFetch(() =>
+    json({
+      items: [
+        {
+          id: sheetId(31),
+          revision: 1,
+          etag: `"${sheetId(31)}:1"`,
+          position: 0,
+          cells: {
+            c3: { value: "22.5" },
+            c4: { value: null, error: "division_by_zero" },
+            c5: { value: null, error: "overflow" },
+            c6: { state: "multiple_matches", count: 3 },
+          },
+        },
+      ],
+      pagination: {
+        limit: 200,
+        offset: 0,
+        count: 1,
+        total: 1,
+        has_more: false,
+      },
+      totals: {},
+    }),
+  );
+  try {
+    const page = await queryWorksheetRows(sheetId(9), {
+      sort: null,
+      search: "",
+      offset: 0,
+    });
+    expect(page.rows[0]?.cells).toEqual({
+      c3: { value: "22.5" },
+      c4: { value: null, error: "division_by_zero" },
+      c5: { value: null, error: "overflow" },
+      c6: { state: "multiple_matches", count: 3 },
     });
   } finally {
     mock.restore();

@@ -1,23 +1,15 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
-import Link from "next/link";
-import type { Route } from "next";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RotateCcw, Search, Sheet as SheetIcon } from "lucide-react";
+import { RotateCcw, Search } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableCell, TableRow } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { apiErrorReference } from "@/lib/api-errors";
@@ -33,8 +25,10 @@ import {
 } from "../adapters/worksheet-queries";
 import {
   SheetAccess,
+  SheetName,
+  SheetTableRow,
+  SheetsTable,
   sheetAnchorWords,
-  sheetHref,
   sheetRowsWords,
   sheetShortDate,
 } from "./sheet-display";
@@ -54,39 +48,6 @@ const showOptions: { value: Show; label: string }[] = [
 /** When a deleted sheet was deleted; its last change is the fallback. */
 function deletedOn(sheet: WorksheetSummary) {
   return sheet.deletedAt ?? sheet.updatedAt;
-}
-
-function SheetName({
-  sheet,
-  link,
-}: {
-  sheet: WorksheetSummary;
-  link: boolean;
-}) {
-  const content = (
-    <>
-      <SheetIcon
-        aria-hidden="true"
-        className="text-muted-foreground size-4 shrink-0"
-      />
-      <span className="truncate">{sheet.title}</span>
-    </>
-  );
-  const className =
-    "inline-flex max-w-full min-w-0 items-center gap-2.5 font-medium";
-  return link ? (
-    <Link
-      href={sheetHref(sheet.id) as Route}
-      className={cn(
-        className,
-        "focus-visible:outline-ring rounded-sm outline-offset-2 after:absolute after:inset-0 focus-visible:outline-2",
-      )}
-    >
-      {content}
-    </Link>
-  ) : (
-    <span className={className}>{content}</span>
-  );
 }
 
 function RestoreButton({
@@ -130,60 +91,6 @@ const deletedColumns = [
   ["Deleted", "w-[16%]"],
   ["Actions", "w-[18%]"],
 ] as const;
-
-function SheetsTable({
-  deleted,
-  empty,
-  children,
-}: {
-  deleted: boolean;
-  empty: ReactNode;
-  children: ReactNode;
-}) {
-  const columns = deleted ? deletedColumns : liveColumns;
-  return (
-    <table
-      aria-label="My sheets"
-      className="w-full table-fixed caption-bottom text-sm"
-    >
-      <colgroup>
-        {columns.map(([label, width]) => (
-          <col key={label} className={width} />
-        ))}
-      </colgroup>
-      <TableHeader className="bg-card sticky top-0 z-[1]">
-        <TableRow className="hover:bg-transparent">
-          {columns.map(([label]) => (
-            <TableHead
-              key={label}
-              className="text-muted-foreground h-9 px-4 text-xs"
-            >
-              {label === "Actions" ? (
-                <span className="sr-only">Actions</span>
-              ) : (
-                label
-              )}
-            </TableHead>
-          ))}
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {empty ? (
-          <TableRow className="hover:bg-transparent">
-            <TableCell
-              colSpan={columns.length}
-              className="text-muted-foreground h-14 px-4 whitespace-normal"
-            >
-              {empty}
-            </TableCell>
-          </TableRow>
-        ) : (
-          children
-        )}
-      </TableBody>
-    </table>
-  );
-}
 
 function TableSkeleton() {
   return (
@@ -348,7 +255,11 @@ export function MySheets() {
             className="min-h-0 flex-1 overflow-auto"
           >
             <div className="hidden md:block">
-              <SheetsTable deleted={isDeleted} empty={empty}>
+              <SheetsTable
+                label="My sheets"
+                columns={isDeleted ? deletedColumns : liveColumns}
+                empty={empty}
+              >
                 {rows.map((sheet) =>
                   isDeleted ? (
                     <TableRow key={sheet.id} className="h-11">
@@ -372,31 +283,12 @@ export function MySheets() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    <TableRow
+                    <SheetTableRow
                       key={sheet.id}
-                      className="hover:bg-tint-hover relative h-11"
-                    >
-                      <TableCell className="truncate px-4">
-                        <SheetName sheet={sheet} link />
-                      </TableCell>
-                      <TableCell className="truncate px-4">
-                        {sheetAnchorWords(sheet)}
-                      </TableCell>
-                      <TableCell className="truncate px-4">
-                        {sheet.owner.displayName}
-                      </TableCell>
-                      <TableCell className="px-4">
-                        <SheetAccess sheet={sheet} />
-                      </TableCell>
-                      <TableCell className="px-4 tabular-nums">
-                        {sheet.liveRowCount}
-                      </TableCell>
-                      <TableCell className="px-4 tabular-nums">
-                        <time dateTime={sheet.updatedAt}>
-                          {sheetShortDate(sheet.updatedAt, region)}
-                        </time>
-                      </TableCell>
-                    </TableRow>
+                      sheet={sheet}
+                      region={region}
+                      anchor
+                    />
                   ),
                 )}
               </SheetsTable>

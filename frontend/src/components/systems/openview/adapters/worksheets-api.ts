@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { apiFetch } from "@/lib/api";
+import {
+  ApiError,
+  apiContractError,
+  apiFetch,
+  apiRequest,
+  keepRequestId,
+} from "@/lib/api";
+import { requestSessionRecheck } from "@/lib/auth-api";
 import { openViewReadFetch } from "./openview-access";
 
 // Sheet routes (docs/specs/sheets.md D10). Code says "worksheet"; users read
@@ -344,9 +351,11 @@ export function restoreWorksheet(id: string): Promise<WorksheetDetail> {
 const jsonValue: z.ZodType<unknown> = z.unknown();
 
 // A cell as the viewer may see it (D10 `Cell`, D7.3): a value, a link, text
-// that matched no record, or a state with no value.
+// that matched no record, a state with no value, or a computed cell that
+// cannot be worked out (D7.2).
 const cellSchema = z.union([
   z.object({ value: jsonValue }).strict(),
+  z.object({ value: z.null(), error: z.string().min(1) }).strict(),
   z
     .object({
       link: z.object({ record_id: uuid, label: z.string() }).strict(),
@@ -364,6 +373,8 @@ const cellSchema = z.union([
         "column_removed",
         "multiple_matches",
       ]),
+      // How many source rows matched (multiple_matches, D7.3a).
+      count: z.number().int().min(2).optional(),
     })
     .strict(),
 ]);
@@ -526,4 +537,344 @@ export function saveWorksheetStructure(
       body: JSON.stringify(structure),
     },
   );
+}
+
+// ------------------------------------------------- sheet actions (F5)
+
+const titleSchema = z.string().trim().min(1).max(200);
+
+function sheetPath(id: string) {
+  return `/worksheets/${encodeURIComponent(id)}`;
+}
+
+/** The owner renames a sheet that is not open (route 5, `If-Match`). */
+export function renameWorksheet(
+  id: string,
+  etag: string,
+  title: string,
+): Promise<WorksheetDetail> {
+  return apiFetch(sheetPath(id), detailSchema, {
+    method: "PATCH",
+    headers: { "If-Match": etag },
+    body: JSON.stringify({ title: titleSchema.parse(title) }),
+  });
+}
+
+/** The owner deletes a sheet that is not open (route 7, `If-Match`). */
+export function deleteWorksheet(id: string, etag: string): Promise<null> {
+  return apiFetch(sheetPath(id), z.null(), {
+    method: "DELETE",
+    headers: { "If-Match": etag },
+  });
+}
+
+const personRefSchema = z
+  .object({ id: uuid, display_name: z.string() })
+  .strict()
+  .transform((wire) => ({ id: wire.id, displayName: wire.display_name }));
+const groupRefSchema = z.object({ id: uuid, name: z.string() }).strict();
+
+const listPagination = z
+  .object({
+    limit: z.number().int().min(1).max(100),
+    offset: z.number().int().min(0),
+    count: z.number().int().min(0),
+    total: z.number().int().min(0),
+    has_more: z.boolean(),
+    total_is_capped: z.boolean().optional(),
+  })
+  .strict();
+
+const revisionSchema = z
+  .object({
+    id: uuid,
+    row_id: uuid,
+    revision: z.number().int(),
+    action: z.enum(["create", "update", "delete", "restore"]),
+    changed_keys: z.array(z.string()),
+    cells: z.record(z.string(), cellSchema),
+    author: personRefSchema.nullable(),
+    created_at: timestamp,
+  })
+  .strict()
+  .transform((wire) => ({
+    id: wire.id,
+    rowId: wire.row_id,
+    revision: wire.revision,
+    action: wire.action,
+    changedKeys: wire.changed_keys,
+    cells: wire.cells,
+    author: wire.author,
+    createdAt: wire.created_at,
+  }));
+
+export type WorksheetRevision = z.output<typeof revisionSchema>;
+
+/** History reads this many changes at a time. */
+export const WORKSHEET_HISTORY_PAGE = 50;
+
+/** A page of a sheet's row changes, newest first (route 15, H3). */
+export function listWorksheetHistory(
+  id: string,
+  options: { offset: number; signal?: AbortSignal },
+): Promise<{ items: WorksheetRevision[]; hasMore: boolean }> {
+  const query = new URLSearchParams({
+    limit: String(WORKSHEET_HISTORY_PAGE),
+    offset: String(options.offset),
+    sort_order: "desc",
+  });
+  return apiFetch(
+    `${sheetPath(id)}/history?${query}`,
+    z
+      .object({ items: z.array(revisionSchema), pagination: listPagination })
+      .strict()
+      .transform((page) => ({
+        items: page.items,
+        hasMore: page.pagination.has_more,
+      })),
+    { cache: "no-store", signal: options.signal },
+  );
+}
+
+const shareSchema = z
+  .object({
+    id: uuid,
+    subject: z.enum(["user", "group"]),
+    user: personRefSchema.nullable(),
+    group: groupRefSchema.nullable(),
+    level: z.enum(["view", "edit"]),
+    created_at: timestamp,
+  })
+  .strict()
+  .transform((wire, context) => {
+    if (wire.subject === "user")
+      return {
+        id: wire.id,
+        level: wire.level,
+        subject: "user" as const,
+        person: wire.user,
+      };
+    if (!wire.group) {
+      context.addIssue({
+        code: "custom",
+        message: "group share without a group",
+      });
+      return z.NEVER;
+    }
+    return {
+      id: wire.id,
+      level: wire.level,
+      subject: "group" as const,
+      group: wire.group,
+    };
+  });
+
+export type WorksheetShare = z.output<typeof shareSchema>;
+
+const SHARE_PAGE = 100;
+const SHARE_MAX_PAGES = 20;
+
+/** Every live share of the owner's sheet (route 16). */
+export async function listWorksheetShares(
+  id: string,
+  signal?: AbortSignal,
+): Promise<WorksheetShare[]> {
+  const shares: WorksheetShare[] = [];
+  for (let page = 0; page < SHARE_MAX_PAGES; page += 1) {
+    const query = new URLSearchParams({
+      limit: String(SHARE_PAGE),
+      offset: String(shares.length),
+    });
+    const result = await apiFetch(
+      `${sheetPath(id)}/shares?${query}`,
+      z
+        .object({ items: z.array(shareSchema), pagination: listPagination })
+        .strict(),
+      { cache: "no-store", signal },
+    );
+    shares.push(...result.items);
+    if (!result.pagination.has_more || result.items.length === 0) break;
+  }
+  return shares;
+}
+
+export type WorksheetShareTarget =
+  { subject: "user"; id: string } | { subject: "group"; id: string };
+
+/** A View or Edit share to one person or one group (route 17). */
+export function shareWorksheet(
+  id: string,
+  target: WorksheetShareTarget,
+  level: "view" | "edit",
+): Promise<WorksheetShare> {
+  const targetId = uuid.parse(target.id);
+  return apiFetch(`${sheetPath(id)}/shares`, shareSchema, {
+    method: "POST",
+    body: JSON.stringify(
+      target.subject === "user"
+        ? { subject: "user", user_id: targetId, level }
+        : { subject: "group", group_id: targetId, level },
+    ),
+  });
+}
+
+/** A share's new level (route 18). */
+export function changeWorksheetShare(
+  id: string,
+  shareId: string,
+  level: "view" | "edit",
+): Promise<WorksheetShare> {
+  return apiFetch(
+    `${sheetPath(id)}/shares/${encodeURIComponent(shareId)}`,
+    shareSchema,
+    { method: "PATCH", body: JSON.stringify({ level }) },
+  );
+}
+
+/** Removes a share (route 19). */
+export function removeWorksheetShare(
+  id: string,
+  shareId: string,
+): Promise<null> {
+  return apiFetch(
+    `${sheetPath(id)}/shares/${encodeURIComponent(shareId)}`,
+    z.null(),
+    { method: "DELETE" },
+  );
+}
+
+function searchText(query: string) {
+  return new URLSearchParams({ q: query.trim().slice(0, 100) });
+}
+
+const candidatesSchema = z
+  .object({
+    people: z.array(personRefSchema),
+    groups: z.array(groupRefSchema),
+  })
+  .strict();
+
+export type WorksheetShareCandidates = z.output<typeof candidatesSchema>;
+
+/** People the owner can see and the owner's groups (route 25). */
+export function searchWorksheetShareCandidates(
+  id: string,
+  query: string,
+  signal?: AbortSignal,
+): Promise<WorksheetShareCandidates> {
+  return apiFetch(
+    `${sheetPath(id)}/share-candidates?${searchText(query)}`,
+    candidatesSchema,
+    { cache: "no-store", signal },
+  );
+}
+
+/** Up to 20 people an editor may put in a person cell (people route). */
+export function searchWorksheetPeople(
+  id: string,
+  query: string,
+  signal?: AbortSignal,
+): Promise<{ id: string; displayName: string }[]> {
+  return apiFetch(
+    `${sheetPath(id)}/people?${searchText(query)}`,
+    z
+      .object({ people: z.array(personRefSchema) })
+      .strict()
+      .transform((wire) => wire.people),
+    { cache: "no-store", signal },
+  );
+}
+
+export type WorksheetExportFormat = "csv" | "xlsx" | "template";
+
+const EXPORT_FILES: Record<
+  WorksheetExportFormat,
+  { type: RegExp; extension: string }
+> = {
+  csv: { type: /^text\/csv(?:;\s*charset=utf-8)?$/, extension: ".csv" },
+  xlsx: {
+    type: /^application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet$/,
+    extension: ".xlsx",
+  },
+  template: {
+    type: /^application\/json(?:;\s*charset=utf-8)?$/,
+    extension: ".json",
+  },
+};
+
+// The record export's file cap (D9.1).
+const EXPORT_MAX_BYTES = 8 * 1024 * 1024;
+
+const exportErrorSchema = z.object({
+  detail: z.union([
+    z.string(),
+    z.object({ code: z.string(), message: z.string().optional() }),
+  ]),
+});
+
+/**
+ * The sheet as a file (route 20): CSV or Excel with every row, or the
+ * template (columns only). The server writes one security event per file
+ * (X3). A refusal keeps its status and code, never the server's words.
+ */
+export async function exportWorksheet(
+  id: string,
+  format: WorksheetExportFormat,
+  signal?: AbortSignal,
+): Promise<{ blob: Blob; filename: string }> {
+  const response = await apiRequest(`${sheetPath(id)}/export`, {
+    method: "POST",
+    signal,
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ format }),
+  });
+  if (!response.ok) {
+    const parsed = exportErrorSchema.safeParse(
+      await response.json().catch(() => null),
+    );
+    const code =
+      parsed.success && typeof parsed.data.detail !== "string"
+        ? parsed.data.detail.code
+        : undefined;
+    // A session that now needs a second step or another network is checked
+    // again, as the record export does.
+    if (["mfa_required", "ip_not_allowed"].includes(code ?? ""))
+      queueMicrotask(() => {
+        if (!signal?.aborted) requestSessionRecheck();
+      });
+    throw keepRequestId(
+      new ApiError(
+        response.status,
+        "Export could not be downloaded.",
+        undefined,
+        code,
+      ),
+      response,
+    );
+  }
+  const expected = EXPORT_FILES[format];
+  const type = response.headers.get("Content-Type")?.trim().toLowerCase();
+  const filename = response.headers
+    .get("Content-Disposition")
+    ?.match(/^attachment; filename="([A-Za-z0-9][A-Za-z0-9_.-]{0,179})"$/)?.[1];
+  if (
+    response.status !== 200 ||
+    !type ||
+    !expected.type.test(type) ||
+    !filename ||
+    filename.includes("..") ||
+    !filename.endsWith(expected.extension) ||
+    !response.headers
+      .get("Cache-Control")
+      ?.toLowerCase()
+      .split(",")
+      .some((part) => part.trim() === "no-store") ||
+    response.headers.get("X-Content-Type-Options")?.trim().toLowerCase() !==
+      "nosniff"
+  )
+    throw apiContractError(response);
+  const blob = await response.blob();
+  if (blob.size > EXPORT_MAX_BYTES) throw apiContractError(response);
+  return { blob, filename };
 }

@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import type { Route } from "next";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -41,8 +42,15 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
+import {
+  GuardedWorkspaceLink,
+  useWorkspaceNavigationRequest,
+} from "@/components/workspace-navigation-guard";
 import { personCardOptions } from "@/components/profile/adapters/profile-queries";
 import { cn } from "@/lib/utils";
 
@@ -55,6 +63,7 @@ import type {
 } from "../adapters/worksheets-api";
 import {
   cellView,
+  conflictWords,
   editInput,
   gridBands,
   inputValue,
@@ -67,12 +76,13 @@ import {
   type SheetColumnType,
 } from "../domain/sheet-grid";
 import { SheetColumnPopover } from "./sheet-column-popover";
-// The link picker loads on first use, apart from the grid.
+// The pickers load on first use, apart from the grid.
 const SheetLinkPicker = lazy(() =>
   import("./sheet-link-picker").then((module) => ({
     default: module.SheetLinkPicker,
   })),
 );
+const SheetPersonPicker = lazy(() => import("./sheet-person-picker"));
 
 // The sheet grid (docs/specs/sheets.md P3, P9, F4, SH-54): one tab stop,
 // arrow keys between cells, Enter edits, Escape leaves, a 2px action
@@ -110,11 +120,18 @@ export type SheetConflict = {
   columnName: string;
   /** What the person typed, as they typed it. */
   draft: string;
+  /** Who changed the cell, when the editor can see them. */
+  changedBy: string | null;
 };
 
-/** Cells an editor changes in place (person cells name people, read-only). */
+/** Cells an editor changes: every column but lookups and computed ones. */
 function editable(column: GridColumn) {
-  return !column.readOnly && column.type !== "user";
+  return !column.readOnly;
+}
+
+/** A linked record's address on its module page. */
+export function recordHref(moduleId: string, recordId: string): Route {
+  return `/openview?section=views&module=${encodeURIComponent(moduleId)}&record=${encodeURIComponent(recordId)}` as Route;
 }
 
 /** A person's name from their card, as bylines read it. */
@@ -138,26 +155,29 @@ function CellContent({
   column,
   cell,
   format,
+  phone,
 }: {
   column: GridColumn;
   cell: WorksheetCell | undefined;
   format: GridFormat;
+  /** On a phone a tap opens the row form, which links the record. */
+  phone: boolean;
 }) {
   const view = cellView(column, cell, format);
   if (view.kind === "blank") return null;
   if (view.kind === "link")
-    return column.linkModuleId ? (
+    return column.linkModuleId && !phone ? (
       <GuardedWorkspaceLink
         tabIndex={-1}
-        href={
-          `/openview?section=views&module=${encodeURIComponent(column.linkModuleId)}&record=${encodeURIComponent(view.recordId)}` as Route
-        }
+        href={recordHref(column.linkModuleId, view.recordId)}
         className="text-action-text block truncate font-medium hover:underline"
       >
         {view.label}
       </GuardedWorkspaceLink>
     ) : (
-      <span className="block truncate">{view.label}</span>
+      <span className="text-action-text block truncate font-medium">
+        {view.label}
+      </span>
     );
   if (view.kind === "state")
     return (
@@ -167,6 +187,13 @@ function CellContent({
         ) : view.state === "deleted" ? (
           <Trash2 aria-hidden="true" className="size-3.5 shrink-0" />
         ) : null}
+        <span className="truncate">{view.words}</span>
+      </span>
+    );
+  if (view.kind === "error")
+    return (
+      <span className="text-warn-text inline-flex min-w-0 items-center gap-1.5">
+        <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0" />
         <span className="truncate">{view.words}</span>
       </span>
     );
@@ -235,9 +262,13 @@ export function SheetGridView({
   const bands = useMemo(() => gridBands(columns), [columns]);
   const [active, setActive] = useState({ row: 0, col: 0 });
   const [editing, setEditing] = useState<Editing | null>(null);
-  const [picking, setPicking] = useState<{ index: number; key: string } | null>(
-    null,
-  );
+  const [picking, setPicking] = useState<{
+    index: number;
+    key: string;
+    kind: "link" | "person";
+  } | null>(null);
+  const router = useRouter();
+  const requestNavigation = useWorkspaceNavigationRequest();
   const [focusTick, setFocusTick] = useState(0);
   const cancelled = useRef(false);
   const saving = useRef(false);
@@ -284,7 +315,9 @@ export function SheetGridView({
     const selector =
       active.row < 0
         ? `[data-header="${active.col}"]`
-        : `[data-cell="${active.row}:${columns[active.col]?.key ?? ""}"]`;
+        : active.col < 0
+          ? `[data-row-actions="${active.row}"]`
+          : `[data-cell="${active.row}:${columns[active.col]?.key ?? ""}"]`;
     if (active.row >= 0) virtual.scrollToIndex(active.row, { align: "auto" });
     const frame = window.requestAnimationFrame(() => {
       pane.current
@@ -302,7 +335,12 @@ export function SheetGridView({
     );
     const lastCol =
       columns.length - 1 + (nextRow < 0 && canChangeColumns ? 1 : 0);
-    setActive({ row: nextRow, col: Math.max(0, Math.min(col, lastCol)) });
+    // Left of the first cell, an editor reaches the row's actions.
+    const firstCol = nextRow >= 0 && canEdit && !phone ? -1 : 0;
+    setActive({
+      row: nextRow,
+      col: Math.max(firstCol, Math.min(col, lastCol)),
+    });
     setFocusTick((value) => value + 1);
   };
 
@@ -311,8 +349,12 @@ export function SheetGridView({
     const column = columns[col];
     if (!canEdit || !row || !column || !editable(column)) return;
     const cell = row.cells[column.key];
-    if (column.type === "link") {
-      setPicking({ index, key: column.key });
+    if (column.type === "link" || column.type === "user") {
+      setPicking({
+        index,
+        key: column.key,
+        kind: column.type === "link" ? "link" : "person",
+      });
       return;
     }
     if (column.type === "boolean") {
@@ -381,14 +423,27 @@ export function SheetGridView({
       focusCell(active.row + move[0], active.col + move[1]);
     } else if (
       (event.key === "Enter" || event.key === "F2") &&
-      active.row >= 0
+      active.row >= 0 &&
+      active.col >= 0
     ) {
       event.preventDefault();
-      startEdit(active.row, active.col);
+      if (canEdit) startEdit(active.row, active.col);
+      else if (event.key === "Enter") openLinkedRecord(active.row, active.col);
     }
   };
 
+  /** A reader opens the record a link cell names (Enter). */
+  function openLinkedRecord(index: number, col: number) {
+    const column = columns[col];
+    const cell = column ? rowAt(store, index)?.cells[column.key] : undefined;
+    if (!column?.linkModuleId || !cell || !("link" in cell)) return;
+    const href = recordHref(column.linkModuleId, cell.link.record_id);
+    const go = () => router.push(href);
+    if (requestNavigation(href, go)) go();
+  }
+
   const pinned = "sticky z-10 bg-card";
+  const headerRows = grouped ? 2 : 1;
   const spacer = (height: number, key: string) => (
     <tr key={key} aria-hidden="true" role="presentation">
       <td
@@ -409,7 +464,7 @@ export function SheetGridView({
       <tr
         key={row?.id ?? `pending-${item.index}`}
         role="row"
-        aria-rowindex={item.index + 2}
+        aria-rowindex={headerRows + item.index + 1}
         style={{ height: rowHeight }}
         className={cn(
           "hover:bg-tint-hover group",
@@ -420,8 +475,9 @@ export function SheetGridView({
           role="gridcell"
           className={cn(
             pinned,
-            "text-muted-foreground group-hover:bg-tint-hover left-0 border-b px-1 text-right text-xs tabular-nums",
-            note && "bg-warn-tint",
+            "text-muted-foreground left-0 border-b px-1 text-right text-xs tabular-nums",
+            // A conflict row keeps its warn tint, as its other cells do.
+            note ? "bg-warn-tint" : "group-hover:over-tint-hover",
           )}
         >
           <span className="inline-flex items-center gap-0.5">
@@ -432,7 +488,11 @@ export function SheetGridView({
                     <Button
                       variant="ghost"
                       size="icon"
-                      tabIndex={-1}
+                      data-row-actions={item.index}
+                      tabIndex={
+                        active.row === item.index && active.col === -1 ? 0 : -1
+                      }
+                      onFocus={() => setActive({ row: item.index, col: -1 })}
                       aria-label={`Row ${item.index + 1} actions`}
                       className="size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-popup-open:opacity-100"
                     />
@@ -490,8 +550,12 @@ export function SheetGridView({
               className={cn(
                 "focus-visible:outline-action-text relative min-w-0 border-b border-l px-3 outline-offset-[-2px] focus:outline-2 focus:outline-solid",
                 index === 0 && pinned,
-                index === 0 && "group-hover:bg-tint-hover",
+                index === 0 &&
+                  (note ? "bg-warn-tint" : "group-hover:over-tint-hover"),
                 column.readOnly && "bg-muted/40",
+                note &&
+                  conflict.key === column.key &&
+                  "shadow-[inset_0_0_0_2px_var(--warn)]",
                 column.numeric && "text-right tabular-nums",
                 isActive && "outline-action-text",
               )}
@@ -499,10 +563,10 @@ export function SheetGridView({
             >
               {isEditing && editing ? (
                 column.type === "select" ? (
-                  <select
+                  <NativeSelect
                     autoFocus
                     aria-label={`${column.name}, row ${item.index + 1}`}
-                    className="border-action-text bg-background absolute inset-0 h-full w-full border-2 px-2 text-sm outline-none"
+                    className="absolute inset-0 w-full [&_select]:h-full [&_select]:rounded-none [&_select]:border-2 [&_select]:border-[color:var(--action-text)]"
                     defaultValue={editing.draft}
                     onChange={(event) =>
                       void finishEdit(
@@ -517,13 +581,13 @@ export function SheetGridView({
                       }
                     }}
                   >
-                    <option value="">None</option>
+                    <NativeSelectOption value="">None</NativeSelectOption>
                     {Object.entries(column.options ?? {}).map(([id, label]) => (
-                      <option key={id} value={id}>
+                      <NativeSelectOption key={id} value={id}>
                         {label}
-                      </option>
+                      </NativeSelectOption>
                     ))}
-                  </select>
+                  </NativeSelect>
                 ) : (
                   <input
                     autoFocus
@@ -536,7 +600,10 @@ export function SheetGridView({
                           : "text"
                     }
                     inputMode={column.numeric ? "decimal" : undefined}
-                    className="border-action-text bg-background absolute inset-0 h-full w-full border-2 px-3 text-sm outline-none"
+                    className={cn(
+                      "border-action-text bg-background absolute inset-0 h-full w-full border-2 px-3 text-sm outline-none",
+                      column.numeric && "text-right tabular-nums",
+                    )}
                     value={editing.draft}
                     onChange={(event) =>
                       setEditing({ ...editing, draft: event.target.value })
@@ -567,6 +634,7 @@ export function SheetGridView({
                   column={column}
                   cell={row.cells[column.key]}
                   format={format}
+                  phone={phone}
                 />
               ) : (
                 <Skeleton className="h-3 w-3/4" />
@@ -596,9 +664,9 @@ export function SheetGridView({
                 className="text-warn-text size-4 shrink-0"
               />
               <span className="min-w-0 flex-1">
-                <b>Someone changed this row while you were editing it.</b> It
-                now shows the newer values. Your {conflict.columnName} (
-                {conflict.draft}) was not saved.
+                <b>{conflictWords(conflict.changedBy)}</b> It now shows the
+                newer values. Your {conflict.columnName} ({conflict.draft}) was
+                not saved.
               </span>
               <Button
                 variant="outline"
@@ -664,11 +732,17 @@ export function SheetGridView({
       <table
         role="grid"
         aria-label={sheet.title}
-        aria-rowcount={count + 1}
+        aria-rowcount={
+          headerRows +
+          count +
+          (canEdit ? 1 : 0) +
+          (totalKeys.length > 0 ? 1 : 0)
+        }
         aria-readonly={!canEdit || undefined}
         onKeyDown={onGridKey}
         onPaste={(event) => {
-          if (!canEdit || editing) return;
+          // A paste starts at a cell: never at a row's actions or a header.
+          if (!canEdit || editing || active.row < 0 || active.col < 0) return;
           const text = event.clipboardData.getData("text/plain");
           if (!text) return;
           event.preventDefault();
@@ -698,7 +772,8 @@ export function SheetGridView({
                 <th
                   key={`${band.label ?? "none"}-${index}`}
                   colSpan={band.span}
-                  role="presentation"
+                  role="columnheader"
+                  scope="colgroup"
                   className="text-muted-foreground h-8 border-b border-l px-3 text-left text-xs font-semibold"
                 >
                   {band.label}
@@ -866,33 +941,55 @@ export function SheetGridView({
           </tfoot>
         ) : null}
       </table>
-      {picking && pickingColumn?.linkModuleId && pickingRow ? (
+      {picking && pickingColumn && pickingRow ? (
         <Suspense fallback={null}>
-          <SheetLinkPicker
-            columnName={pickingColumn.name}
-            moduleId={pickingColumn.linkModuleId}
-            hasLink={Boolean(
-              pickingRow.cells[pickingColumn.key] &&
-              "link" in (pickingRow.cells[pickingColumn.key] ?? {}),
-            )}
-            onClose={() => {
-              const col = columns.findIndex((c) => c.key === pickingColumn.key);
+          {(() => {
+            const col = columns.findIndex((c) => c.key === pickingColumn.key);
+            const index = picking.index;
+            const cell = pickingRow.cells[pickingColumn.key];
+            const close = () => {
               setPicking(null);
-              focusCell(picking.index, col);
-            }}
-            onPick={(recordId) => {
-              const col = columns.findIndex((c) => c.key === pickingColumn.key);
-              const index = picking.index;
+              focusCell(index, col);
+            };
+            const save = (value: unknown) => {
               setPicking(null);
               void onSave(
                 pickingRow,
                 pickingColumn,
-                recordId ? { record_id: recordId } : null,
-                pickingRow.cells[pickingColumn.key] ?? { value: null },
+                value,
+                cell ?? { value: null },
                 "",
               ).then(() => focusCell(index, col));
-            }}
-          />
+            };
+            if (picking.kind === "person")
+              return (
+                <SheetPersonPicker
+                  sheetId={sheet.id}
+                  columnName={pickingColumn.name}
+                  hasPerson={Boolean(cell && "value" in cell && cell.value)}
+                  onClose={close}
+                  onPick={(personId) => save(personId)}
+                />
+              );
+            return pickingColumn.linkModuleId ? (
+              <SheetLinkPicker
+                columnName={pickingColumn.name}
+                moduleId={pickingColumn.linkModuleId}
+                current={
+                  cell && "link" in cell
+                    ? {
+                        recordId: cell.link.record_id,
+                        label: cell.link.label,
+                      }
+                    : null
+                }
+                onClose={close}
+                onPick={(recordId) =>
+                  save(recordId ? { record_id: recordId } : null)
+                }
+              />
+            ) : null;
+          })()}
         </Suspense>
       ) : null}
     </div>

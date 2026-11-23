@@ -131,6 +131,18 @@ test("a cell reads as the viewer may see it", () => {
       state,
       words,
     });
+  expect(
+    cellView(column("c3"), { value: null, error: "division_by_zero" }, format),
+  ).toEqual({ kind: "error", words: "Division by zero" });
+  expect(
+    cellView(column("c3"), { value: null, error: "overflow" }, format),
+  ).toEqual({ kind: "error", words: "Number too large" });
+  expect(
+    cellView(column("c3"), { value: null, error: "unknown_code" }, format),
+  ).toEqual({ kind: "error", words: "Cannot be calculated" });
+  expect(
+    cellView(column("c2"), { state: "multiple_matches", count: 3 }, format),
+  ).toEqual({ kind: "state", state: "multiple_matches", words: "3 matches" });
   expect(cellView(column("c3"), { value: 1234 }, format)).toEqual({
     kind: "value",
     text: "1,234",
@@ -193,6 +205,12 @@ test("a sort reads as the column and its direction", () => {
   expect(sortLabel(column("c3"), "asc")).toBe("Quiz 1, low to high");
   expect(sortLabel(column("c1"), "asc")).toBe("Student, A to Z");
   expect(sortLabel(column("c6"), "desc")).toBe("Remarks, Z to A");
+  expect(
+    sortLabel({ ...column("c6"), type: "boolean", numeric: false }, "asc"),
+  ).toBe("Remarks, No first");
+  expect(
+    sortLabel({ ...column("c6"), type: "boolean", numeric: false }, "desc"),
+  ).toBe("Remarks, Yes first");
 });
 
 test("the grid asks only for the pages of 200 rows that it shows", () => {

@@ -40,11 +40,13 @@ import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { subscribeWorkspaceInvalidations } from "@/components/systems/shared/adapters/invalidation-events";
 import { ApiError } from "@/lib/api";
 import { apiErrorReference } from "@/lib/api-errors";
+import { cn } from "@/lib/utils";
 
 import {
   worksheetDetailOptions,
   worksheetKeys,
   worksheetPlaceOptions,
+  worksheetSharesOptions,
 } from "../adapters/worksheet-queries";
 import {
   createWorksheetRow,
@@ -58,11 +60,16 @@ import {
   type WorksheetRowSort,
   type WorksheetTotal,
 } from "../adapters/worksheets-api";
+import { SheetGridView, type SheetConflict } from "./sheet-grid-view";
+import type { SaveResult } from "./sheet-row-form";
+import { SheetHeaderActions } from "./sheet-header-actions";
+import { useSheetOrganizationName } from "./use-sheet-organization";
 import {
-  SheetGridView,
-  type SaveOutcome,
-  type SheetConflict,
-} from "./sheet-grid-view";
+  openLine,
+  sharedWithWords,
+  sheetRole,
+  type SheetRole,
+} from "../domain/sheet-share";
 // The editing dialogs load on first use, apart from the grid.
 const SheetRowForm = lazy(() =>
   import("./sheet-row-form").then((module) => ({
@@ -72,6 +79,7 @@ const SheetRowForm = lazy(() =>
 const SheetDeleteRowDialog = lazy(() => import("./sheet-delete-row-dialog"));
 import {
   cellConflict,
+  conflictWords,
   inputValue,
   storeRow,
   emptyRowStore,
@@ -86,10 +94,9 @@ import {
   type RowStore,
 } from "../domain/sheet-grid";
 
-// A sheet's own page (docs/specs/sheets.md P3, P6, F7, N4, N6 to N8,
-// Screens 3 and 9): a header over one grid pane that scrolls alone. This
-// unit reads; editing, sharing, export and import arrive in later units, so
-// their actions do not show yet.
+// A sheet's own page (docs/specs/sheets.md P3, P6, F7, N4, N6 to N8, L2,
+// L7, L10; Screens 3, 5 and 9): a header with the actions the viewer may use
+// over one grid pane that scrolls alone. Import and Make a copy arrive in F7.
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SEARCH_DELAY_MS = 300;
@@ -120,7 +127,7 @@ function SheetNotFound() {
         Sheet not found
       </h1>
       <p className="text-muted-foreground text-sm">
-        This sheet does not exist, or it is not shared with you.
+        This sheet does not exist, or you cannot open it.
       </p>
       <p>
         <Link
@@ -150,22 +157,48 @@ function SheetLoading() {
   );
 }
 
-function AccessChip({ sheet }: { sheet: WorksheetDetail }) {
+function AccessChip({
+  sheet,
+  role,
+}: {
+  sheet: WorksheetDetail;
+  role: SheetRole;
+}) {
+  // Only the owner of a sheet that is not open reads its shares (route 16).
+  const shares = useQuery({
+    ...worksheetSharesOptions(sheet.id),
+    enabled: role === "owner" && sheet.shared === true,
+  });
   const [Icon, words] =
-    sheet.state === "open"
+    role === "open"
       ? [Lock, "Read-only"]
-      : sheet.myLevel === "owner"
+      : role === "owner"
         ? sheet.shared
-          ? [Users, "Shared"]
+          ? [Users, shares.data ? sharedWithWords(shares.data) : "Shared"]
           : [Lock, "Only you"]
-        : sheet.myLevel === "edit"
+        : role === "edit"
           ? [Pencil, `You can edit · shared by ${sheet.owner.displayName}`]
           : [Eye, `You can view · shared by ${sheet.owner.displayName}`];
   return (
-    <span className="bg-muted text-muted-foreground inline-flex min-h-6 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium">
+    <span
+      className={cn(
+        "inline-flex min-h-6 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium",
+        role === "open"
+          ? "bg-warn-tint text-warn-text"
+          : "bg-muted text-muted-foreground",
+      )}
+    >
       <Icon aria-hidden="true" className="size-3.5 shrink-0" />
       <span>{words}</span>
     </span>
+  );
+}
+
+/** Why an open sheet is read-only (L10), directly under its title. */
+function OpenLine({ sheet }: { sheet: WorksheetDetail }) {
+  const organization = useSheetOrganizationName();
+  return (
+    <p className="mt-1.5 max-w-3xl text-sm">{openLine(sheet, organization)}</p>
   );
 }
 
@@ -230,7 +263,7 @@ function SortControl({
       <DropdownMenuContent align="start" className="max-h-80 overflow-y-auto">
         {sort ? (
           <DropdownMenuItem onClick={() => onSort(null)}>
-            Saved order
+            Sheet order
           </DropdownMenuItem>
         ) : null}
         {choices.flatMap((column) =>
@@ -286,6 +319,7 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
     index: number;
   } | null>(null);
   const [formRow, setFormRow] = useState<number | null>(null);
+  const markGone = useCallback(() => setGone(true), []);
   // A saved column list rereads the rows: new columns have cells.
   const seenRevision = useRef(sheet.revision);
   useEffect(() => {
@@ -294,12 +328,22 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
     setGeneration((value) => value + 1);
   }, [sheet.revision]);
 
-  /** Saves cells of one row (route 12); `expected` is what the person saw. */
+  /**
+   * Saves cells of one row (route 12); `expected` is what the person saw.
+   * The grid shows a refusal over itself; the row form shows its own.
+   */
   const saveCells = async (
     row: WorksheetRow,
     cells: Record<string, WorksheetCellChange>,
-    conflictOf: { key: string; columnName: string; draft: string },
-  ): Promise<SaveOutcome> => {
+    conflictOf: {
+      key: string;
+      columnName: string;
+      draft: string;
+      /** The form's text per column, for the column the conflict names. */
+      drafts?: Record<string, string>;
+    },
+    from: "grid" | "form" = "grid",
+  ): Promise<SaveResult> => {
     sequence.current += 1;
     const asked = sequence.current;
     setSavingCount((value) => value + 1);
@@ -308,27 +352,52 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
       setStore((current) => storeRow(current, saved, asked));
       setSaveError(null);
       setConflict((current) => (current?.rowId === row.id ? null : current));
-      return "saved";
+      return { outcome: "saved" };
     } catch (error) {
       const found = cellConflict(error);
       if (found) {
         setStore((current) => storeRow(current, found.current, asked));
-        setConflict({ rowId: row.id, ...conflictOf });
-        return "conflict";
+        // The column the person changed that someone else changed too.
+        const key =
+          Object.keys(cells).find((item) => found.keys.includes(item)) ??
+          conflictOf.key;
+        const column = columns.find((item) => item.key === key);
+        const named = {
+          key,
+          columnName: column?.name ?? conflictOf.columnName,
+          draft: conflictOf.drafts?.[key] ?? conflictOf.draft,
+          changedBy: found.changedBy,
+        };
+        setConflict({ rowId: row.id, ...named });
+        return {
+          outcome: "conflict",
+          current: found.current,
+          line: `${conflictWords(found.changedBy)} It now shows the newer values. Your ${named.columnName} (${named.draft}) was not saved.`,
+        };
       }
       if (isNotFound(error)) {
         setGone(true);
-        return "refused";
+        return { outcome: "refused", message: "" };
       }
-      setSaveError(
-        `${conflictOf.columnName}: ${
-          error instanceof ApiError &&
-          (error.status === 403 || error.status === 422)
-            ? error.message
-            : "The change could not be saved. Try again."
-        }`,
-      );
-      return "refused";
+      const detailKey =
+        error instanceof ApiError &&
+        typeof error.details === "object" &&
+        error.details !== null &&
+        "key" in error.details &&
+        typeof error.details.key === "string"
+          ? error.details.key
+          : null;
+      const columnName =
+        columns.find((item) => item.key === detailKey)?.name ??
+        conflictOf.columnName;
+      const message = `${columnName}: ${
+        error instanceof ApiError &&
+        (error.status === 403 || error.status === 422)
+          ? error.message
+          : "The change could not be saved. Try again."
+      }`;
+      if (from === "grid") setSaveError(message);
+      return { outcome: "refused", message };
     } finally {
       setSavingCount((value) => value - 1);
     }
@@ -345,19 +414,23 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
       row,
       { [column.key]: { value, expected } },
       { key: column.key, columnName: column.name, draft },
-    );
+    ).then((result) => result.outcome);
 
-  const saveRow = async (cells: Record<string, WorksheetCellChange>) => {
+  const saveRow = async (
+    cells: Record<string, WorksheetCellChange>,
+    drafts: Record<string, string>,
+  ): Promise<SaveResult> => {
     const row = formRow === null ? undefined : rowAt(store, formRow);
     const key = Object.keys(cells)[0];
     const column = columns.find((item) => item.key === key);
-    if (!row || !key || !column) return false;
-    const outcome = await saveCells(row, cells, {
-      key,
-      columnName: column.name,
-      draft: String(cells[key]?.value ?? ""),
-    });
-    return outcome === "saved";
+    if (!row || !key || !column)
+      return { outcome: "refused", message: "The row could not be saved." };
+    return saveCells(
+      row,
+      cells,
+      { key, columnName: column.name, draft: drafts[key] ?? "", drafts },
+      "form",
+    );
   };
 
   const addRow = async () => {
@@ -409,7 +482,7 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
       const first = Object.keys(cells)[0];
       const column = columns.find((item) => item.key === first);
       if (!first || !column) continue;
-      const outcome = await saveCells(row, cells, {
+      const { outcome } = await saveCells(row, cells, {
         key: first,
         columnName: column.name,
         draft: line.join(" "),
@@ -538,7 +611,8 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
 
   if (gone) return <SheetNotFound />;
   const searching = search.length > 0;
-  const canEdit = sheet.state !== "open" && sheet.myLevel !== "view";
+  const role = sheetRole(sheet);
+  const canEdit = role === "owner" || role === "edit";
   // Route 6 takes every column back; a masked one cannot be sent (D14 S1).
   const canChangeColumns =
     canEdit && !sheet.structure.columns.some((column) => "state" in column);
@@ -553,11 +627,17 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
             >
               {sheet.title}
             </h1>
-            <AccessChip sheet={sheet} />
+            <AccessChip sheet={sheet} role={role} />
           </div>
           <SheetMeta sheet={sheet} />
+          {role === "open" ? <OpenLine sheet={sheet} /> : null}
         </div>
-        {/* Import, Export, Share and More arrive with their units. */}
+        <SheetHeaderActions
+          sheet={sheet}
+          role={role}
+          onFailure={setSaveError}
+          onGone={markGone}
+        />
       </header>
       <div
         role="toolbar"
@@ -680,7 +760,12 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
             columns={columns}
             format={format}
             readOnly={!canEdit}
+            sheetId={sheet.id}
             onSave={saveRow}
+            onDelete={(row, index) => {
+              setFormRow(null);
+              setDeleting({ row, index });
+            }}
             onMove={(index) => {
               if (rowAt(store, index)) setFormRow(index);
             }}

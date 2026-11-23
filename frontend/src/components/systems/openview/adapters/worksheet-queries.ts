@@ -7,6 +7,7 @@ import {
   listModuleWorksheets,
   listMyWorksheets,
   listRecordWorksheets,
+  listWorksheetShares,
   type WorksheetDetail,
 } from "./worksheets-api";
 
@@ -29,6 +30,8 @@ export const worksheetKeys = {
   onModule: (moduleId: string) =>
     ["openview", "worksheets", "module", moduleId] as const,
   detail: (id: string) => ["openview", "worksheets", "detail", id] as const,
+  /** The owner's shares (route 16): the chip and the Share dialog. */
+  shares: (id: string) => ["openview", "worksheets", "shares", id] as const,
   /** Where a sheet sits; the header's breadcrumb reads it (no fetch). */
   place: (id: string) => ["openview", "worksheets", "place", id] as const,
 };
@@ -58,6 +61,13 @@ export const worksheetDetailOptions = (id: string) =>
   queryOptions({
     queryKey: worksheetKeys.detail(id),
     queryFn: ({ signal }) => getWorksheet(id, signal),
+  });
+
+/** The owner's shares of a sheet that is not open (route 16). */
+export const worksheetSharesOptions = (id: string) =>
+  queryOptions({
+    queryKey: worksheetKeys.shares(id),
+    queryFn: ({ signal }) => listWorksheetShares(id, signal),
   });
 
 /** The department, module and record a sheet's breadcrumb names. */

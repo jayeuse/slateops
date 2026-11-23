@@ -306,6 +306,12 @@
     "path": "/api/users/{param}"
   },
   {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "getWorksheetImpact",
+    "method": "GET",
+    "path": "/api/users/{param}/worksheet-impact"
+  },
+  {
     "adapter": "frontend/src/components/systems/boards/adapters/board-calendar-sources-api.ts",
     "function": "addBoardCalendarSource",
     "method": "POST",
@@ -2398,6 +2404,66 @@
     "function": "updateWorksheetCells",
     "method": "PATCH",
     "path": "/api/worksheets/{param}/rows/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "renameWorksheet",
+    "method": "PATCH",
+    "path": "/api/worksheets/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "deleteWorksheet",
+    "method": "DELETE",
+    "path": "/api/worksheets/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "listWorksheetHistory",
+    "method": "GET",
+    "path": "/api/worksheets/{param}/history"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "listWorksheetShares",
+    "method": "GET",
+    "path": "/api/worksheets/{param}/shares"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "shareWorksheet",
+    "method": "POST",
+    "path": "/api/worksheets/{param}/shares"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "changeWorksheetShare",
+    "method": "PATCH",
+    "path": "/api/worksheets/{param}/shares/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "removeWorksheetShare",
+    "method": "DELETE",
+    "path": "/api/worksheets/{param}/shares/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "searchWorksheetShareCandidates",
+    "method": "GET",
+    "path": "/api/worksheets/{param}/share-candidates"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "searchWorksheetPeople",
+    "method": "GET",
+    "path": "/api/worksheets/{param}/people"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "exportWorksheet",
+    "method": "POST",
+    "path": "/api/worksheets/{param}/export"
   },
   {
     "adapter": "frontend/src/components/systems/platform/adapters/account-api.ts",

@@ -132,7 +132,7 @@ test("a refused create keeps the dialog and the name", async ({ page }) => {
   await dialog.getByRole("button", { name: "Create sheet" }).click();
 
   await expect(dialog).toContainText(
-    "This record can no longer hold a new sheet. It was deleted or its module was closed.",
+    "This record was deleted or its module was closed, so it cannot hold a new sheet.",
   );
   await expect(name).toHaveValue("Class 4D");
   await expect(page).toHaveURL(new RegExp(`record=${anaCruz}`));

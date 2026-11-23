@@ -1,6 +1,19 @@
 "use client";
 
-import { Eye, Lock, Pencil, Users } from "lucide-react";
+import type { ReactNode } from "react";
+import Link from "next/link";
+import type { Route } from "next";
+import { Eye, Lock, Pencil, Sheet as SheetIcon, Users } from "lucide-react";
+
+import {
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
+import { cn } from "@/lib/utils";
 
 import {
   formatWorkspaceDate,
@@ -115,4 +128,136 @@ export function sheetDetails(
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+/** A sheet's name with its mark; a link to the sheet when it can open. */
+export function SheetName({
+  sheet,
+  link,
+  guarded = false,
+}: {
+  sheet: WorksheetSummary;
+  link: boolean;
+  /** Through the navigation guard, where a page can hold a draft. */
+  guarded?: boolean;
+}) {
+  const content = (
+    <>
+      <SheetIcon
+        aria-hidden="true"
+        className="text-muted-foreground size-4 shrink-0"
+      />
+      <span className="truncate">{sheet.title}</span>
+    </>
+  );
+  const className =
+    "inline-flex max-w-full min-w-0 items-center gap-2.5 font-medium";
+  if (!link) return <span className={className}>{content}</span>;
+  const linkClass = cn(
+    className,
+    "focus-visible:outline-ring rounded-sm outline-offset-2 after:absolute after:inset-0 focus-visible:outline-2",
+  );
+  const href = sheetHref(sheet.id) as Route;
+  return guarded ? (
+    <GuardedWorkspaceLink href={href} className={linkClass}>
+      {content}
+    </GuardedWorkspaceLink>
+  ) : (
+    <Link href={href} className={linkClass}>
+      {content}
+    </Link>
+  );
+}
+
+/** One table of sheets (Screens 7): a fixed header and one row per sheet. */
+export function SheetsTable({
+  label,
+  columns,
+  empty,
+  children,
+}: {
+  label: string;
+  columns: readonly (readonly [string, string])[];
+  empty: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <table
+      aria-label={label}
+      className="w-full table-fixed caption-bottom text-sm"
+    >
+      <colgroup>
+        {columns.map(([name, width]) => (
+          <col key={name} className={width} />
+        ))}
+      </colgroup>
+      <TableHeader className="bg-card sticky top-0 z-[1]">
+        <TableRow className="hover:bg-transparent">
+          {columns.map(([name]) => (
+            <TableHead
+              key={name}
+              className="text-muted-foreground h-9 px-4 text-xs"
+            >
+              {name === "Actions" ? (
+                <span className="sr-only">Actions</span>
+              ) : (
+                name
+              )}
+            </TableHead>
+          ))}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {empty ? (
+          <TableRow className="hover:bg-transparent">
+            <TableCell
+              colSpan={columns.length}
+              className="text-muted-foreground h-14 px-4 whitespace-normal"
+            >
+              {empty}
+            </TableCell>
+          </TableRow>
+        ) : (
+          children
+        )}
+      </TableBody>
+    </table>
+  );
+}
+
+/** A sheet as a table row: name, owner, access, rows and last change. */
+export function SheetTableRow({
+  sheet,
+  region,
+  anchor,
+  guarded = false,
+}: {
+  sheet: WorksheetSummary;
+  region: WorkspaceRegion | undefined;
+  /** My sheets names where each sheet sits; a module's own list does not. */
+  anchor: boolean;
+  guarded?: boolean;
+}) {
+  return (
+    <TableRow className="hover:bg-tint-hover relative h-11">
+      <TableCell className="truncate px-4">
+        <SheetName sheet={sheet} link guarded={guarded} />
+      </TableCell>
+      {anchor ? (
+        <TableCell className="truncate px-4">
+          {sheetAnchorWords(sheet)}
+        </TableCell>
+      ) : null}
+      <TableCell className="truncate px-4">{sheet.owner.displayName}</TableCell>
+      <TableCell className="px-4">
+        <SheetAccess sheet={sheet} />
+      </TableCell>
+      <TableCell className="px-4 tabular-nums">{sheet.liveRowCount}</TableCell>
+      <TableCell className="px-4 tabular-nums">
+        <time dateTime={sheet.updatedAt}>
+          {sheetShortDate(sheet.updatedAt, region)}
+        </time>
+      </TableCell>
+    </TableRow>
+  );
 }

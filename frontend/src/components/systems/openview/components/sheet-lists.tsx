@@ -43,7 +43,13 @@ import {
   createWorksheet,
   type WorksheetSummary,
 } from "../adapters/worksheets-api";
-import { SheetAccess, sheetDetails, sheetHref } from "./sheet-display";
+import {
+  SheetAccess,
+  SheetTableRow,
+  SheetsTable,
+  sheetDetails,
+  sheetHref,
+} from "./sheet-display";
 
 // The sheets of one record (its Sheets tab) or one module (its Sheets view),
 // with New sheet: docs/specs/sheets.md P2, C1, C3 and Screens 1 and 2.
@@ -59,11 +65,17 @@ export type SheetAnchor =
 
 const TITLE_MAX = 200;
 
-function createRefusal(error: unknown): string {
+function createRefusal(error: unknown, anchor: SheetAnchor): string {
+  const onModule = anchor.kind === "module";
   if (error instanceof ApiError) {
     if (error.status === 409)
-      return "This record can no longer hold a new sheet. It was deleted or its module was closed.";
-    if (error.status === 404) return "This record is no longer available.";
+      return onModule
+        ? "This module was closed, so it cannot hold a new sheet."
+        : "This record was deleted or its module was closed, so it cannot hold a new sheet.";
+    if (error.status === 404)
+      return onModule
+        ? "This module is no longer available."
+        : "This record is no longer available.";
     if (error.status === 403) return "Guests cannot create sheets.";
     if (error.status === 422) return "Check the name and try again.";
   }
@@ -169,7 +181,7 @@ export function NewSheetDialog({
               variant="destructive"
               reference={apiErrorReference(create.error)}
             >
-              <p>{createRefusal(create.error)}</p>
+              <p>{createRefusal(create.error, anchor)}</p>
             </Alert>
           ) : null}
           <DialogFrameFooter>
@@ -247,9 +259,12 @@ function SheetSection({
   canCreate,
   anchor,
   empty,
+  table = false,
 }: {
   heading: string;
   headingLevel: "h2" | "h3";
+  /** From 768px, the same table as My sheets in a card that scrolls alone. */
+  table?: boolean;
   read: ReturnType<
     typeof useQuery<{ items: WorksheetSummary[]; total: number }>
   >;
@@ -258,6 +273,7 @@ function SheetSection({
   empty: { title: string; description: string };
 }) {
   const id = useId();
+  const region = useWorkspaceDisplayRegion();
   const denied = useOpenViewAccessDenied();
   const [creating, setCreating] = useState(false);
   const Heading = headingLevel;
@@ -293,16 +309,41 @@ function SheetSection({
         loading={read.isPending}
         label="Loading sheets…"
         skeleton={<SheetListSkeleton />}
+        className={table ? "access-fill" : undefined}
       >
         {read.data && read.data.items.length > 0 ? (
-          <ul
-            aria-labelledby={id}
-            className="divide-border divide-y rounded-md border"
-          >
-            {read.data.items.map((sheet) => (
-              <SheetRow key={sheet.id} sheet={sheet} />
-            ))}
-          </ul>
+          <>
+            {table ? (
+              <div className="bg-card hidden min-h-0 flex-1 overflow-auto overscroll-contain rounded-md border md:block">
+                <SheetsTable
+                  label={heading}
+                  columns={moduleColumns}
+                  empty={null}
+                >
+                  {read.data.items.map((sheet) => (
+                    <SheetTableRow
+                      key={sheet.id}
+                      sheet={sheet}
+                      region={region}
+                      anchor={false}
+                      guarded
+                    />
+                  ))}
+                </SheetsTable>
+              </div>
+            ) : null}
+            <ul
+              aria-labelledby={id}
+              className={cn(
+                "divide-border divide-y rounded-md border",
+                table && "md:hidden",
+              )}
+            >
+              {read.data.items.map((sheet) => (
+                <SheetRow key={sheet.id} sheet={sheet} />
+              ))}
+            </ul>
+          </>
         ) : (
           <ul aria-labelledby={id} className="rounded-md border border-dashed">
             <li className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2.5 gap-y-0.5 px-3 py-3">
@@ -320,7 +361,10 @@ function SheetSection({
       </LoadingRegion>
     );
   return (
-    <section aria-labelledby={id} className="flex min-w-0 flex-col gap-2">
+    <section
+      aria-labelledby={id}
+      className={cn("flex min-w-0 flex-col gap-2", table && "access-fill")}
+    >
       <div className="flex min-h-11 items-center gap-2 xl:min-h-8">
         <Heading id={id} className="text-sm font-semibold">
           {heading}
@@ -394,6 +438,14 @@ export function RecordSheetsPanel({
   );
 }
 
+const moduleColumns = [
+  ["Sheet", "w-[34%]"],
+  ["Owner", "w-[22%]"],
+  ["Your access", "w-[18%]"],
+  ["Rows", "w-[10%]"],
+  ["Last change", "w-[16%]"],
+] as const;
+
 /** The module page's Sheets view (P2, SH-67). */
 export function ModuleSheets({
   anchor,
@@ -404,13 +456,16 @@ export function ModuleSheets({
 }) {
   const read = useQuery(moduleWorksheetsOptions(anchor.moduleId));
   return (
-    <div className="max-w-3xl min-w-0">
+    // On the module page's fill chain (OD6): from 1280px the table card
+    // takes the height that is left and scrolls alone.
+    <div className="access-fill flex min-h-0 min-w-0 flex-col max-md:max-w-3xl">
       <SheetSection
         heading="Module sheets"
         headingLevel="h2"
         read={read}
         canCreate={canCreate}
         anchor={anchor}
+        table
         empty={{
           title: "No module sheets yet",
           description: "A new sheet is visible only to you until you share it.",

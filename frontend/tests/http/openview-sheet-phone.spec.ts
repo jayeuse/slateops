@@ -22,6 +22,10 @@ const names = ["Ana Cruz", "Bea Santos", "Carlo Reyes"];
 const teacherId = "00000000-0000-4000-8000-0000000009b5";
 const titleField = "00000000-0000-4000-8000-0000000009b6";
 const alice = "00000000-0000-4000-8000-0000000009b7";
+const mara = {
+  id: "00000000-0000-4000-8000-0000000009b8",
+  display_name: "Mara Diaz",
+};
 
 const reader = {
   id: sheetPeople.viewer.id,
@@ -35,6 +39,9 @@ async function openSheet(page: Page, level: "owner" | "view") {
   await signedInAs(page, reader);
   await page.route(`**/api/users/${teacherId}/card`, (route) =>
     route.fulfill({ json: { ...memberCard, display_name: "Rosa Lim" } }),
+  );
+  await page.route(`**/api/users/${mara.id}/card`, (route) =>
+    route.fulfill({ json: { ...memberCard, display_name: mara.display_name } }),
   );
   const summary = wireSheetSummary(sheetId, "Class roster", {
     recordId: "00000000-0000-4000-8000-0000000009b4",
@@ -100,6 +107,7 @@ async function openSheet(page: Page, level: "owner" | "view") {
     moduleFields: {
       [students]: [{ id: titleField, name: "Name", type: "text" }],
     },
+    people: [mara],
   });
   await page.goto(`/openview?sheet=${sheetId}`);
   const grid = page.getByRole("grid", { name: "Class roster" });
@@ -122,9 +130,13 @@ test("a tapped row opens as a form; Save row sends only the changed cells", asyn
   await expect(quiz).toHaveValue("11");
   const box = await quiz.boundingBox();
   expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
-  await expect(
-    form.getByRole("textbox", { name: "Student number" }),
-  ).toHaveAttribute("readonly", "");
+  const lookup = form.getByRole("textbox", { name: "Student number" });
+  await expect(lookup).toHaveAttribute("aria-readonly", "true");
+  await expect(lookup).toHaveText("S-2");
+  await expect(form).toContainText("Lookup from Students. Read-only.");
+  const close = form.getByRole("button", { name: "Close", exact: true });
+  const closeBox = await close.boundingBox();
+  expect(closeBox?.height ?? 0).toBeGreaterThanOrEqual(44);
 
   await form.getByRole("button", { name: "Next row" }).click();
   await expect(page.getByRole("dialog", { name: "Carlo Reyes" })).toContainText(
@@ -155,10 +167,17 @@ test("a link field in the row form picks a readable record", async ({
   const { writes, grid } = await openSheet(page, "owner");
   await grid.locator('[data-cell="2:c1"]').tap();
   const form = page.getByRole("dialog", { name: "Carlo Reyes" });
-  await form.getByRole("button", { name: "Student: Carlo Reyes" }).click();
+  // A phone grid shows the name as text; the form carries the way there.
+  await expect(grid.getByRole("link")).toHaveCount(0);
+  await expect(
+    form.getByRole("link", { name: "Open Carlo Reyes's record" }),
+  ).toBeVisible();
+  const field = form.getByRole("button", { name: "Student: Carlo Reyes" });
+  expect((await field.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+  await field.click();
   const picker = page.getByRole("dialog", { name: "Choose Student" });
   await picker.getByRole("searchbox", { name: "Search Students" }).fill("Ali");
-  await picker.getByRole("option", { name: "Alice Reyes" }).click();
+  await picker.getByRole("button", { name: "Alice Reyes" }).click();
   await expect(
     form.getByRole("button", { name: "Student: Alice Reyes" }),
   ).toBeVisible();
@@ -181,14 +200,86 @@ test("a viewer's row form has only Close", async ({ page }) => {
   const { grid } = await openSheet(page, "view");
   await grid.locator('[data-cell="0:c3"]').tap();
   const form = page.getByRole("dialog", { name: "Ana Cruz" });
-  await expect(form.getByRole("button", { name: "Close" })).toBeVisible();
+  // The header's close and the footer's Close.
+  await expect(form.getByRole("button", { name: "Close" })).toHaveCount(2);
   await expect(form.getByRole("button", { name: "Save row" })).toHaveCount(0);
+  await expect(form.getByRole("button", { name: "Delete row" })).toHaveCount(0);
   await expect(form.getByRole("textbox", { name: "Quiz 1" })).toHaveAttribute(
-    "readonly",
-    "",
+    "aria-readonly",
+    "true",
   );
   // A person field names the person, never their id.
-  await expect(form.getByRole("textbox", { name: "Teacher" })).toHaveValue(
+  await expect(form.getByRole("textbox", { name: "Teacher" })).toHaveText(
     "Rosa Lim",
   );
+  // A read-only link field shows the name and the way to the record.
+  await expect(
+    form.getByRole("textbox", { name: "Student", exact: true }),
+  ).toHaveText("Ana Cruz");
+  await expect(
+    form.getByRole("link", { name: "Open Ana Cruz's record" }),
+  ).toBeVisible();
+});
+
+test("the row form reloads on a conflict and keeps a refused value with its reason", async ({
+  page,
+}) => {
+  const { api, writes, grid } = await openSheet(page, "owner");
+  writes.changedBy = mara;
+  api.rows[1].cells.c3 = { value: 7 };
+  await grid.locator('[data-cell="1:c3"]').tap();
+  const form = page.getByRole("dialog", { name: "Bea Santos" });
+  const quiz = form.getByRole("textbox", { name: "Quiz 1" });
+  await quiz.fill("19");
+  await form.getByRole("button", { name: "Save row" }).click();
+  await expect(
+    form.getByRole("status").filter({ hasText: "changed this row" }),
+  ).toContainText(
+    "Mara Diaz changed this row while you were editing it. It now shows the newer values. Your Quiz 1 (19) was not saved.",
+  );
+  await expect(quiz).toHaveValue("7");
+
+  writes.refuseNextPatch = {
+    status: 422,
+    code: "cell_invalid",
+    message: "Enter a whole number",
+  };
+  await quiz.fill("1.5");
+  await form.getByRole("button", { name: "Save row" }).click();
+  await expect(form.getByRole("alert")).toHaveText(
+    "Quiz 1: Enter a whole number",
+  );
+  await expect(quiz).toHaveValue("1.5");
+  await expect(form).toBeVisible();
+});
+
+test("an editor picks a person and deletes a row from the row form", async ({
+  page,
+}) => {
+  const { api, writes, grid } = await openSheet(page, "owner");
+  await grid.locator('[data-cell="0:c3"]').tap();
+  const form = page.getByRole("dialog", { name: "Ana Cruz" });
+  await form.getByRole("button", { name: "Teacher: Rosa Lim" }).click();
+  const picker = page.getByRole("dialog", { name: "Choose Teacher" });
+  await picker.getByRole("button", { name: "Mara Diaz" }).click();
+  await form.getByRole("button", { name: "Save row" }).click();
+  await expect(form).toHaveCount(0);
+  expect(writes.patches.at(-1)?.cells).toEqual({
+    c5: { value: mara.id, expected: { value: teacherId } },
+  });
+
+  const second = api.rows[1];
+  await grid.locator('[data-cell="1:c3"]').tap();
+  await page
+    .getByRole("dialog", { name: "Bea Santos" })
+    .getByRole("button", { name: "Delete row" })
+    .click();
+  await page
+    .getByRole("alertdialog", { name: "Delete row 2?" })
+    .getByRole("button", { name: "Delete row" })
+    .click();
+  await expect(grid.getByRole("gridcell", { name: "Bea Santos" })).toHaveCount(
+    0,
+  );
+  expect(writes.deletes).toEqual([{ rowId: second.id, ifMatch: second.etag }]);
 });

@@ -20,6 +20,10 @@ const titleField = "00000000-0000-4000-8000-0000000008a4";
 const numberField = "00000000-0000-4000-8000-0000000008a5";
 const teacherId = "00000000-0000-4000-8000-0000000008a6";
 const alice = "00000000-0000-4000-8000-0000000008b1";
+const mara = {
+  id: "00000000-0000-4000-8000-0000000008b2",
+  display_name: "Mara Diaz",
+};
 const studentId = (index: number) =>
   `00000000-0000-4000-8000-${String(880000 + index).padStart(12, "0")}`;
 const names = [
@@ -105,6 +109,9 @@ async function openSheet(page: Page, level: "owner" | "view" = "owner") {
   await page.route(`**/api/users/${teacherId}/card`, (route) =>
     route.fulfill({ json: { ...memberCard, display_name: "Rosa Lim" } }),
   );
+  await page.route(`**/api/users/${mara.id}/card`, (route) =>
+    route.fulfill({ json: { ...memberCard, display_name: mara.display_name } }),
+  );
   const data = sheet(level);
   const api = await installSheetPageApi(page, data);
   const writes = await installSheetEditApi(page, api, {
@@ -122,6 +129,7 @@ async function openSheet(page: Page, level: "owner" | "view" = "owner") {
         { id: numberField, name: "Student number", type: "text" },
       ],
     },
+    people: [mara, { id: teacherId, display_name: "Rosa Lim" }],
   });
   await page.goto(`/openview?sheet=${sheetId}`);
   const grid = page.getByRole("grid", { name: "Class roster" });
@@ -244,10 +252,11 @@ test("rows are added at the end and deleted with their version", async ({
   const deleted = api.rows[0];
   await grid.getByRole("button", { name: "Row 1 actions" }).click();
   await page.getByRole("menuitem", { name: "Delete row" }).click();
-  await page
-    .getByRole("alertdialog", { name: "Delete row 1?" })
-    .getByRole("button", { name: "Delete row" })
-    .click();
+  const confirm = page.getByRole("alertdialog", { name: "Delete row 1?" });
+  await expect(confirm).toContainText(
+    "It leaves this sheet for everyone who can see it. You cannot undo this.",
+  );
+  await confirm.getByRole("button", { name: "Delete row" }).click();
   await expect(grid.getByRole("gridcell", { name: "Ana Cruz" })).toHaveCount(0);
   expect(writes.deletes).toEqual([
     { rowId: deleted.id, ifMatch: deleted.etag },
@@ -340,8 +349,12 @@ test("a link cell offers only records the person can read; a choice cell its cho
   await cell(page, 2, "c1").focus();
   await page.keyboard.press("Enter");
   const picker = page.getByRole("dialog", { name: "Choose Student" });
+  // The record linked now is one step away.
+  await expect(
+    picker.getByRole("link", { name: "Open Carlo Reyes's record" }),
+  ).toBeVisible();
   await picker.getByRole("searchbox", { name: "Search Students" }).fill("Ali");
-  await picker.getByRole("option", { name: "Alice Reyes" }).click();
+  await picker.getByRole("button", { name: "Alice Reyes" }).click();
   await expect(cell(page, 2, "c1")).toHaveText("Alice Reyes");
   expect(writes.patches.at(-1)?.cells).toEqual({
     c1: {
@@ -371,4 +384,111 @@ test("a viewer reads only: no editor, no Add row, no Add column", async ({
   await expect(grid.getByRole("button", { name: "Add row" })).toHaveCount(0);
   await expect(grid.getByRole("button", { name: "Add column" })).toHaveCount(0);
   expect(writes.patches).toEqual([]);
+});
+
+test("a conflict names who changed the row when the editor can see them", async ({
+  page,
+}) => {
+  const { api, writes, grid } = await openSheet(page);
+  writes.changedBy = {
+    id: "00000000-0000-4000-8000-0000000008c9",
+    display_name: "Diego Navarro",
+  };
+  api.rows[1].cells.c3 = { value: 7 };
+  await cell(page, 1, "c3").dblclick();
+  await grid.getByRole("textbox", { name: "Quiz 1, row 2" }).fill("15");
+  await page.keyboard.press("Enter");
+  await expect(
+    grid.getByRole("status").filter({ hasText: "changed this row" }),
+  ).toContainText(
+    "Diego Navarro changed this row while you were editing it. It now shows the newer values. Your Quiz 1 (15) was not saved.",
+  );
+});
+
+test("a person cell takes one of the people the editor can see", async ({
+  page,
+}) => {
+  const { writes, grid } = await openSheet(page);
+  await cell(page, 0, "c6").focus();
+  await page.keyboard.press("Enter");
+  const picker = page.getByRole("dialog", { name: "Choose Teacher" });
+  await picker.getByRole("searchbox", { name: "Search people" }).fill("ma");
+  await picker.getByRole("button", { name: "Mara Diaz" }).click();
+  await expect(cell(page, 0, "c6")).toHaveText("Mara Diaz");
+  expect(writes.patches.at(-1)?.cells).toEqual({
+    c6: { value: mara.id, expected: { value: teacherId } },
+  });
+  await expect(cell(page, 0, "c6")).toBeFocused();
+  await expect(grid).not.toHaveAttribute("aria-readonly", "true");
+});
+
+test("the keyboard reaches a row's actions from its first cell, and the grid counts its header rows", async ({
+  page,
+}) => {
+  const { grid } = await openSheet(page);
+  // One header row, five rows, Add row and the totals row.
+  await expect(grid).toHaveAttribute("aria-rowcount", "8");
+  await expect(grid.getByRole("row").nth(1)).toHaveAttribute(
+    "aria-rowindex",
+    "2",
+  );
+  await cell(page, 0, "c1").focus();
+  await page.keyboard.press("ArrowLeft");
+  const actions = grid.getByRole("button", { name: "Row 1 actions" });
+  await expect(actions).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("menuitem", { name: "Delete row" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(actions).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(cell(page, 0, "c1")).toBeFocused();
+});
+
+test("a viewer opens a linked record with Enter", async ({ page }) => {
+  await openSheet(page, "view");
+  await cell(page, 0, "c1").focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(new RegExp(`record=${studentId(0)}`));
+});
+
+test("a paste lands only on a cell, never from a row's actions", async ({
+  page,
+}) => {
+  const { writes } = await openSheet(page);
+  const paste = (text: string) =>
+    page.evaluate((value) => {
+      const data = new DataTransfer();
+      data.setData("text/plain", value);
+      document.activeElement?.dispatchEvent(
+        new ClipboardEvent("paste", {
+          clipboardData: data,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    }, text);
+  await cell(page, 0, "c1").focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(
+    page.getByRole("button", { name: "Row 1 actions" }),
+  ).toBeFocused();
+  // From the actions, the fourth value would land on Quiz 1 if the paste
+  // started one column to the left of the first cell.
+  await paste("1\t2\t3\t42");
+
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await expect(cell(page, 0, "c3")).toBeFocused();
+  await paste("17");
+  await expect(cell(page, 0, "c3")).toHaveText("17");
+  // Only the paste on Quiz 1 was sent.
+  expect(writes.patches).toEqual([
+    {
+      rowId: wireSheetRow(0, {}).id,
+      cells: { c3: { value: "17", expected: { value: 10 } } },
+    },
+  ]);
 });

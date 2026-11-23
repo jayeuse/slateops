@@ -29,6 +29,8 @@ export type GridColumn = {
   group: string | null;
   /** The module a link column points to; its records events refresh lookups. */
   linkModuleId?: string;
+  /** The link column a lookup reads through. */
+  lookupLinkKey?: string;
   places?: number;
   options?: Record<string, string>;
 };
@@ -59,6 +61,7 @@ export function gridColumns(structure: WorksheetStructure): GridColumn[] {
       group: groups.get(column.key) ?? null,
     };
     if (column.type === "link") view.linkModuleId = column.link.moduleId;
+    if (column.type === "lookup") view.lookupLinkKey = column.lookup.linkKey;
     if (column.type === "decimal") view.places = column.decimal.places;
     if (
       column.type === "computed" &&
@@ -103,7 +106,8 @@ export type CellView =
   | { kind: "value"; text: string }
   | { kind: "link"; label: string; recordId: string }
   | { kind: "unlinked"; text: string }
-  | { kind: "state"; state: WorksheetCellState; words: string };
+  | { kind: "state"; state: WorksheetCellState; words: string }
+  | { kind: "error"; words: string };
 
 function numberText(
   value: unknown,
@@ -172,7 +176,25 @@ export function cellView(
     };
   if ("unlinked" in cell) return { kind: "unlinked", text: cell.unlinked };
   if ("state" in cell)
-    return { kind: "state", state: cell.state, words: STATE_WORDS[cell.state] };
+    return {
+      kind: "state",
+      state: cell.state,
+      words:
+        cell.state === "multiple_matches" && cell.count
+          ? `${cell.count} matches`
+          : STATE_WORDS[cell.state],
+    };
+  // A computed cell that cannot be worked out (D7.2); F6 refines its mark.
+  if ("error" in cell)
+    return {
+      kind: "error",
+      words:
+        cell.error === "division_by_zero"
+          ? "Division by zero"
+          : cell.error === "overflow"
+            ? "Number too large"
+            : "Cannot be calculated",
+    };
   const value = cell.value;
   if (value === null || value === undefined || value === "")
     return { kind: "blank" };
@@ -225,9 +247,13 @@ export function sortLabel(
       ? order === "asc"
         ? "oldest first"
         : "newest first"
-      : order === "asc"
-        ? "A to Z"
-        : "Z to A";
+      : column.type === "boolean"
+        ? order === "asc"
+          ? "No first"
+          : "Yes first"
+        : order === "asc"
+          ? "A to Z"
+          : "Z to A";
   return `${column.name}, ${words}`;
 }
 
@@ -357,6 +383,11 @@ export function editInput(
 
 const conflictSchema = z.object({
   keys: z.array(z.string()),
+  // Who changed the cells, when the editor can see them (F4); else null.
+  changed_by: z
+    .object({ id: z.string(), display_name: z.string() })
+    .nullable()
+    .optional(),
   current: z.object({
     id: z.string(),
     revision: z.number(),
@@ -367,17 +398,25 @@ const conflictSchema = z.object({
 });
 
 /** A 412 `cell_changed`: the cells someone else changed, and the newer row. */
-export function cellConflict(
-  error: unknown,
-): { keys: string[]; current: WorksheetRow } | null {
+export function cellConflict(error: unknown): {
+  keys: string[];
+  current: WorksheetRow;
+  changedBy: string | null;
+} | null {
   if (!(error instanceof ApiError) || error.status !== 412) return null;
   const parsed = conflictSchema.safeParse(error.details);
   return parsed.success
     ? {
         keys: parsed.data.keys,
         current: parsed.data.current as WorksheetRow,
+        changedBy: parsed.data.changed_by?.display_name ?? null,
       }
     : null;
+}
+
+/** The conflict line's first sentence (Screens 3; F4). */
+export function conflictWords(changedBy: string | null): string {
+  return `${changedBy ?? "Someone"} changed this row while you were editing it.`;
 }
 
 /**

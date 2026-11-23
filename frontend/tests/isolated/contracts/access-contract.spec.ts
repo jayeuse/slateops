@@ -57,6 +57,7 @@ import {
   replaceAccessGroupMembers,
   resendAccessInvitation,
   restoreAccessUser,
+  getWorksheetImpact,
   revokeAccessInvitation,
   revokeAccessUserSession,
   revokeAccessUserSessions,
@@ -282,6 +283,7 @@ describeContracts("Access", [
   { name: "resendAccessInvitation", run: () => resendAccessInvitation(userId) },
   { name: "revokeAccessInvitation", run: () => revokeAccessInvitation(userId) },
   { name: "getAccessUserAccess", run: () => getAccessUserAccess(userId) },
+  { name: "getWorksheetImpact", run: () => getWorksheetImpact(userId) },
   {
     name: "listAccessUserSessions",
     run: () => listAccessUserSessions(userId, { limit: 25, offset: 0 }),

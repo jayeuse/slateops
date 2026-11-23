@@ -21,6 +21,7 @@ import { afterAccessUserChange } from "../adapters/access-queries";
 import { peopleErrorMessage, personName, personState } from "../helpers/people";
 import {
   deleteAccessUser,
+  getWorksheetImpact,
   newAccessInvitationLink,
   reconcileAccessInvitation,
   resendAccessInvitation,
@@ -186,6 +187,41 @@ function availableActions(person: AccessUser, self: boolean): AccountAction[] {
     : ["disable", "delete"];
 }
 
+/**
+ * How many of the person's private sheets a disable or a removal opens to
+ * their records' readers (sheets spec L5, SH-15): read when the confirmation
+ * opens, a count only. A failed read shows nothing and never blocks.
+ */
+function useOpeningSheets(
+  userId: string,
+  action: AccountAction | null,
+  opening: number,
+) {
+  const asks = action === "disable" || action === "delete";
+  const [count, setCount] = useState<{ key: string; value: number } | null>(
+    null,
+  );
+  // Each opening of a confirmation reads again.
+  const key = `${userId}:${action ?? ""}:${opening}`;
+  useEffect(() => {
+    if (!asks) return;
+    const controller = new AbortController();
+    getWorksheetImpact(userId, { signal: controller.signal }).then(
+      (value) => setCount({ key, value }),
+      () => undefined,
+    );
+    return () => controller.abort();
+  }, [asks, userId, key]);
+  // A count from an earlier dialog never shows in this one.
+  return asks && count?.key === key ? count.value : 0;
+}
+
+function openingSheetsLine(count: number) {
+  return count === 1
+    ? "1 private sheet will open to everyone who can read its record."
+    : `${count} private sheets will open to everyone who can read their records.`;
+}
+
 /** Sending an invitation is the pending person's next step, so it stays in view. */
 const inviteActions: readonly AccountAction[] = ["reconcile", "resend", "link"];
 
@@ -241,6 +277,8 @@ export function PersonAccount({
   const focusTarget = useRef<FocusTarget | null>(null);
   const actions = availableActions(person, self);
   const copy = action ? actionCopy(action, person) : null;
+  const [opening, setOpening] = useState(0);
+  const openingSheets = useOpeningSheets(person.id, action, opening);
   const state = personState(person, now);
   const invitation = actions.filter((item) => inviteActions.includes(item));
   const lifecycle = actions.filter((item) => !inviteActions.includes(item));
@@ -352,6 +390,7 @@ export function PersonAccount({
   }
 
   function open(item: AccountAction) {
+    setOpening((value) => value + 1);
     focusTarget.current = null;
     setError("");
     setLink(null);
@@ -499,6 +538,9 @@ export function PersonAccount({
                 <AlertDialogDescription>
                   {copy?.description}
                 </AlertDialogDescription>
+                {openingSheets > 0 ? (
+                  <p className="text-sm">{openingSheetsLine(openingSheets)}</p>
+                ) : null}
               </AlertDialogHeader>
               <ActionError
                 message={error}

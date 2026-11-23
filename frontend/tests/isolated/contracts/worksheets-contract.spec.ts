@@ -10,6 +10,16 @@ import {
   restoreWorksheet,
   saveWorksheetStructure,
   updateWorksheetCells,
+  renameWorksheet,
+  deleteWorksheet,
+  listWorksheetHistory,
+  listWorksheetShares,
+  shareWorksheet,
+  changeWorksheetShare,
+  removeWorksheetShare,
+  searchWorksheetShareCandidates,
+  searchWorksheetPeople,
+  exportWorksheet,
 } from "../../../src/components/systems/openview/adapters/worksheets-api";
 import { describeContracts } from "./openapi-contract";
 
@@ -17,9 +27,13 @@ const worksheetId = "00000000-0000-4000-8000-0000000005a1";
 const recordId = "00000000-0000-4000-8000-0000000005a2";
 const moduleId = "00000000-0000-4000-8000-0000000005a3";
 const rowId = "00000000-0000-4000-8000-0000000005a4";
+const shareId = "00000000-0000-4000-8000-0000000005a5";
+const personId = "00000000-0000-4000-8000-0000000005a6";
 
 // My sheets (1), a record's sheets (2), a module's sheets (2a), create (3),
-// one sheet (4), Restore (8) and a page of rows (9), spec D10.
+// one sheet (4), Restore (8), a page of rows (9), and the sheet actions:
+// rename (5), delete (7), history (15), shares (16 to 19), export (20),
+// share candidates (25) and the people list, spec D10.
 describeContracts("OpenView sheets", [
   {
     name: "listMyWorksheets",
@@ -85,5 +99,52 @@ describeContracts("OpenView sheets", [
   {
     name: "restoreWorksheet",
     run: () => restoreWorksheet(worksheetId),
+  },
+  {
+    name: "renameWorksheet",
+    run: () => renameWorksheet(worksheetId, '"s:1"', "Class 1B"),
+  },
+  {
+    name: "deleteWorksheet",
+    run: () => deleteWorksheet(worksheetId, '"s:1"'),
+  },
+  {
+    name: "listWorksheetHistory",
+    run: () => listWorksheetHistory(worksheetId, { offset: 0 }),
+  },
+  {
+    name: "listWorksheetShares",
+    run: () => listWorksheetShares(worksheetId),
+  },
+  {
+    name: "shareWorksheet with a person",
+    run: () =>
+      shareWorksheet(worksheetId, { subject: "user", id: personId }, "edit"),
+  },
+  {
+    name: "shareWorksheet with a group",
+    run: () =>
+      shareWorksheet(worksheetId, { subject: "group", id: personId }, "view"),
+  },
+  {
+    name: "changeWorksheetShare",
+    run: () => changeWorksheetShare(worksheetId, shareId, "view"),
+  },
+  {
+    name: "removeWorksheetShare",
+    run: () => removeWorksheetShare(worksheetId, shareId),
+  },
+  {
+    name: "searchWorksheetShareCandidates",
+    run: () => searchWorksheetShareCandidates(worksheetId, "ber"),
+  },
+  {
+    name: "searchWorksheetPeople",
+    run: () => searchWorksheetPeople(worksheetId, "ber"),
+  },
+  {
+    name: "exportWorksheet",
+    run: () => exportWorksheet(worksheetId, "xlsx"),
+    requestOnly: "The response is the file bytes, not JSON",
   },
 ]);

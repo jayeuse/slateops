@@ -29,7 +29,8 @@ export default function SheetDeleteRowDialog({
       <AlertDialogContent>
         <AlertDialogTitle>Delete row {index + 1}?</AlertDialogTitle>
         <AlertDialogDescription>
-          The row leaves this sheet for everyone who can see it.
+          It leaves this sheet for everyone who can see it. You cannot undo
+          this.
         </AlertDialogDescription>
         <div className="flex justify-end gap-2">
           <AlertDialogCancel

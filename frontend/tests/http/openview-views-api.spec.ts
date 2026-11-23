@@ -5337,6 +5337,7 @@ test("an administrator can preview and confirm deleted-record purging with a fre
     derived_changes: [],
     blockers: [],
     impact_digest: "b".repeat(64),
+    worksheet_count: 2,
   };
   const preview = {
     impact,
@@ -5398,6 +5399,8 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   await expect(impactSummary).toContainText("1 record");
   await expect(impactSummary).toContainText("2 links");
   await expect(impactSummary).toContainText("3 automation history entries");
+  // Sheets on the record go with it: a count, never titles (sheets F2).
+  await expect(details.getByText("2 sheets will be removed.")).toBeVisible();
   await expect(details.getByText(/Last successful backup/)).toHaveText(
     "Last successful backup: No successful backup recorded.",
   );
@@ -5557,6 +5560,8 @@ test("a blocked record purge lists the dependency and hides password confirmatio
   await expect(
     details.getByText("This deletes 1 record forever."),
   ).toBeVisible();
+  // No sheets on the record: no sheet line.
+  await expect(details.getByText(/will be removed\./)).toHaveCount(0);
   await expect(details.getByLabel("Administrator password")).toHaveCount(0);
   await expect(
     details.getByRole("button", { name: "Delete record forever" }),

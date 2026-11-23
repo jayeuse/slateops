@@ -28,6 +28,7 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { cn } from "@/lib/utils";
 
 export type RecordInspectionPageSource = {
   kind: "records";
@@ -261,7 +262,13 @@ export function LiveRecordInspector({
             <div className="shrink-0 border-b px-5 py-3">
               <TabsList
                 aria-label="Record sections"
-                className="max-w-full flex-nowrap justify-start overflow-x-auto overflow-y-hidden"
+                className={cn(
+                  "max-w-full flex-nowrap justify-start overflow-x-auto overflow-y-hidden",
+                  // Five tabs scroll sideways on a phone; the edge fades so
+                  // the strip reads as one that scrolls (OpenView only).
+                  trailingTab &&
+                    "max-md:[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] max-md:pr-8",
+                )}
               >
                 {leadingTab ? (
                   <TabsTrigger value={leadingTab.value} className="shrink-0">

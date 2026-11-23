@@ -1,4 +1,9 @@
-import { expect, expectNoHorizontalScroll, test } from "./helpers/test";
+import {
+  expect,
+  expectNoHorizontalScroll,
+  expectNoPageScroll,
+  test,
+} from "./helpers/test";
 import { installListApi, listIds } from "./helpers/openview-list-api";
 import {
   installSheetsApi,
@@ -39,12 +44,25 @@ test("a reader opens the module's Sheets view and creates a module sheet", async
     "page",
   );
   const list = page.getByRole("region", { name: "Module sheets" });
-  const row = list.getByRole("listitem");
-  await expect(row).toHaveCount(1);
-  await expect(row).toContainText("40 rows · Bernard Ocampo · changed Nov 18");
-  await expect(row).toContainText("View");
+  // From 768px the view reads as the same table as My sheets.
+  const table = list.getByRole("table", { name: "Module sheets" });
+  await expect(table.getByRole("columnheader")).toHaveText([
+    "Sheet",
+    "Owner",
+    "Your access",
+    "Rows",
+    "Last change",
+  ]);
+  const row = table.getByRole("row").nth(1);
+  await expect(row.getByRole("cell")).toHaveText([
+    "Quarterly call list",
+    "Bernard Ocampo",
+    "View",
+    "40",
+    "Nov 18",
+  ]);
   await expect(
-    list.getByRole("link", { name: "Quarterly call list" }),
+    table.getByRole("link", { name: "Quarterly call list" }),
   ).toHaveAttribute("href", `/openview?sheet=${callList}`);
 
   await list.getByRole("button", { name: "New sheet" }).click();
@@ -89,6 +107,38 @@ test("a Sheets address for a module the person cannot read lists no other module
     0,
   );
   await expect(page.getByText("Quarterly call list")).toHaveCount(0);
+});
+
+test("from 1280px a long Sheets view scrolls inside its table card, not the page", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await installListApi(page, { viewer: "reader" });
+  await installSheetsApi(page, {
+    live: Array.from({ length: 40 }, (_, index) =>
+      wireSheetSummary(
+        `00000000-0000-4000-8000-${String(970000 + index).padStart(12, "0")}`,
+        `Visit plan ${index + 1}`,
+        { moduleId: listIds.module, rows: index },
+      ),
+    ),
+  });
+  await page.goto(`${contacts}&tab=sheets`);
+  const table = page.getByRole("table", { name: "Module sheets" });
+  await expect(table.getByRole("row")).toHaveCount(41);
+  await expectNoPageScroll(page);
+  // The card ends inside the window and scrolls its rows itself.
+  const card = await table.evaluate((element) => {
+    const box = element.parentElement;
+    return box
+      ? {
+          bottom: box.getBoundingClientRect().bottom,
+          scrolls: box.scrollHeight > box.clientHeight,
+        }
+      : null;
+  });
+  expect(card?.scrolls).toBe(true);
+  expect(card?.bottom ?? Infinity).toBeLessThanOrEqual(720);
 });
 
 test.describe("on a phone", () => {
