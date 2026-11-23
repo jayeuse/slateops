@@ -104,6 +104,11 @@ class User(BaseModel):
     tokens_valid_after: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Set with an administrator's temporary password; the person's own new password clears
+    # it. While set, a session reaches only identity, password change and sign-out (DEC-0042).
+    password_change_required_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     @validates("email", "username")
     def normalize_profile_field(self, key: str, value: Any) -> Any:

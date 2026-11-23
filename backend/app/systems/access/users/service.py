@@ -166,8 +166,9 @@ def invite_user(
     client: SupabaseAuthClient | None = None,
     org_id: UUID | None = None,
     owner_organization: WorkspaceProfile | None = None,
+    send: invitation_provider.Sender | None = None,
 ) -> User:
-    """Commit local authorization before creating and mailing a provider identity."""
+    """Commit local authorization before creating and mailing (or ``send``-ing) an identity."""
 
     if (actor_id is None) != bootstrap:
         raise InvitationError("Invitation actor is required outside bootstrap")
@@ -218,7 +219,7 @@ def invite_user(
         ).limit(1)) is not None:
             # One pending invitation per person; the message does not reveal the other one.
             raise InvitationConflict("This person cannot be invited right now")
-        if existing is None:
+        if existing is None and send is None:
             email_setup.require_email_configured()  # a new account gets an email (DEC-0041)
         if bootstrap:
             _lock_administrator_changes(db, org_id)
@@ -285,7 +286,7 @@ def invite_user(
             provider_user.app_metadata.get(k) != v for k, v in expected_marker.items()
         ):
             raise InvitationError("Provider invitation does not match")
-        sent = invitation_provider.send_invitation_email(provider, user.email)
+        sent = (send or invitation_provider.send_invitation_email)(provider, user.email)
         if sent.id != provider_user.id:
             raise InvitationError("Provider invitation does not match")
         db.refresh(user, with_for_update=True)

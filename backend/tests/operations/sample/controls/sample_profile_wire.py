@@ -64,6 +64,7 @@ class ProfileWire:
             "sponsor_user_id": self.admin_id if self.role == "guest" else None,
             "expires_at": "2027-01-01T00:00:00Z" if self.role == "guest" else None,
             "invitation_sent_at": None,
+            "password_change_required": False,
             "created_at": STAMP,
             "updated_at": STAMP,
             "deleted_at": None,
@@ -76,6 +77,7 @@ class ProfileWire:
             result.pop("phone")
         account = {key: value for key, value in result.items() if key not in {
             "role", "access", "sponsor_user_id", "expires_at", "invitation_sent_at",
+            "password_change_required",
         }}
         org = {"org_id": self.admin_id, "name": "Example", "slug": "example", "role": self.role}
         result.update(account=account, memberships=[org], pending_invitations=[],

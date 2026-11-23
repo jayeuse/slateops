@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from typing import Annotated, cast
 from uuid import UUID
@@ -53,6 +54,19 @@ _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # Administrator actions hold it shared; changes that can remove an administrator
 # hold it exclusively, so the last-administrator count cannot race.
 ADMINISTRATOR_CHANGE_LOCK = 0x4F53_4144  # "OSAD"
+
+
+# While a person has a temporary password, their session reaches only their identity, the
+# password change, MFA completion and sign-out; the refresh routes admit no identity here
+# (DEC-0042). MFA enrolment and factor removal wait for the new password.
+_PASSWORD_CHANGE_ROUTES = frozenset({
+    ("GET", "/api/auth/me"),
+    ("GET", "/api/auth/session"),
+    ("POST", "/api/auth/password/change"),
+    ("POST", "/api/auth/logout"),
+    ("GET", "/api/auth/mfa"),
+})
+_MFA_VERIFICATION = re.compile(r"/api/auth/mfa/factors/[^/]+/verification")
 
 
 def _note_database_outage(error: Exception) -> None:
@@ -188,9 +202,27 @@ def _resolve_identity(
     cookie_authenticated = cookie_token is not None
     if cookie_authenticated and request.method in _UNSAFE_METHODS:
         _validate_cookie_mutation(request, db, session_id)
+    _require_chosen_password(request, user)
     if isinstance(db.info, dict):
         set_audit_actor(db, user.id)
     return CurrentIdentity(user, session_id, cookie_authenticated, False, claims.assurance_level)
+
+
+def _require_chosen_password(request: Request, user: User) -> None:
+    if user.password_change_required_at is None:
+        return
+    path = request.scope.get("path")
+    if (request.method, path) in _PASSWORD_CHANGE_ROUTES or (
+        request.method == "POST" and _MFA_VERIFICATION.fullmatch(str(path))
+    ):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": "password_change_required",
+            "message": "Choose a new password to continue.",
+        },
+    )
 
 
 def require_allowed_source(

@@ -82,6 +82,10 @@ from app.systems.access.users.acceptance import (
 from app.systems.access.users.account_operations import router as account_operations_router
 from app.systems.access.users.coordination import InvitationConflict, InvitationError
 from app.systems.access.users.email_setup import EmailNotConfigured, email_not_configured
+from app.systems.access.users.invitation_links import (
+    created_invitation_response,
+    invite_with_link,
+)
 from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import Membership, User
 from app.systems.access.users.router import router as users_router
@@ -283,9 +287,13 @@ def invite(
     payload: InvitationCreate,
     admin: Annotated[User, Depends(require_admin)],
     db: Annotated[Session, Depends(get_db)],
-) -> InvitationResponse:
+) -> InvitationResponse | Response:
+    link = None
     try:
-        user = invite_user(db, payload, actor_id=admin.id)
+        if payload.delivery == "link":
+            user, link = invite_with_link(db, payload, actor_id=admin.id)
+        else:
+            user = invite_user(db, payload, actor_id=admin.id)
     except InvitationConflict as error:
         raise HTTPException(
             status_code=409, detail="Email or username is already in use"
@@ -294,7 +302,7 @@ def invite(
         raise HTTPException(status_code=409, detail="Unable to create invitation") from error
     org_id = bound_organization(db)
     membership = db.scalars(select(Membership).filter_by(user_id=user.id, org_id=org_id)).one()
-    return invitation_response(user, membership)
+    return created_invitation_response(invitation_response(user, membership, link=link))
 
 
 @auth_router.post("/invitations/{user_id}/resend", response_model=InvitationResponse)

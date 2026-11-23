@@ -141,8 +141,8 @@ def test_invitation_and_recovery_use_provider_emails_and_backend_admission(
             json={"email": invite_email, "username": f"invited-{uuid4().hex[:16]}"},
         )
         assert invited.status_code == 201
-        assert set(invited.json()) == {"user", "delivery"}
-        assert invited.json()["delivery"] == "email"
+        assert set(invited.json()) == {"user", "delivery", "invitation_url"}
+        assert (invited.json()["delivery"], invited.json()["invitation_url"]) == ("email", None)
         with Session(owner) as db:
             user = db.scalar(select(User).where(User.email == invite_email))
             assert user is not None and user.status == "pending"

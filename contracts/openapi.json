@@ -1711,6 +1711,11 @@
             "title": "Operator",
             "type": "boolean"
           },
+          "password_change_required": {
+            "default": false,
+            "title": "Password Change Required",
+            "type": "boolean"
+          },
           "pending_invitations": {
             "items": {
               "$ref": "#/components/schemas/PendingInvitationResponse"
@@ -11308,6 +11313,15 @@
         "additionalProperties": false,
         "description": "Administrator-selected profile and authorization for a provider email invite.",
         "properties": {
+          "delivery": {
+            "default": "email",
+            "enum": [
+              "email",
+              "link"
+            ],
+            "title": "Delivery",
+            "type": "string"
+          },
           "display_name": {
             "anyOf": [
               {
@@ -11402,10 +11416,22 @@
             "default": "email",
             "enum": [
               "email",
-              "in_app"
+              "in_app",
+              "link"
             ],
             "title": "Delivery",
             "type": "string"
+          },
+          "invitation_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invitation Url"
           },
           "user": {
             "$ref": "#/components/schemas/UserResponse"
@@ -22783,6 +22809,69 @@
         "title": "TemplateResponse",
         "type": "object"
       },
+      "TemporaryPasswordRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          }
+        },
+        "title": "TemporaryPasswordRequest",
+        "type": "object"
+      },
+      "TemporaryPasswordResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "local_revocation": {
+            "const": "committed",
+            "default": "committed",
+            "title": "Local Revocation",
+            "type": "string"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "revoked_sessions": {
+            "minimum": 0.0,
+            "title": "Revoked Sessions",
+            "type": "integer"
+          },
+          "temporary_password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temporary Password"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "user_id",
+          "temporary_password",
+          "revoked_sessions"
+        ],
+        "title": "TemporaryPasswordResponse",
+        "type": "object"
+      },
       "TextFieldConfig": {
         "additionalProperties": false,
         "properties": {
@@ -23647,6 +23736,15 @@
       "UserCreate": {
         "additionalProperties": false,
         "properties": {
+          "delivery": {
+            "default": "email",
+            "enum": [
+              "email",
+              "link"
+            ],
+            "title": "Delivery",
+            "type": "string"
+          },
           "display_name": {
             "anyOf": [
               {
@@ -28481,6 +28579,83 @@
           }
         ],
         "summary": "Revoke Invite",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/invitations/{user_id}/link": {
+      "post": {
+        "description": "A new one-time link that ends the earlier link or email (DEC-0042); no email needed.",
+        "operationId": "new_invite_link_api_auth_invitations__user_id__link_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvitationResendRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "New Invite Link",
         "tags": [
           "auth"
         ]
@@ -63368,6 +63543,83 @@
           }
         ],
         "summary": "Revoke User Session",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/temporary-password": {
+      "post": {
+        "description": "DEC-0042: sessions end and the person must choose a new password at sign-in.",
+        "operationId": "set_user_temporary_password_api_users__user_id__temporary_password_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemporaryPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemporaryPasswordResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set User Temporary Password",
         "tags": [
           "users"
         ]

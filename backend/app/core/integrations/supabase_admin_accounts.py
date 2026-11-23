@@ -5,11 +5,19 @@ account with the password that setup asked for, never an invitation. The account
 ``FIRST_ADMIN_MARKER`` in its ``app_metadata``, so a rerun of the install step finds the
 account that an earlier, interrupted run created and gives it the password again. An
 account with the same email and no marker belongs to someone else and is never changed.
+
+DEC-0042 adds two administrator calls that need no email: an invitation link
+(``generate_invitation_link``) and a temporary password (``set_password_by_administrator``).
 """
+
+import re
+from dataclasses import dataclass, field
+from uuid import UUID
 
 from app.core.integrations.supabase_auth import (
     InvalidProviderCredentials,
     ProviderUser,
+    ProviderUserNotFound,
     SupabaseAuthClient,
     SupabaseAuthUnavailable,
     _error_code,
@@ -20,6 +28,8 @@ from app.core.integrations.supabase_auth import (
 FIRST_ADMIN_MARKER = "slateops_first_administrator"
 _PAGE = 200
 _PAGES = 50
+# GoTrue's token hash: SHA-224 hex, the form the invitation email also carries.
+_INVITATION_HASH = re.compile(r"[0-9a-f]{56}")
 
 
 class ProviderEmailTaken(InvalidProviderCredentials):
@@ -88,3 +98,52 @@ def set_password(client: SupabaseAuthClient, user: ProviderUser, password: str) 
             "Provider account was refused", error_code=_error_code(response)
         )
     return _provider_user(_json_response(response))
+
+
+@dataclass(frozen=True, slots=True)
+class InvitationLink:
+    """A one-time invitation that Auth made without an email (DEC-0042)."""
+
+    user: ProviderUser
+    hashed_token: str = field(repr=False)
+
+
+def generate_invitation_link(client: SupabaseAuthClient, email: str) -> InvitationLink:
+    """A new invitation token for this unconfirmed account; it replaces the earlier one."""
+
+    response = client._request(
+        "POST", "admin/generate_link", admin=True, json={"type": "invite", "email": email}
+    )
+    if response.status_code in {400, 404, 409, 422}:
+        raise InvalidProviderCredentials(
+            "Provider invitation is unavailable", error_code=_error_code(response)
+        )
+    data = _json_response(response)
+    token = data.get("hashed_token")
+    if (
+        data.get("verification_type") != "invite"
+        or not isinstance(token, str)
+        or _INVITATION_HASH.fullmatch(token) is None
+    ):
+        raise SupabaseAuthUnavailable("Supabase Auth returned an invalid invitation link")
+    return InvitationLink(_provider_user(data), token)
+
+
+def set_password_by_administrator(
+    client: SupabaseAuthClient, provider_id: UUID, password: str
+) -> ProviderUser:
+    """An administrator's temporary password for a person (DEC-0042); sends no email."""
+
+    response = client._request(
+        "PUT", f"admin/users/{provider_id}", admin=True, json={"password": password}
+    )
+    if response.status_code == 404:
+        raise ProviderUserNotFound("Provider user does not exist")
+    if response.status_code in {400, 409, 422}:
+        raise InvalidProviderCredentials(
+            "Provider password was refused", error_code=_error_code(response)
+        )
+    user = _provider_user(_json_response(response))
+    if user.id != provider_id:
+        raise SupabaseAuthUnavailable("Supabase Auth returned another user")
+    return user

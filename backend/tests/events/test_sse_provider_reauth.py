@@ -34,7 +34,10 @@ def test_reauth_uses_live_provider_session_not_local_jwt(monkeypatch: pytest.Mon
     client = Mock()
     claims = SimpleNamespace(user_id="provider", session_id="session")
     client.verify_access_token.return_value = claims
-    user = SimpleNamespace(id="local-user", role="admin", supabase_user_id=uuid4())
+    user = SimpleNamespace(
+        id="local-user", role="admin", supabase_user_id=uuid4(),
+        password_change_required_at=None,
+    )
     membership = Membership(user_id=user.id, role="admin")
     db.dirty = set()
     db.scalars.return_value.all.return_value = [membership]
@@ -89,7 +92,10 @@ def test_sse_reauthorization_requires_a_current_verified_factor_with_aal2(
     client.verify_access_token.return_value = SimpleNamespace(
         user_id="provider", session_id="session", assurance_level="aal2"
     )
-    user = SimpleNamespace(id="local-user", role="member", supabase_user_id=uuid4())
+    user = SimpleNamespace(
+        id="local-user", role="member", supabase_user_id=uuid4(),
+        password_change_required_at=None,
+    )
     membership = Membership(user_id=user.id, role="member")
     db.dirty = set()
     monkeypatch.setattr(events_router, "get_supabase_auth_client", lambda: client, raising=False)
@@ -199,7 +205,10 @@ def test_reauthorization_checks_claims_then_uses_a_short_lived_database_session(
         valid_principal = events_router.EventPrincipal("valid-token")
 
         module_id, board_id = uuid4(), uuid4()
-        account = SimpleNamespace(id=uuid4(), role="member", supabase_user_id=uuid4())
+        account = SimpleNamespace(
+            id=uuid4(), role="member", supabase_user_id=uuid4(),
+            password_change_required_at=None,
+        )
         expected = events_router.EventViewer(
             user_id=account.id,
             role="member",
