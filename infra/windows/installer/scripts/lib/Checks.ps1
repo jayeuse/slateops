@@ -574,21 +574,37 @@ namespace SlateOpsSetup
 function Get-LanFact {
     # The up adapter with an IPv4 default gateway (kit Get-LanInfo), with its category and
     # whether it is Wi-Fi (NdisPhysicalMedium 9 = Native 802.11; Assumption, W14 checks it).
-    $configs = @(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter -and ($_.NetAdapter.Status -eq 'Up') })
-    if ($configs.Count -eq 0) { return $null }
-    $config = $configs[0]
-    $ipv4 = @($config.IPv4Address)[0]
-    $connection = Get-NetConnectionProfile -InterfaceIndex $config.InterfaceIndex -ErrorAction SilentlyContinue
+    # W14-D12: Get-NetIPConfiguration throws "Exception setting NetAdapter" when Windows lists
+    # more than one adapter object for an interface (seen on a CI runner), which stopped the
+    # Windows steps and left the mDNS responder without an address. The adapter now comes from
+    # the IPv4 default routes, lowest route plus interface metric first; each lookup takes the
+    # first object it gets and never throws.
+    $routes = @(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+        Sort-Object -Property @{ Expression = { [int]$_.RouteMetric + [int]$_.InterfaceMetric } })
+    $found = New-Object System.Collections.Generic.List[object]
+    foreach ($route in $routes) {
+        $index = [int]$route.InterfaceIndex
+        if (@($found | Where-Object { $_.Index -eq $index }).Count -gt 0) { continue }
+        $adapter = @(Get-NetAdapter -InterfaceIndex $index -ErrorAction SilentlyContinue | Where-Object { [string]$_.Status -eq 'Up' }) | Select-Object -First 1
+        if ($null -eq $adapter) { continue }
+        $ipv4 = @(Get-NetIPAddress -InterfaceIndex $index -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+            Where-Object { ([string]$_.AddressState -eq 'Preferred') -and ([string]$_.IPAddress -notlike '169.254.*') }) | Select-Object -First 1
+        if ($null -eq $ipv4) { continue }
+        $found.Add(@{ Index = $index; Alias = [string]$route.InterfaceAlias; Adapter = $adapter; Ip = $ipv4 })
+    }
+    if ($found.Count -eq 0) { return $null }
+    $pick = $found[0]
+    $connection = @(Get-NetConnectionProfile -InterfaceIndex $pick.Index -ErrorAction SilentlyContinue) | Select-Object -First 1
     $wifi = $null
-    try { $wifi = ([int]$config.NetAdapter.NdisPhysicalMedium -eq 9) } catch { $wifi = $null }
+    try { $wifi = ([int]$pick.Adapter.NdisPhysicalMedium -eq 9) } catch { $wifi = $null }
     return @{
-        interface_alias = [string]$config.InterfaceAlias
-        interface_index = [int]$config.InterfaceIndex
-        address         = [string]$ipv4.IPAddress
-        prefix_length   = [int]$ipv4.PrefixLength
+        interface_alias = $pick.Alias
+        interface_index = $pick.Index
+        address         = [string]$pick.Ip.IPAddress
+        prefix_length   = [int]$pick.Ip.PrefixLength
         category        = $(if ($connection) { [string]$connection.NetworkCategory } else { $null })
         network_name    = $(if ($connection) { [string]$connection.Name } else { $null })
-        adapter_count   = $configs.Count
+        adapter_count   = $found.Count
         wifi            = $wifi
     }
 }

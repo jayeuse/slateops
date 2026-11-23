@@ -3,6 +3,25 @@
 
 function Get-Check { param([string]$Id, [hashtable]$Facts) return (& ('Test-{0}' -f $Id) -Facts $Facts) }
 
+Test-Case 'W14-D12 the LAN fact takes the lowest-metric gateway adapter and survives duplicate adapter objects' {
+    # Get-NetIPConfiguration threw on a CI runner whose interface had two adapter objects. Stand-ins
+    # for the cmdlets: two default routes, the second cheaper; its interface lists two adapters.
+    function Get-NetRoute { param($AddressFamily, $DestinationPrefix, $ErrorAction) return @(
+        [pscustomobject]@{ InterfaceIndex = 4; InterfaceAlias = 'Wi-Fi'; RouteMetric = 0; InterfaceMetric = 50 },
+        [pscustomobject]@{ InterfaceIndex = 7; InterfaceAlias = 'Ethernet'; RouteMetric = 0; InterfaceMetric = 25 }) }
+    function Get-NetAdapter { param($InterfaceIndex, $ErrorAction)
+        if ($InterfaceIndex -eq 7) { return @([pscustomobject]@{ Status = 'Up'; NdisPhysicalMedium = 14 }, [pscustomobject]@{ Status = 'Up'; NdisPhysicalMedium = 14 }) }
+        return @([pscustomobject]@{ Status = 'Up'; NdisPhysicalMedium = 9 }) }
+    function Get-NetIPAddress { param($InterfaceIndex, $AddressFamily, $ErrorAction)
+        if ($InterfaceIndex -eq 7) { return @([pscustomobject]@{ IPAddress = '169.254.3.4'; PrefixLength = 16; AddressState = 'Preferred' }, [pscustomobject]@{ IPAddress = '192.168.1.20'; PrefixLength = 24; AddressState = 'Preferred' }) }
+        return @([pscustomobject]@{ IPAddress = '192.168.1.21'; PrefixLength = 24; AddressState = 'Preferred' }) }
+    function Get-NetConnectionProfile { param($InterfaceIndex, $ErrorAction) return @([pscustomobject]@{ NetworkCategory = 'Private'; Name = 'Office' }) }
+    $lan = Get-LanFact
+    Assert-Equal 'Ethernet 7 192.168.1.20 24 Private Office 2 False' ('{0} {1} {2} {3} {4} {5} {6} {7}' -f $lan.interface_alias, $lan.interface_index, $lan.address, $lan.prefix_length, $lan.category, $lan.network_name, $lan.adapter_count, $lan.wifi)
+    function Get-NetRoute { param($AddressFamily, $DestinationPrefix, $ErrorAction) return @() }
+    Assert-Equal $null (Get-LanFact) 'no default route means no LAN'
+}
+
 Test-Case 'AC-1 C01 refuses Windows 10, asks for an update below 22H2, passes 22621, advises when unreadable' {
     Assert-Equal 'stop windows_10' ('{0} {1}' -f (Get-Check C01 @{ build = 19045 }).class, (Get-Check C01 @{ build = 19045 }).code)
     Assert-Equal 'fix too_old' ('{0} {1}' -f (Get-Check C01 @{ build = 22000 }).class, (Get-Check C01 @{ build = 22000 }).code)
