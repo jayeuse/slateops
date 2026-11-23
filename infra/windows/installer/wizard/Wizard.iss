@@ -70,6 +70,13 @@ const
 #else
   SELF_TEST = False;
 #endif
+  { AC-F8: the screenshot build (/DSelfTest /DScreenshots) shows each page and state and saves
+    it as a PNG; it installs nothing either. }
+#ifdef Screenshots
+  SCREENSHOTS = True;
+#else
+  SCREENSHOTS = False;
+#endif
   UNINSTALL_KEY = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{8B0C1D7E-3F4A-4E52-9A61-5C2D7B9E0F13}_is1';
   CHECK_LIMIT_MS = 300000;
   { DEC-0041 (AC-W2): the limits of the S12 helper steps (the backup folder, the save, the time
@@ -104,6 +111,8 @@ const
     checks, and the planning time after which the update shows the slow line. }
   WSL_LIMIT_MS = 1800000;
   UPDATE_WAIT_MS = 30000;
+  { AC-F5: the receive step waits for a busy engine at most this many times (5 minutes). }
+  RECEIVE_BUSY_TRIES = 10;
   UPDATE_SLOW_MINUTES = 60;
   JOB_IDLE = 0; JOB_SUBMIT = 1; JOB_WAIT = 2; JOB_DONE = 3;
   { DEC-0041 (AC-W7): WM_UPDATEUISTATE with MAKEWPARAM(UIS_SET, UISF_HIDEFOCUS). }
@@ -112,6 +121,13 @@ const
   { AC-O5: the verdict's window procedure hides the caret after each focus. }
   WM_SETFOCUS = $0007;
   WM_KILLFOCUS = $0008;
+  { AC-F1: drawing a page again with drawing suspended (WM_SETREDRAW), then one redraw. }
+  WM_SETREDRAW = $000B;
+  RDW_INVALIDATE = $0001;
+  RDW_ERASE = $0004;
+  RDW_ALLCHILDREN = $0080;
+  RDW_UPDATENOW = $0100;
+  RDW_FRAME = $0400;
   WM_NCDESTROY = $0082;
   GUI_CARETBLINKING = $0001;
 
@@ -191,6 +207,8 @@ function GetCurrentThreadId: Longword;
   external 'GetCurrentThreadId@kernel32.dll stdcall';
 function IsWindow(Wnd: HWND): Boolean;
   external 'IsWindow@user32.dll stdcall';
+function RedrawWindow(Wnd: HWND; Rect, Region, Flags: Longword): Boolean;
+  external 'RedrawWindow@user32.dll stdcall';
 { W14-D3 (6.1 L10): the drive name that Windows shows (the volume label). }
 function GetVolumeInformation(Root, Name: String; NameSize: Longword; Serial, MaxLength, Flags: Longword; FsName: String; FsNameSize: Longword): Boolean;
   external 'GetVolumeInformationW@kernel32.dll stdcall';
@@ -376,6 +394,10 @@ var
   BarSince, BarStageAt, BarClock: Cardinal;
   BarStage, BarHigh, BarLeftShown, BarMbDone, BarMbTotal: Integer;
   PageBar, ReportBar: TLineBar;
+  { AC-F1 (owner, rc.32): the stage rows of the progress block, so a stage change of a running
+    wait moves the state words in place instead of drawing the page again. }
+  WaitRowWords, WaitRowNames: array of TNewStaticText;
+  WaitRowCount: Integer;
   { W14-D5: the last progress line of the running engine job (7.6), from its standard error. }
   JobStepJob, JobStepKey, JobRunId: String;
   JobStepNumber, JobStepTotal: Integer;
@@ -425,12 +447,27 @@ var
   InstalledVersion, UpdPhase, UpdNext, UpdOut, UpdState, UpdNeedsGb, UpdFailText, UpdFailStage, JobRaw: String;
   UpdAt: Cardinal;
   UpdFailed, UpdRetry, UpdWaiting, UpdSlowShown, UpdEngineDone: Boolean;
+  { AC-F5, AC-F6 (owner, rc.33): the busy tries of the receive step, and the code that the last
+    M05 step or job answered (its Details). }
+  UpdBusyTries: Integer;
+  UpdLastCode: String;
+  { AC-F8: the screenshot build's run, from the first timer tick that sees the window. }
+  ShotsPending, ShotsRunning: Boolean;
+  { AC-F4 (DEC-0042): the M01 "Reset the admin password" form. }
+  AdminPwForm: TSetupForm;
+  AdminPwEdit, AdminPwAgain: TNewEdit;
+  AdminPwError: TNewStaticText;
+  AdminPwShow: TNewCheckBox;
+  AdminPwOk: Boolean;
+  AdminPwValue: String;
 
 procedure RenderPage(Index: Integer); forward;
+procedure DrawPage(Index: Integer); forward;
 { TASK-0097 (spec 6.3), in Maintenance.iss: the weights, key share and busy state of a wait. }
 function BarWeights(Kind: String): String; forward;
 procedure BarKeyShare(Kind: String; var Done, Total: Integer); forward;
 function BarBusy(Kind: String): Boolean; forward;
+procedure RefreshWaitLabels; forward;
 { TASK-0097 (spec 6.3), below: a compact bar whose label went with its parent. }
 procedure LineBarForget(var B: TLineBar); forward;
 procedure SaveReport(Sender: TObject); forward;
@@ -461,6 +498,9 @@ function CloseFlowRunning: Boolean; forward;
 function SettingsEntry: Boolean; forward;
 #ifdef SelfTest
 procedure RunSelfTest; forward;
+#ifdef Screenshots
+procedure RunScreenshots; forward;
+#endif
 #endif
 { S07 and S12 read the kept mode. }
 function KeptMode: Boolean; forward;
@@ -844,6 +884,7 @@ begin
   { W14-D5: the old panel took its labels with it. }
   WaitTime := nil;
   WaitBar := nil;
+  WaitRowCount := 0;
   WaitNow := nil;
   StepLabel := nil;
   ReportLabel := nil;
@@ -1467,14 +1508,19 @@ begin
     if I < Current then StateWord := CM('s12_done_word')
     else if I = Current then StateWord := CM('s12_now_word')
     else StateWord := CM('wait_next_word');
+    SetArrayLength(WaitRowWords, I);
+    SetArrayLength(WaitRowNames, I);
     Row := AddTextTo(Cur, CurY, StateWord, I = Current);
     Row.Width := ScaleX(52);
+    WaitRowWords[I - 1] := Row;
     Row := AddTextTo(Cur, CurY, Name, I = Current);
     Row.Left := ScaleX(60);
     Row.Width := Cur.Width - ScaleX(60);
     WizardForm.AdjustLabelHeight(Row);
+    WaitRowNames[I - 1] := Row;
     CurY := CurY + Row.Height + ScaleY(2);
   end;
+  WaitRowCount := I;
   if I > 0 then
     CurY := CurY + ScaleY(4);
   WaitKind := Kind;
@@ -1485,6 +1531,82 @@ begin
   WaitSince := Since;
   if Since <> 0 then
     BarRefresh;
+end;
+
+{ AC-F1 (owner, rc.32): a running wait that moves to another stage changes its state words and
+  their weight in place; the bar's stage starts. False when the block itself changes (no rows,
+  going back in M05, an action line that was not there): then the page is drawn again. }
+function WaitMoveInPlace(Stage: Integer): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  if (WaitRowCount = 0) or (Stage < 1) or (Stage > WaitRowCount) then
+    Exit;
+  if (WaitKind = 'update') and (Stage > 4) then
+    Exit;
+  if (WaitNow = nil) and (WaitActionText(WaitKind) <> '') then
+    Exit;
+  for I := 1 to WaitRowCount do
+  begin
+    if I < Stage then WaitRowWords[I - 1].Caption := CM('s12_done_word')
+    else if I = Stage then WaitRowWords[I - 1].Caption := CM('s12_now_word')
+    else WaitRowWords[I - 1].Caption := CM('wait_next_word');
+    if I = Stage then
+    begin
+      WaitRowWords[I - 1].Font.Style := [fsBold];
+      WaitRowNames[I - 1].Font.Style := [fsBold];
+    end
+    else
+    begin
+      WaitRowWords[I - 1].Font.Style := [];
+      WaitRowNames[I - 1].Font.Style := [];
+    end;
+  end;
+  WaitDrawn := Stage;
+  if (WaitKind <> 'check') and (WaitKind <> 'recheck') and (WaitKind <> 'key') then
+  begin
+    BarStage := Stage;
+    BarStageAt := BarNow;
+  end;
+  Result := True;
+end;
+
+{ AC-F1 (owner, rc.32): S12 when its wait moves to another stage of the same list: the rows move
+  in place and the action line follows; the page is drawn again only when the block changes
+  (no rows yet, an action line that was not there) or S12 failed or finished. }
+procedure RenderInstallStage;
+var
+  Stage: Integer;
+begin
+  if (WaitKind = 'install') and (WaitSince <> 0) and (WaitRowCount > 0) and not InstallFailed and not InstallDone
+    and (Pages[P_INSTALL] <> nil) and (WizardForm.CurPageID = Pages[P_INSTALL].ID) then
+  begin
+    Stage := WaitStage('install');
+    if (Stage = WaitDrawn) or WaitMoveInPlace(Stage) then
+    begin
+      RefreshWaitLabels;
+      Exit;
+    end;
+  end;
+  RenderPage(P_INSTALL);
+end;
+
+{ AC-F1: whether the page must be drawn again for its wait. A wait that has ended (Since 0:
+  S05 after its work, S12 all done, M05 done) never is; a running wait only when its stage
+  changed and the rows cannot move in place. Before rc.33 an ended S05 wait drew S05 again on
+  every tick (its stage reads 1, its rows show 3). }
+function WaitNeedsRedraw: Boolean;
+var
+  Stage: Integer;
+begin
+  Result := False;
+  if (WaitKind = '') or (WaitSince = 0) or (WaitDrawn <= 0) then
+    Exit;
+  Stage := WaitStage(WaitKind);
+  if Stage = WaitDrawn then
+    Exit;
+  Result := not WaitMoveInPlace(Stage);
 end;
 
 { W14-D3 (6.1 L12): the bottom band of the page in page coordinates (the place of the old status
@@ -3988,8 +4110,8 @@ procedure NextBgStep;
 begin
   BgIndex := BgIndex + 1;
   StartBgStep;
-  { DEC-0041 (AC-W2): S12 shows the next stage. }
-  RenderPage(P_INSTALL);
+  { DEC-0041 (AC-W2), AC-F1: S12 shows the next stage, in place. }
+  RenderInstallStage;
 end;
 
 { W14-D9: the helper calls inside the background run from the timer too: the account's SID
@@ -4521,10 +4643,19 @@ begin
   end;
 end;
 
+{ AC-F3 (owner, rc.32): Google offers app passwords only once 2-Step Verification is on, so
+  the help line has two links, in that order. }
 procedure GmailHelpClick(Sender: TObject; const Link: String; LinkType: TSysLinkType);
 begin
-  if ConfirmBox(CM('s09_gmail_title'), CM('s09_gmail_steps'), CM('s09_gmail_open'), CM('btn_close')) then
+  if Link = '2sv' then
+    OpenAsUser('https://myaccount.google.com/signinoptions/two-step-verification', '')
+  else
     OpenAsUser('https://myaccount.google.com/apppasswords', '');
+end;
+
+function GmailHelpCaption: String;
+begin
+  Result := FM2('s09_gmail_help', '<a href="2sv">' + CM('s09_gmail_2sv_link') + '</a>', '<a href="app">' + CM('s09_gmail_link') + '</a>');
 end;
 
 procedure MailMoreClick(Sender: TObject; const Link: String; LinkType: TSysLinkType);
@@ -4784,7 +4915,7 @@ begin
       if Gmail then MailPasswordLabel.Caption := CM('s09_app_password') else MailPasswordLabel.Caption := CM('s09_password');
       Place(MailPasswordLabel, Y, True, ScaleY(4));
       { The help line ends with its link (Gmail: app password). }
-      MailHelpLink.Caption := CM('s09_gmail_help') + ' <a href="help">' + CM('s09_gmail_link') + '</a>';
+      MailHelpLink.Caption := GmailHelpCaption;
       MailHelpLink.AdjustHeight;
       Place(MailHelpLink, Y, Gmail, ScaleY(4));
       Place(MailPassword, Y, True, ScaleY(4));
@@ -4827,7 +4958,7 @@ begin
   MailHelpLink := TNewLinkLabel.Create(WizardForm);
   MailHelpLink.Parent := Surface;
   NoFocusBox(MailHelpLink);
-  MailHelpLink.Caption := '<a href="help">' + CM('s09_gmail_link') + '</a>';
+  MailHelpLink.Caption := GmailHelpCaption;
   MailHelpLink.Width := Surface.Width;
   MailHelpLink.AdjustHeight;
   MailHelpLink.OnLinkClick := @GmailHelpClick;
@@ -5402,7 +5533,7 @@ begin
   { The answers go in and the result (with the recovery key) comes out through the pipe. }
   StartJob('install', Answers, 'install', True, True, INSTALL_JOB_MINUTES);
   Answers := '';
-  RenderPage(P_INSTALL);
+  RenderInstallStage;
 end;
 
 { AC-W5: before the install job, the channel self-test (plan F4d) and R7 (spec 5.2), as M02 runs
@@ -5419,7 +5550,7 @@ begin
   end;
   Value := RandomHex(32);
   StartJob('pipe-test', Value, 'selftest:' + GetSHA256OfString(AnsiString(Value)), True, True, 2);
-  RenderPage(P_INSTALL);
+  RenderInstallStage;
 end;
 
 procedure InstallNextStep;
@@ -5460,7 +5591,7 @@ begin
     InstallOutAt := GetTickCount;
     StartHelper('https-check', RunId, InstallOut, '');
   end;
-  RenderPage(P_INSTALL);
+  RenderInstallStage;
 end;
 
 { Stage 1 and the server part (InstallStep -1). }
@@ -5485,7 +5616,7 @@ begin
     end;
     DataPrepared := True;
     StartBackground;
-    RenderPage(P_INSTALL);
+    RenderInstallStage;
     Exit;
   end;
   PollBackground;
@@ -5619,7 +5750,12 @@ begin
   FailDetailLink := nil;
   BeginBody(P_INSTALL);
   WizardForm.PageNameLabel.Caption := CM('s12_title');
-  WizardForm.PageDescriptionLabel.Caption := CM('s12_subtitle');
+  { AC-F7 (owner, rc.32): after the install, the subtitle says it finished and the "While you
+    wait" box goes. }
+  if InstallDone and not InstallFailed then
+    WizardForm.PageDescriptionLabel.Caption := CM('s12_subtitle_done')
+  else
+    WizardForm.PageDescriptionLabel.Caption := CM('s12_subtitle');
   SetNextCaption(CM('btn_next'));
   AddStageLine(StripStep(P_INSTALL));
   if InstallFailed then
@@ -5641,8 +5777,11 @@ begin
     AddProgress('install', S12Stages, PrepStageCount + 9, '', 0)
   else
     AddProgress('install', S12Stages, WaitStage('install'), WaitActionText('install'), InstallStartedAt);
-  BlockGap;
-  AddText(CM('s12_box'), False);
+  if not InstallDone then
+  begin
+    BlockGap;
+    AddText(CM('s12_box'), False);
+  end;
   WizardForm.NextButton.Enabled := InstallDone;
 end;
 
@@ -5948,6 +6087,43 @@ end;
 { ------------------------------------------------------------------------------------------- }
 
 { Index -1: the current page. }
+{ AC-F1 (owner, rc.32): one page drawn again with drawing suspended, then shown once, so it does
+  not flicker; a fault while drawing goes to the setup log. Drawing is suspended only while the
+  wizard shows (WM_SETREDRAW on would show a window that is not shown yet). The screenshot build
+  draws its pages through this routine too. }
+procedure DrawPage(Index: Integer);
+var
+  Surface: TNewNotebookPage;
+  Suspended: Boolean;
+begin
+  Surface := Pages[Index].Surface;
+  Suspended := WizardForm.Visible and Surface.Visible;
+  if Suspended then
+    SendMessage(Surface.Handle, WM_SETREDRAW, 0, 0);
+  try
+    try
+      if Index = P_CHECK then RenderCheck
+      else if Index = P_RESTART then RenderRestart
+      else if Index = P_BACK then RenderWelcomeBack
+      else if Index = P_DATA then RenderData
+      else if Index = P_BACKUP then RenderBackup
+      else if Index = P_READY then RenderReady
+      else if Index = P_INSTALL then RenderInstall
+      else if Index = P_KEY then RenderKey
+      else if Index = P_MAINT then RenderMaint
+      else if Index = P_UPDATE then RenderUpdate;
+    except
+      Log('Drawing page ' + IntToStr(Index) + ' failed: ' + GetExceptionMessage);
+    end;
+  finally
+    if Suspended then
+    begin
+      SendMessage(Surface.Handle, WM_SETREDRAW, 1, 0);
+      RedrawWindow(Surface.Handle, 0, 0, RDW_ERASE or RDW_FRAME or RDW_INVALIDATE or RDW_ALLCHILDREN or RDW_UPDATENOW);
+    end;
+  end;
+end;
+
 procedure RenderPage(Index: Integer);
 var
   I: Integer;
@@ -5974,16 +6150,7 @@ begin
   end;
   if (Pages[Index] = nil) or (Pages[Index].ID <> WizardForm.CurPageID) then
     Exit;
-  if Index = P_CHECK then RenderCheck
-  else if Index = P_RESTART then RenderRestart
-  else if Index = P_BACK then RenderWelcomeBack
-  else if Index = P_DATA then RenderData
-  else if Index = P_BACKUP then RenderBackup
-  else if Index = P_READY then RenderReady
-  else if Index = P_INSTALL then RenderInstall
-  else if Index = P_KEY then RenderKey
-  else if Index = P_MAINT then RenderMaint
-  else if Index = P_UPDATE then RenderUpdate;
+  DrawPage(Index);
 end;
 
 { W14-D5: the labels of the running waits; captions only, the page is not drawn again (6.1). }
@@ -6020,6 +6187,24 @@ procedure TimerTick(H, Msg, Id, Tick: Longword);
 var
   Code: String;
 begin
+#ifdef Screenshots
+  { AC-F8: the whole run happens in one tick; the waits inside it pump messages, so later ticks
+    return at once. }
+  if ShotsRunning then
+    Exit;
+  if ShotsPending and WizardReady and WizardForm.Visible then
+  begin
+    ShotsPending := False;
+    ShotsRunning := True;
+    try
+      RunScreenshots;
+    finally
+      ShotsRunning := False;
+    end;
+    WizardForm.Close;
+    Exit;
+  end;
+#endif
   { W14-D9: Save report moves in every state: inside a modal form (the S13 form) and in the
     settings program's Start menu report, before the wizard exists. }
   if ReportPhase <> '' then
@@ -6148,8 +6333,8 @@ begin
     PollUpdate;
     RefreshWaitLabels;
     LayoutButtonRow;
-    { W14-D5: the page draws again only when its wait moves to another stage. }
-    if (WaitKind <> '') and (WaitDrawn > 0) and (WaitStage(WaitKind) <> WaitDrawn) then
+    { W14-D5, AC-F1: the page draws again only when its wait's block changes (WaitNeedsRedraw). }
+    if WaitNeedsRedraw then
       RenderPage(-1);
     if (Pages[P_EMAIL] <> nil) and (WizardForm.CurPageID = Pages[P_EMAIL].ID) and (MailChangedAt > 0) and (Elapsed(MailChangedAt) > 1500) then
     begin
@@ -6191,6 +6376,12 @@ end;
 procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);
 begin
   Confirm := False;
+  { AC-F8: the screenshot build closes when its run ends. }
+  if SCREENSHOTS then
+  begin
+    Cancel := True;
+    Exit;
+  end;
   { The removal form is modal; nothing else closes setup while it runs. }
   if CloseFlowRunning then
   begin
@@ -6335,6 +6526,10 @@ begin
     rest the way Inno applies the percentage: a taller client area, with the anchored controls
     following. Before any page is built, so every surface has the new height. }
   WizardForm.ClientHeight := (WizardForm.ClientHeight * 165) div 150;
+  { AC-F7 (owner, rc.32): the settings program's window is "Slate Operations settings", not
+    Inno's "Setup - Slate Operations". }
+  if SETTINGS_BUILD then
+    WizardForm.Caption := CM('settings_title');
   SetArrayLength(Pages, P_COUNT);
   SetArrayLength(Bodies, P_COUNT);
   Pages[P_MAINT] := CreateCustomPage(wpWelcome, CM('m01_title'), '');
@@ -6384,6 +6579,11 @@ begin
   BtnGapNC := WizardForm.CancelButton.Left - (WizardForm.NextButton.Left + WizardForm.NextButton.Width);
   WizardReady := True;
 #ifdef SelfTest
+#ifdef Screenshots
+  ShotsPending := True;
+  StartTimer;
+  Exit;
+#endif
   RunSelfTest;
   Exit;
 #endif
@@ -6402,7 +6602,8 @@ begin
   Result := False;
   if SELF_TEST then
   begin
-    Result := True;
+    { AC-F8: the screenshot build stays on the welcome page while it draws the others. }
+    Result := not (SCREENSHOTS and (PageID = wpWelcome));
     Exit;
   end;
   Resumed := EntryScreen = 'S06';
@@ -6878,7 +7079,8 @@ begin
       its uninstall key in the 64-bit view before ssPostInstall. }
     if HAS_SETTINGS then
     begin
-      RegWriteStringValue(HKLM64, UNINSTALL_KEY, 'ModifyPath', AddQuotes(ExpandConstant('{commonappdata}\SlateOps\settings\SlateOpsSettings.exe')));
+      { AC-F2: the program folder, where Explorer can open it. }
+      RegWriteStringValue(HKLM64, UNINSTALL_KEY, 'ModifyPath', AddQuotes(ExpandConstant('{app}\SlateOpsSettings.exe')));
       RegWriteDWordValue(HKLM64, UNINSTALL_KEY, 'NoModify', 0);
     end;
   end;

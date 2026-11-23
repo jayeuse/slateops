@@ -1540,6 +1540,399 @@ begin
   end;
 end;
 
+{ AC-F1 (owner, rc.32): every S05 state draws all its parts (the strip with its names, the
+  stage rows, the bar row, the verdict, the restart choice); a state whose wait has ended is
+  never drawn again by the timer; a tick and a stage move add or free no control. }
+function SelfStripShown: Boolean;
+var
+  I: Integer;
+begin
+  Result := GetArrayLength(StripCaps) = 4;
+  if Result then
+    for I := 0 to 3 do
+      if (StripCaps[I] = nil) or (StripCaps[I].Caption = '') or not StripCaps[I].Visible then
+        Result := False;
+end;
+
+procedure SelfS05Parts(State: String; var Ok: Boolean; var Detail: String);
+var
+  Controls: Integer;
+begin
+  PrepState := State;
+  RenderRestart;
+  if not SelfStripShown then
+  begin
+    Ok := False;
+    Detail := Detail + ' ' + State + ': strip names';
+  end;
+  if (LastVerdict = nil) and (State <> 'working') then
+  begin
+    Ok := False;
+    Detail := Detail + ' ' + State + ': no verdict';
+  end;
+  if (State <> 'failed') and ((WaitRowCount < 3) or (WaitBar = nil) or (WaitTime = nil) or (WaitRowNames[0].Caption = '')) then
+  begin
+    Ok := False;
+    Detail := Detail + ' ' + State + ': ' + IntToStr(WaitRowCount) + ' stage rows';
+  end;
+  if (State = 'restart') and ((ExtraButton = nil) or not ExtraButton.Visible or (WizardForm.NextButton.Caption <> CM('s05_next'))) then
+  begin
+    Ok := False;
+    Detail := Detail + ' restart: no restart choice';
+  end;
+  if (State = 'restart') or (State = 'done') then
+  begin
+    if WaitNeedsRedraw then
+    begin
+      Ok := False;
+      Detail := Detail + ' ' + State + ': the timer would draw it again (stage ' + IntToStr(WaitStage(WaitKind)) + ', drawn ' + IntToStr(WaitDrawn) + ')';
+    end;
+    if (WaitBar = nil) or (WaitBar.Position <> 1000) then
+    begin
+      Ok := False;
+      Detail := Detail + ' ' + State + ': the bar is not full';
+    end;
+  end;
+  Controls := Bodies[P_RESTART].ControlCount;
+  RefreshWaitLabels;
+  if Bodies[P_RESTART].ControlCount <> Controls then
+  begin
+    Ok := False;
+    Detail := Detail + ' ' + State + ': a tick changed the controls ' + IntToStr(Controls) + ' to ' + IntToStr(Bodies[P_RESTART].ControlCount);
+  end;
+end;
+
+procedure SelfNoRebuild;
+var
+  Ok: Boolean;
+  Detail: String;
+  Controls: Integer;
+begin
+  Ok := True;
+  Detail := '';
+  try
+    try
+      PrepStartedAt := GetTickCount;
+      PrepFeature := 'enabled_now';
+      PrepWsl := 'present';
+      SelfS05Parts('working', Ok, Detail);
+      SelfS05Parts('restart', Ok, Detail);
+      SelfS05Parts('done', Ok, Detail);
+      PrepFailKey := 'prepare.wsl.failed';
+      SelfS05Parts('failed', Ok, Detail);
+    finally
+      PrepState := '';
+    end;
+    SelfRecord('AC-F1 every S05 state draws all its parts and the timer does not draw it again', Ok, Detail);
+  except
+    SelfRecord('AC-F1 every S05 state draws all its parts and the timer does not draw it again', False, GetExceptionMessage);
+  end;
+  { A stage move of a running wait: the rows change in place. }
+  try
+    Ok := True;
+    Detail := '';
+    BeginBody(P_INSTALL);
+    AddProgress('install', S12Stages, 2, FM1('wait_now', CM('s12_stage2')), GetTickCount);
+    Controls := Bodies[P_INSTALL].ControlCount;
+    if not WaitMoveInPlace(3) then
+    begin
+      Ok := False;
+      Detail := 'the rows did not move';
+    end
+    else if (Bodies[P_INSTALL].ControlCount <> Controls) or (WaitDrawn <> 3) or (WaitRowWords[2].Caption <> CM('s12_now_word'))
+      or (WaitRowWords[1].Caption <> CM('s12_done_word')) or not (fsBold in WaitRowNames[2].Font.Style) or (fsBold in WaitRowNames[1].Font.Style) then
+    begin
+      Ok := False;
+      Detail := 'controls ' + IntToStr(Controls) + ' to ' + IntToStr(Bodies[P_INSTALL].ControlCount) + ', drawn ' + IntToStr(WaitDrawn);
+    end;
+    SelfRecord('AC-F1 a status or time change adds or frees no control', Ok, Detail);
+  except
+    SelfRecord('AC-F1 a status or time change adds or frees no control', False, GetExceptionMessage);
+  end;
+end;
+
+#ifdef Screenshots
+{ ------------------------------------------------------------------------------------------- }
+{ AC-F8 (TASK-0097): the screenshot build. Each page and state is drawn with sample values,     }
+{ shown in the wizard (or as its own form) and saved as <n>-<name>.png in /SCREENSHOTDIR by      }
+{ tests\screenshot.ps1. A fault in one state is logged and the next state runs.                 }
+{ ------------------------------------------------------------------------------------------- }
+
+var
+  ShotDir, ShotList: String;
+  ShotNumber: Integer;
+
+procedure Shot(Name: String; Window: HWND);
+var
+  Code: Integer;
+  FileName: String;
+begin
+  ShotNumber := ShotNumber + 1;
+  FileName := AddBackslash(ShotDir) + Copy(IntToStr(100 + ShotNumber), 2, 2) + '-' + Name + '.png';
+  WizardForm.Update;
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'
+    + ExpandConstant('{tmp}\screenshot.ps1') + '" -Handle ' + IntToStr(Window) + ' -Path "' + FileName + '"', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    Code := -1;
+  ShotList := ShotList + Name + ' ' + IntToStr(Code) + #13#10;
+end;
+
+{ An inner page as Inno shows it: its title and subtitle, then the page's own drawing. }
+procedure ShotPage(Index: Integer);
+begin
+  WizardForm.OuterNotebook.ActivePage := WizardForm.InnerPage;
+  WizardForm.InnerNotebook.ActivePage := Pages[Index].Surface;
+  WizardForm.PageNameLabel.Caption := Pages[Index].Caption;
+  WizardForm.PageDescriptionLabel.Caption := Pages[Index].Description;
+end;
+
+procedure ShotFailed(Name: String);
+begin
+  ShotList := ShotList + Name + ' FAULT ' + GetExceptionMessage + #13#10;
+end;
+
+procedure RunScreenshots;
+var
+  Text: String;
+begin
+  ShotDir := ExpandConstant('{param:ScreenshotDir|}');
+  if ShotDir = '' then
+    ShotDir := ExpandConstant('{src}');
+  ShotList := '';
+  ShotNumber := 0;
+  ExtractTemporaryFile('screenshot.ps1');
+  OrgName.Text := 'Riverside Learning Center';
+  OrgYourName.Text := 'Maria Santos';
+  OrgEmail.Text := 'maria@example.com';
+  HostName := 'riverside-learning-center';
+  MailFrom.Text := 'office@example.com';
+  BackupDrive := 'E:';
+  DataRoot := 'D:\SlateOps';
+  SecurityCode := '3F:A2:00:9C';
+  { S02 and S04 }
+  try
+    ShotPage(P_CHECK);
+    SelfCheck('shot owner', 'check-owner.json', 'needs_fixes', 1);
+    Shot('S02-needs-a-fix', WizardForm.Handle);
+    SelfCheck('shot ready', 'check-ready.json', 'ready', 0);
+    Shot('S02-ready', WizardForm.Handle);
+    WizardForm.OuterNotebook.ActivePage := WizardForm.InnerPage;
+    WizardForm.InnerNotebook.ActivePage := WizardForm.LicensePage;
+    Shot('S04-license', WizardForm.Handle);
+  except
+    ShotFailed('S02');
+  end;
+  { S05, every state }
+  try
+    ShotPage(P_RESTART);
+    PrepStartedAt := GetTickCount - 25000;
+    PrepFeature := 'enabled_now';
+    PrepWsl := 'present';
+    { AC-F1: through DrawPage (drawing suspended), and the states that take the focus twice, as
+      the timer would draw them again. }
+    PrepState := 'working';
+    DrawPage(P_RESTART);
+    Shot('S05-working', WizardForm.Handle);
+    PrepState := 'restart';
+    DrawPage(P_RESTART);
+    DrawPage(P_RESTART);
+    Shot('S05-ready-to-restart', WizardForm.Handle);
+    PrepState := 'done';
+    DrawPage(P_RESTART);
+    Shot('S05-done-no-restart', WizardForm.Handle);
+    PrepState := 'failed';
+    PrepFailKey := 'prepare.wsl.failed';
+    DrawPage(P_RESTART);
+    DrawPage(P_RESTART);
+    Shot('S05-failed', WizardForm.Handle);
+    PrepState := '';
+  except
+    ShotFailed('S05');
+  end;
+  { S07 }
+  try
+    ShotPage(P_DATA);
+    Text := '{"code":"listed","message_key":"setup.drives.listed","values":{"drives":[' +
+      '{"letter":"C:","drive_type":"Fixed","file_system":"NTFS","free_bytes":30064771072,"compressed":false,"encrypted":false},' +
+      '{"letter":"D:","drive_type":"Fixed","file_system":"NTFS","free_bytes":256624295936,"compressed":false,"encrypted":false}]}}';
+    LoadDataDrives(Text);
+    DataRoot := 'D:\SlateOps';
+    DrawPage(P_DATA);
+    Shot('S07', WizardForm.Handle);
+  except
+    ShotFailed('S07');
+  end;
+  { S08, normal, then the address name open with its error }
+  try
+    ShotPage(P_ORG);
+    OrgError.Caption := '';
+    OrgErrorAfter := nil;
+    LayoutOrg;
+    Shot('S08', WizardForm.Handle);
+    OrgAddressClick(nil, '', sltID);
+    OrgError.Caption := CM('s08_err_label');
+    OrgErrorAfter := OrgSlug;
+    LayoutOrg;
+    Shot('S08-address-name-error', WizardForm.Handle);
+    OrgError.Caption := '';
+    OrgErrorAfter := nil;
+  except
+    ShotFailed('S08');
+  end;
+  { S10, S11 }
+  try
+    ShotPage(P_BACKUP);
+    DrawPage(P_BACKUP);
+    Shot('S10', WizardForm.Handle);
+    ShotPage(P_READY);
+    DrawPage(P_READY);
+    Shot('S11', WizardForm.Handle);
+  except
+    ShotFailed('S10-S11');
+  end;
+  { S12 running and finished, S13 with Details }
+  try
+    ShotPage(P_INSTALL);
+    InstallStarted := True;
+    InstallDone := False;
+    InstallFailed := False;
+    DataPrepared := True;
+    BgIndex := BgCount;
+    InstallStep := 2;
+    InstallStartedAt := GetTickCount - 400000;
+    JobPurpose := 'install';
+    JobStepJob := 'install';
+    JobStepKey := 'provision';
+    DrawPage(P_INSTALL);
+    Shot('S12-running', WizardForm.Handle);
+    InstallDone := True;
+    DrawPage(P_INSTALL);
+    Shot('S12-finished', WizardForm.Handle);
+    InstallDone := False;
+    JobRaw := '{"code":"done","values":{"exec":{"job":"prepare","code":"unexpected_listener","exit_code":1},'
+      + '"detail":"unexpected_listener: udp UNCONN 0 0 0.0.0.0:68 0.0.0.0:* users:((\"dhcp\",pid=7,fd=3))"}}';
+    InstallFailAt(StageName(BgStageNames, 6), PrepFailText('unexpected_listener'));
+    DrawPage(P_INSTALL);
+    Shot('S13-with-details', WizardForm.Handle);
+    InstallFailed := False;
+    FailDetail := '';
+    JobRaw := '';
+    JobPurpose := '';
+  except
+    ShotFailed('S12');
+  end;
+  { S14, S15 }
+  try
+    ShotPage(P_KEY);
+    KeyText := 'ABCD-EFGH-IJKL-MNOP-QRST-UVWX';
+    KeyState := 'shown';
+    DrawPage(P_KEY);
+    Shot('S14', WizardForm.Handle);
+    WizardForm.OuterNotebook.ActivePage := WizardForm.FinishedPage;
+    RenderFinishedPage;
+    Shot('S15', WizardForm.Handle);
+  except
+    ShotFailed('S14-S15');
+  end;
+  { M01: email set up and not, Repair running, the admin password form }
+  try
+    ShotPage(P_MAINT);
+    MaintStatus := 'ok';
+    MaintState := 'installed';
+    MaintBackup := 'ok';
+    MaintEmailMissing := False;
+    DrawPage(P_MAINT);
+    Shot('M01-email-set-up', WizardForm.Handle);
+    MaintEmailMissing := True;
+    DrawPage(P_MAINT);
+    Shot('M01-email-not-set-up', WizardForm.Handle);
+    MaintEmailMissing := False;
+    StepFor := 'repair';
+    StepOut := '';
+    StepAt := GetTickCount - 20000;
+    DrawPage(P_MAINT);
+    Shot('M01-repair-running', WizardForm.Handle);
+    StepFor := '';
+    BuildAdminPwForm;
+    try
+      AdminPwForm.Show;
+      Shot('M01-reset-admin-password', AdminPwForm.Handle);
+      AdminPwError.Caption := CM('s08_err_password');
+      Shot('M01-reset-admin-password-error', AdminPwForm.Handle);
+      AdminPwForm.Hide;
+    finally
+      FreeAdminPwForm;
+    end;
+  except
+    ShotFailed('M01');
+  end;
+  { M02 Gmail and Other }
+  try
+    ShotPage(P_EMAIL);
+    MailGmail.Checked := True;
+    LayoutMail;
+    RenderMailStatus;
+    Shot('M02-gmail', WizardForm.Handle);
+    MailOther.Checked := True;
+    LayoutMail;
+    RenderMailStatus;
+    Shot('M02-other', WizardForm.Handle);
+  except
+    ShotFailed('M02');
+  end;
+  { M05 ready, running, failed with Details }
+  try
+    ShotPage(P_UPDATE);
+    InstalledVersion := '0.1.0-rc.32';
+    UpdFailed := False;
+    UpdPhase := '';
+    DrawPage(P_UPDATE);
+    Shot('M05-ready', WizardForm.Handle);
+    UpdPhase := 'idle';
+    UpdStartedAt := GetTickCount - 90000;
+    DrawPage(P_UPDATE);
+    Shot('M05-running', WizardForm.Handle);
+    UpdPhase := '';
+    UpdFailed := True;
+    UpdRetry := True;
+    UpdFailStage := UpdStageName(1);
+    UpdFailText := FM1('m05_not_changed', InstalledVersion);
+    FailDetail := FM1('m05_detail_code', 'engine_busy');
+    DrawPage(P_UPDATE);
+    Shot('M05-failed-with-details', WizardForm.Handle);
+    UpdFailed := False;
+    FailDetail := '';
+  except
+    ShotFailed('M05');
+  end;
+  { The removal window, at its third step }
+  try
+    BuildRemoveForm('close');
+    try
+      CloseNumber := 3;
+      ClosePhase := 'data';
+      CloseLine := CM('remove_data_line');
+      CloseStartedAt := GetTickCount - 30000;
+      RenderRemove;
+      RemoveForm.Show;
+      Shot('removal-window', RemoveForm.Handle);
+      RemoveForm.Hide;
+    finally
+      ClosePhase := '';
+      FreeRemoveForm;
+    end;
+  except
+    ShotFailed('removal');
+  end;
+  SaveStringToFile(AddBackslash(ShotDir) + 'screenshots.txt', AnsiString(ShotList), False);
+  Log(ShotList);
+  { Inno closes the wizard only when its Cancel button can take the focus (TMainForm.Close,
+    Inno 6.7.4); S14 hides it and M05 can turn it off. }
+  WizardForm.OuterNotebook.ActivePage := WizardForm.WelcomePage;
+  WizardForm.CancelButton.Visible := True;
+  WizardForm.CancelButton.Enabled := True;
+end;
+#endif
+
 procedure RunSelfTest;
 var
   Text, OutFile: String;
@@ -1611,6 +2004,7 @@ begin
   SelfStrip;
   SelfBar;
   SelfLineBar;
+  SelfNoRebuild;
   SelfDriveStops;
 
   { Sample state for the other pages. }

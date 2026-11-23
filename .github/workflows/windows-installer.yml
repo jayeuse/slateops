@@ -35,7 +35,8 @@ permissions:
 jobs:
   windows-installer:
     runs-on: windows-latest
-    timeout-minutes: 20
+    # AC-F8: the screenshot build adds a few minutes.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -104,6 +105,44 @@ jobs:
           $PSVersionTable.PSVersion.ToString()
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File infra\windows\installer\tests\run-tests.ps1
           exit $LASTEXITCODE
+      - name: Capture each page and state as a PNG (TASK-0097 AC-F8)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-Location infra\windows\installer
+          $iscc = Join-Path $env:RUNNER_TEMP 'innosetup\ISCC.exe'
+          # The screenshot build shows its window on the runner's desktop (no /VERYSILENT), draws
+          # each page and state with sample values, saves each as a PNG and closes; it installs
+          # nothing.
+          & $iscc /Qp /DAppVersion=0.0.0 /DSelfTest /DScreenshots /FSlateOpsScreens SlateOpsSetup.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $dir = Join-Path $env:RUNNER_TEMP 'installer-screenshots'
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          $log = Join-Path $env:RUNNER_TEMP 'SlateOpsScreens.log'
+          $process = Start-Process -FilePath 'output\SlateOpsScreens.exe' -ArgumentList @('/SUPPRESSMSGBOXES', '/NORESTART', ('/SCREENSHOTDIR="{0}"' -f $dir), ('/LOG="{0}"' -f $log)) -PassThru
+          $finished = $process.WaitForExit(300000)
+          if (-not $finished) { $process.Kill() }
+          $list = Join-Path $dir 'screenshots.txt'
+          if (Test-Path -LiteralPath $list) { Get-Content -LiteralPath $list | ForEach-Object { Write-Host $_ } }
+          Write-Host ('{0} screenshots' -f @(Get-ChildItem -LiteralPath $dir -Filter '*.png').Count)
+          if (-not $finished) {
+            Get-Content -LiteralPath $log -ErrorAction SilentlyContinue | Select-Object -Last 40
+            throw 'The screenshot build did not finish in 5 minutes.'
+          }
+          if (-not (Test-Path -LiteralPath $list)) {
+            Get-Content -LiteralPath $log -ErrorAction SilentlyContinue | Select-Object -Last 40
+            throw 'The screenshot build wrote no list.'
+          }
+          $images = @(Get-ChildItem -LiteralPath $dir -Filter '*.png')
+          if ($images.Count -lt 25) { throw ('Only {0} screenshots; see the list above.' -f $images.Count) }
+      - name: Upload the screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer-screenshots
+          path: ${{ runner.temp }}/installer-screenshots
+          if-no-files-found: warn
+          retention-days: 14
 
   exec-path:
     # TASK-0097 W14-D8 and the QA review: the real job path of setup on a fresh runner. The helper

@@ -92,6 +92,25 @@ class TrustPageTests(unittest.TestCase):
             [action.strip() for action in actions],
         )
 
+    def test_ac_b9_the_code_shows_openly_before_the_steps_until_the_device_trusts_it(
+        self,
+    ) -> None:
+        # TASK-0097 AC-B9: the owner never saw the code in the closed "Check the code"
+        # section at the bottom. Until the device trusts Slate Operations, the code stands
+        # under the status line, before the steps; with "Yes" the short page stays.
+        text = self.text
+        code = text.index('id="code"')
+        self.assertLess(text.index('id="status"'), code)
+        self.assertLess(code, text.index('id="steps-area"'))
+        block = text[code : text.index("</section>", code)]
+        self.assertIn("Check that this code matches the code on the server PC", block)
+        self.assertIn('{{readFile "slateops-ca.sha256" | trim | html}}', block)
+        self.assertNotIn("<details", text)
+        self.assertRegex(
+            self.script,
+            r'code\.hidden = state === "yes"|getElementById\("code"\)\.hidden = state === "yes"',
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

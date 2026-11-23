@@ -12,7 +12,8 @@ $SlateOpsExec = @{
     # Plan 6.2 allow-list. The engine refuses a job that it does not have yet. R-8 (DEC-0041):
     # resend-invitation is gone with the invitation of the first administrator.
     EngineJobs  = @('receive', 'prepare', 'prefetch', 'smtp-test', 'install', 'status', 'update', 'set-email',
-        'set-backup-target', 'new-recovery-key', 'export-trust', 'log-bundle', 'prepare-uninstall', 'restore')
+        'set-backup-target', 'new-recovery-key', 'export-trust', 'log-bundle', 'prepare-uninstall', 'restore',
+        'admin-password')
     # Windows-side work that must run as slateops-svc, because WSL distributions and .wslconfig
     # belong to the account that runs wsl.exe (kit design notes). Their paths come from the
     # administrator-only state file, never from the request.
@@ -22,10 +23,10 @@ $SlateOpsExec = @{
     # Plan 3.2 rule 3 and 6.1 (W8): the wizard's pipe \\.\pipe\SlateOps-<request ID> carries
     # the values below; they are never written to a Windows disk. pipe-test is the channel
     # self-test (plan F4d).
-    # Input through the pipe: the SMTP password (smtp-test, set-email) and the answers (install,
-    # plan 6.1). Output through the pipe: exactly the two jobs whose result holds the recovery
+    # Input through the pipe: the SMTP password (smtp-test, set-email), the answers (install,
+    # plan 6.1) and the new admin password (admin-password, DEC-0042). Output through the pipe: exactly the two jobs whose result holds the recovery
     # key (install, new-recovery-key; parent decision, TASK-0093 field recovery_key).
-    PipeInputJobs  = @('smtp-test', 'set-email', 'install', 'pipe-test')
+    PipeInputJobs  = @('smtp-test', 'set-email', 'install', 'pipe-test', 'admin-password')
     # AC-W6 (DEC-0041): smtp-test answers with sent_to, the administrator's address (personal
     # data), so its output stays in memory too.
     PipeOutputJobs = @('install', 'new-recovery-key', 'pipe-test', 'smtp-test')

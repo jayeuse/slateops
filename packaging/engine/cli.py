@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any, BinaryIO, TextIO
 
 from engine import (
+    admin_password,
     backups,
     install,
     log_bundle,
@@ -89,6 +90,8 @@ JOBS: dict[str, Job] = {
         maintenance.prepare_uninstall, maintenance.KEYS, maintenance.REQUIRED
     ),
     "set-email": Job(maintenance.set_email, maintenance.KEYS, maintenance.REQUIRED),
+    # TASK-0097 AC-B8 (DEC-0042), on the Windows Exec allow-list; reads the secret pipe.
+    "admin-password": Job(admin_password.handle, admin_password.KEYS, admin_password.REQUIRED),
 }
 
 

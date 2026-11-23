@@ -64,6 +64,10 @@ UninstallDisplayName=Slate Operations
 Source: "tests\fixtures\check-owner.json"; DestDir: "{tmp}"; Flags: dontcopy
 Source: "tests\fixtures\check-ready.json"; DestDir: "{tmp}"; Flags: dontcopy
 #endif
+#ifdef Screenshots
+; AC-F8: the window capture of the screenshot build.
+Source: "tests\screenshot.ps1"; DestDir: "{tmp}"; Flags: dontcopy
+#endif
 #ifdef PayloadDir
 ; The payload first (help: files extracted on demand go at the top). dontcopy: the wizard
 ; extracts each part when its page needs it; the helper copies it into the admin-only tree.
@@ -94,9 +98,13 @@ Source: "scripts\*.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "scripts\lib\*.ps1"; DestDir: "{app}\scripts\lib"; Flags: ignoreversion
 #endif
 #ifdef SettingsExe
-; W9: the maintenance program, in the administrator-only state folder (TASK-0091 carry: never
-; run maintenance from a program folder that standard users may write).
-Source: "{#SettingsExe}"; DestDir: "{commonappdata}\SlateOps\settings"; DestName: "SlateOpsSettings.exe"; Flags: ignoreversion
+; AC-F2 (owner, rc.32): the maintenance program in the program folder (64-bit mode:
+; C:\Program Files\Slate Operations). Standard users can read and run it there, so the Start menu
+; and Settings, Apps open it, and only administrators can write it (TASK-0091 carry: never a
+; folder that standard users may write). It asks for elevation itself (PrivilegesRequired=admin).
+; The state folder C:\ProgramData\SlateOps\settings, where it was, is administrator-only, so
+; Explorer could not open it ("The item referred to by this shortcut cannot be accessed").
+Source: "{#SettingsExe}"; DestDir: "{app}"; DestName: "SlateOpsSettings.exe"; Flags: ignoreversion
 #endif
 
 #ifndef SettingsBuild
@@ -107,9 +115,16 @@ Name: "{autodesktop}\Slate Operations"; Filename: "https://{code:AddressHost}"
 #ifdef SettingsExe
 ; W9 (plan 9.3, DEC-0033): "Slate Operations settings" and the Save report entry. A file name
 ; cannot hold ":", so the entry reads "Slate Operations - Save report".
-Name: "{autoprograms}\Slate Operations settings"; Filename: "{commonappdata}\SlateOps\settings\SlateOpsSettings.exe"
-Name: "{autoprograms}\Slate Operations - Save report"; Filename: "{commonappdata}\SlateOps\settings\SlateOpsSettings.exe"; Parameters: "/SAVEREPORT=1"
+Name: "{autoprograms}\Slate Operations settings"; Filename: "{app}\SlateOpsSettings.exe"
+Name: "{autoprograms}\Slate Operations - Save report"; Filename: "{app}\SlateOpsSettings.exe"; Parameters: "/SAVEREPORT=1"
 #endif
+#endif
+
+#ifndef SettingsBuild
+[InstallDelete]
+; AC-F2: an update (M05) or a reinstall removes the copy at the old place.
+Type: files; Name: "{commonappdata}\SlateOps\settings\SlateOpsSettings.exe"
+Type: dirifempty; Name: "{commonappdata}\SlateOps\settings"
 #endif
 
 [Messages]

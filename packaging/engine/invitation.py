@@ -55,9 +55,10 @@ ONE_SHOT = [
 ]
 
 
-def bootstrap_argv(
-    ctx: Context, project: str, server_image: str, given: dict[str, Any]
-) -> list[str]:
+def operation_argv(ctx: Context, project: str, server_image: str, *tail: str) -> list[str]:
+    """A backend operation in a one-shot server-image container on the provider network, with
+    ``app.env``, the administrator email and user name from the child environment, and the
+    password on standard input (``--interactive``). Step 11 and ``admin-password`` use it."""
     return [
         "docker",
         "run",
@@ -79,6 +80,17 @@ def bootstrap_argv(
         "--entrypoint",
         "python",
         server_image,
+        *tail,
+    ]
+
+
+def bootstrap_argv(
+    ctx: Context, project: str, server_image: str, given: dict[str, Any]
+) -> list[str]:
+    return operation_argv(
+        ctx,
+        project,
+        server_image,
         "operations/bootstrap_admin.py",
         "--confirm",
         "--json",
@@ -88,7 +100,7 @@ def bootstrap_argv(
         f"--slug={given['slug']}",
         f"--time-zone={given['time_zone']}",
         "--password-stdin",
-    ]
+    )
 
 
 def create_admin(

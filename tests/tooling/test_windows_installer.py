@@ -150,9 +150,9 @@ class WindowsInstallerWorkflowTest(unittest.TestCase):
         self.assertIn("runs-on: windows-latest", self.source)
         steps = re.findall(r"(?ms)^      - name: .*?(?=^      - |\Z)", self.source)
         run_steps = [step for step in steps if "run: |" in step]
-        # Compile, the [Code] self-test (W14-D1, TASK-0097), the script tests, the real Exec job
-        # path (W14-D8) and the DEC-0039 mDNS spike.
-        self.assertEqual(len(run_steps), 5)
+        # Compile, the [Code] self-test (W14-D1, TASK-0097), the script tests, the screenshots
+        # (AC-F8), the real Exec job path (W14-D8) and the DEC-0039 mDNS spike.
+        self.assertEqual(len(run_steps), 6)
         for step in run_steps:
             with self.subTest(step=step.splitlines()[0]):
                 self.assertIn("shell: powershell\n", step)
@@ -397,9 +397,8 @@ class UninstallAndMaintenanceTest(unittest.TestCase):
         for line in ("Uninstallable=no", "CreateUninstallRegKey=no", "CreateAppDir=no"):
             with self.subTest(line=line):
                 self.assertIn(f"\n{line}\n", settings)
-        self.assertIn(
-            'DestDir: "{commonappdata}\\SlateOps\\settings"; DestName: "SlateOpsSettings.exe"', iss
-        )
+        # AC-F2 (owner, rc.32): in the program folder, which Explorer can open without elevation.
+        self.assertIn('DestDir: "{app}"; DestName: "SlateOpsSettings.exe"', iss)
         post = routine(pascal_code(), "procedure CurStepChanged(CurStep: TSetupStep);")
         self.assertIn("'ModifyPath'", post)
         self.assertIn("'NoModify', 0", post)
@@ -1106,7 +1105,7 @@ class W14Part2Test(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 self.assertIn(name, body)
-        refresh = routine(self.raw, "procedure RefreshWaitLabels;")
+        refresh = routine(self.raw, "procedure RefreshWaitLabels;\nvar")
         # Spec 6.3 (7334a07c): a tick sets the time text and the bar position only (BarRefresh).
         self.assertIn("BarRefresh;", refresh)
         self.assertIn("if WaitTime <> nil then", routine(self.raw, "procedure BarRefresh;"))
@@ -2698,7 +2697,7 @@ class StripAndBarTest(unittest.TestCase):
         ):
             with self.subTest(fact=fact):
                 self.assertIn(fact, progress)
-        self.assertIn("BarRefresh;", routine(self.raw, "procedure RefreshWaitLabels;"))
+        self.assertIn("BarRefresh;", routine(self.raw, "procedure RefreshWaitLabels;\nvar"))
         line = routine(self.raw, "procedure LineBarShow(")
         self.assertIn(
             "B.Bar.SetBounds(B.BaseLeft, Lbl.Top + ScaleY(3), ScaleX(96), ScaleY(8));", line
@@ -2729,3 +2728,195 @@ class StripAndBarTest(unittest.TestCase):
         ):
             with self.subTest(record=record):
                 self.assertIn(record, self.selftest)
+
+
+class OwnerRc32Test(unittest.TestCase):
+    """The owner's rc.32 and rc.33 findings (TASK-0097): AC-F1 to AC-F8. Behavior: the self-test
+    records named here and the screenshot build on Windows CI."""
+
+    def setUp(self) -> None:
+        self.raw = pascal_code()
+        self.selftest = SELFTEST.read_text(encoding="ascii")
+        self.copy = read_copy()
+        self.iss = ISS.read_text(encoding="ascii")
+
+    def part(self, head: str) -> str:
+        self.assertIn(head, self.raw)
+        return routine(self.raw, head)
+
+    def test_ac_f1_an_ended_wait_never_redraws_and_a_rebuild_is_not_seen(self) -> None:
+        gate = self.part("function WaitNeedsRedraw: Boolean;")
+        self.assertIn("if (WaitKind = '') or (WaitSince = 0) or (WaitDrawn <= 0) then", gate)
+        self.assertIn("Result := not WaitMoveInPlace(Stage);", gate)
+        tick = self.part("procedure TimerTick(H, Msg, Id, Tick: Longword);")
+        self.assertIn("if WaitNeedsRedraw then", tick)
+        self.assertNotIn("(WaitStage(WaitKind) <> WaitDrawn) then", tick)
+        page = self.part("procedure DrawPage(Index: Integer);\nvar")
+        self.assertIn("Suspended := WizardForm.Visible and Surface.Visible;", page)
+        self.assertIn("SendMessage(Surface.Handle, WM_SETREDRAW, 0, 0);", page)
+        self.assertIn("RedrawWindow(Surface.Handle, 0, 0,", page)
+        self.assertIn(
+            "Log('Drawing page ' + IntToStr(Index) + ' failed: ' + GetExceptionMessage);", page
+        )
+        self.assertIn("DrawPage(Index);", self.part("procedure RenderPage(Index: Integer);\nvar"))
+        install = self.part("procedure NextBgStep;")
+        self.assertIn("RenderInstallStage;", install)
+        self.assertIn(
+            "if (Stage = WaitDrawn) or WaitMoveInPlace(Stage) then",
+            self.part("procedure RenderInstallStage;"),
+        )
+        remove = self.part("procedure RenderRemove;")
+        self.assertIn("SendMessage(RemoveForm.Handle, WM_SETREDRAW, 0, 0);", remove)
+        for record in (
+            "'AC-F1 every S05 state draws all its parts and the timer does not draw it again'",
+            "'AC-F1 a status or time change adds or frees no control'",
+        ):
+            with self.subTest(record=record):
+                self.assertIn(record, self.selftest)
+
+    def test_ac_f2_the_settings_program_is_in_the_program_folder(self) -> None:
+        self.assertIn(
+            'Source: "{#SettingsExe}"; DestDir: "{app}"; DestName: "SlateOpsSettings.exe"', self.iss
+        )
+        self.assertIn(
+            'Name: "{autoprograms}\\Slate Operations settings"; '
+            'Filename: "{app}\\SlateOpsSettings.exe"',
+            self.iss,
+        )
+        self.assertIn(
+            'Filename: "{app}\\SlateOpsSettings.exe"; Parameters: "/SAVEREPORT=1"', self.iss
+        )
+        install_delete = self.iss.split("[InstallDelete]", 1)[1].split("#endif", 1)[0]
+        self.assertIn(
+            'Type: files; Name: "{commonappdata}\\SlateOps\\settings\\SlateOpsSettings.exe"',
+            install_delete,
+        )
+        outside = self.iss.replace(install_delete, "")
+        self.assertNotIn("SlateOps\\settings\\SlateOpsSettings.exe", outside)
+        self.assertIn("ExpandConstant('{app}\\SlateOpsSettings.exe')", self.raw)
+        self.assertNotIn("SlateOps\\settings\\SlateOpsSettings.exe", self.raw)
+
+    def test_ac_f3_gmail_needs_two_step_verification_first(self) -> None:
+        self.assertEqual(
+            self.copy["s09_gmail_help"],
+            "Gmail needs an app password, not your normal password. "
+            "First %1 for this Google account, then %2.",
+        )
+        self.assertEqual(self.copy["s09_gmail_2sv_link"], "turn on 2-Step Verification")
+        self.assertEqual(self.copy["s09_gmail_link"], "make an app password")
+        click = self.part("procedure GmailHelpClick(")
+        self.assertIn("https://myaccount.google.com/signinoptions/two-step-verification", click)
+        self.assertIn("https://myaccount.google.com/apppasswords", click)
+        for gone in ("s09_gmail_title", "s09_gmail_steps", "s09_gmail_open"):
+            with self.subTest(key=gone):
+                self.assertNotIn(gone, self.copy)
+
+    def test_ac_f4_reset_the_admin_password_through_the_pipe(self) -> None:
+        exec_lib = (SCRIPTS / "lib/Exec.ps1").read_text(encoding="ascii")
+        self.assertIn(
+            "'admin-password')", exec_lib.split("EngineJobs  = @(", 1)[1].split("WindowsJobs", 1)[0]
+        )
+        self.assertIn(
+            "PipeInputJobs  = @('smtp-test', 'set-email', 'install', 'pipe-test', "
+            "'admin-password')",
+            exec_lib,
+        )
+        checks = self.part("procedure StartAdminPwChecks(Password: String);")
+        self.assertIn("StartJob('pipe-test', Value, 'adminpwtest:'", checks)
+        self.assertIn("StartAdminPwChecks(Password);", self.raw)
+        self.assertIn("if Code = 'clear' then\n      StartAdminPassword(AdminPwValue)", self.raw)
+        start = self.part("procedure StartAdminPassword(Password: String);")
+        self.assertIn(
+            "StartJob('admin-password', '{\"run_id\":\"' + RunId + '\",\"admin_password\":' "
+            "+ JsonText(Password) + '}', 'adminpw', True, False, 5);",
+            start,
+        )
+        lines = self.part("function AdminPwResultLine(Code: String): String;")
+        for code in ("reset", "invalid_input", "not_installed", "admin_missing", "reset_failed"):
+            with self.subTest(code=code):
+                self.assertIn(f"Code = '{code}'", lines)
+        self.assertEqual(
+            self.copy["m01_adminpw_done"],
+            "The admin password is changed. Sign in with the new password.",
+        )
+        self.assertEqual(
+            self.copy["m01_adminpw_reset_failed"],
+            "Setup could not change the admin password. Select Repair, then try again.",
+        )
+        self.assertEqual(
+            self.copy["m01_adminpw_missing"], "Setup can reset only the admin that setup created."
+        )
+        self.assertIn(
+            "Problem := PasswordProblem(AdminPwEdit.Text);", self.part("procedure AdminPwGoClick(")
+        )
+        self.assertIn("AddMaintAction(8, 1, CM('m01_adminpw')", self.raw)
+
+    def test_ac_f5_receive_waits_for_a_busy_engine(self) -> None:
+        self.assertIn("RECEIVE_BUSY_TRIES = 10;", self.raw)
+        poll = self.part("procedure PollUpdate;\nvar")
+        self.assertIn(
+            "else if ((JobCode = 'engine_busy') or (JobCode = 'runner_busy')) "
+            "and (UpdBusyTries < RECEIVE_BUSY_TRIES) then",
+            poll,
+        )
+        self.assertIn("UpdPause('receive');", poll)
+        self.assertIn("else if UpdNext = 'receive' then", poll)
+
+    def test_ac_f6_an_update_failure_has_its_code_and_detail(self) -> None:
+        fail = self.part("procedure UpdFail(Stage: Integer; Text: String; Retry: Boolean);")
+        self.assertIn("FailDetail := FM1('m05_detail_code', UpdLastCode);", fail)
+        self.assertIn("Detail := JsonValue(JobRaw, 'detail');", fail)
+        self.assertIn("Log('Update stopped at", fail)
+        self.assertIn(
+            "FailDetailLink.OnLinkClick := @ShowFailDetail;",
+            self.part("procedure RenderUpdate;\nbegin"),
+        )
+
+    def test_ac_f7_settings_title_and_s12_when_finished(self) -> None:
+        self.assertEqual(self.copy.get("settings_title"), "Slate Operations settings")
+        self.assertEqual(self.copy.get("s12_subtitle_done"), "Finished.")
+        self.assertIn("WizardForm.Caption := CM('settings_title');", self.raw)
+        install = self.part("procedure RenderInstall;")
+        self.assertIn("if not InstallDone then", install)
+        self.assertLess(
+            install.index("if not InstallDone then"),
+            install.index("AddText(CM('s12_box'), False);"),
+        )
+
+    def test_ac_f8_the_ci_takes_a_screenshot_of_each_page_and_state(self) -> None:
+        self.assertTrue((PS_TESTS / "screenshot.ps1").is_file())
+        self.assertIn(
+            'Source: "tests\\screenshot.ps1"; DestDir: "{tmp}"; Flags: dontcopy', self.iss
+        )
+        workflow = (ROOT / ".github/workflows/windows-installer.yml").read_text(encoding="utf-8")
+        self.assertIn("/DSelfTest /DScreenshots /FSlateOpsScreens", workflow)
+        self.assertIn("name: installer-screenshots", workflow)
+        self.assertIn("procedure RunScreenshots;", self.selftest)
+        for name in (
+            "S02-needs-a-fix",
+            "S05-working",
+            "S05-ready-to-restart",
+            "S05-done-no-restart",
+            "S05-failed",
+            "S07",
+            "S08-address-name-error",
+            "S10",
+            "S11",
+            "S12-running",
+            "S12-finished",
+            "S13-with-details",
+            "S14",
+            "S15",
+            "M01-email-set-up",
+            "M01-email-not-set-up",
+            "M01-repair-running",
+            "M01-reset-admin-password",
+            "M02-gmail",
+            "M02-other",
+            "M05-ready",
+            "M05-running",
+            "M05-failed-with-details",
+            "removal-window",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(f"Shot('{name}',", self.selftest)

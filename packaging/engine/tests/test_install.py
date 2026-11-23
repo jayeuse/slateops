@@ -88,6 +88,9 @@ class World:
         self.sent = 0
         self.admin_created = False
         self.admin_stdin: list[bytes | None] = []
+        # AC-B8 (DEC-0042): the backend operation that sets the first admin's password.
+        self.reset_stdin: list[bytes | None] = []
+        self.reset_answer: tuple[int, str] = (0, '{"result":"reset"}')
         self.bootstrap_exit: tuple[int, str] | None = None
         self.provisioning: tuple[int, str] = (0, '{"result":"provisioned"}')
         self.provisioning_stderr = "provision.roles info ok\n"
@@ -169,6 +172,10 @@ class World:
             return Result(code, out.encode() + b"\n", self.provisioning_stderr.encode())
         if "operations/bootstrap_admin.py" in argv:
             return self._bootstrap(argv, env, stdin)
+        if "operations/reset_admin_password.py" in argv:
+            self.reset_stdin.append(stdin)
+            code, output = self.reset_answer
+            return Result(code, output.encode() + b"\n", b"")
         if text.startswith(("systemctl", "journalctl", "docker ps", "docker logs")):
             return Result(0, b"", b"")
         return Result(0, b"", b"")

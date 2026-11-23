@@ -234,6 +234,150 @@ begin
   end;
 end;
 
+{ AC-F4 (DEC-0042): "Reset the admin password". New password, Type it again and Show, with the
+  S08 rule (12 characters to 72 UTF-8 bytes); the password stays in this process and goes to
+  the engine job admin-password through the pipe. }
+procedure AdminPwShowClick(Sender: TObject);
+begin
+  if AdminPwShow.Checked then
+  begin
+    AdminPwEdit.PasswordChar := #0;
+    AdminPwAgain.PasswordChar := #0;
+  end
+  else
+  begin
+    AdminPwEdit.PasswordChar := '*';
+    AdminPwAgain.PasswordChar := '*';
+  end;
+end;
+
+procedure AdminPwGoClick(Sender: TObject);
+var
+  Problem: String;
+begin
+  Problem := PasswordProblem(AdminPwEdit.Text);
+  if Problem <> '' then
+    AdminPwError.Caption := CM(Problem)
+  else if AdminPwEdit.Text <> AdminPwAgain.Text then
+    AdminPwError.Caption := CM('s08_err_confirm')
+  else
+  begin
+    AdminPwOk := True;
+    AdminPwForm.Close;
+    Exit;
+  end;
+  AdminPwError.AdjustHeight;
+end;
+
+function AdminPwField(Form: TSetupForm; var Y: Integer; Caption: String): TNewEdit;
+var
+  Text: TNewStaticText;
+begin
+  Text := FormText(Form, Y, Caption, True);
+  Y := Y + Text.Height + ScaleY(4);
+  Result := TNewEdit.Create(Form);
+  Result.Parent := Form;
+  Result.PasswordChar := '*';
+  Result.MaxLength := 144;
+  Result.SetBounds(ScaleX(14), Y, Form.ClientWidth - ScaleX(28), ScaleY(21));
+  Y := Y + Result.Height + ScaleY(12);
+end;
+
+{ The form, built without being shown (the screenshot build shows it without a modal wait). }
+procedure BuildAdminPwForm;
+var
+  Y: Integer;
+  Text: TNewStaticText;
+  Go, Back: TNewButton;
+begin
+  AdminPwOk := False;
+  AdminPwForm := CreateCustomForm(ScaleX(440), ScaleY(290), False, False);
+  AdminPwForm.Caption := CM('m01_adminpw');
+  Y := ScaleY(14);
+  Text := FormText(AdminPwForm, Y, CM('s08_password_help'), False);
+  Y := Y + Text.Height + ScaleY(12);
+  AdminPwEdit := AdminPwField(AdminPwForm, Y, CM('adminpw_new'));
+  AdminPwAgain := AdminPwField(AdminPwForm, Y, CM('adminpw_again'));
+  AdminPwShow := TNewCheckBox.Create(AdminPwForm);
+  AdminPwShow.Parent := AdminPwForm;
+  AdminPwShow.Caption := CM('s08_show');
+  AdminPwShow.SetBounds(ScaleX(14), Y - ScaleY(8), ScaleX(120), ScaleY(17));
+  AdminPwShow.OnClick := @AdminPwShowClick;
+  Y := Y + ScaleY(12);
+  AdminPwError := FormText(AdminPwForm, Y, '', False);
+  Go := FormButton(AdminPwForm, CM('adminpw_go'), ScaleX(110), 0);
+  Go.Default := True;
+  Go.OnClick := @AdminPwGoClick;
+  Back := FormButton(AdminPwForm, CM('btn_go_back'), ScaleX(90), mrCancel);
+  Back.Cancel := True;
+  Go.SetBounds(ScaleX(14), AdminPwForm.ClientHeight - ScaleY(14) - Go.Height, Go.Width, Go.Height);
+  Back.SetBounds(AdminPwForm.ClientWidth - ScaleX(14) - Back.Width, Go.Top, Back.Width, Back.Height);
+end;
+
+procedure FreeAdminPwForm;
+begin
+  if AdminPwForm <> nil then
+    AdminPwForm.Free;
+  AdminPwForm := nil;
+  AdminPwEdit := nil;
+  AdminPwAgain := nil;
+  AdminPwError := nil;
+  AdminPwShow := nil;
+end;
+
+{ True with the new password when the person selected "Change password" with a valid one. }
+function AdminPasswordForm(var Password: String): Boolean;
+begin
+  Password := '';
+  BuildAdminPwForm;
+  try
+    ModalOpen := True;
+    AdminPwForm.ShowModal;
+    Result := AdminPwOk;
+    if Result then
+      Password := AdminPwEdit.Text;
+  finally
+    ModalOpen := False;
+    FreeAdminPwForm;
+  end;
+end;
+
+{ AC-F4 (DEC-0042), as M02 and S12 before a password goes through the pipe: the channel
+  self-test (plan F4d), then the security policy again (R7, spec 5.2), then the job. The password
+  waits in this process only (AdminPwValue) and is cleared after the job starts or a check fails. }
+procedure StartAdminPwChecks(Password: String);
+var
+  Value: String;
+begin
+  AdminPwValue := Password;
+  MaintAt := GetTickCount;
+  MaintLine := '';
+  MaintPhase := 'adminpw-selftest';
+  Value := RandomHex(32);
+  StartJob('pipe-test', Value, 'adminpwtest:' + GetSHA256OfString(AnsiString(Value)), True, True, 2);
+  RenderPage(P_MAINT);
+end;
+
+procedure StartAdminPassword(Password: String);
+begin
+  MaintPhase := 'adminpw';
+  MaintAt := GetTickCount;
+  MaintLine := '';
+  StartJob('admin-password', '{"run_id":"' + RunId + '","admin_password":' + JsonText(Password) + '}', 'adminpw', True, False, 5);
+  RenderPage(P_MAINT);
+end;
+
+{ The result line of the job's code (DEC-0042). }
+function AdminPwResultLine(Code: String): String;
+begin
+  if Code = 'reset' then Result := CM('m01_adminpw_done')
+  else if Code = 'invalid_input' then Result := CM('m01_adminpw_invalid')
+  else if Code = 'not_installed' then Result := CM('m01_adminpw_not_installed')
+  else if Code = 'admin_missing' then Result := CM('m01_adminpw_missing')
+  else if Code = 'reset_failed' then Result := CM('m01_adminpw_reset_failed')
+  else Result := CM('m01_adminpw_failed');
+end;
+
 { M01 "Show the phone code" after its helper (W14-D9: StepFinished 'code'). }
 procedure ShowPhoneCode(Code: String);
 var
@@ -246,6 +390,8 @@ begin
 end;
 
 procedure MaintActionClick(Sender: TObject);
+var
+  Password: String;
 begin
   if JobRunning or StepRunning or (MaintPhase <> '') then
     Exit;
@@ -275,6 +421,12 @@ begin
            RenderPage(P_MAINT);
        end;
     7: SaveReport(nil);
+    8: begin
+         Password := '';
+         if AdminPasswordForm(Password) then
+           StartAdminPwChecks(Password);
+         Password := '';
+       end;
   end;
 end;
 
@@ -335,7 +487,8 @@ begin
       if I = 0 then begin AddMaintAction(0, 0, CM('m01_open'), CM('m01_open_hint'), Bottom); AddMaintAction(2, 1, CM('m01_code'), CM('m01_code_hint'), Bottom); end;
       if I = 1 then begin AddMaintAction(3, 0, CM('m01_email'), CM('m01_email_hint'), Bottom); AddMaintAction(4, 1, CM('m01_backup'), CM('m01_backup_hint'), Bottom); end;
       if I = 2 then begin AddMaintAction(5, 0, CM('m01_key'), CM('m01_key_hint'), Bottom); AddMaintAction(6, 1, CM('m01_repair'), CM('m01_repair_hint'), Bottom); end;
-      if I = 3 then AddMaintAction(7, 0, CM('btn_save_report'), CM('m01_report_hint'), Bottom);
+      { AC-F4 (DEC-0042): "Reset the admin password" beside Save report. }
+      if I = 3 then begin AddMaintAction(7, 0, CM('btn_save_report'), CM('m01_report_hint'), Bottom); AddMaintAction(8, 1, CM('m01_adminpw'), CM('m01_adminpw_hint'), Bottom); end;
       CurY := Bottom + ScaleY(4);
     end;
     AddStepLine;
@@ -431,10 +584,41 @@ begin
   if (MaintPhase = '') or (JobState <> JOB_DONE) then
     Exit;
   { W14-D9: only this phase's job (Save report can run a job too). }
-  if not ((JobPurpose = MaintPhase) or ((JobPurpose = 'maintkey') and ((MaintPhase = 'key3') or (MaintPhase = 'key4')))) then
+  if not ((JobPurpose = MaintPhase) or ((JobPurpose = 'maintkey') and ((MaintPhase = 'key3') or (MaintPhase = 'key4')))
+    or ((MaintPhase = 'adminpw-selftest') and (Copy(JobPurpose, 1, 12) = 'adminpwtest:'))) then
     Exit;
   JobState := JOB_IDLE;
-  if MaintPhase = 'setemail' then
+  if MaintPhase = 'adminpw-selftest' then
+  begin
+    { AC-F4: the channel answered with the hash of the value it got, then R7 (StepFinished). }
+    if (JobText <> '') and (Pos('"sha256":"' + Lowercase(Copy(JobPurpose, 13, 64)) + '"', Lowercase(JobText)) > 0) then
+    begin
+      JobText := '';
+      MaintPhase := 'adminpw-r7';
+      if not RunStep('r7', '', 'adminpw-r7', CM('s09_policy'), 0, 0, HELPER_LIMIT_MS) then
+      begin
+        MaintPhase := '';
+        AdminPwValue := '';
+      end;
+    end
+    else
+    begin
+      JobText := '';
+      MaintPhase := '';
+      AdminPwValue := '';
+      MaintLine := CM('s09_channel_failed');
+    end;
+    RenderPage(P_MAINT);
+  end
+  else if MaintPhase = 'adminpw' then
+  begin
+    MaintPhase := '';
+    if JobCode <> 'reset' then
+      Log('Reset the admin password: the job answered ' + JobCode + '.');
+    MaintLine := AdminPwResultLine(JobCode);
+    RenderPage(P_MAINT);
+  end
+  else if MaintPhase = 'setemail' then
   begin
     { The page says where the test email went (m02_test_sent) and Next becomes Done. }
     MaintPhase := '';
@@ -527,6 +711,7 @@ begin
   UpdPhase := Phase;
   UpdAt := GetTickCount;
   UpdOut := '';
+  UpdLastCode := '';
   if Action <> '' then
   begin
     UpdOut := NewOut(Action);
@@ -543,6 +728,8 @@ begin
 end;
 
 procedure UpdFail(Stage: Integer; Text: String; Retry: Boolean);
+var
+  Detail: String;
 begin
   UpdFailed := True;
   UpdRetry := Retry;
@@ -550,6 +737,19 @@ begin
   UpdPhase := '';
   UpdFailStage := UpdStageName(Stage);
   UpdFailText := Text;
+  { AC-F6 (owner, rc.33): the code that the step or job answered and the job's "detail" (AC-O9)
+    go to the setup log and under Details on the failure page. }
+  FailDetail := '';
+  if UpdLastCode <> '' then
+    FailDetail := FM1('m05_detail_code', UpdLastCode);
+  Detail := JsonValue(JobRaw, 'detail');
+  if Detail <> '' then
+  begin
+    if FailDetail <> '' then
+      FailDetail := FailDetail + #13#10;
+    FailDetail := FailDetail + Detail;
+  end;
+  Log('Update stopped at "' + UpdFailStage + '": code ' + UpdLastCode + '; detail: ' + Detail);
   WizardForm.CancelButton.Enabled := True;
   RenderPage(P_UPDATE);
 end;
@@ -593,6 +793,8 @@ begin
   UpdStartedAt := GetTickCount;
   UpdFailed := False;
   UpdWaiting := False;
+  UpdBusyTries := 0;
+  FailDetail := '';
   UpdSlowShown := False;
   UpdState := '';
   UpdStep('idle', 'engine-status', '');
@@ -616,6 +818,13 @@ begin
   if UpdFailed then
   begin
     AddFailure(UpdFailStage, UpdFailText, UpdRetry);
+    { AC-F6: the code and the detail, as S13 shows them (AC-O9). }
+    FailDetailLink := nil;
+    if FailDetail <> '' then
+    begin
+      FailDetailLink := AddLink(CM('s13_details'), 0);
+      FailDetailLink.OnLinkClick := @ShowFailDetail;
+    end;
     Exit;
   end;
   if UpdPhase = '' then
@@ -664,6 +873,15 @@ begin
       Exit;
     if UpdNext = 'idle' then
       UpdStep('idle', 'engine-status', '')
+    else if UpdNext = 'receive' then
+    begin
+      { AC-F5: the receive step again, after a busy engine. }
+      UpdWaiting := False;
+      UpdLastCode := '';
+      UpdPhase := 'receive';
+      StartJob('receive', '{"run_id":"' + RunId + '","setup_version":"' + SetupVersion + '"}', 'updreceive', False, False, 15);
+      RenderPage(P_UPDATE);
+    end
     else
       UpdStep('wsl', 'update-wsl', '');
     Exit;
@@ -689,10 +907,19 @@ begin
       Exit;
     end;
     JobState := JOB_IDLE;
+    UpdLastCode := JobCode;
     if UpdPhase = 'receive' then
     begin
       if JobExit = 0 then
         UpdStep('wsl', 'update-wsl', '')
+      { AC-F5 (owner, rc.33): the once-a-minute tick holds the engine; the receive step waits
+        and tries again, as the update step does, at most RECEIVE_BUSY_TRIES times. }
+      else if ((JobCode = 'engine_busy') or (JobCode = 'runner_busy')) and (UpdBusyTries < RECEIVE_BUSY_TRIES) then
+      begin
+        UpdBusyTries := UpdBusyTries + 1;
+        Log('Update: the engine is busy; the receive step waits and tries again (' + IntToStr(UpdBusyTries) + ' of ' + IntToStr(RECEIVE_BUSY_TRIES) + ').');
+        UpdPause('receive');
+      end
       else
         UpdFail(1, UpdStepText(JobCode), True);
     end
@@ -716,6 +943,7 @@ begin
     Code := 'helper_timeout';
   if Code = '' then
     Exit;
+  UpdLastCode := Code;
   if UpdPhase = 'idle' then
   begin
     if Code <> 'ok' then
@@ -736,6 +964,7 @@ begin
     begin
       { Its own purpose: receive keeps the job runner's time limit (only the update job has none). }
       UpdPhase := 'receive';
+      UpdLastCode := '';
       StartJob('receive', '{"run_id":"' + RunId + '","setup_version":"' + SetupVersion + '"}', 'updreceive', False, False, 15);
     end
     else
@@ -747,6 +976,7 @@ begin
     begin
       UpdWaiting := False;
       UpdPhase := 'update';
+      UpdLastCode := '';
       StartJob('update', '{"run_id":"' + RunId + '","version":"' + SetupVersion + '"}', 'update', False, False, UPDATE_SLOW_MINUTES);
       RenderPage(P_UPDATE);
     end
@@ -852,44 +1082,60 @@ begin
 end;
 
 procedure RenderRemove;
+var
+  Suspended: Boolean;
 begin
   if RemoveForm = nil then
     Exit;
-  RemoveClose.Enabled := not RemovalRunning;
-  if RemovePanel <> nil then
-    RemovePanel.Free;
-  RemovePanel := TPanel.Create(RemoveForm);
-  RemovePanel.Parent := RemoveForm;
-  RemovePanel.BevelOuter := bvNone;
-  RemovePanel.ParentBackground := False;
-  RemovePanel.Color := RemoveForm.Color;
-  RemovePanel.SetBounds(ScaleX(14), ScaleY(14), RemoveForm.ClientWidth - ScaleX(28), RemoveClose.Top - ScaleY(26));
-  Cur := RemovePanel;
-  CurY := 0;
-  RowX := 0;
-  WaitTime := nil;
-  WaitBar := nil;
-  WaitNow := nil;
-  if CloseAfter = 'start' then
-    AddText(CM('remove_start'), False)
-  else
-    AddText(CM('remove_text'), False);
-  BlockGap;
-  if ClosePhase <> '' then
-    AddProgress('remove', CM('remove_stages'), CloseNumber, FM1('wait_now', CloseLine), CloseStartedAt)
-  else
-  begin
-    if CloseEnd = 'done' then
-      AddProgress('remove', CM('remove_stages'), 6, '', 0)
+  { AC-F1 (owner, rc.32): drawn again with drawing suspended, then shown once; only while the
+    form shows (WM_SETREDRAW on would show a form that is not shown yet). }
+  Suspended := RemoveForm.Visible;
+  if Suspended then
+    SendMessage(RemoveForm.Handle, WM_SETREDRAW, 0, 0);
+  try
+    RemoveClose.Enabled := not RemovalRunning;
+    if RemovePanel <> nil then
+      RemovePanel.Free;
+    RemovePanel := TPanel.Create(RemoveForm);
+    RemovePanel.Parent := RemoveForm;
+    RemovePanel.BevelOuter := bvNone;
+    RemovePanel.ParentBackground := False;
+    RemovePanel.Color := RemoveForm.Color;
+    RemovePanel.SetBounds(ScaleX(14), ScaleY(14), RemoveForm.ClientWidth - ScaleX(28), RemoveClose.Top - ScaleY(26));
+    Cur := RemovePanel;
+    CurY := 0;
+    RowX := 0;
+    WaitTime := nil;
+    WaitBar := nil;
+    WaitRowCount := 0;
+    WaitNow := nil;
+    if CloseAfter = 'start' then
+      AddText(CM('remove_start'), False)
     else
-      AddProgress('remove', CM('remove_stages'), CloseNumber, '', 0);
-    if CloseEnd = 'limit' then AddText(CM('remove_limit'), False)
-    else if CloseEnd = 'kept' then AddText(CM('remove_kept_failed'), False)
-    else if CloseEnd = 'data' then AddText(CM('remove_data_failed'), False)
+      AddText(CM('remove_text'), False);
+    BlockGap;
+    if ClosePhase <> '' then
+      AddProgress('remove', CM('remove_stages'), CloseNumber, FM1('wait_now', CloseLine), CloseStartedAt)
     else
     begin
-      if RemoveFeaturesCode = 'removed' then AddText(CM('remove_restart_line'), False);
-      if RemoveWindowsCode = 'removed_at_restart' then AddText(CM('remove_account_restart'), False);
+      if CloseEnd = 'done' then
+        AddProgress('remove', CM('remove_stages'), 6, '', 0)
+      else
+        AddProgress('remove', CM('remove_stages'), CloseNumber, '', 0);
+      if CloseEnd = 'limit' then AddText(CM('remove_limit'), False)
+      else if CloseEnd = 'kept' then AddText(CM('remove_kept_failed'), False)
+      else if CloseEnd = 'data' then AddText(CM('remove_data_failed'), False)
+      else
+      begin
+        if RemoveFeaturesCode = 'removed' then AddText(CM('remove_restart_line'), False);
+        if RemoveWindowsCode = 'removed_at_restart' then AddText(CM('remove_account_restart'), False);
+      end;
+    end;
+  finally
+    if Suspended then
+    begin
+      SendMessage(RemoveForm.Handle, WM_SETREDRAW, 1, 0);
+      RedrawWindow(RemoveForm.Handle, 0, 0, RDW_ERASE or RDW_FRAME or RDW_INVALIDATE or RDW_ALLCHILDREN or RDW_UPDATENOW);
     end;
   end;
 end;
@@ -1067,6 +1313,7 @@ begin
   WaitKind := '';
   WaitTime := nil;
   WaitBar := nil;
+  WaitRowCount := 0;
   WaitNow := nil;
   WaitDrawn := 0;
 end;
@@ -1216,6 +1463,19 @@ begin
     ApplyProvider;
     LayoutMail;
     RenderMailStatus;
+  end
+  else if ForTag = 'adminpw-r7' then
+  begin
+    { AC-F4: the password goes only with a clear policy. }
+    if Code = 'clear' then
+      StartAdminPassword(AdminPwValue)
+    else
+    begin
+      MaintPhase := '';
+      if Code = 'policy' then MaintLine := CM('c18_policy') else MaintLine := CM('c18_unreadable');
+      RenderPage(P_MAINT);
+    end;
+    AdminPwValue := '';
   end
   else if ForTag = 'r7' then
   begin
@@ -1758,6 +2018,17 @@ begin
     if Action = '' then
       Action := FM1('m03_key_line', MaintTarget);
     Result := OneLine(4, 4, Action, MaintAt);
+  end
+  else if MaintPhase = 'adminpw-selftest' then
+    Result := OneLine(0, 0, CM('s09_channel'), MaintAt)
+  else if MaintPhase = 'adminpw' then
+  begin
+    Action := '';
+    if JobPurpose = 'adminpw' then
+      Action := StepText(JobStepJob, JobStepKey, '', '', '');
+    if Action = '' then
+      Action := CM('m01_adminpw_running');
+    Result := OneLine(0, 0, Action, MaintAt);
   end
   else if MaintPhase = 'key4' then
   begin

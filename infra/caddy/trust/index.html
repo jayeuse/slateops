@@ -347,34 +347,18 @@
       .aside p + p {
         margin-top: 12px;
       }
-      details summary {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        min-height: 44px;
-        cursor: pointer;
+      .code {
+        margin-top: 24px;
+        padding: 16px;
+        border: 1px solid var(--rule);
+        border-radius: 8px;
+      }
+      .code h2 {
         font-size: 18px;
         line-height: 28px;
-        font-weight: 600;
-        letter-spacing: -0.015em;
-        list-style: none;
       }
-      details summary::-webkit-details-marker {
-        display: none;
-      }
-      details summary svg {
-        width: 18px;
-        height: 18px;
-        flex-shrink: 0;
-        color: var(--ink-muted);
-      }
-      details[open] summary svg {
-        transform: rotate(90deg);
-      }
-      .code-label {
-        color: var(--ink-muted);
-        font-size: 14px;
-        line-height: 20px;
+      .code p {
+        margin-top: 8px;
       }
       /* 24 characters are 8 pairs with their colons, so the code breaks only after a colon. */
       .fingerprint {
@@ -459,6 +443,14 @@
           <p class="open" id="open" hidden>
             <a class="button button-primary" id="open-link" href="#">Open Slate Operations</a>
           </p>
+
+          {{if fileExists "slateops-ca.sha256"}}
+          <section class="code" id="code" aria-labelledby="code-title">
+            <h2 id="code-title">Check that this code matches the code on the server PC</h2>
+            <code class="fingerprint">{{readFile "slateops-ca.sha256" | trim | html}}</code>
+            <p>The server PC shows it on the last page of setup and in Slate Operations settings. If the codes differ, stop: this is not your Slate Operations.</p>
+          </section>
+          {{end}}
 
           <div id="steps-area">
             <nav class="devices" id="devices" aria-label="Device">
@@ -559,17 +551,6 @@
               blocks this. Turn off a VPN on the <span data-noun>device</span>.
             </p>
           </section>
-          {{if fileExists "slateops-ca.sha256"}}
-          <details>
-            <summary>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
-              Check the code
-            </summary>
-            <p class="code-label">Security code:</p>
-            <code class="fingerprint">{{readFile "slateops-ca.sha256" | trim | html}}</code>
-            <p>It must match the security code on the finish page or in Slate Operations settings on the server PC.</p>
-          </details>
-          {{end}}
         </div>
       </div>
     </main>
@@ -649,6 +630,9 @@
           status.querySelector('[data-icon="no"]').toggleAttribute("hidden", state !== "no");
           document.getElementById("open").hidden = state !== "yes";
           document.getElementById("steps-area").hidden = state === "yes";
+          // The code shows until this device trusts Slate Operations (TASK-0097 AC-B9).
+          var code = document.getElementById("code");
+          if (code) code.hidden = state === "yes";
           // With "Yes", "Open Slate Operations" is the only action (T01).
           document.getElementById("aside").hidden = state === "yes";
           document.body.setAttribute("data-trust", state);
