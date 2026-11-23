@@ -7,6 +7,7 @@ engine job ``admin-password`` starts; the password arrives on standard input onl
 import io
 import json
 from collections.abc import Callable
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -155,6 +156,42 @@ def test_ac_b8_an_admin_without_the_installer_mark_is_never_changed(
 
 
 
+def test_ac_b8_the_reset_clears_the_must_choose_a_new_password_mark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DEC-0042: the admin chose this password at the server PC, so no forced change follows."""
+    from app.core.integrations.supabase_admin_accounts import FIRST_ADMIN_MARKER
+
+    user = SimpleNamespace(
+        id=uuid7(), email="owner@harbor.example", supabase_user_id=uuid7(), status="active",
+        is_deleted=False, password_change_required_at=datetime(2026, 11, 23, tzinfo=UTC),
+    )
+    db = Mock()
+    db.__enter__ = Mock(return_value=db)
+    db.__exit__ = Mock(return_value=False)
+    db.info = {}
+    db.scalar.return_value = user
+    seen_at_commit: list[object] = []
+    db.commit.side_effect = lambda: seen_at_commit.append(user.password_change_required_at)
+    monkeypatch.setattr(reset, "AuditSession", lambda _engine: db)
+    monkeypatch.setattr(reset, "get_engine", lambda: object())
+    monkeypatch.setattr(reset, "administered_membership",
+                        lambda *_args: SimpleNamespace(org_id=uuid7()))
+    monkeypatch.setattr(reset, "is_active_account", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reset, "scope_session", lambda *_args: None)
+    provider = Mock()
+    provider.get_admin_user.return_value = SimpleNamespace(
+        id=user.supabase_user_id, email=user.email, app_metadata={FIRST_ADMIN_MARKER: True},
+    )
+    monkeypatch.setattr(reset, "get_supabase_auth_client", lambda: provider)
+    monkeypatch.setattr(reset.admin_accounts, "set_password", Mock())
+    monkeypatch.setattr(reset, "revoke_user_sessions", Mock())
+    monkeypatch.setattr(reset, "append_security_event", Mock())
+
+    reset.reset_admin_password(user.email, PASSWORD)
+
+    assert seen_at_commit == [None]  # cleared in the same transaction, before its commit
+
 # The real Auth account and database (disposable stack) ------------------------------------
 
 pytest_plugins = ("tests.users.test_first_administrator_integration",)
@@ -182,6 +219,7 @@ def test_ac_b8_the_admin_signs_in_with_the_new_password_and_old_sessions_end(
             user = db.get(User, first.user_id)
             assert user is not None
             session_id = add_session(db, user).id
+            user.password_change_required_at = datetime.now(UTC)  # a temporary password
             db.commit()
 
         reset.reset_admin_password(invitation.email, new_password)
@@ -192,6 +230,8 @@ def test_ac_b8_the_admin_signs_in_with_the_new_password_and_old_sessions_end(
         with Session(owner) as db:
             session = db.get(IdentitySession, session_id)
             assert session is not None and session.revoked_at is not None
+            cleared = db.get(User, first.user_id)
+            assert cleared is not None and cleared.password_change_required_at is None
             assert db.scalar(select(func.count()).select_from(SecurityEvent).where(
                 SecurityEvent.subject_id == first.user_id,
                 SecurityEvent.event_type == "identity.local_admin_password_reset",

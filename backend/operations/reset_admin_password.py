@@ -5,7 +5,8 @@ The install engine's ``admin-password`` job runs ``python operations/reset_admin
 administrator email in ``ADMIN_EMAIL`` and the new password on standard input only (never an
 argument, an environment value, output or a log line). The person must be an active
 administrator whose Auth account setup created (``supabase_admin_accounts`` marker). The job
-sets the password in Auth, ends every Slate Operations session of that person and writes the
+sets the password in Auth, ends every Slate Operations session of that person, clears the
+person's "must choose a new password" mark (``password_change_required_at``) and writes the
 security event ``identity.local_admin_password_reset``. Output is one line of safe JSON:
 ``{"result": "reset"}`` (exit 0), ``{"code": "invalid_input"}`` or
 ``{"code": "admin_missing"}`` (exit 2), or ``{"code": "reset_failed"}`` (exit 3).
@@ -103,9 +104,9 @@ def reset_admin_password(email: str, password: str) -> UUID:
             raise AdminMissing("The Auth account is not the one that setup created")
         admin_accounts.set_password(provider, account, password)
         revoke_user_sessions(db, user.id, except_session_id=None, now=timestamp)
-        # DEC-0042 (Email Adjustments session): clear the person's "must choose a new password"
-        # mark here, with that session's function, once its name is known. The password above
-        # is the one the administrator chose at the server PC.
+        # DEC-0042: the administrator chose this password at the server PC, so the "must
+        # choose a new password" mark of a temporary password no longer applies.
+        user.password_change_required_at = None
         append_security_event(
             db,
             SecurityEventIngestRequest(
