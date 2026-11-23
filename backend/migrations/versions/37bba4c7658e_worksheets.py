@@ -159,7 +159,6 @@ def _worksheet_rows() -> None:
         "ix_worksheet_rows_order", table, ["worksheet_id", "position", "id"], unique=False,
         postgresql_where=sa.text("is_deleted IS FALSE"),
     )
-    op.create_index("ix_worksheet_rows_sheet", table, ["org_id", "worksheet_id"], unique=False)
 
 
 def _worksheet_shares() -> None:

@@ -539,7 +539,7 @@ Column IDs are **sheet-local keys**, `^c[0-9a-z]{1,8}$` (for example `c1`, `c2`)
 | `revision` | `integer NOT NULL DEFAULT 1`, `CHECK (revision > 0)`. |
 
 - `UniqueConstraint("org_id", "worksheet_id", "id")`. This is the target of the row-link foreign key, so a link cannot point into another sheet. Pattern: `uq_saved_views_id_module` (`openview/views/models.py:38`).
-- Indexes: `ix_worksheet_rows_order (worksheet_id, position, id) WHERE is_deleted IS FALSE` for the grid. `ix_worksheet_rows_sheet (org_id, worksheet_id)` for the FK check and the purge.
+- Indexes: `ix_worksheet_rows_order (worksheet_id, position, id) WHERE is_deleted IS FALSE` for the grid. The unique `(org_id, worksheet_id, id)` serves the FK check and the purge.
 - Soft delete is a row delete. A removed column's key stays in `data` until the row's next save, which drops it. Reason: a column removal does not rewrite up to 10,000 rows. Pattern: a record keeps the values of closed fields (`records/router.py:381-384`).
 - `__audit_redacted_fields__ = {"data"}`.
 

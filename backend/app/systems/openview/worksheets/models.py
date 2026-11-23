@@ -108,7 +108,6 @@ class WorksheetRow(BaseModel):
             "ix_worksheet_rows_order", "worksheet_id", "position", "id",
             postgresql_where=text("is_deleted IS FALSE"),
         ),
-        Index("ix_worksheet_rows_sheet", "org_id", "worksheet_id"),
     )
 
     org_id: Mapped[UUID] = mapped_column(
