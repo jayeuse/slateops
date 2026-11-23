@@ -697,7 +697,7 @@ Lock order for a write:
 
 1. the owner's user row, `FOR SHARE`;
 2. all record rows that the write touches, `FOR SHARE`, in ID order: the anchor record, the targets of the row's current links, and the targets of its new links (the current links are read first without a lock, then read again after step 4; a change in between answers 409 `row_changed`);
-3. the actor's live share rows on the sheet, `FOR SHARE`;
+3. the share row that the request changes or removes, `FOR UPDATE` (share routes 18 and 19 only), then the actor's live share rows on the sheet, `FOR SHARE`;
 4. the sheet row, `FOR UPDATE` (structure changes, row create and delete, counters);
 5. the row, `FOR UPDATE`;
 6. the link rows.
