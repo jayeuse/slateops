@@ -74,7 +74,9 @@ export const userSummarySchema = z.strictObject({
 /** `users/schemas.py` InvitationResponse. */
 export const invitationSchema = z.strictObject({
   user: userSchema,
-  delivery: z.enum(["email", "in_app"]),
+  delivery: z.enum(["email", "in_app", "link"]),
+  // DEC-0042: the one-time link, only in the answer that made it.
+  invitation_url: z.string().min(1).nullable().optional(),
 });
 
 /** `users/schemas.py` InvitationCreate (= UserCreate). */
@@ -91,6 +93,8 @@ export const invitationCreateSchema = z.strictObject({
   job_title: z.string().max(200).nullable().optional(),
   sponsor_user_id: uuid.nullable().optional(),
   expires_at: dateTime.nullable().optional(),
+  /** DEC-0042: "link" sends no email; the answer carries the link. */
+  delivery: z.enum(["email", "link"]).optional(),
 });
 
 /**

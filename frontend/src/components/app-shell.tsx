@@ -49,6 +49,7 @@ import {
 } from "@/components/app-navigation";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import { ServerConnectionBanner } from "@/components/server-connection-banner";
+import { ShellAccountChecks } from "@/components/shell-account-checks";
 import { isModulePage } from "@/components/department-navigation-model";
 import { HelpPanel } from "@/components/help/help-panel";
 import {
@@ -648,6 +649,7 @@ export function AppShell({
                 />
               </header>
               <ServerConnectionBanner />
+              <ShellAccountChecks />
             </div>
             <main
               id="main-content"

@@ -1,6 +1,7 @@
 import { listOpenViewDataSources } from "@/components/systems/openview/adapters/views-api";
 import { listSandboxTests } from "@/components/systems/sandbox/state/api";
 import { getAuthMe } from "@/lib/auth-api";
+import { PASSWORD_CHANGE_ROUTE } from "@/lib/password-change-signal";
 import { readUserPreferences } from "@/lib/user-theme-preferences";
 import { accessNavigationFor } from "./workspace-navigation";
 
@@ -15,7 +16,8 @@ const preferredRoutes = {
 } as const;
 type StartRoute =
   | (typeof preferredRoutes)[keyof typeof preferredRoutes]
-  | "/access?view=groups";
+  | "/access?view=groups"
+  | typeof PASSWORD_CHANGE_ROUTE;
 
 /**
  * Where a signed-in person starts. A workspace with nothing published has
@@ -26,6 +28,8 @@ type StartRoute =
 export async function workspaceStartRoute(): Promise<StartRoute> {
   try {
     const identity = await getAuthMe();
+    // A temporary password comes first; every other read is refused.
+    if (identity.passwordChangeRequired) return PASSWORD_CHANGE_ROUTE;
     const preference = await readUserPreferences(identity.id);
     // The request can settle after a different person signs in. Admission and
     // ownership use a fresh identity, not the identity captured at its start.

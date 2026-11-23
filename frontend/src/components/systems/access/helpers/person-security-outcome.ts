@@ -89,3 +89,28 @@ export function personSecurityFailure(caught: unknown): string {
         "This change could not be confirmed. Reload security, then try again.",
       );
 }
+
+const temporaryPasswordRefusals: Readonly<Record<string, string>> = {
+  password_policy_violation:
+    "This password does not meet the password rules. Use 12 to 128 characters and avoid a common password.",
+  security_target_owner:
+    "You cannot set a temporary password for an owner of this organization or of the installation.",
+  security_target_self: "Change your own password in Account settings.",
+  security_target_shared:
+    "This person also belongs to another organization. Only the installation owner can set their password.",
+  security_target_ineligible:
+    "This person cannot sign in now, so a temporary password cannot be set.",
+  mfa_required: "Complete your own two-step verification first.",
+  security_action_incomplete:
+    "Their sessions ended, but the new password was not confirmed. Try again.",
+  user_security_unavailable: "Nothing changed. Try again in a moment.",
+};
+
+/** DEC-0042: the words for a refused temporary password, by its code. */
+export function temporaryPasswordFailure(caught: unknown): string {
+  const code = caught instanceof ApiError ? caught.code : undefined;
+  return (
+    (code !== undefined ? temporaryPasswordRefusals[code] : undefined) ??
+    personSecurityFailure(caught)
+  );
+}

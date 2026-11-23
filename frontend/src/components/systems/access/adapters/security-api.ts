@@ -455,6 +455,38 @@ export function resetPersonMfa(userId: string, signal?: AbortSignal) {
     },
   );
 }
+const temporaryPasswordResponseSchema = z
+  .object({
+    ...effectIdentity,
+    // Set only when the server chose it; shown once, never stored.
+    temporary_password: z.string().min(1).nullable(),
+    local_revocation: z.literal("committed"),
+    revoked_sessions: z.number().int().nonnegative(),
+  })
+  .strict();
+export type TemporaryPasswordResult = z.output<
+  typeof temporaryPasswordResponseSchema
+>;
+/**
+ * DEC-0042: the person's sessions end and they choose a new password at the
+ * next sign-in. With no password the server makes one and returns it once.
+ */
+export function setPersonTemporaryPassword(
+  userId: string,
+  password: string | null,
+  signal?: AbortSignal,
+): Promise<TemporaryPasswordResult> {
+  return apiFetch(
+    `/users/${userId}/temporary-password`,
+    temporaryPasswordResponseSchema.refine((value) => value.user_id === userId),
+    {
+      method: "POST",
+      signal,
+      body: JSON.stringify(password === null ? {} : { password }),
+      refreshOnUnauthorized: false,
+    },
+  );
+}
 export function personSecurityPartial(error: unknown) {
   if (!(error instanceof ApiError)) return null;
   const partial = partialSecuritySchema.safeParse(error.details);

@@ -1,5 +1,5 @@
 import type { Page, Route } from "@playwright/test";
-import { isEventStream, signedInAs } from "./test";
+import { isEventStream, isSystemStatusRead, signedInAs } from "./test";
 import { wireBoard } from "../../helpers/wire";
 import { wirePagination } from "../../helpers/pagination";
 
@@ -234,7 +234,7 @@ export async function installCalendarApi(
     updated_at: stamp,
   });
   await page.route("**/api/**", (route) =>
-    isEventStream(route)
+    isEventStream(route) || isSystemStatusRead(route)
       ? route.fallback()
       : route.fulfill({ status: 404, json: { detail: "Not in this test" } }),
   );

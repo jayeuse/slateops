@@ -158,3 +158,11 @@ Known gaps (no change in F7; each needs a production change and the user's appro
 | Malformed successful JSON becomes a safe contract error without exposing the body | isolated | isolated/security/api-fetch-session.spec.ts › malformed successful JSON becomes a safe contract error without exposing the body      | not auth: lib/api foundation |
 | A 204 needs a schema that accepts null                                            | isolated | isolated/security/api-fetch-session.spec.ts › 204 requires a schema that explicitly accepts null                                     | not auth: lib/api foundation |
 | API errors keep structured validation and non-JSON upstream failures are safe     | isolated | isolated/security/api-fetch-session.spec.ts › API errors preserve structured validation and safely handle non-JSON upstream failures | not auth: lib/api foundation |
+
+## Forced password change (DEC-0042)
+
+| Behavior                                                                                 | Layer    | Owner test (file › title)                                                                                                                        | Source                     |
+| ---------------------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------- |
+| A person who must choose a new password starts on the change page and reads nothing else | isolated | isolated/auth/workspace-start.spec.ts › AC-F-UI a person who must choose a new password starts on the change page and reads nothing else         | AC-F-UI                    |
+| Sign-in with a temporary password opens Choose a new password; the change opens the app  | http     | http/auth-change-password.spec.ts › AC-F-UI signing in with a temporary password opens Choose a new password, and the new password opens the app | AC-F-UI                    |
+| A signed-in person who must choose a new password is sent there from any page            | http     | http/auth-change-password.spec.ts › AC-F-UI a signed-in person who must choose a new password is sent there from any page                        | AC-F-UI; D4: authorization |

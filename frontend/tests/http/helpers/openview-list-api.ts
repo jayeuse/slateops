@@ -3,6 +3,7 @@ import {
   authMeBody,
   defaultOrganization,
   isEventStream,
+  isSystemStatusRead,
   type Page,
   type Route,
 } from "./test";
@@ -283,7 +284,8 @@ export async function installListApi(
   const viewer = viewerAccess[options.viewer ?? "writer"];
 
   await page.route("**/api/**", async (route: Route) => {
-    if (isEventStream(route)) return route.fallback();
+    if (isEventStream(route) || isSystemStatusRead(route))
+      return route.fallback();
     const request = route.request();
     const url = new URL(request.url());
     const method = request.method();

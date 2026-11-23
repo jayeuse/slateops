@@ -101,6 +101,7 @@ export const manageKeys = {
   version: () => ["manage", "maintenance", "version"] as const,
   systemStatus: () => ["manage", "system-status"] as const,
   systemHealthPeriods: () => ["manage", "system-health-periods"] as const,
+  emailStatus: () => ["manage", "email-status"] as const,
 };
 
 export const manageBackupStatusOptions = () =>
@@ -131,6 +132,23 @@ export const manageSystemStatusOptions = () =>
     queryFn: ({ signal }) => getSystemStatus("background", signal),
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
+  });
+/**
+ * The email notice's and Manage → Email's status read (DEC-0042): the System
+ * health read under its own key, so System health keeps its own opening read
+ * (S2-C6) and its one request. The shell's read on any page is not the
+ * person's activity, so it is `background`; Manage → Email reads as `person`
+ * when it opens (`emailSetupPageStatusOptions`).
+ */
+export const emailSetupStatusOptions = () =>
+  queryOptions({
+    queryKey: manageKeys.emailStatus(),
+    queryFn: ({ signal }) => getSystemStatus("background", signal),
+  });
+export const emailSetupPageStatusOptions = () =>
+  queryOptions({
+    ...emailSetupStatusOptions(),
+    queryFn: ({ signal }) => getSystemStatus("person", signal),
   });
 export const manageBackupExportOptions = (id: string) =>
   queryOptions({

@@ -95,6 +95,8 @@ const workspaceNavigationDefinitions = [
       { id: "organization", label: "Organization" },
       // Every role sees System health, so it holds the same place for all.
       { id: "health", label: "System health" },
+      // Email setup steps, for administrators only (DEC-0042).
+      { id: "email", label: "Email" },
       { id: "backup", label: "Backup" },
       { id: "audit", label: "Audit" },
       { id: "jobs", label: "Jobs" },
@@ -188,7 +190,8 @@ export function auditDepartmentsFor(
 
 /**
  * Which Manage sections a person sees (MD3, docs/specs/manage-relayout.md):
- * Organization and System health for everyone; Audit for an administrator (`require_admin`) and
+ * Organization and System health for everyone; Email for an administrator
+ * (DEC-0042); Audit for an administrator (`require_admin`) and
  * a department manager (MD12, the page sends `department_id`); Jobs for a
  * verified administrator; Backup and Updates for the installation owner.
  */
@@ -199,6 +202,7 @@ function visibleManageItem(
   installationOwner: boolean,
   auditManager: boolean,
 ): boolean {
+  if (id === "email") return access === "all";
   if (id === "audit") return access === "all" || auditManager;
   if (id === "jobs") return jobsAdmitted;
   if (id === "backup" || id === "updates") return installationOwner;

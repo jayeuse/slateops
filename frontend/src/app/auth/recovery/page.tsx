@@ -17,7 +17,10 @@ import {
 } from "@/components/ui/field";
 import { apiErrorReference } from "@/lib/api-errors";
 import { completeRecovery, requestRecovery } from "@/lib/auth-api";
-import { recoveryRequestFailureMessage } from "@/lib/email-setup";
+import {
+  isEmailNotConfigured,
+  recoveryRequestFailureMessage,
+} from "@/lib/email-setup";
 import {
   consumeRecoveryToken,
   hasValidRecoveryPasswordLength,
@@ -73,7 +76,10 @@ export default function RecoveryPage() {
     } catch (failure) {
       setRequestState("error");
       setRequestFailure(recoveryRequestFailureMessage(failure));
-      setFailureReference(apiErrorReference(failure));
+      // Email not set up is a known state, not a failure to report (DEC-0042).
+      setFailureReference(
+        isEmailNotConfigured(failure) ? undefined : apiErrorReference(failure),
+      );
     } finally {
       setPending(false);
     }

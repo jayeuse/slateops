@@ -216,3 +216,47 @@ for (const row of rows) {
     }
   });
 }
+
+test("AC-F-UI a person who must choose a new password starts on the change page and reads nothing else", async () => {
+  const mock = installFetch((input) => {
+    const path = String(input);
+    if (path === "/api/auth/me") {
+      const organization = {
+        org_id: "00000000-0000-4000-8000-000000000102",
+        name: "Slate Operations",
+        slug: "slateops",
+        role: "member",
+      };
+      return Response.json({
+        id: userId,
+        username: "start_person",
+        display_name: null,
+        avatar_file_id: null,
+        role: "member",
+        default_organization_blocked: null,
+        access: [],
+        memberships: [organization],
+        pending_invitations: [],
+        current_organization: { ...organization, access: [] },
+        password_change_required: true,
+      });
+    }
+    return Response.json(
+      {
+        detail: {
+          code: "password_change_required",
+          message: "Choose a new password to continue.",
+        },
+      },
+      { status: 403 },
+    );
+  });
+  try {
+    await expect(workspaceStartRoute()).resolves.toBe("/auth/change-password");
+    expect(mock.requests.map(({ input }) => String(input))).toEqual([
+      "/api/auth/me",
+    ]);
+  } finally {
+    mock.restore();
+  }
+});

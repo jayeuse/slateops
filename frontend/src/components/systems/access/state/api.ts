@@ -238,6 +238,21 @@ export function resendAccessInvitation(
   );
 }
 
+/**
+ * A new one-time invitation link (DEC-0042). It ends the earlier link or
+ * invitation email and works once, for 24 hours; no email is sent.
+ */
+export function newAccessInvitationLink(
+  userId: string,
+  options: RequestOptions = {},
+): Promise<AccessInvitationResponse> {
+  return apiFetch(
+    `/auth/invitations/${encodeURIComponent(userId)}/link`,
+    invitationSchema,
+    { method: "POST", body: JSON.stringify({}), signal: options.signal },
+  );
+}
+
 export function revokeAccessInvitation(
   userId: string,
   options: RequestOptions = {},

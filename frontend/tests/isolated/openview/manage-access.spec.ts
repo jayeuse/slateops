@@ -36,6 +36,7 @@ function member(
     currentOrganization: organization,
     organizationOwner: false,
     operator: false,
+    passwordChangeRequired: false,
   };
 }
 

@@ -1,5 +1,5 @@
 import type { Locator, Page } from "./test";
-import { isEventStream, signedInAs } from "./test";
+import { isEventStream, isSystemStatusRead, signedInAs } from "./test";
 import { wirePagination } from "../../helpers/pagination";
 import { wireBoard } from "../../helpers/wire";
 
@@ -50,7 +50,7 @@ export async function installBoardApi(
 ) {
   const visibleBoard = { ...board, level: access.level };
   await page.route("**/api/**", (route) =>
-    isEventStream(route)
+    isEventStream(route) || isSystemStatusRead(route)
       ? route.fallback()
       : route.fulfill({
           status: 404,

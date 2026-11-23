@@ -1,6 +1,11 @@
 import { expect, type Page, type Route } from "@playwright/test";
 import { installOpenViewEventSource } from "./openview-event-source";
-import { isEventStream, signedInAs, type SignedInIdentity } from "./test";
+import {
+  isEventStream,
+  isSystemStatusRead,
+  signedInAs,
+  type SignedInIdentity,
+} from "./test";
 import { pageOf, wirePagination } from "../../helpers/pagination";
 import {
   wireBucket,
@@ -296,7 +301,7 @@ export async function installDashboardApi(
 ) {
   await installOpenViewEventSource(page);
   await page.route("**/api/**", (route) =>
-    isEventStream(route)
+    isEventStream(route) || isSystemStatusRead(route)
       ? route.fallback()
       : route.fulfill({
           status: 404,
