@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { apiFetch } from "@/lib/api";
+import { openViewReadFetch } from "./openview-access";
 
 // Sheet routes (docs/specs/sheets.md D10). Code says "worksheet"; users read
 // "sheet" (P7). Add routes here only as a unit needs them.
@@ -25,6 +26,14 @@ const summaryFields = {
   revision: z.number().int().min(0),
   updated_at: timestamp,
   is_deleted: z.boolean(),
+  deleted_at: timestamp.nullable(),
+  // The record's title, or the module's name for a module sheet.
+  anchor_title: z.string(),
+  module_name: z.string(),
+  // Whether the owner's sheet has a live share; null for anyone else.
+  shared: z.boolean().nullable(),
+  // The group whose share alone gives the viewer the sheet, else null.
+  access_group: z.string().nullable(),
 };
 
 type SummaryWire = z.output<z.ZodObject<typeof summaryFields>>;
@@ -42,6 +51,11 @@ function toSummary(wire: SummaryWire) {
     revision: wire.revision,
     updatedAt: wire.updated_at,
     isDeleted: wire.is_deleted,
+    deletedAt: wire.deleted_at,
+    anchorTitle: wire.anchor_title,
+    moduleName: wire.module_name,
+    shared: wire.shared,
+    accessGroup: wire.access_group,
   };
 }
 
@@ -200,35 +214,109 @@ const MY_SHEETS_PAGE = 100;
 // A bound on the read, so a server that keeps answering has_more cannot loop it.
 const MY_SHEETS_MAX_PAGES = 50;
 
-/**
- * My sheets (route 1): the sheets the person owns or that are shared with
- * them, or with `deleted: "only"` their own deleted sheets. It reads every
- * page, newest change first, so the screen can count and filter the whole
- * list.
- */
-export async function listMyWorksheets(options: {
-  deleted: "exclude" | "only";
-  signal?: AbortSignal;
-}): Promise<MyWorksheets> {
+type SheetPage = z.output<typeof pageSchema>;
+
+/** Reads every page of a sheet list, newest change first. */
+async function readEveryPage(
+  read: (query: URLSearchParams) => Promise<SheetPage>,
+  deleted: "exclude" | "only" = "exclude",
+): Promise<MyWorksheets> {
   const items: WorksheetSummary[] = [];
   let total = 0;
   for (let page = 0; page < MY_SHEETS_MAX_PAGES; page += 1) {
-    const query = new URLSearchParams({
-      limit: String(MY_SHEETS_PAGE),
-      offset: String(items.length),
-      sort_by: "updated_at",
-      sort_order: "desc",
-      deleted: options.deleted,
-    });
-    const result = await apiFetch(`/worksheets?${query}`, pageSchema, {
-      cache: "no-store",
-      signal: options.signal,
-    });
+    const result = await read(
+      new URLSearchParams({
+        limit: String(MY_SHEETS_PAGE),
+        offset: String(items.length),
+        sort_by: "updated_at",
+        sort_order: "desc",
+        deleted,
+      }),
+    );
     items.push(...result.items);
     total = result.pagination.total;
     if (!result.pagination.has_more || result.items.length === 0) break;
   }
   return { items, total };
+}
+
+/**
+ * My sheets (route 1): the sheets the person owns or that are shared with
+ * them, or with `deleted: "only"` their own deleted sheets. It reads every
+ * page, so the screen can count and filter the whole list. It needs no
+ * records.read, so it does not report to the OpenView access latch.
+ */
+export function listMyWorksheets(options: {
+  deleted: "exclude" | "only";
+  signal?: AbortSignal;
+}): Promise<MyWorksheets> {
+  return readEveryPage(
+    (query) =>
+      apiFetch(`/worksheets?${query}`, pageSchema, {
+        cache: "no-store",
+        signal: options.signal,
+      }),
+    options.deleted,
+  );
+}
+
+/** The sheets on a record that the person can see (route 2, Sheets tab). */
+export function listRecordWorksheets(
+  recordId: string,
+  signal?: AbortSignal,
+): Promise<MyWorksheets> {
+  return readEveryPage((query) =>
+    openViewReadFetch(
+      `/records/${encodeURIComponent(recordId)}/worksheets?${query}`,
+      pageSchema,
+      { cache: "no-store", signal },
+    ),
+  );
+}
+
+/** The module sheets that the person can see (route 2a, module page). */
+export function listModuleWorksheets(
+  moduleId: string,
+  signal?: AbortSignal,
+): Promise<MyWorksheets> {
+  return readEveryPage((query) =>
+    openViewReadFetch(
+      `/modules/${encodeURIComponent(moduleId)}/worksheets?${query}`,
+      pageSchema,
+      { cache: "no-store", signal },
+    ),
+  );
+}
+
+const createSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    recordId: uuid.optional(),
+    moduleId: uuid.optional(),
+  })
+  .refine((input) => Boolean(input.recordId) !== Boolean(input.moduleId));
+
+/**
+ * A new blank sheet on exactly one record or one module (route 3); the
+ * person who creates it owns it (C5). Templates and data files come later.
+ */
+export function createWorksheet(
+  raw: { title: string } & (
+    | { recordId: string; moduleId?: never }
+    | { moduleId: string; recordId?: never }
+  ),
+): Promise<WorksheetDetail> {
+  const input = createSchema.parse(raw);
+  return apiFetch("/worksheets", detailSchema, {
+    method: "POST",
+    body: JSON.stringify({
+      ...(input.recordId
+        ? { record_id: input.recordId }
+        : { module_id: input.moduleId }),
+      title: input.title,
+      source: { kind: "blank" },
+    }),
+  });
 }
 
 /** One sheet the person can see (route 4); a hidden sheet answers 404 (P6). */

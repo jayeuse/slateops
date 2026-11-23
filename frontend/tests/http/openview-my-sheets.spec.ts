@@ -1,18 +1,19 @@
 import {
-  answeredHeaders,
   expect,
   expectNoHorizontalScroll,
   signedInAs,
   test,
   type Page,
 } from "./helpers/test";
+import {
+  installSheetsApi,
+  sheetPeople,
+  wireSheetSummary,
+} from "./helpers/openview-sheets-api";
 
 // docs/specs/sheets.md P4 (SH-62) and Screens 7: My sheets, from the sidebar
 // foot, for an account with no department access.
 
-const viewerId = "00000000-0000-4000-8000-0000000006a1";
-const colleagueId = "00000000-0000-4000-8000-0000000006a2";
-const recordId = "00000000-0000-4000-8000-0000000006b1";
 const moduleId = "00000000-0000-4000-8000-0000000006b2";
 const ids = {
   class1a: "00000000-0000-4000-8000-0000000006c1",
@@ -20,131 +21,29 @@ const ids = {
   council: "00000000-0000-4000-8000-0000000006c3",
   draft: "00000000-0000-4000-8000-0000000006c4",
 };
-const noAccessMember = { id: viewerId, role: "member", access: [] } as const;
-
-type Summary = ReturnType<typeof summary>;
-
-function summary(
-  id: string,
-  title: string,
-  options: {
-    owner?: "viewer" | "colleague";
-    level?: "owner" | "edit" | "view";
-    module?: boolean;
-    rows?: number;
-    updatedAt?: string;
-    deleted?: boolean;
-  } = {},
-) {
-  const owner = options.owner ?? "viewer";
-  return {
-    id,
-    record_id: options.module ? null : recordId,
-    module_id: options.module ? moduleId : null,
-    title,
-    owner:
-      owner === "viewer"
-        ? { id: viewerId, display_name: "Andrea Villamor" }
-        : { id: colleagueId, display_name: "Bernard Ocampo" },
-    state: "private" as const,
-    my_level: options.level ?? (owner === "viewer" ? "owner" : "view"),
-    live_row_count: options.rows ?? 0,
-    revision: 1,
-    updated_at: options.updatedAt ?? "2026-11-21T08:30:00Z",
-    is_deleted: options.deleted ?? false,
-  };
-}
-
-function listBody(items: Summary[], url: URL) {
-  return {
-    items,
-    pagination: {
-      limit: Number(url.searchParams.get("limit") ?? 25),
-      offset: Number(url.searchParams.get("offset") ?? 0),
-      count: items.length,
-      total: items.length,
-      has_more: false,
-      total_is_capped: false,
-    },
-  };
-}
-
-/** Answers routes 1 and 8 from two lists, as the server keeps them. */
-async function installMySheetsApi(
-  page: Page,
-  lists: { live: Summary[]; deleted: Summary[] },
-  options: { failFirstRead?: boolean } = {},
-) {
-  const state = { ...lists, reads: 0, restores: [] as string[] };
-  let failNext = options.failFirstRead ?? false;
-  await page.route(
-    (url) => url.pathname === "/api/worksheets",
-    (route) => {
-      const url = new URL(route.request().url());
-      state.reads += 1;
-      if (failNext && url.searchParams.get("deleted") === "exclude") {
-        failNext = false;
-        return route.fulfill({
-          status: 503,
-          headers: answeredHeaders,
-          json: { detail: "Service unavailable" },
-        });
-      }
-      return route.fulfill({
-        headers: { "Cache-Control": "no-store" },
-        json: listBody(
-          url.searchParams.get("deleted") === "only"
-            ? state.deleted
-            : state.live,
-          url,
-        ),
-      });
-    },
-  );
-  await page.route(
-    (url) => /^\/api\/worksheets\/[^/]+\/restore$/.test(url.pathname),
-    (route) => {
-      const id = new URL(route.request().url()).pathname.split("/")[3];
-      const sheet = state.deleted.find((item) => item.id === id);
-      if (route.request().method() !== "POST" || !sheet)
-        return route.fulfill({ status: 404, json: {} });
-      state.restores.push(id);
-      state.deleted = state.deleted.filter((item) => item.id !== id);
-      const restored = { ...sheet, is_deleted: false };
-      state.live = [restored, ...state.live];
-      return route.fulfill({
-        json: {
-          ...restored,
-          structure: {
-            structureVersion: 1,
-            nextColumnSeq: 1,
-            columns: [],
-            groups: [],
-            totals: {},
-          },
-          etag: `"${id}:1"`,
-          created_at: "2026-11-01T08:30:00Z",
-        },
-      });
-    },
-  );
-  return state;
-}
+const noAccessMember = {
+  id: sheetPeople.viewer.id,
+  role: "member",
+  access: [],
+} as const;
 
 const threeSheets = () => ({
   live: [
-    summary(ids.class1a, "Class 1A", { rows: 15 }),
-    summary(ids.class2b, "Class 2B", { rows: 14, module: true }),
-    summary(ids.council, "Student Council records", {
+    wireSheetSummary(ids.class1a, "Class 1A", { rows: 15, shared: true }),
+    wireSheetSummary(ids.class2b, "Class 2B", { rows: 14, moduleId }),
+    wireSheetSummary(ids.council, "Student Council records", {
       owner: "colleague",
       level: "edit",
       rows: 9,
+      recordTitle: "Bernard Ocampo",
     }),
   ],
   deleted: [
-    summary(ids.draft, "Class 4D draft", {
+    // Deleted on Nov 19; its last change before that was Nov 10.
+    wireSheetSummary(ids.draft, "Class 4D draft", {
       deleted: true,
-      updatedAt: "2026-11-19T02:00:00Z",
+      updatedAt: "2026-11-10T02:00:00Z",
+      deletedAt: "2026-11-19T02:00:00Z",
     }),
   ],
 });
@@ -169,7 +68,7 @@ test("an account with no department access opens My sheets from the sidebar foot
     (url) => url.pathname === "/api/views/data-sources",
     (route) => route.fulfill({ status: 403, json: { detail: "Forbidden" } }),
   );
-  await installMySheetsApi(page, threeSheets());
+  await installSheetsApi(page, threeSheets());
   await page.goto("/settings");
 
   await expect(mySheetsLink(page)).toBeVisible();
@@ -219,6 +118,15 @@ test("an account with no department access opens My sheets from the sidebar foot
   await expect(
     table.getByRole("row", { name: /Student Council records/ }),
   ).toContainText("Edit");
+  // On record names the record and its module; a module sheet its module.
+  const class1a = table.getByRole("row", { name: /Class 1A/ });
+  await expect(class1a.getByRole("cell").nth(1)).toHaveText(
+    "Andrea Villamor · Faculty Members",
+  );
+  await expect(class1a).toContainText("Owner · shared");
+  const class2b = table.getByRole("row", { name: /Class 2B/ });
+  await expect(class2b.getByRole("cell").nth(1)).toHaveText("Faculty Members");
+  await expect(class2b).toContainText("Owner · only you");
   await expect(table.getByRole("link", { name: "Class 1A" })).toHaveAttribute(
     "href",
     `/openview?sheet=${ids.class1a}`,
@@ -253,7 +161,7 @@ test("the owner restores a deleted sheet from the Deleted list", async ({
   page,
 }) => {
   await signedInAs(page, noAccessMember);
-  const api = await installMySheetsApi(page, threeSheets());
+  const api = await installSheetsApi(page, threeSheets());
   await page.goto("/openview?section=sheets");
 
   const show = page.getByRole("group", { name: "Show" });
@@ -267,6 +175,10 @@ test("the owner restores a deleted sheet from the Deleted list", async ({
   ]);
   const row = table.getByRole("row", { name: /Class 4D draft/ });
   await expect(row).toContainText("Nov 19");
+  await expect(row).not.toContainText("Nov 10");
+  await expect(row.getByRole("cell").nth(1)).toHaveText(
+    "Andrea Villamor · Faculty Members",
+  );
 
   await row.getByRole("button", { name: "Restore Class 4D draft" }).focus();
   await page.keyboard.press("Enter");
@@ -283,8 +195,12 @@ test("the owner restores a deleted sheet from the Deleted list", async ({
 test("a guest with no sheets sees the same structure with the empty line", async ({
   page,
 }) => {
-  await signedInAs(page, { id: viewerId, role: "guest", access: [] });
-  await installMySheetsApi(page, { live: [], deleted: [] });
+  await signedInAs(page, {
+    id: sheetPeople.viewer.id,
+    role: "guest",
+    access: [],
+  });
+  await installSheetsApi(page, { live: [], deleted: [] });
   await page.goto("/openview?section=sheets");
 
   await expect(mySheetsLink(page)).toBeVisible();
@@ -304,9 +220,27 @@ test("a guest with no sheets sees the same structure with the empty line", async
   ).toBeVisible();
 });
 
+test("a sheet shared through a group names that group", async ({ page }) => {
+  await signedInAs(page, noAccessMember);
+  await installSheetsApi(page, {
+    live: [
+      wireSheetSummary(ids.council, "Mid-Year Enrollment list", {
+        owner: "colleague",
+        level: "view",
+        accessGroup: "CCS Faculty",
+      }),
+    ],
+  });
+  await page.goto("/openview?section=sheets");
+
+  await expect(
+    sheetsTable(page).getByRole("row", { name: /Mid-Year Enrollment list/ }),
+  ).toContainText("View · CCS Faculty");
+});
+
 test("a failed read offers Retry, which loads the list", async ({ page }) => {
   await signedInAs(page, noAccessMember);
-  await installMySheetsApi(page, threeSheets(), { failFirstRead: true });
+  await installSheetsApi(page, threeSheets(), { failFirstMyRead: true });
   await page.goto("/openview?section=sheets");
 
   // The route announcer is an alert too, so the failure is found by its words.
@@ -327,7 +261,7 @@ test.describe("on a phone", () => {
     page,
   }) => {
     await signedInAs(page, noAccessMember);
-    await installMySheetsApi(page, threeSheets());
+    await installSheetsApi(page, threeSheets());
     await page.goto("/settings");
 
     await page.getByRole("button", { name: "Open navigation" }).click();
@@ -343,6 +277,10 @@ test.describe("on a phone", () => {
     await expect(item.getByRole("link", { name: "Class 1A" })).toBeVisible();
     await expect(item).toContainText("Owner");
     await expect(item).toContainText("15 rows · Nov 21");
+    await expect(item).toContainText(
+      "Andrea Villamor · Faculty Members · 15 rows · Nov 21",
+    );
+    await expect(item).toContainText("Owner · shared");
     await expectNoHorizontalScroll(page);
   });
 });

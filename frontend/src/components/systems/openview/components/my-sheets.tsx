@@ -4,14 +4,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import type { Route } from "next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Eye,
-  Pencil,
-  RotateCcw,
-  Search,
-  Sheet as SheetIcon,
-  UserRound,
-} from "lucide-react";
+import { RotateCcw, Search, Sheet as SheetIcon } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -28,21 +21,23 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { apiErrorReference } from "@/lib/api-errors";
-import {
-  formatWorkspaceDate,
-  type WorkspaceRegion,
-} from "@/lib/date-time-display";
 import { cn } from "@/lib/utils";
 
 import {
   restoreWorksheet,
-  type WorksheetLevel,
   type WorksheetSummary,
 } from "../adapters/worksheets-api";
 import {
   myWorksheetsOptions,
   worksheetKeys,
 } from "../adapters/worksheet-queries";
+import {
+  SheetAccess,
+  sheetAnchorWords,
+  sheetHref,
+  sheetRowsWords,
+  sheetShortDate,
+} from "./sheet-display";
 
 // docs/specs/sheets.md P4 and Screens 7: the sheets a person owns and the
 // sheets shared with them. Users read "sheet" only (P7).
@@ -56,51 +51,9 @@ const showOptions: { value: Show; label: string }[] = [
   { value: "deleted", label: "Deleted" },
 ];
 
-const levelWords: Record<WorksheetLevel, string> = {
-  owner: "Owner",
-  edit: "Edit",
-  view: "View",
-};
-
-const levelIcons: Record<WorksheetLevel, typeof Eye> = {
-  owner: UserRound,
-  edit: Pencil,
-  view: Eye,
-};
-
-/**
- * Where the sheet sits. The summary carries only the record or module id, so
- * the cell names the kind until the list carries the record and module names.
- */
-function anchorWords(sheet: WorksheetSummary): string {
-  return sheet.moduleId ? "Module sheet" : "Record sheet";
-}
-
-function shortDate(value: string, region: WorkspaceRegion | undefined) {
-  const options = { month: "short", day: "numeric" } as const;
-  if (region) return formatWorkspaceDate(value, region, options);
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf())
-    ? value
-    : new Intl.DateTimeFormat(undefined, options).format(date);
-}
-
-function rowsWords(count: number) {
-  return `${count} ${count === 1 ? "row" : "rows"}`;
-}
-
-function sheetHref(id: string) {
-  return `/openview?sheet=${encodeURIComponent(id)}` as Route;
-}
-
-function Access({ level }: { level: WorksheetLevel }) {
-  const Icon = levelIcons[level];
-  return (
-    <span className="text-muted-foreground inline-flex min-w-0 items-center gap-1.5">
-      <Icon aria-hidden="true" className="size-3.5 shrink-0" />
-      <span className="truncate">{levelWords[level]}</span>
-    </span>
-  );
+/** When a deleted sheet was deleted; its last change is the fallback. */
+function deletedOn(sheet: WorksheetSummary) {
+  return sheet.deletedAt ?? sheet.updatedAt;
 }
 
 function SheetName({
@@ -123,7 +76,7 @@ function SheetName({
     "inline-flex max-w-full min-w-0 items-center gap-2.5 font-medium";
   return link ? (
     <Link
-      href={sheetHref(sheet.id)}
+      href={sheetHref(sheet.id) as Route}
       className={cn(
         className,
         "focus-visible:outline-ring rounded-sm outline-offset-2 after:absolute after:inset-0 focus-visible:outline-2",
@@ -403,11 +356,11 @@ export function MySheets() {
                         <SheetName sheet={sheet} link={false} />
                       </TableCell>
                       <TableCell className="truncate px-4">
-                        {anchorWords(sheet)}
+                        {sheetAnchorWords(sheet)}
                       </TableCell>
                       <TableCell className="px-4 tabular-nums">
-                        <time dateTime={sheet.updatedAt}>
-                          {shortDate(sheet.updatedAt, region)}
+                        <time dateTime={deletedOn(sheet)}>
+                          {sheetShortDate(deletedOn(sheet), region)}
                         </time>
                       </TableCell>
                       <TableCell className="px-4 text-right">
@@ -427,20 +380,20 @@ export function MySheets() {
                         <SheetName sheet={sheet} link />
                       </TableCell>
                       <TableCell className="truncate px-4">
-                        {anchorWords(sheet)}
+                        {sheetAnchorWords(sheet)}
                       </TableCell>
                       <TableCell className="truncate px-4">
                         {sheet.owner.displayName}
                       </TableCell>
                       <TableCell className="px-4">
-                        <Access level={sheet.myLevel} />
+                        <SheetAccess sheet={sheet} />
                       </TableCell>
                       <TableCell className="px-4 tabular-nums">
                         {sheet.liveRowCount}
                       </TableCell>
                       <TableCell className="px-4 tabular-nums">
                         <time dateTime={sheet.updatedAt}>
-                          {shortDate(sheet.updatedAt, region)}
+                          {sheetShortDate(sheet.updatedAt, region)}
                         </time>
                       </TableCell>
                     </TableRow>
@@ -474,13 +427,13 @@ export function MySheets() {
                           onRestore={restore.mutate}
                         />
                       ) : (
-                        <Access level={sheet.myLevel} />
+                        <SheetAccess sheet={sheet} />
                       )}
                     </span>
                     <span className="text-muted-foreground truncate text-xs tabular-nums">
                       {isDeleted
-                        ? `Deleted ${shortDate(sheet.updatedAt, region)} · ${anchorWords(sheet)}`
-                        : `${anchorWords(sheet)} · ${rowsWords(sheet.liveRowCount)} · ${shortDate(sheet.updatedAt, region)}`}
+                        ? `Deleted ${sheetShortDate(deletedOn(sheet), region)} · ${sheetAnchorWords(sheet)}`
+                        : `${sheetAnchorWords(sheet)} · ${sheetRowsWords(sheet.liveRowCount)} · ${sheetShortDate(sheet.updatedAt, region)}`}
                     </span>
                   </li>
                 ))

@@ -1,8 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { ApiContractError } from "../../../src/lib/api";
 import {
+  createWorksheet,
   getWorksheet,
+  listModuleWorksheets,
   listMyWorksheets,
+  listRecordWorksheets,
   restoreWorksheet,
 } from "../../../src/components/systems/openview/adapters/worksheets-api";
 import { wirePagination } from "../../helpers/pagination";
@@ -29,6 +32,11 @@ function wireSummary(n: number, overrides: Record<string, unknown> = {}) {
     revision: 3,
     updated_at: "2026-11-21T08:30:00Z",
     is_deleted: false,
+    deleted_at: null,
+    anchor_title: "Andrea Villamor",
+    module_name: "Faculty Members",
+    shared: true,
+    access_group: null,
     ...overrides,
   };
 }
@@ -63,6 +71,9 @@ test("My sheets reads the complete list, newest change first, in the reader's wo
               module_id: moduleId,
               my_level: "view",
               state: "open",
+              anchor_title: "Faculty Members",
+              shared: null,
+              access_group: "CCS Faculty",
             }),
           ],
           pagination: wirePagination({
@@ -94,12 +105,22 @@ test("My sheets reads the complete list, newest change first, in the reader's wo
       revision: 3,
       updatedAt: "2026-11-21T08:30:00Z",
       isDeleted: false,
+      deletedAt: null,
+      anchorTitle: "Andrea Villamor",
+      moduleName: "Faculty Members",
+      shared: true,
+      accessGroup: null,
     });
     expect(result.items[100]).toMatchObject({
       recordId: null,
       moduleId,
       myLevel: "view",
       state: "open",
+    });
+    expect(result.items[100]).toMatchObject({
+      anchorTitle: "Faculty Members",
+      shared: null,
+      accessGroup: "CCS Faculty",
     });
   } finally {
     mock.restore();
@@ -109,7 +130,12 @@ test("My sheets reads the complete list, newest change first, in the reader's wo
 test("the Deleted list asks only for the person's own deleted sheets", async () => {
   const mock = installFetch(() =>
     json({
-      items: [wireSummary(7, { is_deleted: true })],
+      items: [
+        wireSummary(7, {
+          is_deleted: true,
+          deleted_at: "2026-11-19T02:00:00Z",
+        }),
+      ],
       pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
     }),
   );
@@ -119,6 +145,9 @@ test("the Deleted list asks only for the person's own deleted sheets", async () 
       "/api/worksheets?limit=100&offset=0&sort_by=updated_at&sort_order=desc&deleted=only",
     ]);
     expect(result.items.map((item) => item.isDeleted)).toEqual([true]);
+    expect(result.items.map((item) => item.deletedAt)).toEqual([
+      "2026-11-19T02:00:00Z",
+    ]);
   } finally {
     mock.restore();
   }
@@ -186,6 +215,69 @@ test("one sheet is read by its id and restored with a POST", async () => {
       "c2",
     ]);
     expect(restored.id).toBe(sheetId(9));
+  } finally {
+    mock.restore();
+  }
+});
+
+test("a record's and a module's sheets are read from their own lists", async () => {
+  const mock = installFetch(() =>
+    json({
+      items: [wireSummary(3)],
+      pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
+    }),
+  );
+  try {
+    const onRecord = await listRecordWorksheets(recordId);
+    const onModule = await listModuleWorksheets(moduleId);
+    expect(mock.requests.map(({ input }) => String(input))).toEqual([
+      `/api/records/${recordId}/worksheets?limit=100&offset=0&sort_by=updated_at&sort_order=desc&deleted=exclude`,
+      `/api/modules/${moduleId}/worksheets?limit=100&offset=0&sort_by=updated_at&sort_order=desc&deleted=exclude`,
+    ]);
+    expect(onRecord).toMatchObject({ total: 1, items: [{ id: sheetId(3) }] });
+    expect(onModule.total).toBe(1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("a new blank sheet is created on exactly one record or module, with a trimmed name", async () => {
+  const created = {
+    ...wireSummary(11),
+    structure: {
+      structureVersion: 1,
+      nextColumnSeq: 1,
+      columns: [],
+      groups: [],
+      totals: {},
+    },
+    etag: `"${sheetId(11)}:1"`,
+    created_at: "2026-11-22T08:30:00Z",
+  };
+  const mock = installFetch(() => json(created, 201));
+  try {
+    const sheet = await createWorksheet({ recordId, title: "  Class 4D  " });
+    await createWorksheet({ moduleId, title: "Visit plan" });
+
+    expect(
+      mock.requests.map(({ input, init }) => [
+        String(input),
+        init?.method,
+        JSON.parse(String(init?.body)),
+      ]),
+    ).toEqual([
+      [
+        "/api/worksheets",
+        "POST",
+        { record_id: recordId, title: "Class 4D", source: { kind: "blank" } },
+      ],
+      [
+        "/api/worksheets",
+        "POST",
+        { module_id: moduleId, title: "Visit plan", source: { kind: "blank" } },
+      ],
+    ]);
+    expect(sheet.id).toBe(sheetId(11));
   } finally {
     mock.restore();
   }

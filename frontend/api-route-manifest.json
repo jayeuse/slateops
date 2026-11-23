@@ -2335,15 +2335,33 @@
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "createWorksheet",
+    "method": "POST",
+    "path": "/api/worksheets"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
     "function": "getWorksheet",
     "method": "GET",
     "path": "/api/worksheets/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "listModuleWorksheets",
+    "method": "GET",
+    "path": "/api/modules/{param}/worksheets"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
     "function": "listMyWorksheets",
     "method": "GET",
     "path": "/api/worksheets"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "listRecordWorksheets",
+    "method": "GET",
+    "path": "/api/records/{param}/worksheets"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",

@@ -1,13 +1,19 @@
 import {
+  createWorksheet,
   getWorksheet,
+  listModuleWorksheets,
   listMyWorksheets,
+  listRecordWorksheets,
   restoreWorksheet,
 } from "../../../src/components/systems/openview/adapters/worksheets-api";
 import { describeContracts } from "./openapi-contract";
 
 const worksheetId = "00000000-0000-4000-8000-0000000005a1";
+const recordId = "00000000-0000-4000-8000-0000000005a2";
+const moduleId = "00000000-0000-4000-8000-0000000005a3";
 
-// My sheets (route 1), one sheet (route 4) and Restore (route 8), spec D10.
+// My sheets (1), a record's sheets (2), a module's sheets (2a), create (3),
+// one sheet (4) and Restore (8), spec D10.
 describeContracts("OpenView sheets", [
   {
     name: "listMyWorksheets",
@@ -16,6 +22,22 @@ describeContracts("OpenView sheets", [
   {
     name: "listMyWorksheets deleted",
     run: () => listMyWorksheets({ deleted: "only" }),
+  },
+  {
+    name: "listRecordWorksheets",
+    run: () => listRecordWorksheets(recordId),
+  },
+  {
+    name: "listModuleWorksheets",
+    run: () => listModuleWorksheets(moduleId),
+  },
+  {
+    name: "createWorksheet on a record",
+    run: () => createWorksheet({ recordId, title: "Class 4D" }),
+  },
+  {
+    name: "createWorksheet on a module",
+    run: () => createWorksheet({ moduleId, title: "Visit plan" }),
   },
   {
     name: "getWorksheet",
