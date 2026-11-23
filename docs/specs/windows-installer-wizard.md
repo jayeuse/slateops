@@ -586,7 +586,7 @@ Each screen below lists: purpose, content and copy, controls, states and message
 
 - **Purpose.** Accept the Elastic License 2.0.
 - **Title.** "License agreement". Subtitle: "Read the license, then select I accept."
-- **Content.** The Inno Setup license page with `LICENSE`. A link-style button: "Third-party notices". No edition choice and no license file (DEC-0029).
+- **Content.** The Inno Setup license page with `LICENSE` as plain text: `infra/windows/installer/LICENSE.txt` has the same words without the Markdown markers ("## " headings, `*` and `**`), and a tooling test fails when the two differ. A link-style button: "Third-party notices". No edition choice and no license file (DEC-0029).
 - **Controls.** "I accept the agreement" / "I do not accept the agreement". Next: "Next" (off until "I accept").
 
 ### S05 Restart this PC once (plan page 3a; only when C26 needs it)

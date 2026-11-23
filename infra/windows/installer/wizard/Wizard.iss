@@ -458,6 +458,8 @@ var
   AdminPwEdit, AdminPwAgain: TNewEdit;
   AdminPwError: TNewStaticText;
   AdminPwShow: TNewCheckBox;
+  { AC-G1: the form's main button; the self-test measures the space above it. }
+  AdminPwGo: TNewButton;
   AdminPwOk: Boolean;
   AdminPwValue: String;
 

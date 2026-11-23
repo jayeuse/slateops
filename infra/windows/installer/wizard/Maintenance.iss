@@ -283,12 +283,49 @@ begin
   Y := Y + Result.Height + ScaleY(12);
 end;
 
-{ The form, built without being shown (the screenshot build shows it without a modal wait). }
+{ AC-G1: the errors that the form can show (PasswordProblem and the second field), by index;
+  '' after the last. }
+function AdminPwErrorKey(I: Integer): String;
+begin
+  case I of
+    0: Result := 's08_err_password';
+    1: Result := 's08_err_password_long';
+    2: Result := 's08_err_password_chars';
+    3: Result := 's08_err_confirm';
+  else
+    Result := '';
+  end;
+end;
+
+{ AC-G1: the height of the tallest error at the form's width. The form keeps this room under
+  "Show", so an error never moves the buttons; the error line is left empty. }
+function AdminPwErrorHeight: Integer;
+var
+  I: Integer;
+begin
+  Result := 0;
+  I := 0;
+  while AdminPwErrorKey(I) <> '' do
+  begin
+    AdminPwError.Caption := CM(AdminPwErrorKey(I));
+    AdminPwError.AdjustHeight;
+    if AdminPwError.Height > Result then
+      Result := AdminPwError.Height;
+    I := I + 1;
+  end;
+  AdminPwError.Caption := '';
+end;
+
+{ The form, built without being shown (the screenshot build shows it without a modal wait).
+  AC-G1 (coordinator, after f95cbedd): CreateCustomForm makes a form that does not keep its size
+  150% high (WizardSizePercent), so a fixed height left half of the form empty. The height now
+  follows the content, as BuildFailureForm does: help, 12 px, two field blocks (6.1 rule 9),
+  "Show" 4 px under the second field, the error line 4 px under it, 16 px, the buttons, 14 px. }
 procedure BuildAdminPwForm;
 var
-  Y: Integer;
+  Y, ErrorHeight: Integer;
   Text: TNewStaticText;
-  Go, Back: TNewButton;
+  Back: TNewButton;
 begin
   AdminPwOk := False;
   AdminPwForm := CreateCustomForm(ScaleX(440), ScaleY(290), False, False);
@@ -298,20 +335,24 @@ begin
   Y := Y + Text.Height + ScaleY(12);
   AdminPwEdit := AdminPwField(AdminPwForm, Y, CM('adminpw_new'));
   AdminPwAgain := AdminPwField(AdminPwForm, Y, CM('adminpw_again'));
+  { AdminPwField leaves Y 12 px under the field; "Show" sits 4 px under it. }
+  Y := Y - ScaleY(8);
   AdminPwShow := TNewCheckBox.Create(AdminPwForm);
   AdminPwShow.Parent := AdminPwForm;
   AdminPwShow.Caption := CM('s08_show');
-  AdminPwShow.SetBounds(ScaleX(14), Y - ScaleY(8), ScaleX(120), ScaleY(17));
+  AdminPwShow.SetBounds(ScaleX(14), Y, ScaleX(120), ScaleY(17));
   AdminPwShow.OnClick := @AdminPwShowClick;
-  Y := Y + ScaleY(12);
+  Y := Y + AdminPwShow.Height + ScaleY(4);
   AdminPwError := FormText(AdminPwForm, Y, '', False);
-  Go := FormButton(AdminPwForm, CM('adminpw_go'), ScaleX(110), 0);
-  Go.Default := True;
-  Go.OnClick := @AdminPwGoClick;
+  ErrorHeight := AdminPwErrorHeight;
+  AdminPwGo := FormButton(AdminPwForm, CM('adminpw_go'), ScaleX(110), 0);
+  AdminPwGo.Default := True;
+  AdminPwGo.OnClick := @AdminPwGoClick;
   Back := FormButton(AdminPwForm, CM('btn_go_back'), ScaleX(90), mrCancel);
   Back.Cancel := True;
-  Go.SetBounds(ScaleX(14), AdminPwForm.ClientHeight - ScaleY(14) - Go.Height, Go.Width, Go.Height);
-  Back.SetBounds(AdminPwForm.ClientWidth - ScaleX(14) - Back.Width, Go.Top, Back.Width, Back.Height);
+  AdminPwForm.ClientHeight := Y + ErrorHeight + ScaleY(16) + AdminPwGo.Height + ScaleY(14);
+  AdminPwGo.SetBounds(ScaleX(14), AdminPwForm.ClientHeight - ScaleY(14) - AdminPwGo.Height, AdminPwGo.Width, AdminPwGo.Height);
+  Back.SetBounds(AdminPwForm.ClientWidth - ScaleX(14) - Back.Width, AdminPwGo.Top, Back.Width, Back.Height);
 end;
 
 procedure FreeAdminPwForm;
@@ -323,6 +364,7 @@ begin
   AdminPwAgain := nil;
   AdminPwError := nil;
   AdminPwShow := nil;
+  AdminPwGo := nil;
 end;
 
 { True with the new password when the person selected "Change password" with a valid one. }

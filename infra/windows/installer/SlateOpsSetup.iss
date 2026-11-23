@@ -38,7 +38,10 @@ WizardSizePercent=150,150
 MinVersion=10.0
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-LicenseFile=..\..\..\LICENSE
+; S04 shows LICENSE as plain text (TASK-0097, AC-G2): LICENSE.txt is LICENSE without the
+; Markdown markers ("## " headings, * and ** emphasis); the words stay. A tooling test
+; (test_windows_installer.py, AC-G2) fails when the two differ.
+LicenseFile=LICENSE.txt
 OutputDir=output
 #ifdef SettingsBuild
 OutputBaseFilename=SlateOpsSettings

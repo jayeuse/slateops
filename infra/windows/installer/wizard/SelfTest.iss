@@ -1651,12 +1651,55 @@ begin
   end;
 end;
 
+{ AC-G1 (coordinator, after f95cbedd): the admin password form is as high as its content. With
+  each error shown, the error ends at least 16 px above the buttons and the tallest exactly 16 px
+  above them; the buttons end 14 px above the bottom; "Show" is 4 px under the second field and
+  the error line 4 px under "Show" (6.1 rule 9). }
+procedure SelfAdminPwForm;
+var
+  I, Bottom, Tallest: Integer;
+  Ok: Boolean;
+begin
+  try
+    BuildAdminPwForm;
+    try
+      Ok := (AdminPwShow.Top = AdminPwAgain.Top + AdminPwAgain.Height + ScaleY(4))
+        and (AdminPwError.Top = AdminPwShow.Top + AdminPwShow.Height + ScaleY(4))
+        and (AdminPwGo.Top + AdminPwGo.Height + ScaleY(14) = AdminPwForm.ClientHeight);
+      Tallest := 0;
+      I := 0;
+      while AdminPwErrorKey(I) <> '' do
+      begin
+        AdminPwError.Caption := CM(AdminPwErrorKey(I));
+        AdminPwError.AdjustHeight;
+        Bottom := AdminPwError.Top + AdminPwError.Height;
+        if Bottom + ScaleY(16) > AdminPwGo.Top then
+          Ok := False;
+        if Bottom > Tallest then
+          Tallest := Bottom;
+        I := I + 1;
+      end;
+      SelfRecord('AC-G1 admin password form fits its content', Ok and (Tallest + ScaleY(16) = AdminPwGo.Top),
+        'error ends at ' + IntToStr(Tallest) + ', buttons at ' + IntToStr(AdminPwGo.Top) + ', form ' + IntToStr(AdminPwForm.ClientHeight));
+    finally
+      FreeAdminPwForm;
+    end;
+  except
+    SelfRecord('AC-G1 admin password form fits its content', False, GetExceptionMessage);
+  end;
+end;
+
 #ifdef Screenshots
 { ------------------------------------------------------------------------------------------- }
 { AC-F8 (TASK-0097): the screenshot build. Each page and state is drawn with sample values,     }
 { shown in the wizard (or as its own form) and saved as <n>-<name>.png in /SCREENSHOTDIR by      }
 { tests\screenshot.ps1. A fault in one state is logged and the next state runs.                 }
 { ------------------------------------------------------------------------------------------- }
+
+const
+  { AC-G2: the second S04 shot scrolls the license text to its end. }
+  WM_VSCROLL = $0115;
+  SB_BOTTOM = 7;
 
 var
   ShotDir, ShotList: String;
@@ -1717,7 +1760,13 @@ begin
     Shot('S02-ready', WizardForm.Handle);
     WizardForm.OuterNotebook.ActivePage := WizardForm.InnerPage;
     WizardForm.InnerNotebook.ActivePage := WizardForm.LicensePage;
+    { S04's own title and subtitle (CurPageChanged sets the subtitle; Inno's message the title). }
+    WizardForm.PageNameLabel.Caption := SetupMessage(msgWizardLicense);
+    WizardForm.PageDescriptionLabel.Caption := CM('s04_subtitle');
     Shot('S04-license', WizardForm.Handle);
+    { AC-G2: the end of the license text (No Liability, Definitions), as plain text. }
+    SendMessage(WizardForm.LicenseMemo.Handle, WM_VSCROLL, SB_BOTTOM, 0);
+    Shot('S04-license-end', WizardForm.Handle);
   except
     ShotFailed('S02');
   end;
@@ -2000,6 +2049,7 @@ begin
   SelfLinks;
   SelfCaret;
   SelfFailDetail;
+  SelfAdminPwForm;
   { TASK-0097 (spec 6.2, 6.3): the strip, the bar and the drive lines. }
   SelfStrip;
   SelfBar;

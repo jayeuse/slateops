@@ -10,6 +10,7 @@ BitLocker key protector read, an Exec task action that takes no parameters).
 
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -2920,3 +2921,105 @@ class OwnerRc32Test(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 self.assertIn(f"Shot('{name}',", self.selftest)
+
+
+def plain_license(markdown: str) -> str:
+    """The Elastic License text without Markdown: "## " heading markers and the * and ** emphasis
+    markers go; every word, line break and character else stays."""
+    return re.sub(r"(?m)^## ", "", markdown).replace("*", "")
+
+
+class OwnerRc34Test(unittest.TestCase):
+    """The coordinator's three small fixes after f95cbedd (TASK-0097): AC-G1 the admin password
+    form fits its content, AC-G2 S04 shows the license as plain text, AC-G3 the S02 test fixture
+    holds what Checks.ps1 returns. Behavior: the self-test record and the screenshots on Windows
+    CI."""
+
+    def setUp(self) -> None:
+        self.raw = pascal_code()
+        self.selftest = SELFTEST.read_text(encoding="ascii")
+        self.iss = ISS.read_text(encoding="ascii")
+
+    def part(self, head: str) -> str:
+        self.assertIn(head, self.raw)
+        return routine(self.raw, head)
+
+    def test_ac_g1_the_admin_password_form_height_comes_from_its_content(self) -> None:
+        # CreateCustomForm with KeepSizeY False makes the form 150% high (WizardSizePercent), so
+        # the fixed 290 gave about 435 px for three fields. The height now follows the content:
+        # the tallest error line, 16 px, the buttons, 14 px (6.1 rule 9; as BuildFailureForm).
+        form = self.part("procedure BuildAdminPwForm;")
+        self.assertIn("ErrorHeight := AdminPwErrorHeight;", form)
+        height = (
+            "AdminPwForm.ClientHeight := Y + ErrorHeight + ScaleY(16) + AdminPwGo.Height"
+            " + ScaleY(14);"
+        )
+        self.assertIn(height, form)
+        self.assertLess(form.index(height), form.index("AdminPwGo.SetBounds("))
+        # 6.1 rule 9: "Show" 4 px under the field, the error 4 px under "Show".
+        self.assertIn("AdminPwShow.SetBounds(ScaleX(14), Y, ", form)
+        self.assertIn("Y := Y + AdminPwShow.Height + ScaleY(4);", form)
+        tallest = self.part("function AdminPwErrorHeight: Integer;")
+        self.assertIn("AdminPwError.Caption := '';", tallest)
+        for key in (
+            "s08_err_password",
+            "s08_err_password_long",
+            "s08_err_password_chars",
+            "s08_err_confirm",
+        ):
+            with self.subTest(key=key):
+                self.assertIn(
+                    f"'{key}'", self.part("function AdminPwErrorKey(I: Integer): String;")
+                )
+        self.assertIn("procedure SelfAdminPwForm;", self.selftest)
+        self.assertIn("'AC-G1 admin password form fits its content'", self.selftest)
+        self.assertIn("  SelfAdminPwForm;\n", self.selftest)
+
+    def test_ac_g2_s04_shows_the_license_as_plain_text_with_the_same_words(self) -> None:
+        self.assertIn("\nLicenseFile=LICENSE.txt\n", self.iss)
+        self.assertNotIn("LicenseFile=..\\..\\..\\LICENSE\n", self.iss)
+        source = (ROOT / "LICENSE").read_bytes().decode("utf-8")
+        copy_bytes = (INSTALLER / "LICENSE.txt").read_bytes()
+        # No BOM: the compiler adds one for UTF-8 text, as it does for LICENSE today.
+        self.assertFalse(copy_bytes.startswith(b"\xef\xbb\xbf"))
+        copy = copy_bytes.decode("utf-8")
+        self.assertEqual(copy, plain_license(source), "regenerate LICENSE.txt from LICENSE")
+        self.assertNotRegex(copy, r"(?m)^#")
+        self.assertNotIn("*", copy)
+        # The words stay: the copy differs only by the removed markers.
+        self.assertEqual(copy.split(), [w for w in (t.strip("#*") for t in source.split()) if w])
+        self.assertIn("Copyright License\n", copy)
+        # The second S04 shot shows the end of the text, where the emphasis markers were.
+        self.assertIn("Shot('S04-license', WizardForm.Handle);", self.selftest)
+        self.assertIn(
+            "SendMessage(WizardForm.LicenseMemo.Handle, WM_VSCROLL, SB_BOTTOM, 0);", self.selftest
+        )
+        self.assertIn("Shot('S04-license-end', WizardForm.Handle);", self.selftest)
+        self.assertIn(
+            "WizardForm.PageNameLabel.Caption := SetupMessage(msgWizardLicense);", self.selftest
+        )
+
+    def test_ac_g3_the_check_fixtures_hold_what_checks_ps1_returns(self) -> None:
+        checks = (INSTALLER / "scripts/lib/Checks.ps1").read_text(encoding="ascii")
+        results: dict[str, set[tuple[str, str]]] = {}
+        for check_id, klass, code in re.findall(
+            r"New-CheckResult '(C\d\d)' '(\w+)' '(\w+)'", checks
+        ):
+            results.setdefault(check_id, set()).add((klass, code))
+        for name in ("check-owner.json", "check-ready.json"):
+            data = json.loads((INSTALLER / "tests/fixtures" / name).read_text(encoding="ascii"))
+            rows = data["values"]["rows"]
+            self.assertEqual(len(rows), 27)
+            for row in rows:
+                with self.subTest(fixture=name, check=row["id"]):
+                    self.assertIn((row["class"], row["code"]), results[row["id"]])
+        # DEC-0037: C24 "off" is recorded only; the S02 counts stay (needs_fixes, one fix: C04).
+        owner = json.loads(
+            (INSTALLER / "tests/fixtures/check-owner.json").read_text(encoding="ascii")
+        )
+        c24 = next(row for row in owner["values"]["rows"] if row["id"] == "C24")
+        self.assertEqual((c24["class"], c24["code"]), ("log", "off"))
+        self.assertEqual(owner["values"]["verdict"]["fix_ids"], ["C04"])
+        self.assertEqual(
+            [row["id"] for row in owner["values"]["rows"] if row["class"] == "fix"], ["C04"]
+        )
