@@ -153,7 +153,7 @@ Test-Case 'W8-6 Save report holds no seeded secret or personal data, follows no 
     }
     Assert-True ($all.Contains('[email]') -and $all.Contains('[recovery key]')) 'placeholders replace the values'
     Assert-True ($all.Contains('logs__setup__linked (a link)')) 'the link is listed as left out'
-    Assert-Equal ('SlateOps-report-report-20261117T040000Z-def456.zip') (Split-Path -Leaf $zip)
+    Assert-Equal ('SlateOps-report-20261117T040000Z-def456.zip') (Split-Path -Leaf $zip) 'the report- of the run ID is not repeated'
     Assert-True ($made.files -ge 1)
 }
 

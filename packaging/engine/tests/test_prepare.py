@@ -450,7 +450,7 @@ def test_ac_e3_a_refusal_names_each_failed_check_and_the_exact_lines(paths: Path
     (paths.proc / "sys/fs/binfmt_misc/WSLInterop").write_text("enabled\n")
     line = "udp   UNCONN 0      0      0.0.0.0:68        0.0.0.0:*"
     owned = line + '   users:(("dhcp\x1bc",pid=88,fd=5))'
-    script = healthy(**{"ss__-H__-ltnu": ok(line + "\n"), "ss__-H__-ltnup": ok(owned + "\n")})
+    script = healthy(ss=ok(owned + "\n"))
 
     code, result = _prepare(paths, script)
 
@@ -472,3 +472,65 @@ def test_ac_e3_a_long_detail_is_cut_to_its_limit(paths: Paths) -> None:
 
     assert (code, result["code"]) == (3, "unexpected_listener")
     assert len(result["detail"]) == 1000 and result["detail"].endswith("...")
+
+
+# AC-E2 (owner's rc.30 run): only `udp UNCONN 0 0 127.0.0.1:323 0.0.0.0:*` and
+# `udp UNCONN 0 0 [::1]:323 [::]:*` were refused, with no owning process. chrony 4.6.1 opens
+# no UDP command socket with `cmdport 0` (cmdmon.c open_socket), so a chronyd outside this
+# distribution owns them; one that this distribution owns stays refused.
+CHRONY_V4 = "udp   UNCONN 0      0           127.0.0.1:323 0.0.0.0:*"
+CHRONY_V6 = "udp   UNCONN 0      0               [::1]:323    [::]:*"
+
+
+def _init_is_systemd(paths: Paths) -> None:
+    (paths.proc / "1").mkdir()
+    (paths.proc / "1/comm").write_text("systemd\n")
+
+
+def test_ac_e2_the_owners_chrony_loopback_lines_outside_this_distribution_pass(
+    paths: Paths,
+) -> None:
+    _init_is_systemd(paths)
+    script = healthy(ss=ok("\n".join([DNS_UDP, CHRONY_V4, CHRONY_V6, DNS_TCP]) + "\n"))
+
+    code, result = _prepare(paths, script)
+
+    assert (code, result) == (0, {"code": "prepared"})
+    assert log_text(paths).count("allowed chronyd command port outside this distribution") == 2
+    assert ["ss", "-H", "-ltnup"] in script.calls
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        CHRONY_V4 + '   users:(("chronyd",pid=812,fd=6))',
+        "udp   UNCONN 0      0           127.0.0.1:324 0.0.0.0:*",
+        "udp   UNCONN 0      0             0.0.0.0:323 0.0.0.0:*",
+        "tcp   LISTEN 0      4096        127.0.0.1:323 0.0.0.0:*",
+        "udp   UNCONN 0      0               [::]:323    [::]:*",
+        "udp   UNCONN 0      0           127.0.0.1:323 10.0.0.1:*",
+    ],
+    ids=["owned-here", "port-324", "any-address", "tcp", "ipv6-any", "other-peer"],
+)
+def test_ac_e2_every_other_command_port_line_is_refused(paths: Paths, line: str) -> None:
+    _init_is_systemd(paths)
+
+    code, result = _prepare(paths, healthy(ss=ok(line + "\n")))
+
+    assert (code, result["code"]) == (3, "unexpected_listener")
+
+
+@pytest.mark.parametrize("comm", [None, "init\n"], ids=["unreadable", "not-systemd"])
+def test_ac_e2_without_this_distributions_init_in_view_the_loopback_lines_are_refused(
+    paths: Paths, comm: str | None
+) -> None:
+    # The owner is known to be outside only when the processes of this distribution are in
+    # view: PID 1 here is its systemd.
+    if comm is not None:
+        (paths.proc / "1").mkdir()
+        (paths.proc / "1/comm").write_text(comm)
+
+    code, result = _prepare(paths, healthy(ss=ok(CHRONY_V4 + "\n")))
+
+    assert (code, result["code"]) == (3, "unexpected_listener")
+    assert "owner not visible" in result["detail"]

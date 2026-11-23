@@ -650,6 +650,7 @@ class InstallProofTests(unittest.TestCase):
             # booted image, before receive.
             "prepare.unexpected_listeners(",
             "the fresh image has an unexpected listener",
+            "chronyd answers on its UDP command port 323",
             "systemctl restart slateops-interop-off.service",
             "prepare.remove_interop(",
             "the engine left the WSLInterop entry",

@@ -159,6 +159,12 @@ from engine import prepare
 lines = [line for line in sys.argv[2].splitlines() if " 127.0.0.11:" not in line]
 print("\n".join(prepare.unexpected_listeners("\n".join(lines))[1]))' "$version" "$listeners")"
 [ -z "$others" ] || fail "the fresh image has an unexpected listener: $others"
+# AC-E2: chronyd runs the image's own chrony.service and chrony.conf; the proof's drop-in only
+# adds -x, which turns off clock control and nothing else (chrony 4.6.1 main.c), so the command
+# port is the same as on Windows. A UDP command request must find no port (cmdport 0).
+if docker exec "$machine" chronyc -n -h 127.0.0.1,::1 tracking >/dev/null 2>&1; then
+    fail "chronyd answers on its UDP command port 323 (chrony.conf needs cmdport 0)"
+fi
 log "the interop unit and the engine remove a WSLInterop entry (prepare's interop rule)"
 binfmt=/proc/sys/fs/binfmt_misc
 docker exec "$machine" sh -c "[ -e $binfmt/status ] || mount -t binfmt_misc binfmt_misc $binfmt"

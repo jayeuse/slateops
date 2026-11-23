@@ -9,7 +9,8 @@ Decisions (TASK-0085 Notes): D-1 accepts systemd ``degraded`` only when containe
 and chrony are active; D-2 refuses every drvfs mount and every 9p mount of a Windows drive
 or under ``/mnt``, and logs each 9p and drvfs mount; S85-7 also refuses any mount on
 ``/mnt/<letter>`` or with a ``path=<letter>:`` option, whatever its type. The listener check
-passes only the WSL DNS tunnel lines (``DNS_LOCAL``).
+passes only the WSL DNS tunnel lines (``DNS_LOCAL``) and, with PID 1 in view being systemd, the
+two chronyd loopback lines that a process outside this distribution owns (``CHRONY_OUTSIDE``).
 
 TASK-0097 (W14 round 3, the first run on Windows): the interop check first removes every
 ``WSLInterop*`` binfmt entry as root (``remove_interop``; the image also does this at each
@@ -219,38 +220,67 @@ def _is_dns_tunnel(fields: list[str]) -> bool:
     )
 
 
-def unexpected_listeners(text: str) -> tuple[list[str], list[str]]:
-    """(allowed DNS tunnel lines, every other line) of ``ss -H -ltnu`` output; each line is
-    its fields joined by one space. The Linux install proof calls this too."""
+# AC-E2 (TASK-0097, the owner's rc.30 run): under WSL these two lines appear with no owning
+# process. chrony 4.6.1 opens no UDP command socket when ``cmdport`` is 0 (cmdmon.c,
+# open_socket; Debian 4.6.1-3+deb13u2 does not patch it), and our chrony.conf has
+# ``cmdport 0``, so a chronyd outside this distribution that shares the WSL network
+# namespace owns them. They pass only with no process column (a socket of a process of this
+# distribution shows its owner, ``ss -p``) and only while PID 1 in view is this
+# distribution's systemd, so that the owners of this distribution are in view. On that port
+# chronyd answers only monitoring requests (tracking, sources: PERMIT_OPEN in cmdmon.c); it
+# refuses every command that changes it over UDP. Mirrored networking shares loopback with
+# Windows, so a Windows program on the PC can read that time status.
+CHRONY_OUTSIDE = {
+    ("udp", "UNCONN", "127.0.0.1:323", "0.0.0.0:*"),
+    ("udp", "UNCONN", "[::1]:323", "[::]:*"),
+}
+
+
+def _is_outside_chrony(fields: list[str]) -> bool:
+    return len(fields) == 6 and (fields[0], fields[1], fields[4], fields[5]) in CHRONY_OUTSIDE
+
+
+def owners_in_view(ctx: Context) -> bool:
+    """PID 1 in this process's view is this distribution's systemd."""
+    try:
+        return (ctx.paths.proc / "1/comm").read_text().strip() == "systemd"
+    except OSError:
+        return False
+
+
+def unexpected_listeners(
+    text: str, *, owners_visible: bool = False
+) -> tuple[list[str], list[str]]:
+    """(allowed lines, every other line) of ``ss -H -ltnup`` output; each line is its fields
+    joined by one space. Allowed: the WSL DNS tunnel lines and, only with ``owners_visible``,
+    the two chronyd loopback lines owned outside this distribution. The Linux install proof
+    calls this too (without ``owners_visible``)."""
     allowed: list[str] = []
     others: list[str] = []
     for line in text.splitlines():
         fields = line.split()
-        if fields:
-            (allowed if _is_dns_tunnel(fields) else others).append(" ".join(fields))
+        if not fields:
+            continue
+        passes = _is_dns_tunnel(fields) or (owners_visible and _is_outside_chrony(fields))
+        (allowed if passes else others).append(" ".join(fields))
     return allowed, others
 
 
-def _owned(ctx: Context, step: str, others: list[str]) -> list[str]:
-    """The refused lines with their owning process (``ss -p``), for the log and ``detail``."""
-    result = ctx.runner.run(step, ["ss", "-H", "-ltnup"], timeout=30)
-    owned = [" ".join(line.split()) for line in result.text().splitlines()] if result.ok else []
-    found = []
-    for line in others:
-        match = next((item for item in owned if item.split()[:6] == line.split()), None)
-        found.append(match or line)
-    return found
-
-
 def check_listeners(ctx: Context, step: str, manifest: dict[str, Any], version: str) -> str | None:
-    result = ctx.runner.run(step, ["ss", "-H", "-ltnu"], timeout=30)
+    result = ctx.runner.run(step, ["ss", "-H", "-ltnup"], timeout=30)
     if not result.ok:
         return _fail(ctx, step, "listeners_unknown", f"exit {result.returncode}")
-    allowed, others = unexpected_listeners(result.text())
+    allowed, others = unexpected_listeners(result.text(), owners_visible=owners_in_view(ctx))
     for line in allowed:
-        ctx.log.line(step, "INFO", f"allowed WSL DNS listener: {line}")
+        kind = "WSL DNS listener" if _is_dns_tunnel(line.split()) else (
+            "chronyd command port outside this distribution"
+        )
+        ctx.log.line(step, "INFO", f"allowed {kind}: {line}")
     if others:
-        return _fail(ctx, step, "unexpected_listener", " | ".join(_owned(ctx, step, others)))
+        seen = [
+            f"{line} (owner not visible)" if len(line.split()) == 6 else line for line in others
+        ]
+        return _fail(ctx, step, "unexpected_listener", " | ".join(seen))
     _pass(ctx, step, "nothing else listens")
     return None
 

@@ -4,7 +4,7 @@
 # before anything is packed (plan 10.6 item 3): New-ReportStaging copies the logs (10.1), the
 # environment facts (10.4), the Windows part of the failure snapshot (10.5) and the Linux part
 # (the engine's log-bundle, kept as one opaque file) into a staging folder, redacted;
-# Complete-Report packs that folder into SlateOps-report-<run ID>.zip on the person's own
+# Complete-Report packs that folder into SlateOps-report-<time>-<id>.zip on the person's own
 # desktop. A link is never followed, and a file that cannot be redacted is left out and listed.
 # Windows PowerShell 5.1, ASCII only.
 
@@ -205,7 +205,7 @@ function Get-ReportDesktop {
 }
 
 function Complete-Report {
-    # Packs the staging folder into SlateOps-report-<run ID>.zip in Destination (a new file;
+    # Packs the staging folder into SlateOps-report-<time>-<id>.zip in Destination (a new file;
     # an existing file or link is never written through). Returns the full path.
     param(
         [Parameter(Mandatory = $true)][string]$StagingDir,
@@ -217,7 +217,11 @@ function Complete-Report {
     if ($folder.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw 'desktop_unavailable' }
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $path = Join-Path $folder.FullName ('SlateOps-report-{0}.zip' -f $RunId)
+    # W14 (owner, rc.30): a report run ID already starts with report-, so the name never
+    # repeats it (SlateOps-report-<time>-<id>.zip, not SlateOps-report-report-...).
+    $name = [string]$RunId
+    if ($name -notlike 'report-*') { $name = 'report-' + $name }
+    $path = Join-Path $folder.FullName ('SlateOps-{0}.zip' -f $name)
     $stream = [System.IO.File]::Open($path, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
     try {
         $zip = New-Object System.IO.Compression.ZipArchive($stream, [System.IO.Compression.ZipArchiveMode]::Create)
