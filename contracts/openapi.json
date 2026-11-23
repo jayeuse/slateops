@@ -21556,6 +21556,927 @@
         "title": "SharedReportRunResponse",
         "type": "object"
       },
+      "SheetBlankSource": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "blank",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "SheetBlankSource",
+        "type": "object"
+      },
+      "SheetColumnGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "keys": {
+            "items": {
+              "pattern": "^c[0-9a-z]{1,8}$",
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Keys",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 150,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "keys"
+        ],
+        "title": "SheetColumnGroup",
+        "type": "object"
+      },
+      "SheetComputedColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "computed": {
+            "$ref": "#/components/schemas/SheetComputedOptions"
+          },
+          "key": {
+            "pattern": "^c[0-9a-z]{1,8}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 150,
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "const": "computed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "type",
+          "computed"
+        ],
+        "title": "SheetComputedColumn",
+        "type": "object"
+      },
+      "SheetComputedOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "expression": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Expression",
+            "type": "string"
+          },
+          "places": {
+            "anyOf": [
+              {
+                "maximum": 18.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Places"
+          }
+        },
+        "required": [
+          "expression"
+        ],
+        "title": "SheetComputedOptions",
+        "type": "object"
+      },
+      "SheetDecimalColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "decimal": {
+            "$ref": "#/components/schemas/SheetDecimalOptions"
+          },
+          "key": {
+            "pattern": "^c[0-9a-z]{1,8}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 150,
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "const": "decimal",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "type",
+          "decimal"
+        ],
+        "title": "SheetDecimalColumn",
+        "type": "object"
+      },
+      "SheetDecimalOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "currency": {
+            "default": false,
+            "title": "Currency",
+            "type": "boolean"
+          },
+          "places": {
+            "maximum": 18.0,
+            "minimum": 0.0,
+            "title": "Places",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "places"
+        ],
+        "title": "SheetDecimalOptions",
+        "type": "object"
+      },
+      "SheetFromSheetColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "pattern": "^c[0-9a-z]{1,8}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 150,
+            "title": "Name",
+            "type": "string"
+          },
+          "sheet_lookup": {
+            "$ref": "#/components/schemas/SheetFromSheetOptions"
+          },
+          "type": {
+            "const": "sheet_lookup",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "type",
+          "sheet_lookup"
+        ],
+        "title": "SheetFromSheetColumn",
+        "type": "object"
+      },
+      "SheetFromSheetOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "linkKey": {
+            "pattern": "^c[0-9a-z]{1,8}$",
+            "title": "Linkkey",
+            "type": "string"
+          },
+          "sourceColumnKey": {
+            "pattern": "^c[0-9a-z]{1,8}$",
+            "title": "Sourcecolumnkey",
+            "type": "string"
+          },
+          "sourceLinkKey": {
+            "pattern": "^c[0-9a-z]{1,8}$",
+            "title": "Sourcelinkkey",
+            "type": "string"
+          },
+          "sourceWorksheetId": {
+            "format": "uuid",
+            "title": "Sourceworksheetid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceWorksheetId",
+          "sourceColumnKey",
+          "linkKey",
+          "sourceLinkKey"
+        ],
+        "title": "SheetFromSheetOptions",
+        "type": "object"
+      },
+      "SheetGroupRef": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "SheetGroupRef",
+        "type": "object"
+      },
+      "SheetHiddenSourceColumn": {
+        "description": "A From another sheet column whose source sheet the viewer cannot see (D14 S1).",
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "state": {
+            "const": "no_access",
+            "title": "State",
+            "type": "string"
+          },
+          "type": {
+            "const": "sheet_lookup",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "type",
+          "state"
+        ],
+        "title": "SheetHiddenSourceColumn",
+        "type": "object"
+      },
+      "SheetLinkCell": {
+        "additionalProperties": false,
+        "properties": {
+          "link": {
+            "$ref": "#/components/schemas/SheetLinkTarget"
+          }
+        },
+        "required": [
+          "link"
+        ],
+        "title": "SheetLinkCell",
+        "type": "object"
+      },
+      "SheetLinkColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "pattern": "^c[0-9a-z]{1,8}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "link": {
+            "$ref": "#/components/schemas/SheetLinkOptions"
+          },
+          "name": {
+            "maxLength": 150,
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "const": "link",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "type",
+          "link"
+        ],
+        "title": "SheetLinkColumn",
+        "type": "object"
+      },
+      "SheetLinkOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "moduleId": {
+            "format": "uuid",
+            "title": "Moduleid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "moduleId"
+        ],
+        "title": "SheetLinkOptions",
+        "type": "object"
+      },
+      "SheetLinkTarget": {
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "record_id": {
+            "format": "uuid",
+            "title": "Record Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "record_id",
+          "label"
+        ],
+        "title": "SheetLinkTarget",
+        "type": "object"
+      },
+      "SheetLookupColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "pattern": "^c[0-9a-z]{1,8}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "lookup": {
+            "$ref": "#/components/schemas/SheetLookupOptions"
+          },
+          "name": {
+            "maxLength": 150,
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "const": "lookup",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "type",
+          "lookup"
+        ],
+        "title": "SheetLookupColumn",
+        "type": "object"
+      },
+      "SheetLookupOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "fieldId": {
+            "format": "uuid",
+            "title": "Fieldid",
+            "type": "string"
+          },
+          "linkKey": {
+            "pattern": "^c[0-9a-z]{1,8}$",
+            "title": "Linkkey",
+            "type": "string"
+          }
+        },
+        "required": [
+          "linkKey",
+          "fieldId"
+        ],
+        "title": "SheetLookupOptions",
+        "type": "object"
+      },
+      "SheetPersonRef": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "title": "SheetPersonRef",
+        "type": "object"
+      },
+      "SheetPlainColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "pattern": "^c[0-9a-z]{1,8}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 150,
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "text",
+              "long_text",
+              "email",
+              "url",
+              "number",
+              "int",
+              "boolean",
+              "date",
+              "datetime",
+              "user"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "type"
+        ],
+        "title": "SheetPlainColumn",
+        "type": "object"
+      },
+      "SheetRow": {
+        "properties": {
+          "cells": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SheetValueCell"
+                },
+                {
+                  "$ref": "#/components/schemas/SheetLinkCell"
+                },
+                {
+                  "$ref": "#/components/schemas/SheetUnlinkedCell"
+                },
+                {
+                  "$ref": "#/components/schemas/SheetStateCell"
+                }
+              ]
+            },
+            "title": "Cells",
+            "type": "object"
+          },
+          "etag": {
+            "title": "Etag",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "etag",
+          "position",
+          "cells"
+        ],
+        "title": "SheetRow",
+        "type": "object"
+      },
+      "SheetRowPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SheetRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/SheetRowPagination"
+          },
+          "totals": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SheetTotal"
+            },
+            "title": "Totals",
+            "type": "object"
+          }
+        },
+        "required": [
+          "items",
+          "pagination",
+          "totals"
+        ],
+        "title": "SheetRowPage",
+        "type": "object"
+      },
+      "SheetRowPagination": {
+        "description": "The list pagination shape, with the 200-row page of the grid (plan decision 7).",
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "limit": {
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "limit",
+          "offset",
+          "count",
+          "total",
+          "has_more"
+        ],
+        "title": "SheetRowPagination",
+        "type": "object"
+      },
+      "SheetRowSort": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "maxLength": 9,
+            "title": "Key",
+            "type": "string"
+          },
+          "order": {
+            "default": "asc",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "title": "Order",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "SheetRowSort",
+        "type": "object"
+      },
+      "SheetRowsQuery": {
+        "additionalProperties": false,
+        "description": "Route 9: one sort column, search text and one page of up to 200 rows (F7).",
+        "properties": {
+          "limit": {
+            "default": 200,
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "search": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search"
+          },
+          "sort": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SheetRowSort"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "SheetRowsQuery",
+        "type": "object"
+      },
+      "SheetSelectColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "pattern": "^c[0-9a-z]{1,8}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 150,
+            "title": "Name",
+            "type": "string"
+          },
+          "select": {
+            "$ref": "#/components/schemas/SheetSelectOptions"
+          },
+          "type": {
+            "const": "select",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "type",
+          "select"
+        ],
+        "title": "SheetSelectColumn",
+        "type": "object"
+      },
+      "SheetSelectOption": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^o[0-9a-z]{1,8}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 100,
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "SheetSelectOption",
+        "type": "object"
+      },
+      "SheetSelectOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/SheetSelectOption"
+            },
+            "minItems": 1,
+            "title": "Options",
+            "type": "array"
+          }
+        },
+        "required": [
+          "options"
+        ],
+        "title": "SheetSelectOptions",
+        "type": "object"
+      },
+      "SheetShareCandidates": {
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/SheetGroupRef"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "people": {
+            "items": {
+              "$ref": "#/components/schemas/SheetPersonRef"
+            },
+            "title": "People",
+            "type": "array"
+          }
+        },
+        "required": [
+          "people",
+          "groups"
+        ],
+        "title": "SheetShareCandidates",
+        "type": "object"
+      },
+      "SheetStateCell": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "enum": [
+              "no_access",
+              "deleted",
+              "removed",
+              "unavailable",
+              "field_removed",
+              "column_removed",
+              "multiple_matches"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "SheetStateCell",
+        "type": "object"
+      },
+      "SheetStructureView": {
+        "description": "The structure as one viewer may see it.",
+        "properties": {
+          "columns": {
+            "items": {
+              "anyOf": [
+                {
+                  "discriminator": {
+                    "mapping": {
+                      "boolean": "#/components/schemas/SheetPlainColumn",
+                      "computed": "#/components/schemas/SheetComputedColumn",
+                      "date": "#/components/schemas/SheetPlainColumn",
+                      "datetime": "#/components/schemas/SheetPlainColumn",
+                      "decimal": "#/components/schemas/SheetDecimalColumn",
+                      "email": "#/components/schemas/SheetPlainColumn",
+                      "int": "#/components/schemas/SheetPlainColumn",
+                      "link": "#/components/schemas/SheetLinkColumn",
+                      "long_text": "#/components/schemas/SheetPlainColumn",
+                      "lookup": "#/components/schemas/SheetLookupColumn",
+                      "number": "#/components/schemas/SheetPlainColumn",
+                      "select": "#/components/schemas/SheetSelectColumn",
+                      "sheet_lookup": "#/components/schemas/SheetFromSheetColumn",
+                      "text": "#/components/schemas/SheetPlainColumn",
+                      "url": "#/components/schemas/SheetPlainColumn",
+                      "user": "#/components/schemas/SheetPlainColumn"
+                    },
+                    "propertyName": "type"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SheetPlainColumn"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SheetDecimalColumn"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SheetSelectColumn"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SheetLinkColumn"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SheetLookupColumn"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SheetComputedColumn"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SheetFromSheetColumn"
+                    }
+                  ]
+                },
+                {
+                  "$ref": "#/components/schemas/SheetHiddenSourceColumn"
+                }
+              ]
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/SheetColumnGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "nextColumnSeq": {
+            "title": "Nextcolumnseq",
+            "type": "integer"
+          },
+          "structureVersion": {
+            "title": "Structureversion",
+            "type": "integer"
+          },
+          "totals": {
+            "additionalProperties": {
+              "enum": [
+                "sum",
+                "average",
+                "min",
+                "max",
+                "count"
+              ],
+              "type": "string"
+            },
+            "title": "Totals",
+            "type": "object"
+          }
+        },
+        "required": [
+          "structureVersion",
+          "nextColumnSeq",
+          "columns",
+          "groups",
+          "totals"
+        ],
+        "title": "SheetStructureView",
+        "type": "object"
+      },
+      "SheetTotal": {
+        "properties": {
+          "fn": {
+            "enum": [
+              "sum",
+              "average",
+              "min",
+              "max",
+              "count"
+            ],
+            "title": "Fn",
+            "type": "string"
+          },
+          "hidden_count": {
+            "title": "Hidden Count",
+            "type": "integer"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "fn",
+          "value",
+          "hidden_count"
+        ],
+        "title": "SheetTotal",
+        "type": "object"
+      },
+      "SheetUnlinkedCell": {
+        "additionalProperties": false,
+        "properties": {
+          "unlinked": {
+            "title": "Unlinked",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unlinked"
+        ],
+        "title": "SheetUnlinkedCell",
+        "type": "object"
+      },
+      "SheetValueCell": {
+        "additionalProperties": false,
+        "properties": {
+          "value": {
+            "$ref": "#/components/schemas/JsonValue"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "SheetValueCell",
+        "type": "object"
+      },
       "Shortcuts": {
         "additionalProperties": false,
         "properties": {
@@ -22560,6 +23481,26 @@
           "pagination"
         ],
         "title": "StandardListResponse[ViewResponse]",
+        "type": "object"
+      },
+      "StandardListResponse_WorksheetSummary_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorksheetSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "StandardListResponse[WorksheetSummary]",
         "type": "object"
       },
       "StorageInUse": {
@@ -25275,6 +26216,269 @@
         ],
         "title": "WorkState",
         "type": "string"
+      },
+      "WorksheetCreate": {
+        "additionalProperties": false,
+        "description": "A new sheet on exactly one record or one module.",
+        "properties": {
+          "module_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Module Id"
+          },
+          "record_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record Id"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SheetBlankSource"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "source"
+        ],
+        "title": "WorksheetCreate",
+        "type": "object"
+      },
+      "WorksheetDetail": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "etag": {
+            "title": "Etag",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_deleted": {
+            "title": "Is Deleted",
+            "type": "boolean"
+          },
+          "live_row_count": {
+            "title": "Live Row Count",
+            "type": "integer"
+          },
+          "module_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Module Id"
+          },
+          "my_level": {
+            "enum": [
+              "owner",
+              "edit",
+              "view"
+            ],
+            "title": "My Level",
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/SheetPersonRef"
+          },
+          "record_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record Id"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "private",
+              "open"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "structure": {
+            "$ref": "#/components/schemas/SheetStructureView"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "record_id",
+          "module_id",
+          "title",
+          "owner",
+          "state",
+          "my_level",
+          "live_row_count",
+          "revision",
+          "updated_at",
+          "is_deleted",
+          "structure",
+          "etag",
+          "created_at"
+        ],
+        "title": "WorksheetDetail",
+        "type": "object"
+      },
+      "WorksheetRename": {
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "WorksheetRename",
+        "type": "object"
+      },
+      "WorksheetSort": {
+        "enum": [
+          "title",
+          "updated_at",
+          "created_at"
+        ],
+        "title": "WorksheetSort",
+        "type": "string"
+      },
+      "WorksheetSummary": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_deleted": {
+            "title": "Is Deleted",
+            "type": "boolean"
+          },
+          "live_row_count": {
+            "title": "Live Row Count",
+            "type": "integer"
+          },
+          "module_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Module Id"
+          },
+          "my_level": {
+            "enum": [
+              "owner",
+              "edit",
+              "view"
+            ],
+            "title": "My Level",
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/SheetPersonRef"
+          },
+          "record_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record Id"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "private",
+              "open"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "record_id",
+          "module_id",
+          "title",
+          "owner",
+          "state",
+          "my_level",
+          "live_row_count",
+          "revision",
+          "updated_at",
+          "is_deleted"
+        ],
+        "title": "WorksheetSummary",
+        "type": "object"
       },
       "WorkspaceAppearanceResponse": {
         "additionalProperties": false,
@@ -56201,6 +57405,146 @@
         ]
       }
     },
+    "/api/modules/{module_id}/worksheets": {
+      "get": {
+        "operationId": "list_module_worksheets_api_modules__module_id__worksheets_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "module_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Module Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/WorksheetSort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort By"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deleted",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DeletedFilter",
+              "default": "exclude"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardListResponse_WorksheetSummary_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Module Worksheets",
+        "tags": [
+          "worksheets"
+        ]
+      }
+    },
     "/api/notifications": {
       "get": {
         "description": "Count and page only references currently visible to the recipient.",
@@ -57950,6 +59294,146 @@
         "summary": "Restore Record",
         "tags": [
           "records"
+        ]
+      }
+    },
+    "/api/records/{record_id}/worksheets": {
+      "get": {
+        "operationId": "list_record_worksheets_api_records__record_id__worksheets_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Record Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/WorksheetSort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort By"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deleted",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DeletedFilter",
+              "default": "exclude"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardListResponse_WorksheetSummary_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Record Worksheets",
+        "tags": [
+          "worksheets"
         ]
       }
     },
@@ -64443,6 +65927,784 @@
         "summary": "Restore View",
         "tags": [
           "views"
+        ]
+      }
+    },
+    "/api/worksheets": {
+      "get": {
+        "description": "My sheets (P4): owned or shared now; ``deleted=only`` lists the person's own (R6).",
+        "operationId": "list_my_worksheets_api_worksheets_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/WorksheetSort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort By"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deleted",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DeletedFilter",
+              "default": "exclude"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardListResponse_WorksheetSummary_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List My Worksheets",
+        "tags": [
+          "worksheets"
+        ]
+      },
+      "post": {
+        "operationId": "create_worksheet_api_worksheets_post",
+        "parameters": [
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorksheetCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorksheetDetail"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Worksheet",
+        "tags": [
+          "worksheets"
+        ]
+      }
+    },
+    "/api/worksheets/{worksheet_id}": {
+      "delete": {
+        "operationId": "delete_worksheet_api_worksheets__worksheet_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worksheet_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Worksheet Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "412": {
+            "description": "If-Match does not match the locked sheet version"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match header is required"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Worksheet",
+        "tags": [
+          "worksheets"
+        ]
+      },
+      "get": {
+        "operationId": "get_worksheet_api_worksheets__worksheet_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worksheet_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Worksheet Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorksheetDetail"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Worksheet",
+        "tags": [
+          "worksheets"
+        ]
+      },
+      "patch": {
+        "operationId": "rename_worksheet_api_worksheets__worksheet_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worksheet_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Worksheet Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorksheetRename"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorksheetDetail"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "If-Match does not match the locked sheet version"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match header is required"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Rename Worksheet",
+        "tags": [
+          "worksheets"
+        ]
+      }
+    },
+    "/api/worksheets/{worksheet_id}/restore": {
+      "post": {
+        "operationId": "restore_worksheet_api_worksheets__worksheet_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worksheet_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Worksheet Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorksheetDetail"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Restore Worksheet",
+        "tags": [
+          "worksheets"
+        ]
+      }
+    },
+    "/api/worksheets/{worksheet_id}/rows/query": {
+      "post": {
+        "description": "Route 9: one page of rows as this person may see them, with totals over all rows.",
+        "operationId": "query_worksheet_rows_api_worksheets__worksheet_id__rows_query_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worksheet_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Worksheet Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SheetRowsQuery"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SheetRowPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Query Worksheet Rows",
+        "tags": [
+          "worksheets"
+        ]
+      }
+    },
+    "/api/worksheets/{worksheet_id}/rows/{row_id}": {
+      "get": {
+        "operationId": "get_worksheet_row_api_worksheets__worksheet_id__rows__row_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worksheet_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Worksheet Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "row_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Row Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SheetRow"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Worksheet Row",
+        "tags": [
+          "worksheets"
+        ]
+      }
+    },
+    "/api/worksheets/{worksheet_id}/share-candidates": {
+      "get": {
+        "operationId": "list_share_candidates_api_worksheets__worksheet_id__share_candidates_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worksheet_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Worksheet Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SheetShareCandidates"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Share Candidates",
+        "tags": [
+          "worksheets"
         ]
       }
     },

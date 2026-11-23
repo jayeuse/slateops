@@ -20,8 +20,7 @@ from uuid6 import uuid7
 
 import app.systems.platform.events.router as events_router
 from app.core.base_model import utc_now
-from app.core.database.base import Base
-from app.systems.access.policy.models import AccessLevel
+from app.systems.access.policy.models import AccessLevel, GroupMember
 from app.systems.access.policy.scope import allowed_module_ids
 from app.systems.access.users.membership import current_membership
 from app.systems.access.users.models import Membership, User, UserStatus
@@ -90,8 +89,10 @@ def _subscription(viewer: EventViewer) -> EventSubscription:
 
 
 def _existing_entities() -> list[str]:
-    tables = {name for name in Base.metadata.tables if not name.startswith("worksheet")}
-    return sorted(tables | {"workspace_profiles", "work_scheduled", "work_triggers", "resync"})
+    """The entities the capture holds; a table added later is not compared."""
+
+    entities = {key.split("|")[0] for key in json.loads(BASELINE.read_text())}
+    return sorted(entities - {"signatures"})
 
 
 def _observe(entities: list[str]) -> dict[str, Any]:
@@ -192,6 +193,17 @@ def test_t2_a_sheet_event_reaches_its_owner_recipients_and_open_sheet_readers_on
         "owner", "view share", "edit share", "edit share by group", "guest with edit share",
         "peer", "module manager", "admin",
     }
+    # SH-11: a recipient who loses record read gets no event until read returns.
+    reader_row = db.scalars(select(GroupMember).where(
+        GroupMember.group_id == world.reader_access.group_id,
+        GroupMember.user_id == world.viewer.id,
+    )).one()
+    sheet_event = _sheet_event(world.sheet.id, org_id)
+    for deleted, receives in ((True, False), (False, True)):
+        reader_row.is_deleted, reader_row.deleted_at = deleted, utc_now() if deleted else None
+        db.flush()
+        viewer = _sheet_viewer(db, world.viewer, org_id)
+        assert _can_receive(_subscription(viewer), sheet_event) is receives
 
 
 @pytest.mark.integration
@@ -230,8 +242,30 @@ def test_t3_each_sheet_table_publishes_only_the_sheet_id(integration_db: Session
     assert published() == expected
 
 
+@pytest.mark.integration
+def test_t3_a_module_sheet_event_carries_no_module(integration_db: Session) -> None:
+    db = integration_db
+    world = sheet_world(db, "module")
+    db.info.pop(REALTIME_INVALIDATION_KEY, None)
+    world.sheet.title = "Renamed"
+    db.add(WorksheetRow(
+        org_id=world.sheet.org_id, worksheet_id=world.sheet.id, position=1024, data={},
+        data_bytes=2,
+    ))
+    db.flush()
+    assert [
+        event.to_transport_payload() for event in db.info.get(REALTIME_INVALIDATION_KEY, [])
+        if event.entity.startswith("worksheet")
+    ] == [
+        {"entity": "worksheets", "entity_id": str(world.sheet.id),
+         "org_id": str(world.sheet.org_id)},
+    ] * 2
+
+
 def test_t3_another_worksheet_table_publishes_nothing() -> None:
     assert event_for_entity("worksheet_presence", ROW, org_id=ORG) is None
+    with pytest.raises(ValueError, match="invalid invalidation payload"):
+        InvalidationEvent("worksheet_presence", entity_id=ROW, org_id=ORG)
     with pytest.raises(ValueError, match="invalid invalidation payload"):
         parse_invalidation_payload(
             {"entity": "worksheet_presence", "entity_id": str(ROW), "org_id": str(ORG)}

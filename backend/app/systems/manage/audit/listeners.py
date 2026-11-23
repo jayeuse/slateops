@@ -182,10 +182,11 @@ _WORKSHEET_CHILD_TABLES = frozenset(
 )
 
 
-def _event_entity_id(instance: Any, entity: str) -> Any:
-    if entity in _WORKSHEET_CHILD_TABLES:
-        return instance.worksheet_id
-    return getattr(instance, "id", None)
+def _event_entity_id(instance: Any, entity: str) -> UUID | None:
+    identity = instance.worksheet_id if entity in _WORKSHEET_CHILD_TABLES else getattr(
+        instance, "id", None
+    )
+    return identity if isinstance(identity, UUID) else None
 
 
 def _event_entity(instance: Any, entity: str) -> str:

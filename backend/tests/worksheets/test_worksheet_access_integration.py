@@ -55,6 +55,7 @@ PRIVATE = {
     "owner": "owner", "view share": "view", "edit share": "edit",
     "edit share by group": "edit", "guest with edit share": "view",
     "peer": None, "module manager": None, "admin": None,
+    "member without module access": None,
 }
 
 
@@ -84,7 +85,11 @@ def _delete_account(db: Session, world: SheetWorld) -> None:
     _soft_delete(world.owner)
 
 
-OPEN = {name: "view" for name in PRIVATE if name != "owner"}
+# Every reader of the record reads an open sheet; a member who cannot read it never does.
+OPEN = {
+    **{name: "view" for name in PRIVATE if name != "owner"},
+    "member without module access": None,
+}
 
 
 @pytest.mark.parametrize("anchor", ["record", "module"])
@@ -104,7 +109,7 @@ def test_a_sheet_opens_read_only_to_every_reader_when_its_owner_leaves(
     assert levels == OPEN
     seen = _seen(db, world)
     assert seen.pop("owner") is False
-    assert seen == dict.fromkeys(OPEN, True)
+    assert seen == {name: level is not None for name, level in OPEN.items()}
 
 
 def test_a_release_cutoff_after_the_sheet_keeps_it_open_when_the_owner_returns(
@@ -137,6 +142,27 @@ def test_an_owner_without_module_read_loses_the_sheet_and_it_stays_private(
     _soft_delete(row)
     db.flush()
     assert _levels(db, world) == {**PRIVATE, "owner": None}
+    row.is_deleted, row.deleted_at = False, None
+    db.flush()
+    assert _levels(db, world) == PRIVATE  # read returns: the sheet returns to its owner
+
+
+def test_a_recipient_without_record_read_loses_the_share_until_read_returns(
+    integration_db: Session,
+) -> None:
+    db = integration_db
+    world = sheet_world(db)
+    row = db.scalars(select(GroupMember).where(
+        GroupMember.group_id == world.reader_access.group_id,
+        GroupMember.user_id == world.viewer.id,
+    )).one()
+    _soft_delete(row)
+    db.flush()
+    assert _levels(db, world) == {**PRIVATE, "view share": None}
+    assert _seen(db, world)["view share"] is False
+    row.is_deleted, row.deleted_at = False, None
+    db.flush()
+    assert _levels(db, world) == PRIVATE
 
 
 @pytest.mark.parametrize("anchor", ["record", "module"])

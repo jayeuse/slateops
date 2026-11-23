@@ -8,10 +8,10 @@ module (spec D0: derived on each read, never stored). Administrators get no over
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import and_, case, exists, func, or_, select
+from sqlalchemy import Select, and_, case, exists, func, or_, select, union_all
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
-from sqlalchemy.sql.selectable import ScalarSelect
+from sqlalchemy.sql.selectable import CompoundSelect, ScalarSelect
 
 from app.core.database.organization_scope import bound_organization_column
 from app.systems.access.policy.checks import module_filter
@@ -28,7 +28,12 @@ _EDIT_RANK = 2
 
 
 def worksheet_present_clause() -> ColumnElement[bool]:
-    """The owner can act in the sheet's organization, and no release cutoff opened it."""
+    """The owner can act in the sheet's organization, and no release cutoff opened it.
+
+    It needs a bound organization: ``active_account_clause`` compares the membership with
+    ``slateops.org_id``, so an unbound transaction finds no owner present (every sheet open).
+    Callers always run inside a bound request, worker or test transaction.
+    """
 
     return exists(
         select(Membership.id)
@@ -84,6 +89,7 @@ def _share_clause(user_id: UUID) -> ColumnElement[bool]:
         .join(Group, Group.id == GroupMember.group_id)
         .where(
             GroupMember.user_id == user_id,
+            GroupMember.org_id == bound_organization_column(),
             GroupMember.is_deleted.is_(False),
             Group.is_deleted.is_(False),
         )
@@ -134,16 +140,64 @@ def own_deleted_worksheet_clause(db: Session, user: User) -> ColumnElement[bool]
     )
 
 
+def _candidate_ids(user: User, org_id: UUID) -> CompoundSelect[tuple[UUID]]:
+    """Every sheet the person could see, found through indexes (B2 review N-2).
+
+    Owned sheets (``ix_worksheets_owner``), sheets shared with the person or their groups
+    (the share indexes), and the sheets of owners who may have left (their memberships in
+    the organization). It is a superset: the exact rule still filters it.
+    """
+
+    groups = select(GroupMember.group_id).where(
+        GroupMember.org_id == org_id,
+        GroupMember.user_id == user.id,
+        GroupMember.is_deleted.is_(False),
+    )
+    shared = select(WorksheetShare.worksheet_id).where(
+        WorksheetShare.org_id == org_id,
+        WorksheetShare.is_deleted.is_(False),
+        or_(
+            and_(WorksheetShare.subject == "user", WorksheetShare.user_id == user.id),
+            and_(WorksheetShare.subject == "group", WorksheetShare.group_id.in_(groups)),
+        ),
+    )
+    # An owner who is not present has a membership here that fails the account rule, or a
+    # release cutoff. A sheet is only made by a member, so its owner always has one.
+    departed = (
+        select(Membership.user_id)
+        .join(User, User.id == Membership.user_id)
+        .where(
+            Membership.org_id == org_id,
+            or_(~active_account_clause(), Membership.worksheets_released_at.is_not(None)),
+        )
+    )
+    return union_all(
+        select(Worksheet.id).where(Worksheet.owner_id == user.id, Worksheet.org_id == org_id),
+        shared,
+        select(Worksheet.id).where(
+            Worksheet.owner_id.in_(departed), Worksheet.org_id == org_id
+        ),
+    )
+
+
+def visible_worksheet_statement(db: Session, user: User, org_id: UUID) -> Select[tuple[UUID]]:
+    """The IDs of every sheet of the organization the person can see.
+
+    It reads only the person's candidate sheets, so its cost does not grow with the private
+    sheets of other people (the SSE snapshot runs for every subscriber on every event).
+    """
+
+    return select(Worksheet.id).where(
+        Worksheet.org_id == org_id,
+        Worksheet.id.in_(_candidate_ids(user, org_id)),
+        visible_worksheet_clause(db, user),
+    )
+
+
 def visible_worksheet_ids(db: Session, user: User, org_id: UUID) -> frozenset[UUID]:
     """Every sheet of the organization the person can see, for the SSE snapshot."""
 
-    return frozenset(
-        db.scalars(
-            select(Worksheet.id).where(
-                Worksheet.org_id == org_id, visible_worksheet_clause(db, user)
-            )
-        ).all()
-    )
+    return frozenset(db.scalars(visible_worksheet_statement(db, user, org_id)).all())
 
 
 def load_visible_worksheet(db: Session, user: User, worksheet_id: UUID) -> Worksheet | None:

@@ -33,12 +33,14 @@ class SheetWorld:
     manager: User
     admin: User
     reader_access: GroupAccess
+    outsider: User
 
     def people(self) -> dict[str, User]:
         return {
             "owner": self.owner, "view share": self.viewer, "edit share": self.editor,
             "edit share by group": self.group_member, "guest with edit share": self.guest,
             "peer": self.peer, "module manager": self.manager, "admin": self.admin,
+            "member without module access": self.outsider,
         }
 
 
@@ -98,5 +100,5 @@ def sheet_world(db: Session, anchor: Anchor = "record") -> SheetWorld:
     share(db, sheet, "edit", user=guest)
     return SheetWorld(
         department, module, record, sheet, share_group, owner, viewer, editor, group_member,
-        guest, peer, manager, admin, reader_access,
+        guest, peer, manager, admin, reader_access, add_user(db),
     )

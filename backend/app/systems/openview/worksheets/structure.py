@@ -59,21 +59,21 @@ class _Column(_Strict):
         return _not_blank(value, "Column names")
 
 
-class PlainColumn(_Column):
+class SheetPlainColumn(_Column):
     type: PlainType
 
 
-class DecimalOptions(_Strict):
+class SheetDecimalOptions(_Strict):
     places: Places
     currency: bool = False
 
 
-class DecimalColumn(_Column):
+class SheetDecimalColumn(_Column):
     type: Literal["decimal"]
-    decimal: DecimalOptions
+    decimal: SheetDecimalOptions
 
 
-class SelectOption(_Strict):
+class SheetSelectOption(_Strict):
     id: OptionId
     label: Annotated[str, Field(max_length=100)]
 
@@ -83,12 +83,12 @@ class SelectOption(_Strict):
         return _not_blank(value, "Option labels")
 
 
-class SelectOptions(_Strict):
-    options: list[SelectOption] = Field(min_length=1)
+class SheetSelectOptions(_Strict):
+    options: list[SheetSelectOption] = Field(min_length=1)
 
     @field_validator("options")
     @classmethod
-    def _unique(cls, options: list[SelectOption]) -> list[SelectOption]:
+    def _unique(cls, options: list[SheetSelectOption]) -> list[SheetSelectOption]:
         ids = {option.id for option in options}
         labels = {option.label for option in options}
         if len(ids) != len(options) or len(labels) != len(options):
@@ -96,60 +96,60 @@ class SelectOptions(_Strict):
         return options
 
 
-class SelectColumn(_Column):
+class SheetSelectColumn(_Column):
     type: Literal["select"]
-    select: SelectOptions
+    select: SheetSelectOptions
 
 
-class LinkOptions(_Strict):
+class SheetLinkOptions(_Strict):
     moduleId: UUID
 
 
-class LinkColumn(_Column):
+class SheetLinkColumn(_Column):
     type: Literal["link"]
-    link: LinkOptions
+    link: SheetLinkOptions
 
 
-class LookupOptions(_Strict):
+class SheetLookupOptions(_Strict):
     linkKey: ColumnKey
     fieldId: UUID
 
 
-class LookupColumn(_Column):
+class SheetLookupColumn(_Column):
     type: Literal["lookup"]
-    lookup: LookupOptions
+    lookup: SheetLookupOptions
 
 
-class ComputedOptions(_Strict):
+class SheetComputedOptions(_Strict):
     expression: str = Field(min_length=1, max_length=MAX_EXPRESSION_CHARACTERS)
     places: Places | None = None
 
 
-class ComputedColumn(_Column):
+class SheetComputedColumn(_Column):
     type: Literal["computed"]
-    computed: ComputedOptions
+    computed: SheetComputedOptions
 
 
-class SheetLookupOptions(_Strict):
+class SheetFromSheetOptions(_Strict):
     sourceWorksheetId: UUID
     sourceColumnKey: ColumnKey
     linkKey: ColumnKey
     sourceLinkKey: ColumnKey
 
 
-class SheetLookupColumn(_Column):
+class SheetFromSheetColumn(_Column):
     type: Literal["sheet_lookup"]
-    sheet_lookup: SheetLookupOptions
+    sheet_lookup: SheetFromSheetOptions
 
 
 Column = Annotated[
-    PlainColumn | DecimalColumn | SelectColumn | LinkColumn | LookupColumn | ComputedColumn
-    | SheetLookupColumn,
+    SheetPlainColumn | SheetDecimalColumn | SheetSelectColumn | SheetLinkColumn
+    | SheetLookupColumn | SheetComputedColumn | SheetFromSheetColumn,
     Field(discriminator="type"),
 ]
 
 
-class ColumnGroup(_Strict):
+class SheetColumnGroup(_Strict):
     name: Annotated[str, Field(max_length=150)]
     keys: list[ColumnKey] = Field(min_length=1)
 
@@ -163,7 +163,7 @@ class WorksheetStructure(_Strict):
     structureVersion: Literal[1]
     nextColumnSeq: int = Field(ge=1)
     columns: list[Column] = Field(default_factory=list, max_length=MAX_COLUMNS)
-    groups: list[ColumnGroup] = Field(default_factory=list)
+    groups: list[SheetColumnGroup] = Field(default_factory=list)
     totals: dict[ColumnKey, TotalFunction] = Field(default_factory=dict)
 
     @model_validator(mode="before")
@@ -185,8 +185,8 @@ class WorksheetStructure(_Strict):
         if len({column.name.casefold() for column in self.columns}) != len(self.columns):
             raise ValueError("Column names must be unique, ignoring case")
         for column in self.columns:
-            options = column.lookup if isinstance(column, LookupColumn) else (
-                column.sheet_lookup if isinstance(column, SheetLookupColumn) else None
+            options = column.lookup if isinstance(column, SheetLookupColumn) else (
+                column.sheet_lookup if isinstance(column, SheetFromSheetColumn) else None
             )
             if options is not None and types.get(options.linkKey) != "link":
                 raise ValueError(f"Column {column.key}: linkKey must name a link column")
