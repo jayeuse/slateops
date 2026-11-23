@@ -13,6 +13,7 @@ import {
   PanelLeftOpen,
   RotateCcw,
   Settings2,
+  Sheet as SheetIcon,
   UserCircle,
   X,
 } from "lucide-react";
@@ -51,6 +52,7 @@ import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import { ServerConnectionBanner } from "@/components/server-connection-banner";
 import { ShellAccountChecks } from "@/components/shell-account-checks";
 import { isModulePage } from "@/components/department-navigation-model";
+import { isMySheetsPage } from "@/components/workspace-navigation";
 import { HelpPanel } from "@/components/help/help-panel";
 import {
   GuardedWorkspaceLink,
@@ -150,8 +152,10 @@ export function AppShell({
   const isManage = pathname === "/manage";
   // A module page and a department dashboard are still pages like Manage
   // (OD6, EXIT-B2).
+  // My sheets is a still page too (docs/specs/sheets.md Screens 7).
   const isModule =
     isModulePage(pathname, searchParams) ||
+    isMySheetsPage(pathname, searchParams) ||
     (pathname === "/openview" && searchParams.get("section") === "dashboards");
   // Boards is a still page from 1280px too; only its panels scroll (BR8).
   const isBoards = pathname === "/boards";
@@ -776,6 +780,71 @@ function AppSidebarHeader({
 }
 
 const commsDescription = "Messages and channels";
+const mySheetsDescription = "Sheets you own and sheets shared with you";
+const mySheetsHref = "/openview?section=sheets" as Route;
+
+/**
+ * My sheets, above OpenComms in the foot, for every account whatever its
+ * access (docs/specs/sheets.md P4). The link carries no sheet code: the page
+ * loads with OpenView.
+ */
+function AppMySheetsLink({ surface, collapsed }: ShellRowProps) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const active = isMySheetsPage(pathname, searchParams);
+  const descriptionId = useId();
+  const drawer = surface === "drawer";
+
+  return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          render={
+            <GuardedWorkspaceLink
+              href={mySheetsHref}
+              prefetch={false}
+              onPointerEnter={() => router.prefetch(mySheetsHref)}
+              onFocus={() => router.prefetch(mySheetsHref)}
+            />
+          }
+          isActive={active}
+          aria-current={active ? "page" : undefined}
+          aria-label="My sheets"
+          aria-describedby={drawer ? descriptionId : undefined}
+          aria-description={drawer ? undefined : mySheetsDescription}
+          title={
+            drawer
+              ? undefined
+              : collapsed
+                ? `My sheets — ${mySheetsDescription}`
+                : mySheetsDescription
+          }
+          className={cn(
+            navigationRowSize(surface),
+            navigationActiveInk,
+            navigationIconStroke,
+            navigationNoActiveFill,
+            drawer && "h-auto py-1.5",
+          )}
+        >
+          <SheetIcon aria-hidden="true" />
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate">My sheets</span>
+            {drawer ? (
+              <span
+                id={descriptionId}
+                className="text-sidebar-muted truncate text-xs font-normal"
+              >
+                {mySheetsDescription}
+              </span>
+            ) : null}
+          </span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  );
+}
 
 type ShellRowProps = { surface: NavigationSurface; collapsed: boolean };
 
@@ -920,6 +989,7 @@ function AppAccountRow({ surface, collapsed }: ShellRowProps) {
 function AppSidebarFooter({ surface, collapsed }: ShellRowProps) {
   return (
     <SidebarFooter className="shrink-0 gap-0.5 border-t border-(--sidebar-border) px-2 py-2 group-data-[collapsible=icon]:px-1.5 xl:group-data-[collapsible=icon]:px-3">
+      <AppMySheetsLink surface={surface} collapsed={collapsed} />
       <AppCommsLink surface={surface} collapsed={collapsed} />
       <AppAccountRow surface={surface} collapsed={collapsed} />
     </SidebarFooter>

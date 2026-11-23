@@ -475,6 +475,9 @@ export function getWorkspaceLocation(
     (candidate) => candidate.pathname === pathname,
   );
   if (!definition) return null;
+  // My sheets is no OpenView section in the sidebar: its crumb names itself.
+  if (isMySheetsPage(pathname, searchParams))
+    return { workspace: null, section: "My sheets" };
   const sectionId = sectionFor(definition, searchParams, hash, access);
   // The sidebar has no Platform group (DR-7.7): its pages read "Files",
   // "Files › Import & export", "Search" and "Notifications", for every level,
@@ -547,6 +550,16 @@ export function isWorkspaceNavigationGroupActive(
 const COMMS_NAVIGATION_KEY = "comms";
 const PROFILE_NAVIGATION_KEY = "profile";
 const SETTINGS_NAVIGATION_KEY = "account-settings";
+/** My sheets sits in the sidebar foot for every account (docs/specs/sheets.md P4). */
+const MY_SHEETS_NAVIGATION_KEY = "my-sheets";
+
+/** Whether a URL shows My sheets, OpenView's sheets section. */
+export function isMySheetsPage(
+  pathname: string,
+  searchParams: URLSearchParams,
+): boolean {
+  return pathname === "/openview" && searchParams.get("section") === "sheets";
+}
 
 /** The navigation key of the place a URL shows, or null outside the sidebar. */
 export function currentNavigationKey(
@@ -557,6 +570,7 @@ export function currentNavigationKey(
   if (pathname === "/comms" || pathname.startsWith("/comms/"))
     return COMMS_NAVIGATION_KEY;
   if (pathname === "/profile") return PROFILE_NAVIGATION_KEY;
+  if (isMySheetsPage(pathname, searchParams)) return MY_SHEETS_NAVIGATION_KEY;
   if (pathname === "/settings" || pathname === "/settings/appearance")
     return SETTINGS_NAVIGATION_KEY;
   const definition = workspaceNavigationDefinitions.find(

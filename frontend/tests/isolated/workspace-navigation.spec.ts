@@ -705,6 +705,23 @@ test("the current navigation key follows the route and its section", () => {
   expect(key("/login")).toBeNull();
 });
 
+// Sheets P4: My sheets sits in the sidebar foot for every account, so it is
+// its own place, not an OpenView section, and its crumb names only itself.
+test("My sheets is its own place for every account", () => {
+  expect(
+    currentNavigationKey("/openview", new URLSearchParams("section=sheets")),
+  ).toBe("my-sheets");
+  for (const access of ["all", "none"] as const)
+    expect(
+      getWorkspaceLocation(
+        "/openview",
+        new URLSearchParams("section=sheets"),
+        "",
+        access,
+      ),
+    ).toEqual({ workspace: null, section: "My sheets" });
+});
+
 test("a link leaves the organization only when it names another one", () => {
   const current = "00000000-0000-4000-8000-000000000102";
   const other = "00000000-0000-4000-8000-000000000199";

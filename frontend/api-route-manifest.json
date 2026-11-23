@@ -2334,6 +2334,24 @@
     "path": "/api/records/window-query"
   },
   {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "getWorksheet",
+    "method": "GET",
+    "path": "/api/worksheets/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "listMyWorksheets",
+    "method": "GET",
+    "path": "/api/worksheets"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "restoreWorksheet",
+    "method": "POST",
+    "path": "/api/worksheets/{param}/restore"
+  },
+  {
     "adapter": "frontend/src/components/systems/platform/adapters/account-api.ts",
     "function": "changeAccountPassword",
     "method": "POST",

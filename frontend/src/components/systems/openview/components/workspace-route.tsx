@@ -9,6 +9,7 @@ import { parseOpenViewUrl } from "../domain/model";
 import { OpenViewQuerySync } from "./openview-query-sync";
 import { OpenViewLoading } from "./openview-skeletons";
 import ServerBackedDashboards from "./server-backed-dashboards";
+import { MySheets } from "./my-sheets";
 import { ReportLinkRedirect } from "./report-link-redirect";
 import ServerBackedViewsWorkspace, {
   OpenViewHeader,
@@ -34,6 +35,8 @@ function OpenViewRouteContent() {
   // with the builder's saved-chart list.
   else if (section === "dashboards" || section === "charts")
     content = <ServerBackedDashboards />;
+  // My sheets reads its own list, with no records.read and no stream (P4).
+  else if (section === "sheets") content = <MySheets />;
   // The Reports page is gone (DC8, DC9): its links open a module page's
   // Reports view.
   else if (section === "reports")

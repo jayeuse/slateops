@@ -5,6 +5,8 @@ export const OPENVIEW_SECTIONS = [
   "dashboards",
   "charts",
   "reports",
+  // My sheets (docs/specs/sheets.md P4): every account's list of its sheets.
+  "sheets",
 ] as const;
 export type OpenViewSection = (typeof OPENVIEW_SECTIONS)[number];
 

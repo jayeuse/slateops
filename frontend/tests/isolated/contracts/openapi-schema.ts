@@ -245,6 +245,9 @@ const PATTERN_SAMPLES: Record<string, string> = {
   "^[a-f0-9]{64}$": "a".repeat(64),
   "^[0-9a-f]{64}$": "a".repeat(64),
   "^[0-9]{6}$": "123456",
+  // Sheet column keys and select option ids (docs/specs/sheets.md D1.7).
+  "^c[0-9a-z]{1,8}$": "c1",
+  "^o[0-9a-z]{1,8}$": "o1",
 };
 
 export class Generator {
