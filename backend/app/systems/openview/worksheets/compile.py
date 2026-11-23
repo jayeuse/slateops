@@ -33,6 +33,7 @@ from sqlalchemy import (
 from sqlalchemy import cast as sql_cast
 from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.selectable import LateralFromClause
 
 from app.systems.openview.worksheets.expression import Binary, Call, Negate, Node, Number, Ref
 
@@ -116,22 +117,38 @@ class _Compiler:
         return _aggregate(node.function, values)
 
 
-def compile_expression(
-    node: Node, operands: Mapping[str, Operand],
-) -> tuple[Expression, Expression, Expression]:
-    """The masked value, the error code and the hidden flag of one computed column.
+def computed_cell(node: Node, operands: Mapping[str, Operand], key: str) -> LateralFromClause:
+    """One computed column as a fenced LATERAL with ``value``, ``error`` and ``hidden``.
 
-    A hidden or erroneous cell has no value, so the sort, the search and the totals treat
-    it as blank, as the grid shows it (K6).
+    The expression is written once, in an inner fenced subquery; the masking reads it by
+    name. A hidden or erroneous cell has no value, so the sort, the search and the totals
+    treat it as blank, as the grid shows it (K6). ``OFFSET 0`` keeps PostgreSQL from
+    pulling either subquery into the row query, where each later column would copy this
+    expression for every reference (B10 review item 3, S-11).
     """
 
     compiler = _Compiler(operands)
     raw = compiler.value(node)
-    hidden = _any(compiler.hidden)
     found = func.coalesce(*compiler.errors) if compiler.errors else no_error()
-    error = case(
-        (and_(found.is_(None), func.abs(raw) >= literal(LIMIT, Numeric())), literal("overflow")),
-        else_=found,
+    base = (
+        select(raw.label("raw"), found.label("found"), _any(compiler.hidden).label("hidden"))
+        .correlate_except(None)
+        .offset(0)
+        .lateral(f"computed_base_{key}")
     )
-    masked = case((or_(hidden, error.is_not(None)), _no_number()), else_=raw)
-    return masked, case((hidden, no_error()), else_=error), hidden
+    error = case(
+        (and_(base.c.found.is_(None), func.abs(base.c.raw) >= literal(LIMIT, Numeric())),
+         literal("overflow")),
+        else_=base.c.found,
+    )
+    return (
+        select(
+            case((or_(base.c.hidden, error.is_not(None)), _no_number()),
+                 else_=base.c.raw).label("value"),
+            case((base.c.hidden, no_error()), else_=error).label("error"),
+            base.c.hidden.label("hidden"),
+        )
+        .select_from(base)
+        .offset(0)
+        .lateral(f"computed_{key}")
+    )

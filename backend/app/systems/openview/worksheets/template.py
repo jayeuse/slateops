@@ -9,10 +9,8 @@ only a number column can have is dropped from a column that became ``text``.
 """
 
 import json
-from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.systems.access.policy.checks import module_level
@@ -20,68 +18,26 @@ from app.systems.access.users.models import User
 from app.systems.openview.worksheets.models import Worksheet
 from app.systems.openview.worksheets.serializers import structure_view
 from app.systems.openview.worksheets.structure import (
-    ColumnKey,
-    SheetColumnGroup,
     SheetComputedColumn,
     SheetDecimalColumn,
     SheetLinkColumn,
     SheetLookupColumn,
     SheetPlainColumn,
     SheetSelectColumn,
-    TotalFunction,
+)
+from app.systems.openview.worksheets.template_schema import (
+    TEMPLATE_KIND,
+    SheetTemplate,
+    SheetTemplateLink,
+    SheetTemplateLinkColumn,
+    SheetTemplateLookup,
+    SheetTemplateLookupColumn,
+    TemplateColumn,
 )
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field as RecordField
 from app.systems.sandbox.fields.models import FieldType
 from app.systems.sandbox.modules.models import Module
-
-TEMPLATE_KIND = "slateops-worksheet-template"
-
-
-class _Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class SheetTemplateLink(_Strict):
-    moduleName: str
-    departmentName: str
-
-
-class SheetTemplateLinkColumn(_Strict):
-    key: ColumnKey
-    name: str
-    type: Literal["link"]
-    link: SheetTemplateLink
-
-
-class SheetTemplateLookup(_Strict):
-    linkKey: ColumnKey
-    fieldName: str
-
-
-class SheetTemplateLookupColumn(_Strict):
-    key: ColumnKey
-    name: str
-    type: Literal["lookup"]
-    lookup: SheetTemplateLookup
-
-
-TemplateColumn = Annotated[
-    SheetPlainColumn | SheetDecimalColumn | SheetSelectColumn | SheetComputedColumn
-    | SheetTemplateLinkColumn | SheetTemplateLookupColumn,
-    Field(discriminator="type"),
-]
-
-
-class SheetTemplate(_Strict):
-    """Version 1 of the template file (D9.2); import validates against the same model."""
-
-    kind: Literal["slateops-worksheet-template"]
-    schemaVersion: Literal[1]
-    title: str
-    columns: list[TemplateColumn]
-    groups: list[SheetColumnGroup]
-    totals: dict[ColumnKey, TotalFunction]
 
 
 def _readable_module(db: Session, user: User, module_id: UUID) -> SheetTemplateLink | None:

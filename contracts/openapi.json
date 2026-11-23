@@ -21699,6 +21699,28 @@
         "title": "SheetComputedOptions",
         "type": "object"
       },
+      "SheetCopySource": {
+        "additionalProperties": false,
+        "description": "Make a copy (L6): columns, rows and links of a sheet, on the same record or module.",
+        "properties": {
+          "kind": {
+            "const": "copy",
+            "title": "Kind",
+            "type": "string"
+          },
+          "worksheet_id": {
+            "format": "uuid",
+            "title": "Worksheet Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "worksheet_id"
+        ],
+        "title": "SheetCopySource",
+        "type": "object"
+      },
       "SheetDecimalColumn": {
         "additionalProperties": false,
         "properties": {
@@ -21758,7 +21780,8 @@
           "error": {
             "enum": [
               "division_by_zero",
-              "overflow"
+              "overflow",
+              "too_complex"
             ],
             "title": "Error",
             "type": "string"
@@ -21879,7 +21902,8 @@
         "type": "object"
       },
       "SheetHiddenSourceColumn": {
-        "description": "A From another sheet column whose source sheet the viewer cannot see (D14 S1).",
+        "additionalProperties": false,
+        "description": "A From another sheet column whose source sheet the viewer cannot see (D14 S1).\n\nRoute 6 takes it back as \"keep this column as it is\" (B11 review, option a).",
         "properties": {
           "key": {
             "title": "Key",
@@ -22798,54 +22822,83 @@
         "title": "SheetStateCell",
         "type": "object"
       },
+      "SheetStructureSource": {
+        "additionalProperties": false,
+        "description": "New sheet from this structure (X7): the columns of a sheet the person can see.",
+        "properties": {
+          "kind": {
+            "const": "structure",
+            "title": "Kind",
+            "type": "string"
+          },
+          "worksheet_id": {
+            "format": "uuid",
+            "title": "Worksheet Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "worksheet_id"
+        ],
+        "title": "SheetStructureSource",
+        "type": "object"
+      },
       "SheetStructureUpdate": {
         "additionalProperties": false,
         "description": "Route 6: the whole column list. New columns use keys from ``nextColumnSeq`` on.",
         "properties": {
           "columns": {
             "items": {
-              "discriminator": {
-                "mapping": {
-                  "boolean": "#/components/schemas/SheetPlainColumn",
-                  "computed": "#/components/schemas/SheetComputedColumn",
-                  "date": "#/components/schemas/SheetPlainColumn",
-                  "datetime": "#/components/schemas/SheetPlainColumn",
-                  "decimal": "#/components/schemas/SheetDecimalColumn",
-                  "email": "#/components/schemas/SheetPlainColumn",
-                  "int": "#/components/schemas/SheetPlainColumn",
-                  "link": "#/components/schemas/SheetLinkColumn",
-                  "long_text": "#/components/schemas/SheetPlainColumn",
-                  "lookup": "#/components/schemas/SheetLookupColumn",
-                  "number": "#/components/schemas/SheetPlainColumn",
-                  "select": "#/components/schemas/SheetSelectColumn",
-                  "sheet_lookup": "#/components/schemas/SheetFromSheetColumn",
-                  "text": "#/components/schemas/SheetPlainColumn",
-                  "url": "#/components/schemas/SheetPlainColumn",
-                  "user": "#/components/schemas/SheetPlainColumn"
-                },
-                "propertyName": "type"
-              },
-              "oneOf": [
+              "anyOf": [
                 {
-                  "$ref": "#/components/schemas/SheetPlainColumn"
+                  "discriminator": {
+                    "mapping": {
+                      "boolean": "#/components/schemas/SheetPlainColumn",
+                      "computed": "#/components/schemas/SheetComputedColumn",
+                      "date": "#/components/schemas/SheetPlainColumn",
+                      "datetime": "#/components/schemas/SheetPlainColumn",
+                      "decimal": "#/components/schemas/SheetDecimalColumn",
+                      "email": "#/components/schemas/SheetPlainColumn",
+                      "int": "#/components/schemas/SheetPlainColumn",
+                      "link": "#/components/schemas/SheetLinkColumn",
+                      "long_text": "#/components/schemas/SheetPlainColumn",
+                      "lookup": "#/components/schemas/SheetLookupColumn",
+                      "number": "#/components/schemas/SheetPlainColumn",
+                      "select": "#/components/schemas/SheetSelectColumn",
+                      "sheet_lookup": "#/components/schemas/SheetFromSheetColumn",
+                      "text": "#/components/schemas/SheetPlainColumn",
+                      "url": "#/components/schemas/SheetPlainColumn",
+                      "user": "#/components/schemas/SheetPlainColumn"
+                    },
+                    "propertyName": "type"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SheetPlainColumn"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SheetDecimalColumn"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SheetSelectColumn"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SheetLinkColumn"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SheetLookupColumn"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SheetComputedColumn"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SheetFromSheetColumn"
+                    }
+                  ]
                 },
                 {
-                  "$ref": "#/components/schemas/SheetDecimalColumn"
-                },
-                {
-                  "$ref": "#/components/schemas/SheetSelectColumn"
-                },
-                {
-                  "$ref": "#/components/schemas/SheetLinkColumn"
-                },
-                {
-                  "$ref": "#/components/schemas/SheetLookupColumn"
-                },
-                {
-                  "$ref": "#/components/schemas/SheetComputedColumn"
-                },
-                {
-                  "$ref": "#/components/schemas/SheetFromSheetColumn"
+                  "$ref": "#/components/schemas/SheetHiddenSourceColumn"
                 }
               ]
             },
@@ -22978,6 +23031,243 @@
           "totals"
         ],
         "title": "SheetStructureView",
+        "type": "object"
+      },
+      "SheetTemplate": {
+        "additionalProperties": false,
+        "description": "Version 1 of the template file (D9.2); import validates against the same model.",
+        "properties": {
+          "columns": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "boolean": "#/components/schemas/SheetPlainColumn",
+                  "computed": "#/components/schemas/SheetComputedColumn",
+                  "date": "#/components/schemas/SheetPlainColumn",
+                  "datetime": "#/components/schemas/SheetPlainColumn",
+                  "decimal": "#/components/schemas/SheetDecimalColumn",
+                  "email": "#/components/schemas/SheetPlainColumn",
+                  "int": "#/components/schemas/SheetPlainColumn",
+                  "link": "#/components/schemas/SheetTemplateLinkColumn",
+                  "long_text": "#/components/schemas/SheetPlainColumn",
+                  "lookup": "#/components/schemas/SheetTemplateLookupColumn",
+                  "number": "#/components/schemas/SheetPlainColumn",
+                  "select": "#/components/schemas/SheetSelectColumn",
+                  "text": "#/components/schemas/SheetPlainColumn",
+                  "url": "#/components/schemas/SheetPlainColumn",
+                  "user": "#/components/schemas/SheetPlainColumn"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/SheetPlainColumn"
+                },
+                {
+                  "$ref": "#/components/schemas/SheetDecimalColumn"
+                },
+                {
+                  "$ref": "#/components/schemas/SheetSelectColumn"
+                },
+                {
+                  "$ref": "#/components/schemas/SheetComputedColumn"
+                },
+                {
+                  "$ref": "#/components/schemas/SheetTemplateLinkColumn"
+                },
+                {
+                  "$ref": "#/components/schemas/SheetTemplateLookupColumn"
+                }
+              ]
+            },
+            "maxItems": 100,
+            "title": "Columns",
+            "type": "array"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/SheetColumnGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "kind": {
+            "const": "slateops-worksheet-template",
+            "title": "Kind",
+            "type": "string"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "title": "Schemaversion",
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 200,
+            "title": "Title",
+            "type": "string"
+          },
+          "totals": {
+            "patternProperties": {
+              "^c[0-9a-z]{1,8}$": {
+                "enum": [
+                  "sum",
+                  "average",
+                  "min",
+                  "max",
+                  "count"
+                ],
+                "type": "string"
+              }
+            },
+            "title": "Totals",
+            "type": "object"
+          }
+        },
+        "required": [
+          "kind",
+          "schemaVersion",
+          "title",
+          "columns",
+          "groups",
+          "totals"
+        ],
+        "title": "SheetTemplate",
+        "type": "object"
+      },
+      "SheetTemplateLink": {
+        "additionalProperties": false,
+        "properties": {
+          "departmentName": {
+            "title": "Departmentname",
+            "type": "string"
+          },
+          "moduleName": {
+            "title": "Modulename",
+            "type": "string"
+          }
+        },
+        "required": [
+          "moduleName",
+          "departmentName"
+        ],
+        "title": "SheetTemplateLink",
+        "type": "object"
+      },
+      "SheetTemplateLinkColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "pattern": "^c[0-9a-z]{1,8}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "link": {
+            "$ref": "#/components/schemas/SheetTemplateLink"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "const": "link",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "type",
+          "link"
+        ],
+        "title": "SheetTemplateLinkColumn",
+        "type": "object"
+      },
+      "SheetTemplateLookup": {
+        "additionalProperties": false,
+        "properties": {
+          "fieldName": {
+            "title": "Fieldname",
+            "type": "string"
+          },
+          "linkKey": {
+            "pattern": "^c[0-9a-z]{1,8}$",
+            "title": "Linkkey",
+            "type": "string"
+          }
+        },
+        "required": [
+          "linkKey",
+          "fieldName"
+        ],
+        "title": "SheetTemplateLookup",
+        "type": "object"
+      },
+      "SheetTemplateLookupColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "pattern": "^c[0-9a-z]{1,8}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "lookup": {
+            "$ref": "#/components/schemas/SheetTemplateLookup"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "const": "lookup",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "type",
+          "lookup"
+        ],
+        "title": "SheetTemplateLookupColumn",
+        "type": "object"
+      },
+      "SheetTemplateSource": {
+        "additionalProperties": false,
+        "description": "A template file (X6) and, for each of its link columns, a module or null (text).",
+        "properties": {
+          "kind": {
+            "const": "template",
+            "title": "Kind",
+            "type": "string"
+          },
+          "module_mapping": {
+            "patternProperties": {
+              "^c[0-9a-z]{1,8}$": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "title": "Module Mapping",
+            "type": "object"
+          },
+          "template": {
+            "$ref": "#/components/schemas/SheetTemplate"
+          }
+        },
+        "required": [
+          "kind",
+          "template"
+        ],
+        "title": "SheetTemplateSource",
         "type": "object"
       },
       "SheetTotal": {
@@ -26856,7 +27146,30 @@
             "title": "Record Id"
           },
           "source": {
-            "$ref": "#/components/schemas/SheetBlankSource"
+            "discriminator": {
+              "mapping": {
+                "blank": "#/components/schemas/SheetBlankSource",
+                "copy": "#/components/schemas/SheetCopySource",
+                "structure": "#/components/schemas/SheetStructureSource",
+                "template": "#/components/schemas/SheetTemplateSource"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SheetBlankSource"
+              },
+              {
+                "$ref": "#/components/schemas/SheetStructureSource"
+              },
+              {
+                "$ref": "#/components/schemas/SheetCopySource"
+              },
+              {
+                "$ref": "#/components/schemas/SheetTemplateSource"
+              }
+            ],
+            "title": "Source"
           },
           "title": {
             "maxLength": 200,
@@ -66845,6 +67158,7 @@
         ]
       },
       "post": {
+        "description": "Route 3: blank, from a structure (X7), a copy (L6) or a template (X6).",
         "operationId": "create_worksheet_api_worksheets_post",
         "parameters": [
           {

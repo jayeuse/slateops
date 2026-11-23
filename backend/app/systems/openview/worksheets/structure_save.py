@@ -37,7 +37,11 @@ from app.systems.openview.worksheets.row_writes import (
 )
 from app.systems.openview.worksheets.schemas import SheetStructureUpdate
 from app.systems.openview.worksheets.serializers import worksheet_etag
-from app.systems.openview.worksheets.sheet_lookup_save import check_sheet_graph, check_sources
+from app.systems.openview.worksheets.sheet_lookup_save import (
+    check_sheet_graph,
+    check_sources,
+    kept_columns,
+)
 from app.systems.openview.worksheets.structure import (
     MAX_COLUMNS,
     Column,
@@ -198,10 +202,11 @@ def save_structure(
         raise worksheet_limit("columns", MAX_COLUMNS, "A sheet holds at most 100 columns")
     old = WorksheetStructure.model_validate(sheet.structure)
     old_columns = {column.key: column for column in old.columns}
-    sequence = _next_sequence(old, payload.columns)
-    _check_links(db, user, old_columns, payload.columns)
-    check_sources(db, user, sheet, old_columns, payload.columns)
-    columns = _with_stored_expressions(db, sheet, old_columns, payload.columns)
+    requested = kept_columns(db, user, sheet, old_columns, payload.columns)
+    sequence = _next_sequence(old, requested)
+    _check_links(db, user, old_columns, requested)
+    check_sources(db, user, sheet, old_columns, requested)
+    columns = _with_stored_expressions(db, sheet, old_columns, requested)
     try:
         structure = WorksheetStructure.model_validate({
             "structureVersion": 1, "nextColumnSeq": sequence,

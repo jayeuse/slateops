@@ -159,3 +159,12 @@ def lock_actor_shares(db: Session, org_id: UUID, worksheet_id: UUID, actor_id: U
         .order_by(WorksheetShare.id)
         .with_for_update(read=True, of=WorksheetShare)
     ).all())
+
+
+def lock_source(db: Session, worksheet_id: UUID) -> None:
+    """A sheet being copied, FOR SHARE: its writers wait until the copy commits (L6)."""
+
+    _locked(db, lambda: db.scalar(
+        select(Worksheet.id).where(Worksheet.id == worksheet_id)
+        .with_for_update(read=True, of=Worksheet)
+    ))

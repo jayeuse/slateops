@@ -270,3 +270,37 @@ def test_the_expanded_budget_counts_the_steps_through_another_sheet(
     assert (refused.json()["detail"]["reason"], refused.json()["detail"]["key"]) == (
         "too_large", "c7",
     )
+
+
+def test_an_editor_without_the_source_keeps_its_columns_and_cannot_remove_them(
+    integration_db: Session, summary: Summary,
+) -> None:
+    """B11 review option (a): the masked column comes back as "keep it"; only the owner
+    removes a column whose source the saver cannot see (`column_not_visible`)."""
+
+    editor = summary.world.editor  # Edit on the summary, nothing on Class 1A
+    detail = _client(summary.application, editor, summary.db).get(
+        f"/api/worksheets/{summary.world.sheet.id}",
+    ).json()
+    columns = detail["structure"]["columns"]
+    assert columns[1] == {"key": "c2", "name": "Final", "type": "sheet_lookup",
+                          "state": "no_access"}
+    columns[3]["name"] = "Extra"
+    saved = summary.save(columns, person=editor)
+    assert saved.status_code == 200, saved.text
+    integration_db.refresh(summary.world.sheet)
+    stored = summary.world.sheet.structure["columns"]
+    assert stored[1]["sheet_lookup"]["sourceWorksheetId"] == str(summary.source.id)
+    assert stored[3]["name"] == "Extra"
+    without = [column for column in saved.json()["structure"]["columns"]
+               if column["key"] != "c5"]
+    refused = summary.save(without, person=editor)
+    assert refused.status_code == 422, refused.text
+    assert (refused.json()["detail"]["code"], refused.json()["detail"]["key"]) == (
+        "column_not_visible", "c5",
+    )
+    owner_view = _client(summary.application, summary.world.owner, summary.db).get(
+        f"/api/worksheets/{summary.world.sheet.id}",
+    ).json()["structure"]["columns"]
+    removed = summary.save([column for column in owner_view if column["key"] != "c5"])
+    assert removed.status_code == 200, removed.text

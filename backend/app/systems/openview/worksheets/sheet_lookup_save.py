@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.systems.access.users.models import User
+from app.systems.openview.worksheets import sheet_lookup_cost
 from app.systems.openview.worksheets.access import load_visible_worksheet
 from app.systems.openview.worksheets.expression import (
     MAX_CHAIN,
@@ -28,6 +29,7 @@ from app.systems.openview.worksheets.expression import (
 )
 from app.systems.openview.worksheets.models import Worksheet
 from app.systems.openview.worksheets.row_writes import error
+from app.systems.openview.worksheets.schemas import SheetHiddenSourceColumn
 from app.systems.openview.worksheets.structure import (
     Column,
     SheetComputedColumn,
@@ -42,6 +44,35 @@ from app.systems.sandbox.fields.models import Field
 def _invalid(column: Column, message: str) -> Any:
     return error(status.HTTP_422_UNPROCESSABLE_CONTENT, "sheet_lookup_invalid",
                  f"{column.name}: {message}", key=column.key)
+
+
+def kept_columns(db: Session, user: User, sheet: Worksheet, old: Mapping[str, Column],
+                 columns: list[Any]) -> list[Column]:
+    """The request's columns with each masked From another sheet column kept as stored.
+
+    A person who cannot see a column's source cannot remove it; the owner can.
+    """
+
+    kept: list[Column] = []
+    for column in columns:
+        if isinstance(column, SheetHiddenSourceColumn):
+            stored = old.get(column.key)
+            if not isinstance(stored, SheetFromSheetColumn):
+                raise error(status.HTTP_422_UNPROCESSABLE_CONTENT, "structure_invalid",
+                            f"{column.name}: the sheet has no such column")
+            kept.append(stored)
+        else:
+            kept.append(column)
+    present = {column.key for column in kept}
+    for stored in old.values():
+        if (isinstance(stored, SheetFromSheetColumn) and stored.key not in present
+                and user.id != sheet.owner_id
+                and load_visible_worksheet(db, user, stored.sheet_lookup.sourceWorksheetId)
+                is None):
+            raise error(status.HTTP_422_UNPROCESSABLE_CONTENT, "column_not_visible",
+                        f"{stored.name}: only the owner can remove a column whose source "
+                        "you cannot see", key=stored.key)
+    return kept
 
 
 def check_sources(db: Session, user: User, sheet: Worksheet, old: Mapping[str, Column],
@@ -159,3 +190,11 @@ def check_sheet_graph(db: Session, sheet_id: UUID, columns: list[Column]) -> Non
                 if not graph.fact(sheet_id, ref, []).numeric:
                     raise ExpressionError(column.key, "not_numeric",
                                           f"{column.name}: {names[ref]} does not hold numbers")
+    spent: dict[str, Column] = {}
+    for column in columns:
+        if not isinstance(column, SheetFromSheetColumn):
+            continue
+        spent[column.key] = column
+        if sheet_lookup_cost.read_cost(spent, graph.structure) > sheet_lookup_cost.READ_BUDGET:
+            raise ExpressionError(column.key, "too_complex", f"{column.name}: the columns of "
+                                  "this sheet would read too much of other sheets")

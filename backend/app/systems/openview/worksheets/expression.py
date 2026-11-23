@@ -345,6 +345,20 @@ def stored_text(node: Node) -> str:
     return f"{left} {node.operator} {right}"
 
 
+def renamed(node: Node, keys: Mapping[str, str]) -> Node:
+    """The same tree reading ``keys[old]`` wherever it read ``old`` (copies, templates)."""
+
+    if isinstance(node, Ref):
+        return Ref(keys.get(node.key, node.key))
+    if isinstance(node, Negate):
+        return Negate(renamed(node.operand, keys))
+    if isinstance(node, Binary):
+        return Binary(node.operator, renamed(node.left, keys), renamed(node.right, keys))
+    if isinstance(node, Call):
+        return Call(node.function, tuple(renamed(item, keys) for item in node.arguments))
+    return node
+
+
 def references(node: Node) -> list[str]:
     """Every column key the tree reads, once per occurrence."""
 

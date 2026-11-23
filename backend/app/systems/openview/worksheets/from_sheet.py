@@ -2,7 +2,9 @@
 
 For each row, the source rows are those whose ``sourceLinkKey`` link points to the record
 this row's ``linkKey`` link points to. The source cell is the source sheet's own projection
-for the same viewer, so a computed, lookup or chained source shows what that sheet shows.
+for the same viewer, pruned to the source column and the columns it reads, so a computed,
+lookup or chained source shows what that sheet shows. Every nested projection spends from
+the read's budget; a column past it reads ``too_complex`` (security review S-11).
 A viewer who cannot see the source sheet gets ``no_access`` in the whole column; a source
 column that is gone reads ``column_removed``; two or more live matches read
 ``multiple_matches`` with their count. Nothing is stored (K6).
@@ -28,6 +30,8 @@ from app.systems.openview.worksheets.projection import (
     hidden_column,
     project_rows,
 )
+from app.systems.openview.worksheets.sheet_lookup_cost import READ_BUDGET as _BUDGET
+from app.systems.openview.worksheets.sheet_lookup_cost import Budget, pruned
 from app.systems.openview.worksheets.structure import (
     SheetFromSheetColumn,
     SheetLinkColumn,
@@ -48,16 +52,26 @@ def _no_number() -> Any:
     return sql_cast(null(), Numeric)
 
 
-def _removed(key: str) -> ColumnProjection:
+READ_BUDGET = _BUDGET  # read at each top-level projection; tests may lower it
+# Matches counted per row; a record with more source rows than this shows this count, so
+# a row never pays for every duplicate in a large source sheet (S-11).
+MAX_COUNTED = 100
+
+
+def _state(key: str, state: str) -> ColumnProjection:
     return ColumnProjection(
-        key, literal("column_removed"), _no_value(), _no_text(), _no_text(), _no_text(),
+        key, literal(state), _no_value(), _no_text(), _no_text(), _no_text(),
         _no_number(), false(), false(),
     )
 
 
+def _removed(key: str) -> ColumnProjection:
+    return _state(key, "column_removed")
+
+
 def project_sheet_lookup(
     db: Session, user: User, projection: RowProjection, column: SheetFromSheetColumn,
-    link: Link | None, sources: frozenset[UUID],
+    link: Link | None, sources: frozenset[UUID], budget: Budget,
 ) -> ColumnProjection:
     """The column for ``user``; joins one LATERAL that picks the matching source row."""
 
@@ -66,6 +80,8 @@ def project_sheet_lookup(
         return hidden_column(key)
     if options.sourceWorksheetId in sources or len(sources) >= MAX_CHAIN:
         return blank_column(key)  # a loop or a chain refused on save; never read again
+    if not budget.take(1):
+        return _state(key, "too_complex")
     source = load_visible_worksheet(db, user, options.sourceWorksheetId)
     if source is None:
         return hidden_column(key)
@@ -74,44 +90,69 @@ def project_sheet_lookup(
     target, source_link = found.get(options.sourceColumnKey), found.get(options.sourceLinkKey)
     if target is None or not isinstance(source_link, SheetLinkColumn):
         return _removed(key)
-    inner = project_rows(db, user, structure, sources | {source.id})
+    reads = pruned(structure, options.sourceColumnKey)
+    if not budget.take(len(reads.columns)):
+        return _state(key, "too_complex")
+    here = f"{projection.scope}{key}"
+
+    def matching(name: str) -> tuple[Any, Any, list[Any]]:
+        """Live source rows whose link column points to this row's record."""
+
+        found_link = aliased(WorksheetRowLink, name=f"{name}_link_{here}")
+        found_row = aliased(WorksheetRow, name=f"{name}_row_{here}")
+        return found_link, found_row, [
+            found_link.target_record_id == link.target,
+            found_link.org_id == source.org_id,
+            found_link.worksheet_id == source.id,
+            found_link.column_key == options.sourceLinkKey,
+            found_link.is_deleted.is_(False),
+            found_row.org_id == found_link.org_id,
+            found_row.id == found_link.row_id,
+            found_row.worksheet_id == source.id,
+            found_row.is_deleted.is_(False),
+        ]
+
+    # The count reads only links, at most MAX_COUNTED of them; the value projects one
+    # source row, found by its ID first, so each level of a chain costs one row (S-11).
+    count_link, count_row, counting = matching("count")
+    capped = (
+        select(literal(1).label("one")).select_from(count_link).join(count_row, true())
+        .where(*counting).limit(MAX_COUNTED)
+        .correlate_except(count_link, count_row)  # this row's link, two levels out
+        .lateral(f"found_{here}")
+    )
+    counted = (
+        select(func.count().label("matches")).select_from(capped)
+        .lateral(f"matches_{here}")
+    )
+    first_link, first_row, firsting = matching("first")
+    first = (
+        select(first_link.row_id.label("row_id")).select_from(first_link)
+        .join(first_row, true()).where(*firsting).limit(1)
+        .correlate_except(first_link, first_row)
+        .lateral(f"first_{here}")
+    )
+    inner = project_rows(db, user, reads, sources | {source.id}, budget, budget.scope())
     shown = inner.column(options.sourceColumnKey)
     # A choice shows its label: this sheet does not hold the source's options.
     value = func.to_jsonb(shown.text) if isinstance(target, SheetSelectColumn) else shown.value
-    matched = aliased(WorksheetRowLink, name=f"match_{key}")
-    rows = (
-        select(
-            WorksheetRow.id.label("row_id"), matched.target_record_id.label("target"),
-            shown.state.label("state"), value.label("value"), shown.label.label("label"),
-            shown.text.label("text"), shown.number.label("number"),
-            shown.shown.label("shown"),
-        )
-        .select_from(inner.source.join(matched, and_(
-            matched.org_id == WorksheetRow.org_id,
-            matched.worksheet_id == WorksheetRow.worksheet_id,
-            matched.row_id == WorksheetRow.id,
-            matched.column_key == options.sourceLinkKey,
-            matched.is_deleted.is_(False),
-        )))
-        .where(
-            WorksheetRow.org_id == source.org_id,
-            WorksheetRow.worksheet_id == source.id,
-            WorksheetRow.is_deleted.is_(False),
-        )
-        .subquery(f"source_{key}")
-    )
     pick = (
-        select(rows, func.count().over().label("matches"))
-        .where(rows.c.target == link.target)
-        .order_by(rows.c.row_id)
+        select(shown.state.label("state"), value.label("value"), shown.label.label("label"),
+               shown.text.label("text"), shown.number.label("number"),
+               shown.shown.label("shown"))
+        .select_from(inner.source)
+        .where(WorksheetRow.id == first.c.row_id, WorksheetRow.org_id == source.org_id)
+        .correlate_except(WorksheetRow.__table__)
         .limit(1)
-        .correlate_except(rows)
-        .lateral(f"from_sheet_{key}")
+        .lateral(f"from_sheet_{here}")
     )
-    projection.source = projection.source.outerjoin(pick, true())
+    projection.source = (
+        projection.source.outerjoin(counted, true()).outerjoin(first, true())
+        .outerjoin(pick, true())
+    )
     linked = func.coalesce(link.state == "link", false())
-    single = and_(linked, pick.c.matches == 1)
-    many = and_(linked, pick.c.matches > 1)
+    single = and_(linked, counted.c.matches == 1)
+    many = and_(linked, counted.c.matches > 1)
     state = case((link.state == "no_access", literal("no_access")),
                  (many, literal("multiple_matches")), (single, pick.c.state),
                  else_=_no_text())
@@ -122,7 +163,7 @@ def project_sheet_lookup(
     return ColumnProjection(
         key=key,
         state=state,
-        value=case((many, func.to_jsonb(pick.c.matches)), (single, pick.c.value),
+        value=case((many, func.to_jsonb(counted.c.matches)), (single, pick.c.value),
                    else_=_no_value()),
         label=case((single, pick.c.label), else_=_no_text()),
         text=case((single, pick.c.text), else_=_no_text()),

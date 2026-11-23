@@ -34,17 +34,35 @@ from app.systems.openview.worksheets.access import (
     worksheet_states,
 )
 from app.systems.openview.worksheets.candidates import like, share_candidates, visible_people
-from app.systems.openview.worksheets.locking import lock_anchor, lock_owner, lock_worksheet
+from app.systems.openview.worksheets.create_sources import (
+    Draft,
+    check_copy,
+    check_mapping,
+    copy_rows,
+    finish,
+    from_sheet,
+    from_template,
+)
+from app.systems.openview.worksheets.locking import (
+    lock_anchor,
+    lock_owner,
+    lock_source,
+    lock_worksheet,
+)
 from app.systems.openview.worksheets.models import Worksheet
 from app.systems.openview.worksheets.query import query_rows, read_row
 from app.systems.openview.worksheets.row_writes import authorize_edit
 from app.systems.openview.worksheets.schemas import (
+    SheetBlankSource,
+    SheetCopySource,
     SheetPeople,
     SheetRow,
     SheetRowPage,
     SheetRowsQuery,
     SheetShareCandidates,
+    SheetStructureSource,
     SheetStructureUpdate,
+    SheetTemplateSource,
     WorksheetCreate,
     WorksheetDetail,
     WorksheetListRequest,
@@ -238,6 +256,35 @@ def _creation_anchor(db: Session, user: User, payload: WorksheetCreate) -> UUID:
     return membership.org_id
 
 
+def _source_checks(db: Session, user: User, payload: WorksheetCreate) -> Worksheet | None:
+    """The 404 loaders of the source first (R5), then the anchor, then the copy rules."""
+
+    source = payload.source
+    original = None
+    if isinstance(source, SheetStructureSource | SheetCopySource):
+        original = _visible(db, user, source.worksheet_id)
+    if isinstance(source, SheetTemplateSource):
+        check_mapping(db, user, source)
+    _creation_anchor(db, user, payload)
+    if isinstance(source, SheetCopySource) and original is not None:
+        check_copy(db, user, payload, original)
+    return original
+
+
+def _structure(db: Session, user: User, payload: WorksheetCreate,
+               original: Worksheet | None) -> tuple[dict[str, Any], Draft | None]:
+    source = payload.source
+    if isinstance(source, SheetBlankSource):
+        return dict(BLANK_STRUCTURE), None
+    if isinstance(source, SheetTemplateSource):
+        draft = from_template(db, source)
+    else:
+        assert original is not None  # loaded by `_source_checks`
+        draft = from_sheet(db, user, original)
+    built = finish(db, draft)
+    return built.model_dump(mode="json"), draft
+
+
 @router.post(
     "/worksheets", response_model=WorksheetDetail, status_code=status.HTTP_201_CREATED,
     responses={201: {"headers": {**_ETAG, "Location": {"schema": {"type": "string"}}}}},
@@ -245,16 +292,25 @@ def _creation_anchor(db: Session, user: User, payload: WorksheetCreate) -> UUID:
 def create_worksheet(
     payload: WorksheetCreate, user: Actor, db: Database, response: Response,
 ) -> WorksheetDetail:
-    _creation_anchor(db, user, payload)
+    """Route 3: blank, from a structure (X7), a copy (L6) or a template (X6)."""
+
+    original = _source_checks(db, user, payload)
     lock_owner(db, user.id)
     lock_anchor(db, record_id=payload.record_id, module_id=payload.module_id)
+    if isinstance(payload.source, SheetCopySource) and original is not None:
+        lock_source(db, original.id)
     forget_access(db, user.id)
-    org_id = _creation_anchor(db, user, payload)  # again under the locks
+    original = _source_checks(db, user, payload)  # again under the locks
+    org_id = _creation_anchor(db, user, payload)
+    structure, draft = _structure(db, user, payload, original)
     sheet = Worksheet(
         org_id=org_id, record_id=payload.record_id, module_id=payload.module_id,
-        owner_id=user.id, title=payload.title, structure=dict(BLANK_STRUCTURE),
+        owner_id=user.id, title=payload.title, structure=structure,
     )
     db.add(sheet)
+    db.flush()
+    if isinstance(payload.source, SheetCopySource) and original is not None and draft:
+        copy_rows(db, original, sheet, draft)
     db.commit()
     db.refresh(sheet)
     response.headers["Location"] = f"/api/worksheets/{sheet.id}"

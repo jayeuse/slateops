@@ -9,7 +9,13 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, m
 
 from app.common.listing import SortOrder, StandardListRequest
 from app.systems.openview.worksheets.access import WorksheetLevel
-from app.systems.openview.worksheets.structure import Column, SheetColumnGroup, TotalFunction
+from app.systems.openview.worksheets.structure import (
+    Column,
+    ColumnKey,
+    SheetColumnGroup,
+    TotalFunction,
+)
+from app.systems.openview.worksheets.template_schema import SheetTemplate
 
 Title = Annotated[str, Field(min_length=1, max_length=200)]
 
@@ -34,6 +40,40 @@ class SheetBlankSource(BaseModel):
     kind: Literal["blank"]
 
 
+class SheetStructureSource(BaseModel):
+    """New sheet from this structure (X7): the columns of a sheet the person can see."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["structure"]
+    worksheet_id: UUID
+
+
+class SheetCopySource(BaseModel):
+    """Make a copy (L6): columns, rows and links of a sheet, on the same record or module."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["copy"]
+    worksheet_id: UUID
+
+
+class SheetTemplateSource(BaseModel):
+    """A template file (X6) and, for each of its link columns, a module or null (text)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["template"]
+    template: SheetTemplate
+    module_mapping: dict[ColumnKey, UUID | None] = Field(default_factory=dict)
+
+
+SheetSource = Annotated[
+    SheetBlankSource | SheetStructureSource | SheetCopySource | SheetTemplateSource,
+    Field(discriminator="kind"),
+]
+
+
 class WorksheetCreate(BaseModel):
     """A new sheet on exactly one record or one module."""
 
@@ -42,8 +82,7 @@ class WorksheetCreate(BaseModel):
     record_id: UUID | None = None
     module_id: UUID | None = None
     title: Title
-    # Later units add the structure, copy and template sources to this union.
-    source: SheetBlankSource
+    source: SheetSource
 
     @field_validator("title", mode="before")
     @classmethod
@@ -79,7 +118,12 @@ class SheetGroupRef(BaseModel):
 
 
 class SheetHiddenSourceColumn(BaseModel):
-    """A From another sheet column whose source sheet the viewer cannot see (D14 S1)."""
+    """A From another sheet column whose source sheet the viewer cannot see (D14 S1).
+
+    Route 6 takes it back as "keep this column as it is" (B11 review, option a).
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     key: str
     name: str
@@ -199,7 +243,7 @@ class SheetErrorCell(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     value: None
-    error: Literal["division_by_zero", "overflow"]
+    error: Literal["division_by_zero", "overflow", "too_complex"]
 
 
 class SheetMatchesCell(BaseModel):
@@ -253,7 +297,7 @@ class SheetStructureUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    columns: list[Column]
+    columns: list[Column | SheetHiddenSourceColumn]
     groups: list[SheetColumnGroup] = Field(default_factory=list)
     totals: dict[str, TotalFunction] = Field(default_factory=dict)
 

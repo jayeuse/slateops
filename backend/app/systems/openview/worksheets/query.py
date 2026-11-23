@@ -143,9 +143,16 @@ def query_rows(db: Session, user: User, sheet: Worksheet, request: SheetRowsQuer
         pattern = _like(request.search)
         texts = [column.text.ilike(pattern, escape="\\") for column in projection.columns]
         statement = statement.where(or_(*texts)) if texts else statement.where(false())
-    counted = int(db.scalar(
+    # Without a search, every live row counts: no column's LATERAL runs for the count.
+    counting = (
         statement.with_only_columns(func.count(), maintain_column_froms=True)
-    ) or 0)
+        if request.search is not None
+        else select(func.count()).select_from(WorksheetRow).where(
+            WorksheetRow.org_id == sheet.org_id, WorksheetRow.worksheet_id == sheet.id,
+            WorksheetRow.is_deleted.is_(False),
+        )
+    )
+    counted = int(db.scalar(counting) or 0)
     order: list[Any] = []
     if request.sort is not None:
         sort = projection.column(request.sort.key).sort

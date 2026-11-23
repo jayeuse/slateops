@@ -38,7 +38,7 @@ from sqlalchemy.sql.selectable import FromClause
 from app.systems.access.policy.checks import module_filter, module_level
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
-from app.systems.openview.worksheets.compile import Operand, compile_expression, no_error
+from app.systems.openview.worksheets.compile import Operand, computed_cell, no_error
 from app.systems.openview.worksheets.expression import (
     ExpressionError,
     Node,
@@ -46,6 +46,7 @@ from app.systems.openview.worksheets.expression import (
     references,
 )
 from app.systems.openview.worksheets.models import WorksheetRow, WorksheetRowLink
+from app.systems.openview.worksheets.sheet_lookup_cost import Budget
 from app.systems.openview.worksheets.structure import (
     SheetComputedColumn,
     SheetDecimalColumn,
@@ -62,9 +63,9 @@ from app.systems.sandbox.records.models import Record
 
 CellState = Literal[
     "no_access", "deleted", "removed", "unavailable", "field_removed", "link", "unlinked",
-    "division_by_zero", "overflow", "column_removed", "multiple_matches",
+    "division_by_zero", "overflow", "too_complex", "column_removed", "multiple_matches",
 ]
-ERROR_STATES = ("division_by_zero", "overflow")
+ERROR_STATES = ("division_by_zero", "overflow", "too_complex")
 NUMERIC_TYPES = frozenset({"int", "number", "decimal"})
 # A record decimal field stores a canonical decimal string; only that shape is read as a number.
 _DECIMAL_TEXT = r"^-?(0|[1-9][0-9]*)(\.[0-9]+)?$"
@@ -108,6 +109,8 @@ class ColumnProjection:
 class RowProjection:
     source: FromClause
     columns: list[ColumnProjection] = field(default_factory=list)
+    # Prefixes every alias, so nested source projections never shadow each other (S-11).
+    scope: str = ""
 
     def column(self, key: str) -> ColumnProjection:
         return next(column for column in self.columns if column.key == key)
@@ -235,10 +238,11 @@ def _join_link(
 ) -> tuple[Link, ColumnProjection]:
     """One LATERAL read of the cell's live link, its record, module and title field."""
 
-    link = aliased(WorksheetRowLink, name=f"row_link_{key}")
-    target = aliased(Record, name=f"target_{key}")
-    module = aliased(Module, name=f"target_module_{key}")
-    title = aliased(Field, name=f"title_{key}")
+    named = f"{projection.scope}{key}"
+    link = aliased(WorksheetRowLink, name=f"row_link_{named}")
+    target = aliased(Record, name=f"target_{named}")
+    module = aliased(Module, name=f"target_module_{named}")
+    title = aliased(Field, name=f"title_{named}")
     linked_state = case(
         (link.target_removed.is_(True), literal("removed")),
         (~module_filter(db, user, AccessLevel.READ, target.module_id), literal("no_access")),
@@ -278,7 +282,7 @@ def _join_link(
             link.column_key == key,
             link.is_deleted.is_(False),
         )
-        .lateral(f"link_{key}")
+        .lateral(f"link_{named}")
     )
     projection.source = projection.source.outerjoin(cell, true())
     unlinked = WorksheetRow.data[key]["unlinked"]
@@ -398,6 +402,25 @@ def _computed(projection: RowProjection, structure: WorksheetStructure) -> None:
         if kinds[projected.key] in NUMERIC_TYPES or kinds[projected.key] in {"lookup",
                                                                              "sheet_lookup"}
     }
+    # Each operand once per row, read by name: a reference never copies its SQL (S-11).
+    needed = sorted({ref for tree in trees.values() for ref in references(tree)}
+                    & set(operands))
+    if needed:
+        row_operands = (
+            select(*(item for key in needed for item in (
+                operands[key].number.label(f"number_{key}"),
+                operands[key].hidden.label(f"hidden_{key}"),
+                operands[key].error.label(f"error_{key}"),
+            )))
+            .correlate_except(None)
+            .offset(0)
+            .lateral(f"{projection.scope}operands")
+        )
+        projection.source = projection.source.outerjoin(row_operands, true())
+        for key in needed:
+            operands[key] = Operand(row_operands.c[f"number_{key}"],
+                                    row_operands.c[f"hidden_{key}"],
+                                    row_operands.c[f"error_{key}"])
     pending = dict(trees)
     while pending:
         ready = [key for key, tree in pending.items()
@@ -406,16 +429,7 @@ def _computed(projection: RowProjection, structure: WorksheetStructure) -> None:
             projection.columns.extend(blank_column(key) for key in pending)
             return
         for key in ready:
-            value, error, hidden = compile_expression(pending.pop(key), operands)
-            # OFFSET 0 keeps PostgreSQL from pulling the subquery up into the row query:
-            # pulled up, each later column would copy this expression for every reference,
-            # and a chain of columns would grow exponentially (B10 review item 3).
-            cell = (
-                select(value.label("value"), error.label("error"), hidden.label("hidden"))
-                .correlate_except(None)
-                .offset(0)
-                .lateral(f"computed_{key}")
-            )
+            cell = computed_cell(pending.pop(key), operands, f"{projection.scope}{key}")
             projection.source = projection.source.outerjoin(cell, true())
             operands[key] = Operand(cell.c.value, cell.c.hidden, cell.c.error)
             projection.columns.append(_computed_column(
@@ -435,14 +449,19 @@ def link_column_hidden(db: Session, user: User, module_id: UUID) -> bool:
 
 
 def project_rows(db: Session, user: User, structure: WorksheetStructure,
-                 sources: frozenset[UUID] = frozenset()) -> RowProjection:
+                 sources: frozenset[UUID] = frozenset(),
+                 budget: Budget | None = None, scope: str = "") -> RowProjection:
     """Compile every column of ``structure`` for ``user`` over ``worksheet_rows``.
 
-    ``sources`` are the sheets already being read on the way here (From another sheet).
+    ``sources`` are the sheets already being read on the way here (From another sheet),
+    and ``budget`` the read's remaining units for nested source projections (S-11).
+    ``scope`` prefixes the aliases of a nested projection.
     """
-    from app.systems.openview.worksheets.from_sheet import project_sheet_lookup
+    from app.systems.openview.worksheets import from_sheet
 
-    projection = RowProjection(source=WorksheetRow.__table__)
+    budget = budget or Budget(from_sheet.READ_BUDGET)
+
+    projection = RowProjection(source=WorksheetRow.__table__, scope=scope)
     links: dict[str, tuple[Link, UUID] | None] = {}
     for column in structure.columns:
         if isinstance(column, SheetLinkColumn):
@@ -466,8 +485,9 @@ def project_rows(db: Session, user: User, structure: WorksheetStructure,
             projection.columns.append(_plain(column.key, column))
         elif isinstance(column, SheetFromSheetColumn):
             found = links.get(column.sheet_lookup.linkKey)
-            projection.columns.append(project_sheet_lookup(
+            projection.columns.append(from_sheet.project_sheet_lookup(
                 db, user, projection, column, None if found is None else found[0], sources,
+                budget,
             ))
     _computed(projection, structure)
     order = {column.key: index for index, column in enumerate(structure.columns)}

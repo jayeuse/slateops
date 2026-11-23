@@ -47,7 +47,10 @@ STATE_WORDS = {
     "field_removed": "Field removed",
     "column_removed": "Column removed",
 }
-ERROR_WORDS = {"division_by_zero": "Division by zero", "overflow": "Number too large"}
+ERROR_WORDS = {
+    "division_by_zero": "Division by zero", "overflow": "Number too large",
+    "too_complex": "Cannot be calculated",
+}
 XlsxValue = str | int | float | bool | date | datetime | None
 
 
