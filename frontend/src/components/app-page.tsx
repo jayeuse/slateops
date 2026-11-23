@@ -59,6 +59,10 @@ import {
 } from "@/components/workspace-navigation-guard";
 import { getMfaStatus, type MfaStatus } from "@/lib/mfa-api";
 import {
+  PASSWORD_CHANGE_ROUTE,
+  subscribePasswordChangeRequired,
+} from "@/lib/password-change-signal";
+import {
   MfaFlowContext,
   MfaPresentation,
   MfaCleanupNotice,
@@ -276,6 +280,16 @@ export function AppPage({ children }: AppPageProps) {
   });
   const mfa = useMfaController(requestSessionRecheck, finishFactorRemoval);
   const { bind: bindMfa, hide: hideMfa, clear: clearMfa, open: mfaOpen } = mfa;
+  // DEC-0042: a call refused with 403 `password_change_required` anywhere,
+  // also behind the organization or network gates, opens the one page that
+  // works. The shell's identity check is in PasswordChangeRedirect.
+  useEffect(
+    () =>
+      subscribePasswordChangeRequired(() =>
+        router.replace(PASSWORD_CHANGE_ROUTE),
+      ),
+    [router],
+  );
 
   useEffect(() => {
     mounted.current = true;

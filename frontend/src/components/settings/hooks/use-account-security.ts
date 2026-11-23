@@ -18,6 +18,7 @@ import {
   platformKeys,
 } from "@/components/systems/platform/adapters/platform-queries";
 import { useErrorText } from "@/lib/use-error-text";
+import { passwordChangeErrorMessage } from "@/lib/password-change";
 
 type AccountConfirmation =
   | { type: "session"; session: AccountSession }
@@ -26,18 +27,7 @@ type AccountConfirmation =
 
 export const PASSWORD_LENGTH_MESSAGE = "Use 12 to 128 characters.";
 
-function passwordErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) {
-    if (error.status === 403) return "The current password was not accepted.";
-    if (error.status === 429)
-      return "Too many password attempts. Wait before trying again.";
-    if (error.status === 503)
-      return "Password changes are temporarily unavailable. Try again later.";
-    if (error.status === 422)
-      return "The new password was not accepted. Check the password requirements and try again.";
-  }
-  return "The password could not be changed. Try again.";
-}
+const passwordErrorMessage = passwordChangeErrorMessage;
 
 /**
  * Whether a failed change may still have run on the server (PD53): no answer

@@ -426,7 +426,8 @@ def test_invitation_completion_starts_current_role_episode_and_replay_preserves_
         membership = membership_of(db, target.id)
         target.status = membership.status = "pending"
         membership.invitation_accepted_at = None
-        membership.invitation_sent_at = world.clock - timedelta(days=1)
+        # Inside the 24-hour invitation lifetime (DEC-0042 AC-L2).
+        membership.invitation_sent_at = world.clock - timedelta(hours=1)
         membership.provider_invitation_operation_id = operation
         provider_id, email = target.supabase_user_id, target.email
         db.commit()

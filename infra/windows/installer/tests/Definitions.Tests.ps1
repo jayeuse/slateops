@@ -1,0 +1,240 @@
+# Definitions.Tests.ps1 - AC-4: the account, task, .wslconfig and rule definitions keep the
+# boot-test kit's values (infra/windows/boot-test/10-setup.ps1 and lib/svc-exec.ps1; REQ-0022
+# E1, E2, E4, E5, E6) apart from names and paths; plus the resume, hosts, MSI and CA rules.
+
+$script:TestCaPem = @'
+-----BEGIN CERTIFICATE-----
+MIIBiTCCATCgAwIBAgIUJMNxs0ydG8FSV9CbY1O3kZV5PDUwCgYIKoZIzj0EAwIw
+IzEhMB8GA1UEAwwYU2xhdGUgT3BlcmF0aW9ucyBUZXN0IENBMB4XDTI2MTExNzA1
+NDExOFoXDTM2MTExNDA1NDExOFowIzEhMB8GA1UEAwwYU2xhdGUgT3BlcmF0aW9u
+cyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE5KdfDgEuUEWByIL7
+rRZPy6I+wJfQtJ8pUNBNJE4ZcxqzMa/tsSSpfOrWj+S0u3BFfHP9B8CSOmPB2S0t
+lIA4V6NCMEAwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAQYwHQYDVR0O
+BBYEFGYcAV9Ry31mnnf/v6QLB6UaDtpjMAoGCCqGSM49BAMCA0cAMEQCIEM7uA+l
+lmwPUnS8TOPotd/SeAwy4F2CmqRFd6jpsh8YAiAqcoDIu09WsjD5xEbm1Gykb9ye
+r1FO4QiPZ7iALkS4Bg==
+-----END CERTIFICATE-----
+'@
+$script:TestLeafPem = @'
+-----BEGIN CERTIFICATE-----
+MIIBajCCARGgAwIBAgIUAQa4tCyjAzdehoWqx0ScWiyjsxIwCgYIKoZIzj0EAwIw
+IzEhMB8GA1UEAwwYU2xhdGUgT3BlcmF0aW9ucyBUZXN0IENBMB4XDTI2MTExNzA1
+NDExOFoXDTI3MTIxOTA1NDExOFowGjEYMBYGA1UEAwwPb2ZmaWNlLXBjLmxvY2Fs
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE39F/MtciegA+S0i6n0h0T+aHAYWl
+UcvI0cQETq3jnK0lAgmY4/oByz2F/LRCKSjCBOb+WrmEtX/9rOtUKMGqZaMsMCow
+DAYDVR0TAQH/BAIwADAaBgNVHREEEzARgg9vZmZpY2UtcGMubG9jYWwwCgYIKoZI
+zj0EAwIDRwAwRAIgG3xcYxnZ9QcPG17djkbuwlY0DBBirFEz1KtBE6vnPkkCID9n
+3KGd18M0lD8LKMsKXgv95yA5Mjz2FmeTDmkQJBxB
+-----END CERTIFICATE-----
+'@
+
+Test-Case 'AC-4 the boot task keeps the kit settings (W7-6)' {
+    $definition = Get-StartTaskDefinition -ScriptsDir 'C:\ProgramData\SlateOps\scripts'
+    $objects = New-TaskSettingsFromDefinition -Definition $definition
+    $settings = $objects.Settings
+    Assert-Equal 'PT0S' $settings.ExecutionTimeLimit
+    Assert-Equal 999 $settings.RestartCount
+    Assert-Equal 'PT1M' $settings.RestartInterval
+    Assert-Equal 'IgnoreNew' ([string]$settings.MultipleInstances)
+    Assert-Equal $false $settings.DisallowStartIfOnBatteries
+    Assert-Equal $false $settings.StopIfGoingOnBatteries
+    Assert-Equal $true $settings.StartWhenAvailable
+    Assert-Equal 4 $settings.Priority
+    Assert-Equal $false $settings.IdleSettings.StopOnIdleEnd
+    Assert-Equal 'PT1M' $objects.Trigger.Repetition.Interval
+    Assert-Equal 'MSFT_TaskBootTrigger' $objects.Trigger.CimClass.CimClassName
+    Assert-Equal 'Limited' $definition.RunLevel
+    Assert-Equal '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "C:\ProgramData\SlateOps\scripts\start.ps1"' $objects.Action.Arguments
+}
+
+Test-Case 'AC-4 the Exec task keeps the kit settings and has no trigger' {
+    $definition = Get-ExecTaskDefinition -ScriptsDir 'C:\ProgramData\SlateOps\scripts'
+    $objects = New-TaskSettingsFromDefinition -Definition $definition
+    # Parent decision (DEC-0036, TASK-0095): 8 hours, not the kit's 2. The engine update job runs
+    # its backup and, after a failure, a restore in one Exec run; Task Scheduler stops a longer
+    # run. No installation exists yet, so every install gets the new limit.
+    Assert-Equal 'PT8H' $objects.Settings.ExecutionTimeLimit
+    Assert-Equal 'IgnoreNew' ([string]$objects.Settings.MultipleInstances)
+    Assert-Equal $false $objects.Settings.DisallowStartIfOnBatteries
+    Assert-Equal $false $objects.Settings.StopIfGoingOnBatteries
+    Assert-Equal $true $objects.Settings.StartWhenAvailable
+    Assert-Equal $null $objects.Trigger
+    Assert-Equal '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "C:\ProgramData\SlateOps\scripts\exec.ps1"' $objects.Action.Arguments
+}
+
+Test-Case 'AC-4 P3-6 the account definition that the service step uses: hidden standard user, batch logon, three deny rights' {
+    $account = Get-AccountDefinition
+    Assert-Equal 'slateops-svc' $account.Name
+    Assert-Equal @('S-1-5-32-545') $account.Groups
+    Assert-Equal @('SeBatchLogonRight', 'SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight', 'SeDenyNetworkLogonRight') $account.Rights
+    Assert-Equal $true $account.Hidden
+}
+
+Test-Case 'AC-4 Windows accepts the account definition (description at most 48 characters)' {
+    $account = Get-AccountDefinition
+    Assert-True ($account.Description.Length -le 48) ('{0} characters' -f $account.Description.Length)
+    Assert-True ($account.Name.Length -le 20) $account.Name
+    # The real call that the first Windows CI run refused, under a test name.
+    $secure = ConvertTo-SecureText -Text (New-RandomPassword)
+    $script:TestUsers.Add('slateops-w7def')
+    $user = New-LocalUser -Name 'slateops-w7def' -Password $secure -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires `
+        -FullName $account.FullName -Description $account.Description
+    Assert-Equal $account.Description $user.Description
+    Remove-LocalUser -Name 'slateops-w7def'
+}
+
+Test-Case 'AC-4 setup never reuses an existing slateops-svc account' {
+    $layout = New-SlateOpsLayout -StateRoot (Join-Path (New-TestDirectory 'reuse') 'SlateOps')
+    $null = New-TestUser 'slateops-svc'
+    $result = Install-ServiceAccountAndTasks -Layout $layout
+    Assert-Equal 'account_exists' $result.code
+    Assert-Equal $null (Get-ScheduledTask -TaskPath '\SlateOps\' -ErrorAction SilentlyContinue)
+    Remove-LocalUser -Name 'slateops-svc'
+}
+
+Test-Case 'AC-4 .wslconfig holds the kit values, mirrored networking and the disk size, and leaves DNS tunneling at its default' {
+    $expected = @(
+        '# Written by Slate Operations setup for the account slateops-svc.',
+        '[wsl2]',
+        'memory=6GB',
+        'vmIdleTimeout=-1',
+        'networkingMode=mirrored',
+        'defaultVhdSize=120GB',
+        '',
+        '[general]',
+        'instanceIdleTimeout=-1'
+    )
+    Assert-Equal $expected (Get-WslConfigText -VhdSizeGB 120)
+    Assert-Throws { Get-WslConfigText -VhdSizeGB 8 } 'The disk size is outside*'
+}
+
+Test-Case 'AC-4 the disk limit is 90 percent of the free space, between 16 and 1024 GB' {
+    Assert-Equal 90 (Get-VhdSizeGB -FreeBytes ([long]100 * 1GB))
+    # Parent decision 7 (TASK-0094): the engine accepts data_vhd_max_gb from 25.
+    Assert-Equal 25 (Get-VhdSizeGB -FreeBytes ([long]10 * 1GB))
+    Assert-Equal 1024 (Get-VhdSizeGB -FreeBytes ([long]4000 * 1GB))
+}
+
+Test-Case 'AC-4 the firewall rules open TCP 443 and 80 on the Private profile from the local network only' {
+    $rules = Get-FirewallRuleDefinition -Cidr '192.168.1.0/24'
+    Assert-Equal 'Private LocalSubnet Inbound Allow TCP' ('{0} {1} {2} {3} {4}' -f $rules.Windows.Profile, $rules.Windows.RemoteAddress, $rules.Windows.Direction, $rules.Windows.Action, $rules.Windows.Protocol)
+    Assert-Equal @('443', '80') $rules.Windows.LocalPort
+    Assert-Equal '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90} Private 192.168.1.0/24' ('{0} {1} {2}' -f $rules.HyperV.VMCreatorId, $rules.HyperV.Profiles, $rules.HyperV.RemoteAddresses)
+    Assert-Equal '192.168.1.0/24' (ConvertTo-NetworkCidr -Address '192.168.1.23' -PrefixLength 24)
+    Assert-Throws { Get-FirewallRuleDefinition -Cidr 'Any' } 'Not an IPv4 network.'
+}
+
+Test-Case 'AC-4 S91-11 a network of /0 is refused for the Hyper-V rule' {
+    Assert-Throws { Get-FirewallRuleDefinition -Cidr '0.0.0.0/0' } 'Not an IPv4 network.'
+    Assert-Throws { Get-FirewallRuleDefinition -Cidr '192.168.1.0/0' } 'Not an IPv4 network.'
+    Assert-Equal '10.0.0.0/8' (Get-FirewallRuleDefinition -Cidr '10.0.0.0/8').HyperV.RemoteAddresses
+}
+
+Test-Case 'AC-4 the hosts entry is one marked line that a second run does not repeat' {
+    $existing = "# Copyright`r`n127.0.0.1 localhost`r`n"
+    $once = Get-HostsContent -Existing $existing -HostName 'office-pc.local'
+    Assert-Equal "# Copyright`r`n127.0.0.1 localhost`r`n127.0.0.1 office-pc.local # Slate Operations`r`n" $once
+    Assert-Equal $once (Get-HostsContent -Existing $once -HostName 'office-pc.local')
+    Assert-Equal "# Copyright`r`n127.0.0.1 localhost`r`n127.0.0.1 new-pc.local # Slate Operations`r`n" (Get-HostsContent -Existing $once -HostName 'new-pc.local')
+    Assert-Throws { Get-HostsContent -Existing '' -HostName 'evil.com' } 'Not a .local name.'
+}
+
+Test-Case 'AC-4 the resume starts the original setup file through Explorer, so Windows asks for administrator approval' {
+    Assert-Equal ('"{0}\explorer.exe" "D:\Downloads\SlateOpsSetup-0.2.0.exe"' -f [Environment]::GetFolderPath('Windows')) (Get-ResumeCommand -SetupPath 'D:\Downloads\SlateOpsSetup-0.2.0.exe')
+    Assert-Throws { Get-ResumeCommand -SetupPath 'D:\x" /evil "y.exe' } 'Not a setup file path.'
+}
+
+Test-Case 'AC-4 the saved progress holds the stage, the run ID and true or false marks only' {
+    $layout = New-SlateOpsLayout -StateRoot (Join-Path (New-TestDirectory 'progress') 'SlateOps')
+    $null = Initialize-ProtectedTree -Tree $layout.StateTree
+    Save-SetupProgress -Layout $layout -Stage 'feature_restart' -RunId 'install-20261117T032000Z-abc123'
+    $saved = Read-SetupProgress -Layout $layout
+    Assert-Equal @('run_id', 'saved_at', 'schema_version', 'stage') (Get-OrdinalSorted @($saved.Keys))
+    Assert-Throws { Save-SetupProgress -Layout $layout -Stage 'install_started' -RunId 'install-20261117T032000Z-abc123' -Marks @{ admin_email = 'maria@example.com' } } 'A mark is true or false.'
+    Assert-Throws { Save-SetupProgress -Layout $layout -Stage 'anything' -RunId 'install-20261117T032000Z-abc123' } 'Unknown stage.'
+}
+
+Test-Case 'AC-4 the MSI exit codes map to the plan 10.7 outcomes' {
+    Assert-Equal 'installed restart_needed busy failed' ('{0} {1} {2} {3}' -f (Get-MsiOutcome 0), (Get-MsiOutcome 3010), (Get-MsiOutcome 1618), (Get-MsiOutcome 1603))
+}
+
+Test-Case 'AC-4 only a self-signed CA certificate is trusted, and its security code matches the engine format' {
+    $ca = ConvertFrom-PemCertificate -Pem $script:TestCaPem
+    Assert-Equal $true (Test-CaCertificate -Certificate $ca)
+    Assert-Equal 'B8:19:44:7B:92:E3:03:F3:01:1D:53:80:1F:CC:BE:B5:14:0F:35:B1:0F:18:5C:D0:F2:74:25:EC:BC:FF:04:95' (Get-CaSecurityCode -Certificate $ca)
+    Assert-Equal $false (Test-CaCertificate -Certificate (ConvertFrom-PemCertificate -Pem $script:TestLeafPem))
+    $layout = New-SlateOpsLayout -StateRoot (Join-Path (New-TestDirectory 'ca') 'SlateOps')
+    Assert-Equal 'certificate_invalid' (Install-TrustedCa -Layout $layout -Pem $script:TestLeafPem).code
+    Assert-Equal 'certificate_invalid' (Install-TrustedCa -Layout $layout -Pem 'not a certificate').code
+}
+
+Test-Case 'AC-4 P3-5 the hosts file keeps its encoding: a byte order mark stays, none is added' {
+    $layout = New-SlateOpsLayout -StateRoot (Join-Path (New-TestDirectory 'p3-5-hosts') 'SlateOps')
+    $null = Initialize-ProtectedTree -Tree $layout.StateTree
+    $withBom = Join-Path (New-TestDirectory 'p3-5-bom') 'hosts'
+    [System.IO.File]::WriteAllText($withBom, "127.0.0.1 localhost`r`n", (New-Object System.Text.UTF8Encoding($true)))
+    $null = Set-HostsEntry -Layout $layout -HostName 'office-pc.local' -Path $withBom
+    $bytes = [System.IO.File]::ReadAllBytes($withBom)
+    Assert-Equal @(239, 187, 191) @($bytes[0], $bytes[1], $bytes[2])
+    $plain = Join-Path (New-TestDirectory 'p3-5-plain') 'hosts'
+    [System.IO.File]::WriteAllText($plain, "127.0.0.1 localhost`r`n", [System.Text.Encoding]::ASCII)
+    $null = Set-HostsEntry -Layout $layout -HostName 'office-pc.local' -Path $plain
+    Assert-Equal "127.0.0.1 localhost`r`n127.0.0.1 office-pc.local # Slate Operations`r`n" ([System.IO.File]::ReadAllText($plain))
+    Assert-Equal 49 ([System.IO.File]::ReadAllBytes($plain))[0] 'the file starts with "1", no byte order mark'
+}
+
+Test-Case 'AC-4 S91-9 a CA certificate whose self-signature does not verify is refused' {
+    $der = [Convert]::FromBase64String((($script:TestCaPem -replace '-----[A-Z ]+-----', '') -replace '\s', ''))
+    $der[$der.Length - 1] = $der[$der.Length - 1] -bxor 1
+    $tampered = "-----BEGIN CERTIFICATE-----`n{0}`n-----END CERTIFICATE-----" -f [Convert]::ToBase64String($der)
+    Assert-Equal $false (Test-CaSelfSignature -Certificate (ConvertFrom-PemCertificate -Pem $tampered))
+    Assert-Equal $true (Test-CaSelfSignature -Certificate (ConvertFrom-PemCertificate -Pem $script:TestCaPem))
+    $layout = New-SlateOpsLayout -StateRoot (Join-Path (New-TestDirectory 's91-9-tampered') 'SlateOps')
+    Assert-Equal 'certificate_invalid' (Install-TrustedCa -Layout $layout -Pem $tampered).code
+}
+
+Test-Case 'AC-4 S91-9 the trusted root is limited to Server Authentication in LocalMachine Root' {
+    $layout = New-SlateOpsLayout -StateRoot (Join-Path (New-TestDirectory 's91-9-import') 'SlateOps')
+    $null = Initialize-ProtectedTree -Tree $layout.StateTree
+    $ca = ConvertFrom-PemCertificate -Pem $script:TestCaPem
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', 'LocalMachine')
+    try {
+        Assert-Equal 'added' (Install-TrustedCa -Layout $layout -Pem $script:TestCaPem).code
+        $store.Open('ReadOnly')
+        $stored = @($store.Certificates.Find([System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $ca.Thumbprint, $false))
+        Assert-Equal 1 $stored.Count
+        Assert-Equal @('1.3.6.1.5.5.7.3.1') (Get-StoreEnhancedKeyUsage -Certificate $stored[0])
+        $store.Close()
+    } finally {
+        $store.Open('ReadWrite')
+        foreach ($item in @($store.Certificates.Find([System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $ca.Thumbprint, $false))) { $store.Remove($item) }
+        $store.Close()
+    }
+}
+
+Test-Case 'AC-4 S91-7 no resume entries when the elevating user is not the signed-in user' {
+    Assert-Equal $true (Test-ResumeUser -ElevatedUser 'PC1\maria' -SessionUser 'pc1\Maria')
+    Assert-Equal $false (Test-ResumeUser -ElevatedUser 'PC1\admin' -SessionUser 'PC1\maria')
+    Assert-Equal $false (Test-ResumeUser -ElevatedUser 'PC1\admin' -SessionUser '')
+    $result = Register-SetupResume -SetupPath 'D:\Downloads\SlateOpsSetup-0.2.0.exe' -SessionUser 'OTHERPC\someone-else'
+    Assert-Equal 'resume_other_user setup.resume.resume_other_user' ('{0} {1}' -f $result.code, $result.message_key)
+    Assert-Equal $null (Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name 'SlateOpsSetup' -ErrorAction SilentlyContinue)
+}
+
+Test-Case 'AC-4 S91-3 setup takes over only a task folder that holds the product tasks' {
+    $service = New-Object -ComObject 'Schedule.Service'
+    $service.Connect()
+    $folderPath = '\SlateOpsW7Sddl'
+    try {
+        $action = New-ScheduledTaskAction -Execute (Join-Path ([Environment]::SystemDirectory) 'cmd.exe') -Argument '/c exit 0'
+        $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount
+        Register-ScheduledTask -TaskPath ($folderPath + '\') -TaskName 'Exec' -Action $action -Principal $principal -Force | Out-Null
+        Assert-Equal 'product' (Get-TaskFolderState -FolderPath $folderPath)
+    } finally {
+        Unregister-ScheduledTask -TaskPath ($folderPath + '\') -TaskName 'Exec' -Confirm:$false -ErrorAction SilentlyContinue
+    }
+    Assert-Equal 'unknown' (Get-TaskFolderState -FolderPath $folderPath) 'an empty folder is not the product folder'
+    try { $service.GetFolder('\').DeleteFolder('SlateOpsW7Sddl', 0) } catch { $null = $_ }
+    Assert-Equal 'absent' (Get-TaskFolderState -FolderPath $folderPath)
+}
+

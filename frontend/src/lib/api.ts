@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { currentOrganizationId } from "@/lib/organization-context";
 import { noteServerFailure, noteServerResponse } from "@/lib/server-connection";
+import { notifyPasswordChangeRequired } from "@/lib/password-change-signal";
 
 export type Pagination = {
   limit: number;
@@ -678,6 +679,11 @@ async function parseResponse(
       typeof body === "object" && body !== null && "request_id" in body
         ? requestIdFrom(body.request_id)
         : undefined;
+    if (
+      response.status === 403 &&
+      errorDetail?.code === "password_change_required"
+    )
+      notifyPasswordChangeRequired();
     throw new ApiError(
       response.status,
       typeof detail === "string"

@@ -132,7 +132,7 @@ Tests and reviews cite these IDs.
 - **S1-C3.** The frontend `ApiError` keeps the request ID: from the body, else from the `X-Request-ID` header.
 - **S1-C4.** Every error message and toast that shows an API error shows "Reference" with the last 8 characters, a Copy control that copies the full ID, and the R5 sentence. The Copy control has an accessible name, and its confirmation is announced.
 - **S1-C5.** A failure with no response (no request ID) shows no reference and no empty placeholder.
-- **S1-C7.** A sign-in refused for wrong or malformed credentials (401, 422) shows "Invalid email or password." and no reference, also when the response carries a request ID (R5 exception).
+- **S1-C7.** A sign-in refused for wrong or malformed credentials (401, 422) shows "Wrong email, username or password." and no reference, also when the response carries a request ID (R5 exception).
 - **S1-C6.** No error message shows a stack trace, SQL, a service name, a host or a port (R1, R6).
 
 **S2 Status now**

@@ -6,7 +6,10 @@ from collections.abc import Callable
 
 from app.systems.access.users.schemas import UserResponse
 from operations.sample.blueprint import SampleDataset
-from operations.sample.controls.access_verification import _pending_invitation
+from operations.sample.controls.access_verification import (
+    _pending_invitation,
+    invitation_link_valid,
+)
 from operations.sample.controls.access_verification import (
     verify_access_controls as verify_access_controls,
 )
@@ -35,6 +38,7 @@ CONTROL_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("DELETE", "/api/users/{user_id}"),
         ("POST", "/api/users/{user_id}/restore"),
         ("POST", "/api/auth/invitations/{user_id}/resend"),
+        ("POST", "/api/auth/invitations/{user_id}/link"),
         ("POST", "/api/auth/invitations/{user_id}/reconcile"),
         ("DELETE", "/api/auth/invitations/{user_id}"),
         ("GET", "/api/users/{user_id}"),
@@ -151,6 +155,16 @@ def plan_access_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             kind="access_controls",
             target_key=pending_key,
             operation="resend_invitation",
+            values={},
+            expected_status=200,
+            expected_end_state={"status": "pending", "invitation_sent": True},
+        ),
+        # A new one-time link replaces the emailed invitation; the revoke below ends it.
+        _make_action(
+            key="controls:access:link_invitation",
+            kind="access_controls",
+            target_key=pending_key,
+            operation="link_invitation",
             values={},
             expected_status=200,
             expected_end_state={"status": "pending", "invitation_sent": True},
@@ -371,7 +385,12 @@ def _user_action(
                 "Restored guest did not match its plan", step="restore_guest"
             )
         return _result(action, context, evidence, mappings)
-    if operation in {"resend_invitation", "reconcile_invitation", "revoke_invitation"}:
+    if operation in {
+        "resend_invitation",
+        "link_invitation",
+        "reconcile_invitation",
+        "revoke_invitation",
+    }:
         person = next(
             (p for p in dataset.organization.actors.people if p.key == action.target_key), None
         )
@@ -424,7 +443,14 @@ def _user_action(
         )
         if after_sent:
             body = _read_json(response, step=str(operation))
-            checked(body.get("user") if operation == "resend_invitation" else body, sent=True)
+            wrapped = operation in {"resend_invitation", "link_invitation"}
+            checked(body.get("user") if wrapped else body, sent=True)
+            if operation == "link_invitation" and not invitation_link_valid(
+                body, context.private_values.get("origin")
+            ):
+                raise SamplePhaseActionError(
+                    "Invitation link did not match its plan", step=str(operation)
+                )
         after = checked(
             _request_object(
                 action,

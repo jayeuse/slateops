@@ -1,19 +1,31 @@
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.common.normalization import normalize_email
+from app.common.normalization import normalize_email, normalize_username
+
+# The username rule of UserCreate (users/schemas.py): 3 to 100 letters, digits, "_" or "-".
+_USERNAME = re.compile(r"[a-zA-Z0-9_-]{3,100}")
 
 
 class LoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    email: str = Field(min_length=3, max_length=320)
+    # REQ-0024: the email address or the username of the account (the field keeps its name).
+    email: str = Field(
+        min_length=3, max_length=320, description="The account's email address or username"
+    )
     password: str = Field(min_length=1, max_length=128)
 
     @field_validator("email", mode="before")
     @classmethod
     def normalize_login_email(cls, value: object) -> object:
+        if isinstance(value, str) and "@" not in value:
+            username = normalize_username(value)
+            if not _USERNAME.fullmatch(username):
+                raise ValueError("Invalid email address or username")
+            return username
         return normalize_email(value)
 
 

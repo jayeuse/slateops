@@ -253,6 +253,8 @@ def _reauthorize_in_database(principal: EventPrincipal) -> EventViewer | None:
             if resolved is None:
                 return None
             user, identity_session = resolved
+            if user.password_change_required_at is not None:
+                return None  # A temporary password reaches no stream (DEC-0042).
             # The stream stays bound to the organization it opened in (D16); every
             # re-check enters that organization again with its MFA and network rules.
             org_id = principal.org_id or identity_session.active_org_id

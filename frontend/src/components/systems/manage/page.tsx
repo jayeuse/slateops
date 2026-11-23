@@ -90,10 +90,12 @@ import { isManageBackupExportId } from "./adapters/backup-api";
 import { UpdatesPanel } from "./components/updates-panel";
 import { SystemHealth } from "./components/system-health";
 import { ManageUnavailable } from "./components/manage-unavailable";
+import { EmailSetupPanel } from "./components/email-setup-panel";
 
 type ViewTab =
   | "Organization"
   | "System health"
+  | "Email"
   | "Audit"
   | "Backup"
   | "Jobs"
@@ -175,6 +177,7 @@ function profileResponseErrors(
 const manageTabs: readonly ViewTab[] = [
   "Organization",
   "System health",
+  "Email",
   "Audit",
   "Backup",
   "Jobs",
@@ -185,6 +188,7 @@ const manageTabs: readonly ViewTab[] = [
 const manageSectionIds: Readonly<Record<ViewTab, string>> = {
   Organization: "organization",
   "System health": "health",
+  Email: "email",
   Audit: "audit",
   Backup: "backup",
   Jobs: "jobs",
@@ -506,13 +510,15 @@ function ManageContent() {
         : "Set your organization’s name, region, and look."
       : tab === "System health"
         ? "See whether Slate Operations works now, and what to do when it does not."
-        : tab === "Jobs"
-          ? "See scheduled work, attempts, and problems."
-          : tab === "Audit"
-            ? "See who changed what, then inspect the details."
-            : tab === "Updates & licensing"
-              ? "The person who runs your server installs updates."
-              : "The person who runs your server restores backups.";
+        : tab === "Email"
+          ? "See whether email is set up, and how to set it up on the server PC."
+          : tab === "Jobs"
+            ? "See scheduled work, attempts, and problems."
+            : tab === "Audit"
+              ? "See who changed what, then inspect the details."
+              : tab === "Updates & licensing"
+                ? "The person who runs your server installs updates."
+                : "The person who runs your server restores backups.";
   // A real owner-only refusal (a stale identity) lands on the same notice.
   const ownerRefused =
     (tab === "Backup" || tab === "Updates & licensing") &&
@@ -1565,6 +1571,8 @@ function ManageContent() {
               <SystemHealth viewer={referenceViewerFor(knownIdentity)} />
             </div>
           ) : null}
+
+          {sectionShown && tab === "Email" ? <EmailSetupPanel /> : null}
 
           {sectionShown && tab === "Updates & licensing" ? (
             <div className="manage-scroll min-w-0">

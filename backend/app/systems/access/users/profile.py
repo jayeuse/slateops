@@ -79,6 +79,7 @@ def self_profile_response(
             "sponsor_user_id": membership.sponsor_user_id if membership else None,
             "expires_at": membership.expires_at if membership else None,
             "invitation_sent_at": membership.invitation_sent_at if membership else None,
+            "password_change_required": user.password_change_required_at is not None,
             "access": entries,
         }
     )

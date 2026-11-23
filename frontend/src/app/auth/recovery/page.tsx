@@ -18,6 +18,10 @@ import {
 import { apiErrorReference } from "@/lib/api-errors";
 import { completeRecovery, requestRecovery } from "@/lib/auth-api";
 import {
+  isEmailNotConfigured,
+  recoveryRequestFailureMessage,
+} from "@/lib/email-setup";
+import {
   consumeRecoveryToken,
   hasValidRecoveryPasswordLength,
   passwordsMatch,
@@ -37,6 +41,7 @@ export default function RecoveryPage() {
   const [passwordLengthInvalid, setPasswordLengthInvalid] = useState(false);
   const [mismatch, setMismatch] = useState(false);
   const [requestState, setRequestState] = useState<RequestState>("idle");
+  const [requestFailure, setRequestFailure] = useState("");
   const [completionState, setCompletionState] =
     useState<CompletionState>("idle");
   const [pending, setPending] = useState(false);
@@ -70,7 +75,11 @@ export default function RecoveryPage() {
       setRequestState("sent");
     } catch (failure) {
       setRequestState("error");
-      setFailureReference(apiErrorReference(failure));
+      setRequestFailure(recoveryRequestFailureMessage(failure));
+      // Email not set up is a known state, not a failure to report (DEC-0042).
+      setFailureReference(
+        isEmailNotConfigured(failure) ? undefined : apiErrorReference(failure),
+      );
     } finally {
       setPending(false);
     }
@@ -233,7 +242,7 @@ export default function RecoveryPage() {
                 variant="destructive"
                 reference={failureReference}
               >
-                We could not process that request. Try again shortly.
+                {requestFailure}
               </Alert>
             ) : null}
             <form className="flex flex-col gap-4" onSubmit={submitRequest}>

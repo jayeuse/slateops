@@ -1,0 +1,13 @@
+# Slate Operations: one backup runner tick each minute while the distribution runs
+# (plan W10b-1; TASK-0092 (a*) step 1). The engine writes this file at install step 12.
+[Unit]
+Description=Slate Operations backup runner tick, each minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+Persistent=false
+Unit=slateops-runner.service
+
+[Install]
+WantedBy=timers.target

@@ -51,6 +51,7 @@ import {
 import { useAccessDraftRegistration } from "../state/draft-navigation";
 import type { AccessUser } from "../state/api";
 import { useErrorText } from "@/lib/use-error-text";
+import { PersonTemporaryPassword } from "./person-temporary-password";
 import { apiErrorReference } from "@/lib/api-errors";
 
 type Action = PersonSecurityAction;
@@ -390,6 +391,13 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
             </div>
             {ran === "email" ? outcome : null}
           </section>
+          {/* DEC-0042: never for the signed-in administrator's own account. */}
+          {self ? null : (
+            <PersonTemporaryPassword
+              person={person}
+              eligible={readAccepted && data.status.target_eligible}
+            />
+          )}
           {/* Rare and risky: last, closed, in danger ink (the Advanced Last
               Rule); each result stays beside its own action. */}
           <AdvancedSection

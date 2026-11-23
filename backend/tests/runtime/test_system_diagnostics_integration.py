@@ -166,8 +166,8 @@ def test_s6_c2_i17_the_installation_owner_downloads_the_whole_installation(world
         "server_errors",
     ]
     assert body["summary"]["kind"] == "installation"
-    assert body["versions"]["application"] == "0.1.0"
-    assert body["versions"]["schema_revision"] == "fcde5c2045b7"
+    assert body["versions"]["application"] == "0.0.0+dev"
+    assert body["versions"]["schema_revision"] == "4f8324236e1e"
     assert body["versions"]["postgresql"]
     assert body["database"]["bytes"] == 4096
     assert [worker["key"] for worker in body["workers"]] == [
@@ -205,7 +205,7 @@ def test_s6_c3_i18_an_admin_downloads_only_their_organization(world):
     _attachment(response, "organization")
     body = response.json()
     assert list(body) == ["summary", "versions", "periods", "storage", "server_errors"]
-    assert body["versions"] == {"application": "0.1.0"}
+    assert body["versions"] == {"application": "0.0.0+dev"}
     assert body["storage"] == {"used_bytes": 100}
     assert body["summary"]["storage_used_bytes"] == 100
     items = body["server_errors"]["items"]

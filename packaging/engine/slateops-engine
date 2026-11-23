@@ -1,0 +1,15 @@
+#!/usr/bin/python3 -I
+"""slateops-engine: the Slate Operations install engine (standard library only).
+
+The bundle keeps this file next to the ``engine`` package; /usr/local/bin/slateops-engine
+links here. ``-I`` keeps the environment and the current folder out of the import path.
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from engine.cli import main  # noqa: E402
+
+raise SystemExit(main())

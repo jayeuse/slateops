@@ -6,6 +6,7 @@ import {
   draftFromUser,
   guestDaysError,
   guestExpiryFromDays,
+  peopleErrorMessage,
   personConflicts,
   personPatch,
   personSaveFailure,
@@ -300,4 +301,29 @@ test("a refused role change shows beside Role, with the reference on one form li
       reference: requestId,
     },
   });
+});
+
+test("AC-B3 an invitation without email setup names the server PC settings", () => {
+  const refusal = new ApiError(
+    503,
+    "Email is not set up yet. Set it up in Slate Operations settings on the server PC.",
+    {
+      code: "email_not_configured",
+      message:
+        "Email is not set up yet. Set it up in Slate Operations settings on the server PC.",
+    },
+    "email_not_configured" as never,
+  );
+
+  expect(
+    peopleErrorMessage(refusal, "The invitation could not be sent. Try again."),
+  ).toBe(
+    "Email is not set up yet. Set it up in Slate Operations settings on the server PC.",
+  );
+  expect(
+    peopleErrorMessage(
+      new ApiError(503, "Unavailable"),
+      "The change could not be made. Try again.",
+    ),
+  ).toBe("The change could not be made. Try again.");
 });

@@ -89,6 +89,8 @@ def test_create_listener_stages_and_writes_create_log() -> None:
         "bio": None,
         "avatar_file_id": None,
         "status": "active",
+        # A password-named field is redacted even when it is empty.
+        "password_change_required_at": "[REDACTED]",
     }
     assert session.info[REALTIME_INVALIDATION_KEY] == [
         InvalidationEvent(entity="users", entity_id=user.id, administrators_only=True)

@@ -31,7 +31,12 @@ from tests.migrations.audit_partition_support import (
     committed_history,
     plan_nodes,
 )
-from tests.operations.migration_support import guarded_migration_environment, run_alembic
+from tests.operations.migration_support import (
+    add_later_user_column,
+    drop_later_user_column,
+    guarded_migration_environment,
+    run_alembic,
+)
 from tests.race_support import join, start, wait_until_blocked_by
 
 pytestmark = pytest.mark.integration
@@ -238,7 +243,11 @@ def test_history_reads_the_sequence_index_before_and_after_the_drop_a42b(
 ) -> None:
     after = _history(conversation)
     run_alembic(environment, "downgrade", PREVIOUS)
-    before = _history(conversation)
+    add_later_user_column(conversation.engines.owner)
+    try:
+        before = _history(conversation)
+    finally:
+        drop_later_user_column(conversation.engines.owner)
 
     for answers in (after, before):
         assert {name: ordered for name, (_ids, ordered, _scans) in answers.items()} == (

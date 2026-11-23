@@ -448,7 +448,7 @@ Solution: make the feedback consistent with one rule, and add toasts only where 
    - Create board.
    - Permanently delete board.
    - Sandbox save failure, which is announced as a neutral status.
-   - Invitation complete. Show "Password set. Sign in." on `/login`.
+   - Invitation complete. Show "Your password is set. Sign in with the email or username from your invitation message." on `/login?completed=invitation` (REQ-0024 addition 5); a password reset keeps "Password set. Sign in.".
    - Recovery complete. Use the same message.
 5. Separate the success and failure channels in the Boards calendar actions and the Sandbox version actions.
 6. Move `MfaCleanupNotice` out of the toast corner.

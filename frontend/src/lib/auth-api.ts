@@ -79,6 +79,8 @@ const authMeResponse = z.object({
     .extend({ access: accessEntries, owner: z.boolean().default(false) })
     .nullable(),
   operator: z.boolean().default(false),
+  // DEC-0042: a temporary password is set; every other call answers 403.
+  password_change_required: z.boolean().default(false),
 });
 
 export type SessionStatus = z.output<typeof sessionResponse>;
@@ -127,6 +129,8 @@ export type AuthMe = {
   organizationOwner: boolean;
   /** The account owns the installation: it changes installation-wide sign-in policy. */
   operator: boolean;
+  /** The account must choose a new password before anything else (DEC-0042). */
+  passwordChangeRequired: boolean;
 };
 
 function membership(
@@ -164,6 +168,7 @@ function authMe(current: z.output<typeof authMeResponse>): AuthMe {
     currentOrganization: organization ? membership(organization) : null,
     organizationOwner: organization?.owner ?? false,
     operator: current.operator,
+    passwordChangeRequired: current.password_change_required,
   };
 }
 
@@ -208,10 +213,11 @@ export async function acceptOrganizationInvitation(
   );
 }
 
-export async function signIn(email: string, password: string) {
+/** `login` is an email address or a username; the server's field stays `email`. */
+export async function signIn(login: string, password: string) {
   const session = await apiFetch("/auth/login", authenticatedResponse, {
     method: "POST",
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email: login, password }),
     refreshOnUnauthorized: false,
   });
   announceIdentityChange();

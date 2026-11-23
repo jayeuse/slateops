@@ -2,6 +2,9 @@
 
 from typing import Any
 
+TOKEN = "3f" * 28
+LINK = f"http://localhost/auth/setup#token_hash={TOKEN}&type=invite"
+
 INVITATION_CASES = (
     [(None, None)]
     + [
@@ -18,6 +21,13 @@ INVITATION_CASES = (
             "unknown",
             "cleanup_unknown",
             "cleanup_readback",
+            "link_origin",
+            "link_path",
+            "link_query",
+            "link_type",
+            "link_token",
+            "link_delivery",
+            "link_user",
         )
     ]
     + [
@@ -25,6 +35,7 @@ INVITATION_CASES = (
         for fault in (
             "missing_first",
             "missing_last",
+            "missing_link",
             "actor",
             "target",
             "outcome",
@@ -83,4 +94,22 @@ def corrupt_invitation(body: dict[str, Any], fault: str, wrong_id: str) -> dict[
             "timestamp": {"invitation_sent_at": "sent"},
             "unsent": {"invitation_sent_at": None},
         }[fault.rsplit("_", 1)[1]],
+    }
+
+
+def corrupt_link(body: dict[str, Any], fault: str, wrong_id: str) -> dict[str, Any]:
+    """One wrong part of an invitation-link answer per fault."""
+    if fault == "link_delivery":
+        return {**body, "delivery": "email"}
+    if fault == "link_user":
+        return {**body, "user": {**body["user"], "id": wrong_id}}
+    return {
+        **body,
+        "invitation_url": {
+            "link_origin": LINK.replace("http://localhost", "http://foreign.test"),
+            "link_path": LINK.replace("/auth/setup", "/auth/recovery"),
+            "link_query": LINK.replace("#", "?next=1#"),
+            "link_type": LINK.replace("type=invite", "type=recovery"),
+            "link_token": LINK.replace(TOKEN, "not-a-token"),
+        }[fault],
     }

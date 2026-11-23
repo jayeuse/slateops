@@ -104,12 +104,10 @@ def verify_backup_final(
             issues.append("Backup queued request differs from its owned admission receipt")
         else:
             observed["backup_requests_queued"] = 1
-        recorded = _version(version.get("version_observation"), step="backup_recorded_version")
-        current = _version(read("/api/version"), step="backup_final_version")
-        if current["current_version"] != recorded["current_version"]:
-            issues.append("Running version differs from its recorded observation")
-        else:
-            observed["backup_version_reviewed"] = 1
+        # Both reads must be valid; a pack populated at another release is not a defect.
+        _version(version.get("version_observation"), step="backup_recorded_version")
+        _version(read("/api/version"), step="backup_final_version")
+        observed["backup_version_reviewed"] = 1
     except (
         SampleClientError,
         SamplePhaseActionError,

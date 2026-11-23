@@ -96,6 +96,12 @@ only report metadata, not a private message projection. Export is a separate
 exact-administrator purpose (D31), with fresh password confirmation and a recorded
 reason for private sources; it does not confer ordinary conversation read access.
 
+Accepted risk: an administrator who sets a temporary password for a person can
+sign in as that person and read what that person reads, including private
+conversations. Owners and the administrator's own account are refused, a person
+with two-step verification first needs the audited two-step reset, and the
+`identity.temporary_password` audit event names the administrator.
+
 Comms uses private Realtime topics for opaque invalidations and minimal
 presence/typing signals; other application pages retain authenticated SSE.
 Browsers receive Comms events but cannot publish authoritative messages or track

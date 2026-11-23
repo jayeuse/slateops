@@ -25,6 +25,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api";
 import { requestEmailChange } from "@/lib/auth-api";
+import {
+  EMAIL_NOT_CONFIGURED_MESSAGE,
+  isEmailNotConfigured,
+} from "@/lib/email-setup";
 import { profileSelfOptions } from "@/components/profile/adapters/profile-queries";
 import { DialogRows } from "./dialog-rows";
 import { FactValue, focusReturn } from "./rows";
@@ -101,15 +105,17 @@ export default function EmailChange() {
     } catch (failure: unknown) {
       if (current !== version.current || controller.signal.aborted) return;
       setError(
-        failure instanceof ApiError && failure.status === 401
-          ? "Your current password was not accepted, or you were signed out. Check your password and try again."
-          : failure instanceof ApiError && failure.status === 409
-            ? "This email address cannot be used, or the request did not finish. Your saved email has not changed."
-            : failure instanceof ApiError && failure.status === 403
-              ? "Your email cannot be changed right now. Finish any sign-in check you are asked for, such as two-step verification, then try again."
-              : failure instanceof ApiError && failure.status === 422
-                ? "Check the new email address and current password. The request was not accepted."
-                : "The request could not be confirmed. Confirmation emails may have been sent. Check both inboxes before you ask again; nothing is sent again by itself.",
+        isEmailNotConfigured(failure)
+          ? EMAIL_NOT_CONFIGURED_MESSAGE
+          : failure instanceof ApiError && failure.status === 401
+            ? "Your current password was not accepted, or you were signed out. Check your password and try again."
+            : failure instanceof ApiError && failure.status === 409
+              ? "This email address cannot be used, or the request did not finish. Your saved email has not changed."
+              : failure instanceof ApiError && failure.status === 403
+                ? "Your email cannot be changed right now. Finish any sign-in check you are asked for, such as two-step verification, then try again."
+                : failure instanceof ApiError && failure.status === 422
+                  ? "Check the new email address and current password. The request was not accepted."
+                  : "The request could not be confirmed. Confirmation emails may have been sent. Check both inboxes before you ask again; nothing is sent again by itself.",
         failure,
       );
     } finally {

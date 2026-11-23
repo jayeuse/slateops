@@ -41,7 +41,9 @@ def _installation(tmp_path: Path) -> tuple[dict[str, str], InstanceTarget, list[
     return values, target, containers
 
 
-@pytest.mark.parametrize("fault", [None, "url", "issuer", "network", "image", "volume"])
+@pytest.mark.parametrize(
+    "fault", [None, "url", "issuer", "network", "image", "docker-hub-image", "volume"],
+)
 def test_provider_operations_admit_only_the_database_installation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fault: str | None,
 ) -> None:
@@ -57,6 +59,12 @@ def test_provider_operations_admit_only_the_database_installation(
         }
     elif fault == "image":
         inspected[0]["Config"]["Image"] = "untrusted:latest"
+    elif fault == "docker-hub-image":
+        # The old Docker Hub name at the pinned digest: the API stays exact (W5b-10).
+        inspected[1]["Config"]["Image"] = (
+            "supabase/gotrue:v2.196.0@sha256:"
+            "c0c25187a6b835e65a6f6e6c6b39d090e832d40e6de5186f2c038e0411944232"
+        )
     elif fault == "volume":
         inspected[2]["Mounts"][0]["Name"] = "neighbor-storage"
     monkeypatch.setattr(guard, "instance_target_for_process", lambda *a, **k: target, raising=False)

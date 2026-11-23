@@ -48,6 +48,11 @@ from app.systems.access.users.directory import (
     membership_view,
 )
 from app.systems.access.users.directory import UserSortField as UserSortField
+from app.systems.access.users.email_setup import EmailNotConfigured, email_not_configured
+from app.systems.access.users.invitation_links import (
+    created_invitation_response,
+    invite_with_link,
+)
 from app.systems.access.users.membership import (
     bound_organization,
     require_current_membership,
@@ -61,6 +66,8 @@ from app.systems.access.users.schemas import (
     PersonCardResponse,
     PersonProfilePublicResponse,
     PersonProfileResponse,
+    TemporaryPasswordRequest,
+    TemporaryPasswordResponse,
     UserAccessResponse,
     UserCreate,
     UserListResponse,
@@ -79,6 +86,7 @@ from app.systems.access.users.security import read_security, recover_person, res
 from app.systems.access.users.service import (
     invite_user,
 )
+from app.systems.access.users.temporary_password import set_temporary_password
 from app.systems.platform.files.providers import StorageBackend
 from app.systems.platform.files.storage import get_storage
 
@@ -300,13 +308,19 @@ def create_user(
     payload: UserCreate,
     admin: AdminUser,
     db: Annotated[Session, Depends(get_db)],
-) -> InvitationResponse:
+) -> InvitationResponse | Response:
+    link = None
     try:
-        user = invite_user(
-            db,
-            InvitationCreate(**payload.model_dump()),
-            actor_id=admin.id,
-        )
+        if payload.delivery == "link":
+            user, link = invite_with_link(
+                db, InvitationCreate(**payload.model_dump()), actor_id=admin.id
+            )
+        else:
+            user = invite_user(
+                db,
+                InvitationCreate(**payload.model_dump()),
+                actor_id=admin.id,
+            )
     except InvitationConflict as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -314,6 +328,8 @@ def create_user(
         ) from error
     except ProfileValidationError as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except EmailNotConfigured as error:
+        raise email_not_configured() from error
     except InvitationError as error:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -321,7 +337,7 @@ def create_user(
         ) from error
     org_id = bound_organization(db)
     membership = db.scalars(select(Membership).filter_by(user_id=user.id, org_id=org_id)).one()
-    return invitation_response(user, membership)
+    return created_invitation_response(invitation_response(user, membership, link=link))
 
 
 @router.get("/{user_id}/security", response_model=UserSecurityResponse)
@@ -354,6 +370,24 @@ def recover_user(
     if self_effect:
         clear_browser_session(response)
     return result
+
+
+@router.post("/{user_id}/temporary-password", response_model=TemporaryPasswordResponse)
+def set_user_temporary_password(
+    user_id: UUID,
+    payload: TemporaryPasswordRequest,
+    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
+    db: Annotated[Session, Depends(get_db)],
+    request: Request,
+    response: Response,
+) -> TemporaryPasswordResponse | Response:
+    """DEC-0042: sessions end and the person must choose a new password at sign-in."""
+
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return set_temporary_password(db, identity, request, user_id, payload.password)
+    except HTTPException as error:
+        return security_effect_error(request, error, False)
 
 
 @router.post("/{user_id}/mfa/reset", response_model=UserMfaResetResponse)

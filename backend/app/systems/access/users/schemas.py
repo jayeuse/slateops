@@ -8,6 +8,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictBool,
+    StrictStr,
     field_validator,
 )
 
@@ -138,6 +139,8 @@ class AuthMeResponse(AccountResponse):
     sponsor_user_id: UUID | None = None
     expires_at: datetime | None = None
     invitation_sent_at: datetime | None = None
+    # A temporary password: only identity, password change and sign-out work (DEC-0042).
+    password_change_required: bool = False
 
 
 class OrganizationSelectionRequest(BaseModel):
@@ -263,6 +266,8 @@ class UserCreate(BaseModel):
     job_title: str | None = Field(default=None, max_length=200)
     sponsor_user_id: UUID | None = None
     expires_at: datetime | None = None
+    # "link": no email; the answer carries a one-time link to copy (DEC-0042).
+    delivery: Literal["email", "link"] = "email"
 
     @field_validator("email", mode="before")
     @classmethod
@@ -281,15 +286,20 @@ class InvitationCreate(UserCreate):
 
 class InvitationResponse(BaseModel):
     user: UserResponse
-    delivery: Literal["email", "in_app"] = "email"
+    delivery: Literal["email", "in_app", "link"] = "email"
+    # Only in this answer, only for "link"; never stored (DEC-0042).
+    invitation_url: str | None = None
 
 
-def invitation_response(user: User, membership: Membership) -> InvitationResponse:
+def invitation_response(
+    user: User, membership: Membership, *, link: str | None = None
+) -> InvitationResponse:
     return InvitationResponse(
         user=UserResponse(**{key: getattr(
             membership if key == "status" or key not in User.__table__.columns else user, key
         ) for key in UserResponse.model_fields}),
-        delivery="in_app" if user.status == "active" else "email",
+        delivery="in_app" if user.status == "active" else "link" if link else "email",
+        invitation_url=link,
     )
 
 
@@ -340,6 +350,21 @@ class UserRecoveryResponse(BaseModel):
     email_request: Literal["accepted"] = "accepted"
     local_revocation: Literal["not_requested", "committed"]
     revoked_sessions: int | None = Field(ge=0)
+
+
+class TemporaryPasswordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # None: the server chooses one. The service checks it, so a refusal never echoes it.
+    password: StrictStr | None = None
+
+
+class TemporaryPasswordResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    operation_id: UUID
+    user_id: UUID
+    temporary_password: str | None
+    local_revocation: Literal["committed"] = "committed"
+    revoked_sessions: int = Field(ge=0)
 
 
 class UserMfaResetRequest(BaseModel):

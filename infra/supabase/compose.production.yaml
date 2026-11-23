@@ -70,9 +70,10 @@ services:
       SLATEOPS_APP_PRIVATE_SUBNET: &app-private-subnet ${SLATEOPS_APP_PRIVATE_SUBNET:-172.31.248.0/28}
       SUPABASE_URL: http://api-gw:8000
       SUPABASE_AUTH_ISSUER: ${API_EXTERNAL_URL:?Set the installation Auth issuer}
-      SMTP_HOST: ${SMTP_HOST:?Set an SMTP host}
-      SMTP_PORT: ${SMTP_PORT:?Set an SMTP port}
-      SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:?Set the invitation sender email}
+      # Email is optional (DEC-0041): a blank host and sender mean "not set up" (Settings).
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:-}
       LOG_DIR: /var/log/slateops/api
       BACKUP_EXPORT_ROOT: /var/lib/slateops/backup-exports
     volumes:

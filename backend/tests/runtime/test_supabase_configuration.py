@@ -64,7 +64,9 @@ def test_backend_loads_provider_mail_configuration_without_local_storage_or_outb
 
 
 def test_missing_provider_mail_configuration_is_observable_without_startup_failure() -> None:
-    settings = Settings(**settings_values())
+    # The isolated defaults set email up (tests/config_support.py); this case leaves it out.
+    unset = {"smtp_host": None, "smtp_port": None, "smtp_admin_email": None}
+    settings = Settings(**settings_values(**unset))
     assert (settings.smtp_host, settings.smtp_port, settings.smtp_admin_email) == (None, None, None)
 
 

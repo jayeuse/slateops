@@ -7,7 +7,7 @@ import pytest
 
 from tests import supabase_runtime
 
-FAILING = "supabase/realtime:v2.143.3@sha256:"
+FAILING = "ghcr.io/supabase/realtime:v2.143.3@sha256:"
 PRESENT = "axllent/mailpit:v1.27.9@sha256:"
 
 

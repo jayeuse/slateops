@@ -27,6 +27,8 @@ from app.systems.access.identity.contracts import (
 )
 from app.systems.access.identity.mfa import MFARequired
 from app.systems.access.identity.schemas import EmailChangeCompleteRequest, EmailChangeRequest
+from app.systems.access.users import email_setup
+from app.systems.access.users.email_setup import email_not_configured
 from app.systems.manage.audit.security_events import SecurityEventPersistenceError
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -53,6 +55,8 @@ def request_email_change(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, bool]:
     require_completed_identity(identity)
+    if not email_setup.email_configured():
+        raise email_not_configured()  # Auth would accept it and send no confirmation (DEC-0041)
     token = (
         request.cookies.get("slateops_access")
         if identity.cookie_authenticated

@@ -180,3 +180,80 @@ def test_a_blocked_login_budget_refuses_before_the_provider_with_the_remaining_w
     # The route sends this wait as Retry-After.
     assert error.value.retry_after == 60
     client.password_grant.assert_not_called()
+
+
+# AC-U1 (REQ-0024 owner addition 6): sign in with the username as well as the email.
+
+
+def test_ac_u1_the_login_field_takes_an_email_or_a_username() -> None:
+    from pydantic import ValidationError
+
+    from app.systems.access.identity.schemas import LoginRequest
+
+    assert LoginRequest(email=" Person@Example.Test ", password="x").email == "person@example.test"
+    assert LoginRequest(email=" Front_Desk-2 ", password="x").email == "front_desk-2"
+    for refused in ("ab", "front desk", "front.desk", "a@", "x" * 101):
+        with pytest.raises(ValidationError):
+            LoginRequest(email=refused, password="x")
+
+
+def _username_lookup(db: Mock, row: tuple[object, str] | None) -> None:
+    db.execute.return_value.first.return_value = row
+
+
+def test_ac_u1_a_username_spends_and_signs_in_as_its_accounts_email(
+    monkeypatch: pytest.MonkeyPatch, unit_platform_policy,
+) -> None:
+    from app.systems.access.identity import provider_login, rate_limits
+
+    db = Mock(spec=Session)
+    person_id = uuid4()
+    _username_lookup(db, (person_id, "person@example.test"))
+    client = Mock()
+    client.password_grant.side_effect = InvalidProviderCredentials("wrong")
+    now = datetime.now(UTC)
+    bucket = IdentityRateLimitBucket(window_started_at=now, attempt_count=0, blocked_until=None)
+    monkeypatch.setattr(rate_limits, "cleanup_expired_buckets", Mock(return_value=0))
+    fingerprint = Mock(return_value="fingerprint")
+    monkeypatch.setattr(rate_limits, "login_fingerprint", fingerprint)
+    monkeypatch.setattr(rate_limits, "lock_bucket", Mock(return_value=bucket))
+    retry = Mock(return_value=None)
+    monkeypatch.setattr(rate_limits, "login_retry_after", retry)
+    record = Mock()
+    monkeypatch.setattr(rate_limits, "record_attempt", record)
+    monkeypatch.setattr(provider_login, "append_representative_failure", Mock())
+
+    with pytest.raises(InvalidCredentials):
+        provider_login.login_with_provider(
+            db, "frontdesk", "wrong", client, source="127.0.0.1", now=now
+        )
+
+    # The username's attempts count against the same account budget as its email's.
+    client.password_grant.assert_called_once_with("person@example.test", "wrong")
+    fingerprint.assert_called_once_with("person@example.test", "127.0.0.1")
+    assert retry.call_args.kwargs["identifier"] == "person@example.test"
+    assert record.call_args.kwargs["identifier"] == "person@example.test"
+    assert record.call_args.kwargs["subject_id"] == person_id
+    db.scalar.assert_not_called()  # one lookup per attempt: the username's
+
+
+def test_ac_u1_an_unknown_username_is_refused_like_a_wrong_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.systems.access.identity import provider_login
+
+    db = Mock(spec=Session)
+    _username_lookup(db, None)
+    client = Mock()
+    client.password_grant.side_effect = InvalidProviderCredentials("unknown")
+    failures = Mock()
+    monkeypatch.setattr(provider_login, "append_representative_failure", failures)
+
+    with pytest.raises(InvalidCredentials):
+        provider_login.login_with_provider(
+            db, "nobody_here", "password", client, enforce_rate_limit=False
+        )
+
+    # The provider still answers the attempt, so its cost matches an unknown email's.
+    client.password_grant.assert_called_once_with("nobody_here", "password")
+    assert failures.call_args.kwargs["subject_id"] is None

@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.normalization import normalize_email
+from app.common.normalization import normalize_email, normalize_username
 from app.core.base_model import utc_now
 from app.core.integrations.supabase_auth import (
     InvalidProviderCredentials,
@@ -45,6 +45,22 @@ def _account_id(db: Session, email: str) -> UUID | None:
     return db.scalar(select(User.id).where(User.email == normalized))
 
 
+def _attempt(db: Session, login: str) -> tuple[str, UUID | None]:
+    """The identifier of an attempt and its local account (REQ-0024: email or username).
+
+    A username names its account's email, so the provider sign-in and every login budget
+    use that email: alternating the two forms never doubles an account's budget. An unknown
+    username stays its own identifier and still reaches the provider, so it costs and
+    answers the same as a wrong password. One lookup runs for every attempt.
+    """
+    if "@" in login:
+        return login, _account_id(db, login)
+    row = db.execute(
+        select(User.id, User.email).where(User.username == normalize_username(login))
+    ).first()
+    return (login, None) if row is None else (str(row[1]), row[0])
+
+
 def _append_failure(
     db: Session,
     source: str | None,
@@ -78,8 +94,8 @@ def login_with_provider(
 
     timestamp = now or utc_now()
     policy = load_platform_policy(db)
-    # Every attempt runs this one lookup, so known and unknown emails cost the same.
-    subject_id = _account_id(db, email)
+    # Every attempt runs this one lookup, so known and unknown names cost the same.
+    email, subject_id = _attempt(db, email)
     fingerprint: str | None = None
     bucket = None
     if enforce_rate_limit:

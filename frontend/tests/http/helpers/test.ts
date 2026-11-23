@@ -355,6 +355,29 @@ export const test = base.extend({
         });
       },
     );
+    // An administrator's shell reads the system status for the email notice
+    // (DEC-0042) on every signed-in route; by default email is set up, so no
+    // notice shows. System health and Manage → Email journeys route it at
+    // page level.
+    await context.route(
+      (url) => url.pathname === "/api/system/status",
+      (route) =>
+        route.fulfill({
+          headers: { "Cache-Control": "no-store" },
+          json: {
+            parts: [
+              { key: "data", status: "working" },
+              { key: "signing_in", status: "working" },
+              { key: "files", status: "working" },
+              { key: "email", status: "set_up" },
+            ],
+            version: "0.1.0",
+            checked_at: "2026-10-06T08:00:00Z",
+            organization: null,
+            installation: null,
+          },
+        }),
+    );
     await context.route("**/api/notifications/unread-count", (route) =>
       route.fulfill({ json: { unread_count: 0 } }),
     );
@@ -535,6 +558,15 @@ export type { BrowserContext, Locator, Page, Route } from "@playwright/test";
  * with `route.fallback()`; answering it instead makes the stream fail at a
  * random moment, and its resync reloads whatever the journey is doing.
  */
+/**
+ * The administrator shell's system status read (DEC-0042 email notice).
+ * Catch-all mocks pass it to the base fixture's answer, so no journey gets a
+ * refused read it did not ask for.
+ */
+export function isSystemStatusRead(route: Route): boolean {
+  return new URL(route.request().url()).pathname === "/api/system/status";
+}
+
 export function isEventStream(route: Route): boolean {
   return new URL(route.request().url()).pathname === "/api/events";
 }

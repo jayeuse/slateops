@@ -53,6 +53,8 @@ test("a cold Comms load sends each shell read once and repeats only by design", 
     "GET /api/auth/me": 1,
     "GET /api/users/00000000-0000-4000-8000-000000000001/preferences": 1,
     "GET /api/notifications": 1,
+    // An administrator's email notice reads the system status (DEC-0042).
+    "GET /api/system/status": 1,
     // The shell count is read again when the event stream connects (resync).
     "GET /api/notifications/unread-count": 2,
     // Brand, read again on the stream's resync; then the calendar once.
@@ -101,8 +103,8 @@ test("a cold Comms load sends each shell read once and repeats only by design", 
     await expect.poll(counts).toEqual(expected);
     await settleReact(page);
     expect(counts()).toEqual(expected);
-    // 49 Comms and shell reads, and the sidebar's two (DA2).
-    expect(calls).toHaveLength(51);
+    // 50 Comms and shell reads, and the sidebar's two (DA2).
+    expect(calls).toHaveLength(52);
   } finally {
     token.release();
     heartbeat.release();

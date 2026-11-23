@@ -115,7 +115,11 @@ purposes. Report-bound moderation takes no request body and returns only report
 metadata, not private message content or an ordinary read grant. Export is an
 export-only exact-administrator purpose (D31), with fresh password confirmation
 and a recorded reason for private sources, captured authority and current-source
-rechecks. It is not a general private-read bypass. Retention irreversibly removes
+rechecks. It is not a general private-read bypass. A temporary password set by an
+administrator is an accepted exception: that administrator can sign in as the
+person and read their private conversations. Owners and the actor are refused,
+a verified two-step factor needs the audited reset first, and
+`identity.temporary_password` records the actor. Retention irreversibly removes
 expired content/revisions and fences attachments while confirmed Storage cleanup
 finishes; a retained linkage anchor is not restorable content. See the
 [API purpose contracts](07-api-architecture.md#ordinary-private-reads-versus-privileged-purposes)

@@ -193,12 +193,14 @@ test("Manage shows each section only to an account whose requests the server adm
       .find((group) => group.id === "manage")
       ?.items.map((entry) => entry.id);
 
+  // AC-E2 (DEC-0042): Email shows to an administrator only, after System
+  // health; every other level below has no Email.
   expect(sections({ role: "admin", access: [], operator: true }, true)).toEqual(
-    ["organization", "health", "backup", "audit", "jobs", "updates"],
+    ["organization", "health", "email", "backup", "audit", "jobs", "updates"],
   );
   expect(
     sections({ role: "admin", access: [], operator: false }, true),
-  ).toEqual(["organization", "health", "audit", "jobs"]);
+  ).toEqual(["organization", "health", "email", "audit", "jobs"]);
   expect(sections(manager, false)).toEqual(["organization", "health"]);
   expect(
     sections({ role: "member", access: [], operator: false }, false),
@@ -312,7 +314,7 @@ test("UF-C7.3 an administrator sees Sandbox, Boards, Access, Manage as now, then
     "Sandbox: Build, Triggers, Test, History",
     "Boards: Company, All boards",
     "Access: Overview, People, Groups, Security",
-    "Manage: Organization, System health, Backup, Audit, Jobs, Updates & licensing",
+    "Manage: Organization, System health, Email, Backup, Audit, Jobs, Updates & licensing",
     "Files: Files, Import & export",
   ]);
   const files = getWorkspaceTools(

@@ -1,5 +1,10 @@
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
-import { authMeBody, isEventStream, isSidebarDepartmentRead } from "./test";
+import {
+  authMeBody,
+  isEventStream,
+  isSidebarDepartmentRead,
+  isSystemStatusRead,
+} from "./test";
 import { openedSheet } from "./settled";
 import { pageOf } from "../../helpers/pagination";
 import type { AccessSecurityEvent } from "../../../src/components/systems/access/adapters/security-events-api";
@@ -410,7 +415,8 @@ export async function mockAccessApi(
   };
 
   await page.route("**/api/**", async (route) => {
-    if (isEventStream(route)) return route.fallback();
+    if (isEventStream(route) || isSystemStatusRead(route))
+      return route.fallback();
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;

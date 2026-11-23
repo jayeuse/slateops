@@ -15,7 +15,9 @@ export default async function signIn(config: FullConfig) {
       });
       const page = await context.newPage();
       await page.goto("/login");
-      await page.getByLabel("Email", { exact: true }).fill(identity.email);
+      await page
+        .getByLabel("Email or username", { exact: true })
+        .fill(identity.email);
       await page.getByLabel("Password").fill(identity.password);
       await page.getByRole("button", { name: "Sign in" }).click();
       await expect(

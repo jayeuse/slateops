@@ -18,16 +18,25 @@ import { getSessionStatus, signIn } from "@/lib/auth-api";
 import { loginFailureCause, loginFailureMessage } from "@/lib/login-failure";
 import { useErrorText } from "@/lib/use-error-text";
 
+/** After a recovery ("password") or an accepted invitation ("invitation"). */
+const completedNotices = new Map([
+  ["password", "Password set. Sign in."],
+  [
+    "invitation",
+    "Your password is set. Sign in with the email or username from your invitation message.",
+  ],
+]);
+
 function PasswordSetNotice() {
   const search = useSearchParams();
-  return search.get("completed") === "password" ? (
-    <Alert variant="success">Password set. Sign in.</Alert>
-  ) : null;
+  const notice = completedNotices.get(search.get("completed") ?? "");
+  return notice ? <Alert variant="success">{notice}</Alert> : null;
 }
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  // An email address or a username, sent as typed (REQ-0024 addition 6).
+  const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [errorFailure, setError] = useErrorText();
   const error = errorFailure?.message ?? "";
@@ -56,7 +65,7 @@ export default function LoginPage() {
     setError("");
     setPending(true);
     try {
-      const session = await signIn(email, password);
+      const session = await signIn(login, password);
       if (session.setup_required) {
         setError("Finish setup using the link in your invitation email.");
         return;
@@ -100,17 +109,20 @@ export default function LoginPage() {
         )}
         <form className="flex flex-col gap-4" onSubmit={submit}>
           <FormField>
-            <FieldLabel htmlFor="email">Email</FieldLabel>
+            <FieldLabel htmlFor="login">Email or username</FieldLabel>
             <FieldControl
               render={
                 <Input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
+                  id="login"
+                  type="text"
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   required
                   className="min-h-11"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
+                  value={login}
+                  onChange={(event) => setLogin(event.target.value)}
                 />
               }
             />

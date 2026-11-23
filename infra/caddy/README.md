@@ -58,6 +58,14 @@ python3 infra/caddy/generate_config.py \
   --key-file <PRIVATE_KEY_FILE>
 ```
 
+The Windows installer adds `--trust-root <folder>` (and `--http-port`, default 80).
+It renders a port 80 site that serves, for the public host only, the trust page
+(`/trust`, rendered with Caddy `templates` from the page in the Caddy image) and the
+two public trust files from `<folder>`, and that redirects every other path and
+host to HTTPS. The HTTPS site gets the same three paths and `/trust/ok` (204, no
+body), before every other route. The folder must hold only the public files; the
+generator refuses one that equals, contains or lies inside the certificate folder.
+
 `--listen-address` defaults to `0.0.0.0`. The generator accepts only literal IP
 bind addresses, valid hostnames/IP public and upstream hosts, valid ports, and
 absolute certificate paths without control characters or Caddy interpolation braces.

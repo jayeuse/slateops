@@ -9,6 +9,7 @@ const routes = [
   "/setup",
   "/auth/setup",
   "/auth/recovery",
+  "/auth/change-password",
   "/openview",
   "/sandbox",
   "/boards",

@@ -28,6 +28,7 @@ from app.systems.access.identity.session_revocation import revoke_user_sessions
 from app.systems.access.users.acceptance import accept_verified_invitation
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.eligibility import is_active_account
+from app.systems.access.users.invitation_provider import INVITATION_LIFETIME
 from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.manage.audit import security_events
 from app.systems.manage.audit.models import SecurityEventOutcome
@@ -209,6 +210,7 @@ def complete_recovery(
         password_updated = True
         stage = "local_commit"
         revoke_user_sessions(db, local.id, except_session_id=None)
+        local.password_change_required_at = None  # a password of their own (DEC-0042)
         security_events.append_security_event(
             db,
             _action_event(
@@ -278,6 +280,7 @@ def complete_invitation(
             or local.status != UserStatus.PENDING.value
             or membership is None
             or membership.invitation_sent_at is None
+            or membership.invitation_sent_at <= utc_now() - INVITATION_LIFETIME
             or membership.provider_invitation_operation_id is None
             or not is_identity_eligible(local, membership)
             or provider_user.app_metadata.get("slateops_user_id") != str(local.id)
@@ -421,6 +424,7 @@ def change_password(
             raise InvalidCredentials("Invalid credentials")
         stage = "local_commit"
         revoke_user_sessions(db, user.id, except_session_id=current_session_id)
+        locked.password_change_required_at = None  # ends a temporary password (DEC-0042)
         if bucket is not None:
             db.delete(bucket)
         if enforce_rate_limit:

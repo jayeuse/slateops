@@ -238,6 +238,12 @@ class ExpireCommand(BridgeCommand):
     expired_at: AwareDatetime
 
 
+class PolicyDefaultCommand(BridgeCommand):
+    """The installer writes the default policy once (decision H2); never replaces one."""
+
+    op: Literal["policy_default"]
+
+
 class RestoreFinalizedMarker(StrictRequest):
     format_version: Literal[3]
     snapshot_id: str = Field(pattern=r"^[0-9a-f]{64}$")

@@ -16,6 +16,7 @@ import {
   listAccessModules,
   listAccessUsers,
   listAccessUserSessions,
+  newAccessInvitationLink,
   replaceAccessGroupAccess,
   replaceAccessGroupMembers,
   resendAccessInvitation,
@@ -183,6 +184,63 @@ test("invitations send role and groups and never a password", async () => {
       }),
     ).rejects.toThrow();
     expect(mock.requests).toHaveLength(3);
+  } finally {
+    mock.restore();
+    restoreCookie();
+  }
+});
+
+test("AC-L-UI an invitation by link sends delivery link and reads its one-time link; a new link posts to the link route", async () => {
+  const restoreCookie = installCsrfCookie("invite-token");
+  const link =
+    "https://slateops.example/auth/setup#token_hash=abc123&type=invite";
+  const mock = installFetch(() =>
+    Response.json(
+      { user, delivery: "link", invitation_url: link },
+      { status: 201 },
+    ),
+  );
+  try {
+    await expect(
+      inviteAccessUser({
+        email: "ana@example.com",
+        username: "ana",
+        delivery: "link",
+      }),
+    ).resolves.toEqual({ user, delivery: "link", invitation_url: link });
+    await expect(newAccessInvitationLink(ids.guest)).resolves.toEqual({
+      user,
+      delivery: "link",
+      invitation_url: link,
+    });
+    expect(sent(mock.requests)).toEqual([
+      ["/api/auth/invitations", "POST"],
+      [`/api/auth/invitations/${ids.guest}/link`, "POST"],
+    ]);
+    expect(JSON.parse(String(mock.requests[0]?.init?.body))).toEqual({
+      email: "ana@example.com",
+      username: "ana",
+      delivery: "link",
+    });
+    expect(JSON.parse(String(mock.requests[1]?.init?.body))).toEqual({});
+  } finally {
+    mock.restore();
+    restoreCookie();
+  }
+});
+
+test("AC-L-UI an email invitation answer with a null link still parses", async () => {
+  const restoreCookie = installCsrfCookie("invite-token");
+  const mock = installFetch(() =>
+    Response.json(
+      { user, delivery: "email", invitation_url: null },
+      { status: 201 },
+    ),
+  );
+  try {
+    await expect(
+      inviteAccessUser({ email: "ana@example.com", username: "ana" }),
+    ).resolves.toEqual({ user, delivery: "email", invitation_url: null });
   } finally {
     mock.restore();
     restoreCookie();

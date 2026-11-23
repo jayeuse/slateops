@@ -145,7 +145,9 @@ async function signInWith(
     sandboxAccess,
   );
   await page.goto("/login");
-  await page.getByLabel("Email").fill("owner@example.test");
+  await page
+    .getByLabel("Email or username", { exact: true })
+    .fill("owner@example.test");
   await page.getByLabel("Password").fill("correct horse battery");
   await page.getByRole("button", { name: "Sign in" }).click();
   return requests;
@@ -164,6 +166,25 @@ test("a first sign-in with nothing published opens the Sandbox", async ({
   // The form posts the Email and Password fields and nothing else.
   expect(loginRequests).toEqual([
     { email: "owner@example.test", password: "correct horse battery" },
+  ]);
+});
+
+test("AC-U2 a person signs in with a username, sent as typed", async ({
+  page,
+}) => {
+  const { loginRequests } = await installDestination(page, "none");
+  await page.goto("/login");
+  const login = page.getByLabel("Email or username", { exact: true });
+  // Password managers fill it; a phone keyboard leaves the case alone.
+  await expect(login).toHaveAttribute("autocomplete", "username");
+  await expect(login).toHaveAttribute("autocapitalize", "none");
+  await login.fill("TestAdmin");
+  await page.getByLabel("Password").fill("correct horse battery");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page).toHaveURL(/\/sandbox$/);
+  // An email field would refuse a name without "@" and send nothing.
+  expect(loginRequests).toEqual([
+    { email: "TestAdmin", password: "correct horse battery" },
   ]);
 });
 
@@ -333,13 +354,13 @@ const loginFailures = [
     label: "wrong credentials",
     status: 401,
     requestId: "01a1da34-2758-7b23-9d1b-e82349d396a7",
-    message: "Invalid email or password.",
+    message: "Wrong email, username or password.",
   },
   {
     label: "an email the server refuses as malformed",
     status: 422,
     requestId: "01a1da34-2745-7745-b02b-372a88a27619",
-    message: "Invalid email or password.",
+    message: "Wrong email, username or password.",
   },
   {
     label: "rate limit with a delay rounded up to minutes",
@@ -414,15 +435,17 @@ for (const failure of loginFailures) {
           }),
     );
     await page.goto("/login");
-    await page.getByLabel("Email", { exact: true }).fill("owner@example.test");
+    await page
+      .getByLabel("Email or username", { exact: true })
+      .fill("owner@example.test");
     await page.getByLabel("Password").fill("correct horse battery");
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page.getByRole("main").getByRole("alert")).toHaveText(
       failure.message,
     );
-    await expect(page.getByLabel("Email", { exact: true })).toHaveValue(
-      "owner@example.test",
-    );
+    await expect(
+      page.getByLabel("Email or username", { exact: true }),
+    ).toHaveValue("owner@example.test");
     await expect(page.getByLabel("Password")).toHaveValue(
       "correct horse battery",
     );
@@ -470,7 +493,9 @@ for (const entry of ["/", "/login"] as const) {
       await expect(
         page.getByRole("button", { name: "Sign in", exact: true }),
       ).toBeHidden();
-      await expect(page.getByLabel("Email", { exact: true })).toBeHidden();
+      await expect(
+        page.getByLabel("Email or username", { exact: true }),
+      ).toBeHidden();
       await session.entered;
       session.release();
       await destination.entered;
@@ -510,7 +535,9 @@ for (const entry of ["/", "/login"] as const) {
           page.getByRole("link", { name: "Open workspace", exact: true }),
         ).toBeVisible();
       } else {
-        await expect(page.getByLabel("Email", { exact: true })).toBeVisible();
+        await expect(
+          page.getByLabel("Email or username", { exact: true }),
+        ).toBeVisible();
         await expect(
           page.getByRole("button", { name: "Sign in", exact: true }),
         ).toBeEnabled();

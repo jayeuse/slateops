@@ -11,6 +11,7 @@ import app.systems.access.users.service as user_service
 from app.core.integrations.supabase_auth import ProviderUser, SupabaseAuthUnavailable
 from app.systems.access.identity.models import IdentityMfaObservation
 from app.systems.access.policy.models import GroupMember
+from app.systems.access.users import email_setup
 from app.systems.access.users.coordination import (
     InvitationConflict,
     InvitationError,
@@ -217,6 +218,51 @@ def _provider(sent_to: list[str], *, email: str | None = None, operation: str | 
     provider.admin_create_invitation_user.side_effect = create
     provider.admin_send_invitation.side_effect = send
     return provider
+
+
+def test_ac_b3_a_new_person_is_not_invited_while_email_is_not_set_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(email_setup, "email_configured", lambda: False)
+    db, admin = _actor_session()
+    sent_to: list[str] = []
+    provider = _provider(sent_to)
+
+    with pytest.raises(email_setup.EmailNotConfigured):
+        user_service.invite_user(db, _invitation(), actor_id=admin.id, client=provider)
+
+    db.commit.assert_not_called()
+    db.rollback.assert_called_once()
+    provider.admin_create_invitation_user.assert_not_called()
+    assert sent_to == []
+
+
+def test_ac_b3_an_existing_account_is_invited_while_email_is_not_set_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inviting an existing account sends no email, so it needs no email setup."""
+
+    monkeypatch.setattr(email_setup, "email_configured", lambda: False)
+    existing = local_user()[0]
+    existing.email, existing.supabase_user_id = "person@example.com", uuid7()
+    admin, membership = local_user(UserRole.ADMIN)
+    db = Mock(spec=Session)
+    # The fresh administrator check, the email-or-username lookup, no earlier membership in
+    # this organization, and no pending invitation elsewhere.
+    reads: list[User | None] = [admin, existing, None, None]
+    db.scalar.side_effect = lambda _statement: reads.pop(0)
+    db.dirty = set()
+    db.scalars.return_value.all.side_effect = [[membership], []]
+    db.get.return_value = None
+    monkeypatch.setattr(user_service, "get_user", lambda _db, user_id: existing)
+    provider = _provider([])
+
+    result = user_service.invite_user(db, _invitation(), actor_id=admin.id, client=provider)
+
+    assert result is existing
+    db.commit.assert_called_once()
+    provider.admin_create_invitation_user.assert_not_called()
+    provider.admin_send_invitation.assert_not_called()
 
 
 def test_an_invitation_reserves_the_profile_its_observation_and_its_memberships() -> None:

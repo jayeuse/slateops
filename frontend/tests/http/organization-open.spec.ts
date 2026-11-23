@@ -346,7 +346,9 @@ test("UF-C13.3 a 401 on the automatic open follows the session check to the sign
   expect(await chooserSeen(page)).toBe(false);
   expect(await tabOrganization(page)).toBeNull();
 
-  await page.getByLabel("Email", { exact: true }).fill("member@example.test");
+  await page
+    .getByLabel("Email or username", { exact: true })
+    .fill("member@example.test");
   await page.getByLabel("Password").fill("correct horse battery");
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(

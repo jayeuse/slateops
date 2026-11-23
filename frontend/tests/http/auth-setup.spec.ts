@@ -51,16 +51,27 @@ test("invitation setup clears the fragment and waits for explicit submission", a
   await expect(page).toHaveURL(/\/auth\/setup$/);
   await expect(page.getByLabel("Password", { exact: true })).toBeEnabled();
   expect(requests).toHaveLength(0);
+  // AC-I1: the line under the headline says what the password is for; the
+  // link alone cannot name the person before it is used.
+  await expect(
+    page.getByRole("heading", { name: "Set your password" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Choose your password to join Slate Operations.", {
+      exact: true,
+    }),
+  ).toBeVisible();
 
   await page
     .getByLabel("Password", { exact: true })
     .fill("a long invited password");
   await page.getByLabel("Confirm password").fill("a long invited password");
   await page.getByRole("button", { name: "Set password" }).click();
-  await expect(page).toHaveURL(/\/login\?completed=password$/);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Password set. Sign in." }),
-  ).toBeVisible();
+  // D1 (REQ-0024 addition 5): the sign-in page says which names to use.
+  await expect(page).toHaveURL(/\/login\?completed=invitation$/);
+  await expect(page.getByRole("status")).toHaveText(
+    "Your password is set. Sign in with the email or username from your invitation message.",
+  );
   expect(requests).toEqual([
     { token_hash: "invite-proof", password: "a long invited password" },
   ]);
@@ -102,7 +113,7 @@ test("a new invitation link clears an expired-link failure before retry", async 
     .fill("fresh password choice");
   await page.getByLabel("Confirm password").fill("fresh password choice");
   await page.getByRole("button", { name: "Set password" }).click();
-  await expect(page).toHaveURL(/\/login\?completed=password$/);
+  await expect(page).toHaveURL(/\/login\?completed=invitation$/);
   expect(submittedTokens).toEqual(["expired", "fresh"]);
 });
 
@@ -152,7 +163,7 @@ test("an old invitation response cannot replace a newer link", async ({
       .fill("second password choice");
     await page.getByLabel("Confirm password").fill("second password choice");
     await page.getByRole("button", { name: "Set password" }).click();
-    await expect(page).toHaveURL(/\/login\?completed=password$/);
+    await expect(page).toHaveURL(/\/login\?completed=invitation$/);
     expect(submittedTokens).toEqual(["old", "new"]);
   } finally {
     oldResponse.release();
@@ -237,7 +248,9 @@ test("login accepts email and does not send a username field", async ({
     });
   });
   await page.goto("/login");
-  await page.getByLabel("Email", { exact: true }).fill("member@example.test");
+  await page
+    .getByLabel("Email or username", { exact: true })
+    .fill("member@example.test");
   await page.getByLabel("Password").fill("a long login password");
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/openview$/);

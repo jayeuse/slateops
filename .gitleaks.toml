@@ -20,4 +20,8 @@ regexes = [
   '''^internal_[a-z]+_\d{2}$''',
   # Fixed temporary password in RBAC route tests.
   '''^temporary-secret-123$''',
+  # Public OpenPGP fingerprints of the Debian 13 signing keys in packaging/linux-image/pins.env.
+  '''^04B54C3CDCA79751B16BC6B5225629DF75B188BD$''',
+  '''^5E04A1E3223A19A20706E20F9904613D4CCE68C6$''',
+  '''^41587F7DB8C774BCCF131416762F67A0B2C39DE4$''',
 ]

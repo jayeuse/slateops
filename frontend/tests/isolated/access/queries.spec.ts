@@ -103,6 +103,7 @@ test("confirmed commands mark only the reads they change as stale", async () => 
     currentOrganization: organization,
     organizationOwner: false,
     operator: false,
+    passwordChangeRequired: false,
   });
   const stale = () =>
     queries

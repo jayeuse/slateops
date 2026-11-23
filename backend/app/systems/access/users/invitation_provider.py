@@ -1,14 +1,24 @@
 """Resolve an exact provider identity for a pending local invitation."""
 
+from collections.abc import Callable
+from datetime import timedelta
+
 from app.core.integrations.supabase_auth import (
     ProviderUser,
     ProviderUserNotFound,
     SupabaseAuthClient,
     SupabaseAuthUnavailable,
 )
+from app.systems.access.users import email_setup
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import Membership, User
 from app.systems.manage.health import signals
+
+# GoTrue's invitation expiry (``GOTRUE_MAILER_OTP_EXP``, unset: 86400 s); completion checks
+# it locally as well (DEC-0042 AC-L2).
+INVITATION_LIFETIME = timedelta(hours=24)
+# Delivers a provider invitation for an email: the email itself, or an invitation link.
+Sender = Callable[[SupabaseAuthClient, str], ProviderUser]
 
 
 def send_invitation_email(provider: SupabaseAuthClient, email: str) -> ProviderUser:
@@ -52,7 +62,7 @@ def _find_or_create(
 
 
 def prepare_invitation_user(
-    provider: SupabaseAuthClient, profile: User, membership: Membership
+    provider: SupabaseAuthClient, profile: User, membership: Membership, *, email: bool = True
 ) -> ProviderUser:
     """Keep the old local binding until an owned replacement is sent and committed.
 
@@ -61,6 +71,8 @@ def prepare_invitation_user(
     so an explicit retry can inspect the provider's authoritative state.
     """
 
+    if email:  # before any provider change (DEC-0041); a link needs no email (DEC-0042)
+        email_setup.require_email_configured()
     old_id = profile.supabase_user_id
     if old_id is not None:
         try:

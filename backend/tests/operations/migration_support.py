@@ -18,6 +18,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import Engine, text
 
 from tests.conftest import _guard_integration_database
 
@@ -26,6 +27,26 @@ _SCRIPT_LOCATION = str(Path(__file__).resolve().parents[2] / "migrations")
 _LOG_FORMAT = "%(levelname)-5.5s [%(name)s] %(message)s"
 _REVISION_COMMANDS = {"upgrade": command.upgrade, "downgrade": command.downgrade}
 
+
+# The current `User` model maps this column from revision 4f8324236e1e on. A test that runs
+# application code below that revision adds it first and drops it before an upgrade adds it.
+_LATER_USER_COLUMN = "password_change_required_at"
+
+
+def add_later_user_column(owner: Engine) -> None:
+    """Let the current `User` model load rows at a revision below 4f8324236e1e."""
+    with owner.begin() as connection:
+        connection.execute(
+            text(f"ALTER TABLE public.users ADD COLUMN {_LATER_USER_COLUMN} timestamptz")
+        )
+
+
+def drop_later_user_column(owner: Engine) -> None:
+    """Undo `add_later_user_column` before the upgrade through 4f8324236e1e adds it."""
+    with owner.begin() as connection:
+        connection.execute(
+            text(f"ALTER TABLE public.users DROP COLUMN IF EXISTS {_LATER_USER_COLUMN}")
+        )
 
 def guarded_migration_environment() -> dict[str, str]:
     runtime_url = os.getenv("TEST_DATABASE_URL", "")

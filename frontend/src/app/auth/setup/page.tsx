@@ -164,7 +164,7 @@ export default function AuthSetupPage() {
     try {
       await completeInvitation(invitationToken, password);
       if (submittedVersion !== invitationVersion.current) return;
-      router.replace("/login?completed=password");
+      router.replace("/login?completed=invitation");
     } catch (error) {
       if (submittedVersion !== invitationVersion.current) return;
       const kind = classifySetupFailure(error);
@@ -210,7 +210,7 @@ export default function AuthSetupPage() {
             <p className="text-muted-foreground mt-2 text-sm">
               {account.status === "signed-in"
                 ? "You are signed in. Join an organization that invited this account."
-                : "Finish setting up your invited Slate Operations account."}
+                : "Choose your password to join Slate Operations."}
             </p>
           </div>
           {account.status === "signed-in" ? (

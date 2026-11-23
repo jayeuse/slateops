@@ -5,11 +5,12 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from operations.backups.host import SERVICES, Host, Json, RunnerError, physical_archive
+from operations.backups.host import Host, Json, RunnerError, physical_archive
 
 
 def admit_docker(host: Host, values: dict[str, str]) -> None:
     physical = physical_archive()
+    services = host.config.services
     all_containers = host.inventory()
     host.containers = [
         item
@@ -21,7 +22,7 @@ def admit_docker(host: Host, values: dict[str, str]) -> None:
         labels = host.labels(item)
         service = labels.get("com.docker.compose.service", "")
         if (
-            service not in SERVICES
+            service not in services
             or service in by_service
             or labels.get("com.docker.compose.project.working_dir") != str(host.config.compose_root)
             or item.get("State", {}).get("Status") not in {"running", "exited"}
@@ -30,7 +31,7 @@ def admit_docker(host: Host, values: dict[str, str]) -> None:
         ):
             raise RunnerError("admission_failed")
         by_service[service] = item
-    if set(by_service) != SERVICES:
+    if set(by_service) != services:
         raise RunnerError("admission_failed")
     actual_env = by_service["api"].get("Config", {}).get("Env")
     keys = (
@@ -58,6 +59,8 @@ def admit_docker(host: Host, values: dict[str, str]) -> None:
         ("provider-volume-init", "supabase-studio-snippets", "/app/snippets"),
         ("caddy", "caddy-data", "/data"),
     ):
+        if service not in services:
+            continue
         mounted = [
             mount
             for mount in by_service[service].get("Mounts", [])
@@ -71,12 +74,11 @@ def admit_docker(host: Host, values: dict[str, str]) -> None:
             raise RunnerError("admission_failed")
     images = physical._compose_images(host.config, host._physical_command)
     if (
-        set(images) != SERVICES
+        set(images) != services
         or any(item["Config"].get("Image") != images[name] for name, item in by_service.items())
         or any(
             "@sha256:" not in images[name]
-            for name in SERVICES
-            - {"provider-volume-init", "api", "caddy"}
+            for name in services - {"provider-volume-init", "api", "caddy"}
         )
     ):
         raise RunnerError("admission_failed")

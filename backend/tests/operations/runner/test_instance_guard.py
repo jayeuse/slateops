@@ -406,6 +406,44 @@ def test_process_target_rejects_live_volume_not_mounted_by_attested_container(
         )
 
 
+DOCKER_HUB_DB_IMAGE = (
+    "supabase/postgres:17.11.0.004@sha256:"
+    "6058a6759ab9268cff8ee70641d61f1bd75953316281b76427cf5a6b4db2eafc"
+)
+
+
+def test_api_refuses_an_attestation_with_the_docker_hub_database_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Only the dev.py preflight admits the old name (plan W5b-10); the API stays exact.
+    monkeypatch.setattr(instance, "REPOSITORY_ROOT", tmp_path)
+    attestation = write_attestation(tmp_path, "slateops-boards-a1b2c3d4")
+    payload = json.loads(attestation.read_text(encoding="utf-8"))
+    payload["ownership"]["image"] = DOCKER_HUB_DB_IMAGE
+    attestation.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(InstanceTargetError, match="ownership"):
+        load_instance_target(_environment())
+
+
+def test_api_refuses_a_live_container_with_the_docker_hub_database_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(instance, "REPOSITORY_ROOT", tmp_path)
+    write_attestation(tmp_path, "slateops-boards-a1b2c3d4")
+    container, network, volume = _docker_ownership_facts()
+    container["Config"]["Image"] = DOCKER_HUB_DB_IMAGE
+    inspected = iter(([container], [network], [volume]))
+    monkeypatch.setattr(instance, "_docker_json", lambda _arguments: next(inspected))
+
+    with pytest.raises(InstanceTargetError, match="Live Docker ownership"):
+        instance_target_for_process(
+            "postgresql+psycopg://slateops_runtime:secret@127.0.0.1:55432/postgres",
+            "slateops_runtime",
+            {**_environment(), "ENVIRONMENT": "development"},
+        )
+
+
 def test_production_target_is_explicit_and_does_not_require_local_docker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

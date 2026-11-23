@@ -182,6 +182,14 @@ def test_host_only_routes_are_required_only_for_host_acceptance(tmp_path: Path) 
         ),
         (("POST", "/api/notifications/read-all"), "/api/notifications/read-all"),
         (
+            ("POST", "/api/users/{user_id}/temporary-password"),
+            "/api/users/" + _PATH_ID + "/temporary-password",
+        ),
+        (
+            ("POST", "/api/auth/invitations/{user_id}/link"),
+            "/api/auth/invitations/" + _PATH_ID + "/link",
+        ),
+        (
             ("POST", "/api/backups/exports/{export_id}/download-admission"),
             "/api/backups/exports/" + _PATH_ID + "/download-admission",
         ),

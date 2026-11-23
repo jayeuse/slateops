@@ -17,7 +17,9 @@ for (const viewport of [desktop, phone]) {
     await signedOut(page);
     await page.setViewportSize(viewport);
     await page.goto("/login");
-    await expect(page.getByLabel("Email", { exact: true })).toBeVisible();
+    await expect(
+      page.getByLabel("Email or username", { exact: true }),
+    ).toBeVisible();
     const titles = page.getByRole("heading", { level: 1 });
     await expect(titles).toHaveCount(1);
     await expect(titles).toHaveText("Welcome back");
@@ -42,7 +44,8 @@ const routes = [
   },
   {
     path: "/login",
-    settled: (page: Page) => page.getByLabel("Email", { exact: true }),
+    settled: (page: Page) =>
+      page.getByLabel("Email or username", { exact: true }),
   },
   {
     path: "/auth/recovery",

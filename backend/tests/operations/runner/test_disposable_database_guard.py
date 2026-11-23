@@ -53,6 +53,24 @@ def test_runner_resource_inventory_matches_provider_compose() -> None:
     assert declared_binds == guarded_binds
 
 
+def test_provider_images_come_from_the_h9_registries() -> None:
+    # H9 (APR-0011): no provider image counts against a Docker Hub pull limit, except
+    # Envoy (Sponsored Open Source) and the development-only Mailpit.
+    repositories = {service: image.partition(":")[0] for service, image in PROVIDER_IMAGES.items()}
+    assert repositories == {
+        "db": "ghcr.io/supabase/postgres",
+        "auth": "ghcr.io/supabase/gotrue",
+        "imgproxy": "ghcr.io/imgproxy/imgproxy",
+        "provider-volume-init": "ghcr.io/supabase/storage-api",
+        "storage": "ghcr.io/supabase/storage-api",
+        "realtime": "ghcr.io/supabase/realtime",
+        "meta": "ghcr.io/supabase/postgres-meta",
+        "studio": "ghcr.io/supabase/studio",
+        "api-gw": "envoyproxy/envoy",
+        "mailpit": "axllent/mailpit",
+    }
+
+
 @pytest.fixture
 def disposable_target(tmp_path, monkeypatch):
     url = "postgresql+psycopg://slateops_runtime:test-only-placeholder@127.0.0.1:49152/postgres"

@@ -102,7 +102,7 @@ def test_s2_c1_c10_every_role_reads_the_status_and_no_audit_or_security_row_is_w
         assert [part["status"] for part in body["parts"]] == [
             "working", "working", "working", "set_up",
         ]
-        assert body["version"] == "0.1.0"
+        assert body["version"] == "0.0.0+dev"
         assert body["checked_at"].endswith("Z")
     assert refused.status_code == 403
     assert refused.json() == {

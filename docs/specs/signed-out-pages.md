@@ -161,9 +161,9 @@ The Still Page Rule is for workspace pages; signed-out pages are not still pages
 
 ## Words
 
-Kept (tests pin most of them): "Welcome back", "Sign in to continue to your workspace.", "Email", "Password", "Forgot password?", "Sign in", "Signing in…", "First deployment?", "Read the setup guide", "Password set. Sign in.", "Finish setup using the link in your invitation email.", "Reset password", "Choose a new password", both recovery descriptions, "Preparing password recovery…", "Request recovery", "Requesting…", "Saving…", "New password", "Confirm new password", the requirement line and the field errors, both recovery notices, "Remembered your password?", "Return to sign in", and "Open workspace".
+Kept (tests pin most of them): "Welcome back", "Sign in to continue to your workspace.", "Email or username" (REQ-0024 addition 6; was "Email"), "Password", "Forgot password?", "Sign in", "Signing in…", "First deployment?", "Read the setup guide", "Password set. Sign in.", "Finish setup using the link in your invitation email.", "Reset password", "Choose a new password", both recovery descriptions, "Preparing password recovery…", "Request recovery", "Requesting…", "Saving…", "New password", "Confirm new password", the requirement line and the field errors, both recovery notices, "Remembered your password?", "Return to sign in", and "Open workspace".
 
-**Error message.** "Invalid email or password." (commit `296c890f`): **confirmed**. It is the same for a wrong email and a wrong password, so it does not tell anyone which accounts exist. It is short, it ends with a period like the other notices, and it shows no reference because the person can fix it alone.
+**Error message.** "Wrong email, username or password." (REQ-0024 addition 6; was "Invalid email or password.", commit `296c890f`): **confirmed**. It is the same for a wrong email and a wrong password, so it does not tell anyone which accounts exist. It is short, it ends with a period like the other notices, and it shows no reference because the person can fix it alone.
 
 **Home words (Human Owner, 2026-11-14, "Product story").** Exact words; do not edit them.
 
@@ -197,7 +197,7 @@ Changed or removed with the restyle (each needs no new word):
 | --- | --- | --- |
 | No sign-in flash on `/` and `/login` for a signed-in visitor | `http/auth-sign-in-destination.spec.ts` "an authenticated visitor to … waits …" | Home: `actionsHidden` hides the header "Sign in", and the hero CTA stays `invisible` until the check ends. Sign-in: `contentHidden` hides Email and Sign in. `main` stays visible. |
 | Public actions after an anonymous or failed check | same file, "keeps its public actions …" | The page clears `actionsHidden` and `contentHidden` in both paths, as now. |
-| The error alert inside `main`; "Invalid email or password." | same file, "login explains …" | The `Alert` sits in the card, inside `main`; the frame adds no alert (SO-F7). |
+| The error alert inside `main`; "Wrong email, username or password." | same file, "login explains …" | The `Alert` sits in the card, inside `main`; the frame adds no alert (SO-F7). |
 | Setup guide link only on sign-in | `http/landing-page.spec.ts` (UF-C13.4) | Home has no `/setup` link; "First deployment?" and the link share one `<p>` (SO-P7). The test also checks the old step "Join" and its sentence; those words are gone, so it must check the invitation line "Staff join by invitation from their administrator." instead. The criterion does not change. |
 | Recovery request and completion, one status | `http/auth-setup.spec.ts`, `fullstack/auth-session.spec.ts` | Words kept; the frame adds no `role="status"`. |
 | One "sign in" link on email change | `http/auth-email-change.spec.ts` (`/sign in/i`) | No header action on that page (SO-F4). |

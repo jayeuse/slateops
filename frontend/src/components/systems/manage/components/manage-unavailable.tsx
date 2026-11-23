@@ -8,6 +8,7 @@ import type { WorkspaceNavigationItem } from "@/components/workspace-navigation"
 type ManageSectionTitle =
   | "Organization"
   | "System health"
+  | "Email"
   | "Audit"
   | "Backup"
   | "Jobs"

@@ -21,6 +21,7 @@ import { afterAccessUserChange } from "../adapters/access-queries";
 import { peopleErrorMessage, personName, personState } from "../helpers/people";
 import {
   deleteAccessUser,
+  newAccessInvitationLink,
   reconcileAccessInvitation,
   resendAccessInvitation,
   restoreAccessUser,
@@ -31,10 +32,20 @@ import {
 import { useAccessVerifying, verifyingReason } from "../state/draft-navigation";
 import { ActionError } from "./editor-conflicts";
 import { useErrorText } from "@/lib/use-error-text";
+import { OneTimeSecret } from "./one-time-secret";
+import {
+  InvitationMessageCopy,
+  useInvitingOrganizationName,
+} from "./invitation-message-copy";
+import {
+  INVITATION_LINK_LIFETIME,
+  invitationMessage,
+} from "../helpers/invitation-message";
 
 type AccountAction =
   | "reconcile"
   | "resend"
+  | "link"
   | "revoke"
   | "disable"
   | "enable"
@@ -73,6 +84,16 @@ function actionCopy(action: AccountAction, person: AccessUser): ActionCopy {
         confirm: "Resend invitation",
         pending: "Sending…",
         done: "Invitation sent again",
+        destructive: false,
+      };
+    case "link":
+      return {
+        button: "Copy a new link",
+        title: "Make a new invitation link?",
+        description: `The earlier link or invitation email for ${person.email} stops working. The new link works once, for 24 hours.`,
+        confirm: "Make new link",
+        pending: "Making…",
+        done: "New invitation link made",
         destructive: false,
       };
     case "revoke":
@@ -137,6 +158,8 @@ function run(action: AccountAction, person: AccessUser): Promise<unknown> {
       return reconcileAccessInvitation(person.id);
     case "resend":
       return resendAccessInvitation(person.id);
+    case "link":
+      return newAccessInvitationLink(person.id);
     case "revoke":
       return revokeAccessInvitation(person.id);
     case "disable":
@@ -156,7 +179,7 @@ function availableActions(person: AccessUser, self: boolean): AccountAction[] {
   if (person.status === "pending")
     return person.invitation_sent_at === null
       ? ["reconcile"]
-      : ["resend", "revoke"];
+      : ["resend", "link", "revoke"];
   if (self) return [];
   return person.status === "disabled"
     ? ["enable", "delete"]
@@ -164,7 +187,7 @@ function availableActions(person: AccessUser, self: boolean): AccountAction[] {
 }
 
 /** Sending an invitation is the pending person's next step, so it stays in view. */
-const inviteActions: readonly AccountAction[] = ["reconcile", "resend"];
+const inviteActions: readonly AccountAction[] = ["reconcile", "resend", "link"];
 
 type FocusTarget = readonly (AccountAction | "invitation")[];
 
@@ -172,6 +195,7 @@ type FocusTarget = readonly (AccountAction | "invitation")[];
 const focusAfter: Record<AccountAction, FocusTarget> = {
   reconcile: ["resend"],
   resend: ["resend"],
+  link: ["link"],
   revoke: ["invitation"],
   disable: ["enable"],
   enable: ["disable"],
@@ -205,6 +229,9 @@ export function PersonAccount({
   const [errorFailure, setError] = useErrorText();
   const error = errorFailure?.message ?? "";
   const [now] = useState(() => Date.now());
+  // The new invitation link, shown once in the dialog until it closes.
+  const [link, setLink] = useState<string | null>(null);
+  const organizationName = useInvitingOrganizationName();
   const mounted = useRef(false);
   const pendingRef = useRef(false);
   const buttons = useRef(new Map<AccountAction, HTMLButtonElement>());
@@ -277,7 +304,21 @@ export function PersonAccount({
     setPending(true);
     setError("");
     try {
-      await run(selected, person);
+      const result = await run(selected, person);
+      if (
+        selected === "link" &&
+        typeof result === "object" &&
+        result !== null &&
+        "invitation_url" in result &&
+        typeof result.invitation_url === "string"
+      ) {
+        await afterAccessUserChange(client);
+        if (!mounted.current) return;
+        // The dialog stays open on the link; Done puts focus back here.
+        setLink(result.invitation_url);
+        focusTarget.current = focusAfter[selected];
+        return;
+      }
       if (selected === "delete") {
         // The person leaves the directory, so the sheet closes and the
         // notice carries Undo (the Four Moments Rule).
@@ -313,7 +354,13 @@ export function PersonAccount({
   function open(item: AccountAction) {
     focusTarget.current = null;
     setError("");
+    setLink(null);
     setAction(item);
+  }
+
+  function closeDialog() {
+    setLink(null);
+    setAction(null);
   }
 
   const summary = person.is_deleted
@@ -404,38 +451,82 @@ export function PersonAccount({
 
       <AlertDialog
         open={action !== null}
-        onOpenChange={(next) => !next && !pending && setAction(null)}
+        onOpenChange={(next) => !next && !pending && closeDialog()}
       >
         <AlertDialogContent
           className="access-ui slim-ui"
           finalFocus={() => focusTarget.current === null}
         >
-          <AlertDialogHeader>
-            <AlertDialogTitle>{copy?.title}</AlertDialogTitle>
-            <AlertDialogDescription>{copy?.description}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <ActionError message={error} reference={errorFailure?.reference} />
-          <AlertDialogFooter>
-            <Button
-              variant="ghost"
-              className="min-h-11"
-              disabled={pending}
-              onClick={() => setAction(null)}
-            >
-              Cancel
-            </Button>
-            <DisabledReason reason={verifying ? verifyingReason : null}>
-              <Button
-                variant={copy?.destructive ? "destructive" : "default"}
-                className="min-h-11"
-                pending={pending}
-                pendingLabel={copy?.pending}
-                onClick={() => void confirm()}
+          {link ? (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Send this invitation link</AlertDialogTitle>
+                <AlertDialogDescription>
+                  The earlier link or invitation email no longer works.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <InvitationMessageCopy
+                message={invitationMessage({
+                  organization: organizationName,
+                  link,
+                  email: person.email,
+                  username: person.username,
+                })}
+              />
+              <OneTimeSecret
+                label={`Invitation link for ${person.email}`}
+                value={link}
+                copyLabel="Copy link"
               >
-                {copy?.confirm}
-              </Button>
-            </DisabledReason>
-          </AlertDialogFooter>
+                It works once, for {INVITATION_LINK_LIFETIME}, and shows only
+                now. Send it to them by any channel.
+              </OneTimeSecret>
+              <AlertDialogFooter>
+                {/* The copy above is the one filled button (parent D4). */}
+                <Button
+                  variant="secondary"
+                  className="min-h-11"
+                  onClick={closeDialog}
+                >
+                  Close
+                </Button>
+              </AlertDialogFooter>
+            </>
+          ) : (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{copy?.title}</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {copy?.description}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <ActionError
+                message={error}
+                reference={errorFailure?.reference}
+              />
+              <AlertDialogFooter>
+                <Button
+                  variant="ghost"
+                  className="min-h-11"
+                  disabled={pending}
+                  onClick={() => setAction(null)}
+                >
+                  Cancel
+                </Button>
+                <DisabledReason reason={verifying ? verifyingReason : null}>
+                  <Button
+                    variant={copy?.destructive ? "destructive" : "default"}
+                    className="min-h-11"
+                    pending={pending}
+                    pendingLabel={copy?.pending}
+                    onClick={() => void confirm()}
+                  >
+                    {copy?.confirm}
+                  </Button>
+                </DisabledReason>
+              </AlertDialogFooter>
+            </>
+          )}
         </AlertDialogContent>
       </AlertDialog>
     </>

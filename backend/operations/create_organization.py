@@ -66,20 +66,26 @@ def _username_from_email(email: str) -> str:
     return re.sub(r"^_+|_+$", "", re.sub(r"[^a-zA-Z0-9_-]+", "_", local))[:100].lower()
 
 
+def validate_identity(name: str, slug: str) -> None:
+    """The organization name and slug rule; raise ``ValueError`` when either breaks it."""
+    if not name.strip() or len(name.strip()) > 200 or not re.fullmatch(
+        r"[a-z0-9]+(?:-[a-z0-9]+)*", slug
+    ) or len(slug) > 200:
+        raise ValueError("Organization name or slug is invalid")
+
+
 def provision(
     db: Session, *, name: str, slug: str, admin_user_id: UUID | None = None,
     invitation: InvitationCreate | None = None, provider_user_id: UUID | None = None,
-    confirmed_provider: ProviderUser | None = None,
+    confirmed_provider: ProviderUser | None = None, timezone: str = "UTC",
 ) -> WorkspaceProfile:
     """Commit the organization and its initial authority; provider invites retain reservations.
 
     An explicit provider ID is operator authority to link that identity, never
     an email-equality sign-in path. Provider accounts are not edited or replaced.
+    ``timezone`` applies only to a new organization; a resumed one keeps its own.
     """
-    if not name.strip() or len(name.strip()) > 200 or not re.fullmatch(
-        r"[a-z0-9]+(?:-[a-z0-9]+)*", slug
-    ) or len(slug) > 200:
-        raise ValueError("Organization name or slug is invalid")
+    validate_identity(name, slug)
     if (admin_user_id is None) == (invitation is None):
         raise ValueError("Choose an account or an invitation")
     reserved = db.scalar(select(WorkspaceProfile).where(
@@ -115,7 +121,9 @@ def provision(
         if user is None or user.is_deleted or user.status != "active":
             raise ValueError("Administrator account is not active")
     try:
-        org = WorkspaceProfile(display_name=name.strip(), slug=slug, timezone="UTC", locale="en-US")
+        org = WorkspaceProfile(
+            display_name=name.strip(), slug=slug, timezone=timezone, locale="en-US"
+        )
         db.add(org)
         db.flush()
         scope_session(db, org.id)
