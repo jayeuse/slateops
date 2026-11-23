@@ -34,7 +34,12 @@ from tests.boards.kanban_support import add_objective, add_stage
 from tests.boards.support import board_group, project_board
 from tests.conftest import alembic_heads, guarded_create_engine, membership_of
 from tests.database_pool import dispose_process_engines
-from tests.operations.migration_support import guarded_migration_environment, run_alembic
+from tests.operations.migration_support import (
+    add_later_user_column,
+    drop_later_user_column,
+    guarded_migration_environment,
+    run_alembic,
+)
 from tests.organization_scope_support import bind_test_organization, scoped_override
 from tests.rbac.support import (
     _client,
@@ -338,6 +343,7 @@ def test_every_audit_reader_returns_the_same_bytes_after_the_upgrade_dbi12(
     environment, owner, runtime = plain_schema
     [head] = alembic_heads()
     api_app = create_app()
+    add_later_user_column(owner)
     world = _seed(owner)
     settings_entry = _change_settings(api_app, runtime, world)
     requests = _requests(world, settings_entry)
@@ -354,6 +360,7 @@ def test_every_audit_reader_returns_the_same_bytes_after_the_upgrade_dbi12(
     assert str(world.hidden_link).encode() in before["list"][2]
     assert str(world.hidden_link).encode() not in before["manager list"][2]
 
+    drop_later_user_column(owner)
     run_alembic(environment, "upgrade", head)
     dispose_process_engines()
     with owner.connect() as connection:

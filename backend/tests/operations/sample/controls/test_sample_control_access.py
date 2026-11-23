@@ -19,13 +19,17 @@ from operations.sample.controls.access import (
     plan_access_controls,
     verify_access_controls,
 )
+from operations.sample.controls.actions import plan_controls
+from operations.sample.controls.request_verification import verify_request_evidence
 from operations.sample.packs import get_pack
 from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
 from operations.sample.phases.plan import plan_phases
 from operations.sample.scenario import build_dataset
 from tests.operations.sample.controls.access_invitation_fixtures import (
     INVITATION_CASES,
+    LINK,
     corrupt_invitation,
+    corrupt_link,
     user_response,
 )
 
@@ -99,6 +103,7 @@ def _context(tmp_path: Path, dataset: SampleDataset, handler) -> PhaseExecutionC
         field_ids={},
         mappings={},
         admin_password="fixture-admin-password",
+        private_values={"origin": "http://localhost"},
     )
 
 
@@ -123,9 +128,11 @@ def _route(request: httpx.Request) -> tuple[str, str]:
         path = path.replace("/access", "/access")
     if re.fullmatch(r"/api/users/[0-9a-f-]{36}/restore", path):
         path = "/api/users/{user_id}/restore"
-    if re.fullmatch(r"/api/auth/invitations/[0-9a-f-]{36}(?:/(?:resend|reconcile))?", path):
+    if re.fullmatch(r"/api/auth/invitations/[0-9a-f-]{36}(?:/(?:resend|reconcile|link))?", path):
         path = "/api/auth/invitations/{user_id}" + (
-            f"/{path.rsplit('/', 1)[1]}" if path.endswith(("/resend", "/reconcile")) else ""
+            f"/{path.rsplit('/', 1)[1]}"
+            if path.endswith(("/resend", "/reconcile", "/link"))
+            else ""
         )
     return request.method, path
 
@@ -144,6 +151,7 @@ def test_access_control_plan_is_repeatable_and_restores_people(pack_key: str) ->
         "delete_user",
         "restore_user",
         "resend_invitation",
+        "link_invitation",
         "revoke_invitation",
         "reconcile_invitation",
         "revoke_invitation",
@@ -316,6 +324,18 @@ def test_access_controls_call_ui_routes_and_restore_the_planned_state(
                 headers=request_id,
                 json={"user": body, "delivery": "email"} if operation == "resend" else body,
             )
+        if path == f"/api/auth/invitations/{PENDING_ID}/link" and method == "POST":
+            assert json.loads(request.content) == {}
+            assert invitation_writes == ["resend"] and not invitation_revoked
+            invitation_writes.append("link")
+            reads_since_write = 0
+            body = {"user": invitation(), "delivery": "link", "invitation_url": LINK}
+            if fault and fault.startswith("link_"):
+                fault_hit = True
+                body = corrupt_link(body, fault, GUEST_ID)
+            return httpx.Response(
+                200, headers={**request_id, "Cache-Control": "no-store"}, json=body
+            )
         if path == f"/api/auth/invitations/{PENDING_ID}" and method == "DELETE":
             assert not invitation_revoked
             invitation_writes.append("revoke")
@@ -337,7 +357,7 @@ def test_access_controls_call_ui_routes_and_restore_the_planned_state(
             if fault and (
                 (
                     fault.startswith("before_")
-                    and invitation_writes == ["resend", "revoke"]
+                    and invitation_writes == ["resend", "link", "revoke"]
                     and reads_since_write == 2
                 )
                 or (fault.startswith("readback_") and invitation_writes[-1:] == ["reconcile"])
@@ -375,6 +395,14 @@ def test_access_controls_call_ui_routes_and_restore_the_planned_state(
     ]
     if receipt_fault in {"missing_first", "missing_last"}:
         results.remove(revokes[0 if receipt_fault == "missing_first" else -1])
+    elif receipt_fault == "missing_link":
+        results.remove(
+            next(
+                result
+                for action, result in zip(actions, results, strict=True)
+                if action.values["operation"] == "link_invitation"
+            )
+        )
     elif receipt_fault == "duplicate":
         results.append(revokes[0])
     elif receipt_fault in {"actor", "target", "outcome"}:
@@ -406,16 +434,19 @@ def test_access_controls_call_ui_routes_and_restore_the_planned_state(
     }
     if receipt_fault == "split_target":
         guest = next(p for p in dataset.organization.actors.people if p.key == _guest_key(dataset))
-        manifest["control_plan"][6]["target_key"] = revokes[0]["target_key"] = guest.key
+        manifest["control_plan"][7]["target_key"] = revokes[0]["target_key"] = guest.key
         row = revokes[0]["request_evidence"][0]
         row["path"], row["primary_entity_id"] = f"/api/auth/invitations/{GUEST_ID}", GUEST_ID
         for stage in ("invitation_before", "invitation_after"):
             revokes[0][stage].update(id=GUEST_ID, email=guest.email, username=guest.username)
-    # The real plan also holds the People security control under this kind; it has
-    # its own verifier and must not fail the access operation check.
-    from operations.sample.controls.people_security import plan_people_security_controls
-
-    manifest["control_plan"].append(asdict(plan_people_security_controls(dataset)[0]))
+    # The real plan also holds the People security and temporary-password controls under
+    # this kind; they have their own verifiers and must not fail the access operation check.
+    manifest["control_plan"].extend(
+        asdict(action)
+        for action in plan_controls(dataset)
+        if action.values.get("operation")
+        in {"review_people_security", "temporary_password_roundtrip"}
+    )
 
     counts, issues = verify_access_controls(
         context.clients["admin"], dataset, manifest, admin_id=ADMIN_ID
@@ -431,8 +462,22 @@ def test_access_controls_call_ui_routes_and_restore_the_planned_state(
     assert counts["access_users_restored"] == 1
     assert counts["access_invitations_revoked"] == 1
     assert group_deleted and not guest_deleted and invitation_revoked
-    assert invitation_writes == ["resend", "revoke", "reconcile", "revoke"]
+    assert invitation_writes == ["resend", "link", "revoke", "reconcile", "revoke"]
+    assert len(manifest["control_plan"]) == len(actions) + 2
     assert ("POST", "/api/auth/invitations/{user_id}/reconcile") in CONTROL_ROUTES
+    assert ("POST", "/api/auth/invitations/{user_id}/link") in CONTROL_ROUTES
+    link_action, link_result = next(
+        (action, result)
+        for action, result in zip(actions, results, strict=True)
+        if action.values["operation"] == "link_invitation"
+    )
+    request_issues: list[str] = []
+    observed = {"control_requests_verified": 0}
+    verify_request_evidence(
+        dataset, {}, link_action, link_result, {}, ADMIN_ID, set(), observed, request_issues
+    )
+    assert request_issues == [] and observed["control_requests_verified"] == 1
+    assert LINK not in json.dumps(results) and LINK not in (tmp_path / "requests.jsonl").read_text()
     observed = {_route(request) for request in requests}
     assert CONTROL_ROUTES <= observed
     assert pending.email not in (tmp_path / "requests.jsonl").read_text()

@@ -109,6 +109,12 @@
   },
   {
     "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "setPersonTemporaryPassword",
+    "method": "POST",
+    "path": "/api/users/{param}/temporary-password"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
     "function": "updateAccessSecurityPolicy",
     "method": "PATCH",
     "path": "/api/workspace/security"
@@ -226,6 +232,12 @@
     "function": "listAccessUserSessions",
     "method": "GET",
     "path": "/api/users/{param}/sessions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "newAccessInvitationLink",
+    "method": "POST",
+    "path": "/api/auth/invitations/{param}/link"
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",

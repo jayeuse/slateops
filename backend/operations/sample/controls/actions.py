@@ -96,6 +96,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     from operations.sample.controls.read_reviews import plan_read_reviews
     from operations.sample.controls.reads import plan_read_controls
     from operations.sample.controls.sandbox import plan_sandbox_controls
+    from operations.sample.controls.temporary_password import plan_temporary_password_controls
 
     prune, *sandbox = plan_sandbox_controls(dataset)
     platform = plan_platform_controls(dataset)
@@ -126,6 +127,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         *plan_profile_controls(dataset),
         *plan_mfa_controls(dataset),
         *plan_people_security_controls(dataset),
+        *plan_temporary_password_controls(dataset),
         *plan_board_controls(dataset),
         *plan_openview_controls(dataset),
         *plan_access_controls(dataset),
@@ -373,6 +375,12 @@ def execute_control_action(
     from operations.sample.controls.read_reviews import execute_read_review
     from operations.sample.controls.reads import execute_read_control
     from operations.sample.controls.sandbox import execute_sandbox_control
+    from operations.sample.controls.temporary_password import (
+        OPERATION as TEMPORARY_PASSWORD,
+    )
+    from operations.sample.controls.temporary_password import (
+        execute_temporary_password_control,
+    )
 
     operation = action.values.get("operation")
     if operation == "self_email_change":
@@ -388,6 +396,8 @@ def execute_control_action(
         return execute_mfa_control(action, dataset, context, on_substep=on_substep)
     if operation == "review_people_security":
         return execute_people_security_control(action, dataset, context, on_substep=on_substep)
+    if operation == TEMPORARY_PASSWORD:
+        return execute_temporary_password_control(action, dataset, context, on_substep=on_substep)
     if operation in FILE_OPERATIONS:
         return execute_file_control(action, dataset, context, on_substep=on_substep)
     if operation == "review_notifications":

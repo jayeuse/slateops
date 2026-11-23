@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, cast
+from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
 
 from pydantic import ValidationError
@@ -13,6 +14,7 @@ from operations.sample.blueprint import SampleDataset
 from operations.sample.client import SampleClient
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.expectations import read_phase_plan
+from operations.sample.population.invitations import _TOKEN_HASH, SampleInvitationError, _origin
 from operations.sample.verification.core import SampleVerificationError
 
 
@@ -39,6 +41,32 @@ def _pending_invitation(
     return user
 
 
+def invitation_link_valid(body: Mapping[str, Any], origin: object) -> bool:
+    """A link answer opens the invitation completion page on the run's origin, once.
+
+    The same rules as an emailed invitation link (``InvitationMailbox``); never log the link.
+    """
+    url = body.get("invitation_url")
+    if body.get("delivery") != "link" or not isinstance(url, str) or not isinstance(origin, str):
+        return False
+    try:
+        link = urlsplit(url)
+        same_origin = _origin(f"{link.scheme}://{link.netloc}") == _origin(origin)
+        fields = parse_qs(link.fragment, strict_parsing=True, keep_blank_values=True)
+    except (SampleInvitationError, ValueError):
+        return False
+    tokens = fields.get("token_hash", [])
+    return (
+        same_origin
+        and link.path == "/auth/setup"
+        and not link.query
+        and set(fields) == {"token_hash", "type"}
+        and fields["type"] == ["invite"]
+        and len(tokens) == 1
+        and _TOKEN_HASH.fullmatch(tokens[0]) is not None
+    )
+
+
 def _invitation_receipts(
     actions: list[PhaseAction],
     results: Mapping[str, Mapping[str, Any]],
@@ -53,12 +81,14 @@ def _invitation_receipts(
         if action.values.get("operation")
         in {
             "resend_invitation",
+            "link_invitation",
             "reconcile_invitation",
             "revoke_invitation",
         }
     ]
     valid = [action.values.get("operation") for action in invitations] == [
         "resend_invitation",
+        "link_invitation",
         "revoke_invitation",
         "reconcile_invitation",
         "revoke_invitation",
@@ -197,9 +227,12 @@ def verify_access_controls(
     """Read back the restored guest, revoked invite and removed temporary group."""
     issues: list[str] = []
     actions, results = _control_data(manifest, "access_controls", issues)
-    # People security shares this kind but has its own verifier.
+    # People security and the temporary password share this kind but have their own checks.
     actions = [
-        action for action in actions if action.values.get("operation") != "review_people_security"
+        action
+        for action in actions
+        if action.values.get("operation")
+        not in {"review_people_security", "temporary_password_roundtrip"}
     ]
     operations = {action.values.get("operation"): action for action in actions}
     expected_operations = {
@@ -209,6 +242,7 @@ def verify_access_controls(
         "delete_user",
         "restore_user",
         "resend_invitation",
+        "link_invitation",
         "reconcile_invitation",
         "revoke_invitation",
     }

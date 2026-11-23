@@ -74,6 +74,8 @@ def test_serialize_record_contains_only_local_profile_fields() -> None:
         "bio": None,
         "avatar_file_id": None,
         "status": "active",
+        # A password-named field is redacted even when it is empty.
+        "password_change_required_at": "[REDACTED]",
     }
     assert "password_hash" not in snapshot
     assert "id" not in snapshot
