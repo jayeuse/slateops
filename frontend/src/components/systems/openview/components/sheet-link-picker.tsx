@@ -37,7 +37,7 @@ export function SheetLinkPicker({
   columnName: string;
   moduleId: string;
   hasLink: boolean;
-  onPick: (recordId: string | null) => void;
+  onPick: (recordId: string | null, label: string) => void;
   onClose: () => void;
 }) {
   const id = useId();
@@ -116,7 +116,12 @@ export function SheetLinkPicker({
               className={cn(
                 "hover:bg-tint-hover focus-visible:outline-ring min-h-11 px-3 text-left text-sm outline-offset-[-2px] focus-visible:outline-2",
               )}
-              onClick={() => onPick(record.id)}
+              onClick={() =>
+                onPick(
+                  record.id,
+                  recordTitle(record, fieldList, titleField?.id ?? null),
+                )
+              }
             >
               {recordTitle(record, fieldList, titleField?.id ?? null)}
             </button>
@@ -137,7 +142,7 @@ export function SheetLinkPicker({
             <Button
               variant="ghost"
               className="min-h-11"
-              onClick={() => onPick(null)}
+              onClick={() => onPick(null, "")}
             >
               Remove link
             </Button>

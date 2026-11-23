@@ -9,7 +9,10 @@ import {
   removeBoardCalendarSource,
 } from "../../../src/components/systems/boards/adapters/board-calendar-sources-api";
 import { listDueBoardCards } from "../../../src/components/systems/boards/adapters/board-due-cards-api";
-import { parseWorkspaceInvalidation } from "../../../src/components/systems/shared/adapters/workspace-event-source";
+import {
+  parseWorkspaceInvalidation,
+  relayedInvalidation,
+} from "../../../src/components/systems/shared/adapters/workspace-event-source";
 import { installFetch } from "../helpers/fake-fetch";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
@@ -321,4 +324,31 @@ test("a sheet change reaches the stream with its sheet id, and nothing else", ()
     expect(
       parseWorkspaceInvalidation("invalidate", JSON.stringify(payload)),
     ).toBeNull();
+});
+
+// Security review F3-1: a follower tab gets a sheet event from the leader's
+// relay with the same sheet id, and a relayed sheet event that also names a
+// module is dropped, as the stream drops it.
+test("a relayed sheet event keeps its sheet id and nothing else", () => {
+  const sheetId = "00000000-0000-4000-8000-00000000000a";
+  expect(
+    relayedInvalidation({
+      type: "invalidate",
+      entity: "worksheets",
+      worksheetId: sheetId,
+    }),
+  ).toEqual({ type: "invalidate", entity: "worksheets", worksheetId: sheetId });
+  expect(
+    relayedInvalidation({
+      type: "invalidate",
+      entity: "worksheets",
+      worksheetId: sheetId,
+      moduleId,
+    }),
+  ).toBeNull();
+  expect(
+    relayedInvalidation({ type: "invalidate", entity: "worksheets" }),
+  ).toBeNull();
+  expect(relayedInvalidation({ type: "resync" })).toEqual({ type: "resync" });
+  expect(relayedInvalidation("not an event")).toBeNull();
 });

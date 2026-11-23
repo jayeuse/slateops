@@ -77,6 +77,28 @@ export function parseWorkspaceInvalidation(
   }
 }
 
+/**
+ * The invalidation a follower tab gets from the leader's relay. It is parsed
+ * again with the stream's own rules, so a relay can carry nothing that the
+ * stream itself would refuse (a sheet event keeps only its sheet id).
+ */
+export function relayedInvalidation(
+  raw: unknown,
+): WorkspaceInvalidation | null {
+  if (!raw || typeof raw !== "object" || !("type" in raw)) return null;
+  const normalized = raw as WorkspaceInvalidation;
+  if (normalized.type === "resync") return { type: "resync" };
+  return parseWorkspaceInvalidation(
+    "invalidate",
+    JSON.stringify({
+      entity: normalized.entity,
+      ...(normalized.moduleId ? { module_id: normalized.moduleId } : {}),
+      ...(normalized.boardId ? { board_id: normalized.boardId } : {}),
+      ...(normalized.worksheetId ? { entity_id: normalized.worksheetId } : {}),
+    }),
+  );
+}
+
 export function retryAfterSeconds(value: string | null): number | undefined {
   if (!value) return;
   const seconds = /^\d+$/.test(value.trim())

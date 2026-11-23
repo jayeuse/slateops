@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 
 import { usePersonName } from "./sheet-grid-view";
+import { SheetLinkPicker } from "./sheet-link-picker";
 
 import type {
   WorksheetCellChange,
@@ -30,9 +31,9 @@ import {
 // in a bottom panel, its fields grouped by column group, 44px inputs; lookup
 // and computed fields read-only; Save row sends only the changed cells.
 
-/** Columns a phone form can change as text or a choice (links read-only). */
+/** Columns a phone form changes (person fields read-only until F5's list). */
 function editableHere(column: GridColumn) {
-  return !column.readOnly && column.type !== "link" && column.type !== "user";
+  return !column.readOnly && column.type !== "user";
 }
 
 export function SheetRowForm({
@@ -70,6 +71,11 @@ export function SheetRowForm({
     ),
   );
   const [saving, setSaving] = useState(false);
+  // Picked links: the record and its title, by column key (null removes).
+  const [links, setLinks] = useState<
+    Record<string, { id: string; label: string } | null>
+  >({});
+  const [picking, setPicking] = useState<GridColumn | null>(null);
   const first = columns[0];
   const firstView = first
     ? cellView(first, row.cells[first.key], format)
@@ -86,6 +92,15 @@ export function SheetRowForm({
     const changes: Record<string, WorksheetCellChange> = {};
     for (const column of columns) {
       if (!editableHere(column)) continue;
+      if (column.type === "link") {
+        if (!(column.key in links)) continue;
+        const picked = links[column.key];
+        changes[column.key] = {
+          value: picked ? { record_id: picked.id } : null,
+          expected: seen.cells[column.key] ?? { value: null },
+        };
+        continue;
+      }
       const before = editInput(column, seen.cells[column.key], format);
       if (drafts[column.key] === before) continue;
       changes[column.key] = {
@@ -171,7 +186,27 @@ export function SheetRowForm({
                 ) : null}
                 <label className="flex flex-col gap-1">
                   <span className="text-sm font-medium">{column.name}</span>
-                  {column.type === "user" && view.kind === "value" ? (
+                  {column.type === "link" && !fixed ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-11 min-h-11 justify-start text-base font-normal"
+                      aria-label={`${column.name}: ${
+                        column.key in links
+                          ? (links[column.key]?.label ?? "none")
+                          : view.kind === "link"
+                            ? view.label
+                            : "none"
+                      }`}
+                      onClick={() => setPicking(column)}
+                    >
+                      {column.key in links
+                        ? (links[column.key]?.label ?? "Choose a record")
+                        : view.kind === "link"
+                          ? view.label
+                          : "Choose a record"}
+                    </Button>
+                  ) : column.type === "user" && view.kind === "value" ? (
                     <PersonField id={view.text} />
                   ) : column.type === "select" && !fixed ? (
                     <select
@@ -249,6 +284,26 @@ export function SheetRowForm({
           </div>
         </form>
       </DialogContent>
+      {picking?.linkModuleId ? (
+        <SheetLinkPicker
+          columnName={picking.name}
+          moduleId={picking.linkModuleId}
+          hasLink={
+            picking.key in links
+              ? Boolean(links[picking.key])
+              : cellView(picking, row.cells[picking.key], format).kind ===
+                "link"
+          }
+          onClose={() => setPicking(null)}
+          onPick={(recordId, label) => {
+            setLinks((current) => ({
+              ...current,
+              [picking.key]: recordId ? { id: recordId, label } : null,
+            }));
+            setPicking(null);
+          }}
+        />
+      ) : null}
     </Dialog>
   );
 }

@@ -20,6 +20,8 @@ const students = "00000000-0000-4000-8000-0000000009b2";
 const numberField = "00000000-0000-4000-8000-0000000009b3";
 const names = ["Ana Cruz", "Bea Santos", "Carlo Reyes"];
 const teacherId = "00000000-0000-4000-8000-0000000009b5";
+const titleField = "00000000-0000-4000-8000-0000000009b6";
+const alice = "00000000-0000-4000-8000-0000000009b7";
 
 const reader = {
   id: sheetPeople.viewer.id,
@@ -84,8 +86,21 @@ async function openSheet(page: Page, level: "owner" | "view") {
       }),
     ),
     totals: {},
+    modules: [{ id: students, name: "Students", titleFieldId: titleField }],
   });
-  const writes = await installSheetEditApi(page, api);
+  const writes = await installSheetEditApi(page, api, {
+    linkTargets: [
+      {
+        moduleId: students,
+        titleFieldId: titleField,
+        id: alice,
+        title: "Alice Reyes",
+      },
+    ],
+    moduleFields: {
+      [students]: [{ id: titleField, name: "Name", type: "text" }],
+    },
+  });
   await page.goto(`/openview?sheet=${sheetId}`);
   const grid = page.getByRole("grid", { name: "Class roster" });
   await expect(
@@ -132,6 +147,34 @@ test("a tapped row opens as a form; Save row sends only the changed cells", asyn
   await page.getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByRole("dialog", { name: "Ana Cruz" })).toHaveCount(0);
   expect(writes.patches).toHaveLength(1);
+});
+
+test("a link field in the row form picks a readable record", async ({
+  page,
+}) => {
+  const { writes, grid } = await openSheet(page, "owner");
+  await grid.locator('[data-cell="2:c1"]').tap();
+  const form = page.getByRole("dialog", { name: "Carlo Reyes" });
+  await form.getByRole("button", { name: "Student: Carlo Reyes" }).click();
+  const picker = page.getByRole("dialog", { name: "Choose Student" });
+  await picker.getByRole("searchbox", { name: "Search Students" }).fill("Ali");
+  await picker.getByRole("option", { name: "Alice Reyes" }).click();
+  await expect(
+    form.getByRole("button", { name: "Student: Alice Reyes" }),
+  ).toBeVisible();
+  await form.getByRole("button", { name: "Save row" }).click();
+  await expect(grid.locator('[data-cell="2:c1"]')).toHaveText("Alice Reyes");
+  expect(writes.patches.at(-1)?.cells).toEqual({
+    c1: {
+      value: { record_id: alice },
+      expected: {
+        link: {
+          record_id: "00000000-0000-4000-8000-000000990002",
+          label: "Carlo Reyes",
+        },
+      },
+    },
+  });
 });
 
 test("a viewer's row form has only Close", async ({ page }) => {

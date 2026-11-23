@@ -50,9 +50,12 @@ const gzip = {
 // of the conversation list (item 5; the filter alone is 73 bytes locally).
 // Together 1,437 bytes in CI: 556,647 at deb555d2, 558,084 at b0d9ca05;
 // 556,958 locally. Revert if the owner prefers trimming.
+// Raised to 562,000 on 2026-11-23 for Sheets (TASK-0102 F4, parent decision):
+// shared UI primitives split, no sheet code in the shell — measured 559,819
+// local; with the sheet dialogs loaded on first use, 558,632 local.
 // Growth is reported against the last recorded measurement.
 const s04BaselineColdGzipBytes = 546_979;
-const coldTargetGzipBytes = 560_000;
+const coldTargetGzipBytes = 562_000;
 // docs/plans/ci-stability.md D3: a cold load within this many bytes of the
 // target warns, so the pull request that adds approved shell code records a new
 // target in the same commit instead of after a red run.

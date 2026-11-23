@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -61,14 +63,13 @@ import {
   type SaveOutcome,
   type SheetConflict,
 } from "./sheet-grid-view";
-import { SheetRowForm } from "./sheet-row-form";
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+// The editing dialogs load on first use, apart from the grid.
+const SheetRowForm = lazy(() =>
+  import("./sheet-row-form").then((module) => ({
+    default: module.SheetRowForm,
+  })),
+);
+const SheetDeleteRowDialog = lazy(() => import("./sheet-delete-row-dialog"));
 import {
   cellConflict,
   inputValue,
@@ -669,51 +670,33 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
         onPaste={(index, column, grid) => void paste(index, column, grid)}
       />
       {formRow !== null && rowAt(store, formRow) ? (
-        <SheetRowForm
-          key={rowAt(store, formRow)?.id}
-          row={rowAt(store, formRow) as WorksheetRow}
-          index={formRow}
-          total={store.total ?? 0}
-          sheetTitle={sheet.title}
-          columns={columns}
-          format={format}
-          readOnly={!canEdit}
-          onSave={saveRow}
-          onMove={(index) => {
-            if (rowAt(store, index)) setFormRow(index);
-          }}
-          onClose={() => setFormRow(null)}
-        />
+        <Suspense fallback={null}>
+          <SheetRowForm
+            key={rowAt(store, formRow)?.id}
+            row={rowAt(store, formRow) as WorksheetRow}
+            index={formRow}
+            total={store.total ?? 0}
+            sheetTitle={sheet.title}
+            columns={columns}
+            format={format}
+            readOnly={!canEdit}
+            onSave={saveRow}
+            onMove={(index) => {
+              if (rowAt(store, index)) setFormRow(index);
+            }}
+            onClose={() => setFormRow(null)}
+          />
+        </Suspense>
       ) : null}
-      <AlertDialog
-        open={deleting !== null}
-        onOpenChange={(open) => {
-          if (!open) setDeleting(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogTitle>
-            Delete row {deleting ? deleting.index + 1 : ""}?
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            The row leaves this sheet for everyone who can see it.
-          </AlertDialogDescription>
-          <div className="flex justify-end gap-2">
-            <AlertDialogCancel
-              render={<Button variant="ghost" className="min-h-11" />}
-            >
-              Cancel
-            </AlertDialogCancel>
-            <Button
-              variant="destructive"
-              className="min-h-11"
-              onClick={() => void deleteRow()}
-            >
-              Delete row
-            </Button>
-          </div>
-        </AlertDialogContent>
-      </AlertDialog>
+      {deleting ? (
+        <Suspense fallback={null}>
+          <SheetDeleteRowDialog
+            index={deleting.index}
+            onCancel={() => setDeleting(null)}
+            onConfirm={() => void deleteRow()}
+          />
+        </Suspense>
+      ) : null}
     </div>
   );
 }

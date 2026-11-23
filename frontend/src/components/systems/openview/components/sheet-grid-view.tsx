@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  lazy,
+  Suspense,
   useEffect,
   useMemo,
   useRef,
@@ -65,7 +67,12 @@ import {
   type SheetColumnType,
 } from "../domain/sheet-grid";
 import { SheetColumnPopover } from "./sheet-column-popover";
-import { SheetLinkPicker } from "./sheet-link-picker";
+// The link picker loads on first use, apart from the grid.
+const SheetLinkPicker = lazy(() =>
+  import("./sheet-link-picker").then((module) => ({
+    default: module.SheetLinkPicker,
+  })),
+);
 
 // The sheet grid (docs/specs/sheets.md P3, P9, F4, SH-54): one tab stop,
 // arrow keys between cells, Enter edits, Escape leaves, a 2px action
@@ -466,8 +473,16 @@ export function SheetGridView({
               onFocus={() => {
                 if (!isActive) setActive({ row: item.index, col: index });
               }}
-              onClick={() => {
-                if (phone && row) onOpenRow(item.index);
+              // On a phone a tap opens the row, the name included: the
+              // link does not navigate (Screens 9).
+              onClickCapture={(event) => {
+                if (!phone || !row) return;
+                if (
+                  event.target instanceof Element &&
+                  event.target.closest("a")
+                )
+                  event.preventDefault();
+                onOpenRow(item.index);
               }}
               onDoubleClick={() => {
                 if (!phone) startEdit(item.index, index);
@@ -852,31 +867,33 @@ export function SheetGridView({
         ) : null}
       </table>
       {picking && pickingColumn?.linkModuleId && pickingRow ? (
-        <SheetLinkPicker
-          columnName={pickingColumn.name}
-          moduleId={pickingColumn.linkModuleId}
-          hasLink={Boolean(
-            pickingRow.cells[pickingColumn.key] &&
-            "link" in (pickingRow.cells[pickingColumn.key] ?? {}),
-          )}
-          onClose={() => {
-            const col = columns.findIndex((c) => c.key === pickingColumn.key);
-            setPicking(null);
-            focusCell(picking.index, col);
-          }}
-          onPick={(recordId) => {
-            const col = columns.findIndex((c) => c.key === pickingColumn.key);
-            const index = picking.index;
-            setPicking(null);
-            void onSave(
-              pickingRow,
-              pickingColumn,
-              recordId ? { record_id: recordId } : null,
-              pickingRow.cells[pickingColumn.key] ?? { value: null },
-              "",
-            ).then(() => focusCell(index, col));
-          }}
-        />
+        <Suspense fallback={null}>
+          <SheetLinkPicker
+            columnName={pickingColumn.name}
+            moduleId={pickingColumn.linkModuleId}
+            hasLink={Boolean(
+              pickingRow.cells[pickingColumn.key] &&
+              "link" in (pickingRow.cells[pickingColumn.key] ?? {}),
+            )}
+            onClose={() => {
+              const col = columns.findIndex((c) => c.key === pickingColumn.key);
+              setPicking(null);
+              focusCell(picking.index, col);
+            }}
+            onPick={(recordId) => {
+              const col = columns.findIndex((c) => c.key === pickingColumn.key);
+              const index = picking.index;
+              setPicking(null);
+              void onSave(
+                pickingRow,
+                pickingColumn,
+                recordId ? { record_id: recordId } : null,
+                pickingRow.cells[pickingColumn.key] ?? { value: null },
+                "",
+              ).then(() => focusCell(index, col));
+            }}
+          />
+        </Suspense>
       ) : null}
     </div>
   );
