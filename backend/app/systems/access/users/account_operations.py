@@ -1,7 +1,7 @@
 """User account lifecycle routes backed by local identity."""
 
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -10,7 +10,6 @@ from uuid6 import uuid7
 
 from app.common.dependencies import require_admin, require_fresh_exact_admin
 from app.core.database import get_db
-from app.core.database.organization_scope import session_organization
 from app.systems.access.identity.session_revocation import revoke_user_sessions
 from app.systems.access.policy.access_notifications import (
     AccessSnapshot,
@@ -34,71 +33,31 @@ from app.systems.access.users.coordination import (
     refuse_account_details,
     require_user_patch,
     shares_another_organization,
-    unavailable,
 )
 from app.systems.access.users.directory import directory_membership, membership_view
 from app.systems.access.users.eligibility import is_established_user
 from app.systems.access.users.membership import is_platform_operator
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
+from app.systems.access.users.outcomes import record_outcome
+from app.systems.access.users.outcomes import record_security_event as _record_security_event
 from app.systems.access.users.schemas import UserResponse, UserUpdate
 from app.systems.comms.realtime.grants import lock_projection, revoke_stale
 from app.systems.manage.audit.models import SecurityEventOutcome
-from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.security_events import (
-    SecurityEventPersistenceError,
-    append_committed_security_event,
-)
 from app.systems.manage.workspace.security_policy import apply_role_mfa_episode
+from app.systems.openview.worksheets.leave import opening_count, record_opened
 
 router = APIRouter(prefix="/users", tags=["users"])
 AdminUser = Annotated[User, Depends(require_admin)]
 
 
-def _record_security_event(
-    *,
-    event_type: str,
-    outcome: SecurityEventOutcome,
-    operation_id: UUID,
-    actor_id: UUID | None = None,
-    subject_id: UUID | None = None,
-    reason: str | None = None,
-    org_id: UUID | None = None,
-) -> None:
-    try:
-        append_committed_security_event(
-            SecurityEventIngestRequest(
-                event_type=event_type,
-                outcome=outcome,
-                source="users.router",
-                operation_id=operation_id,
-                actor_id=actor_id,
-                subject_id=subject_id,
-                reason=reason,
-            ),
-            org_id=org_id,
-        )
-    except SecurityEventPersistenceError as error:
-        raise unavailable("Unable to record security event") from error
-
-
 def _record_outcome(
-    db: Session,
-    event_type: str,
-    outcome: SecurityEventOutcome,
-    operation_id: UUID,
-    actor_id: UUID,
-    target_id: UUID,
-    reason: str | None = None,
+    db: Session, event_type: str, outcome: SecurityEventOutcome, operation_id: UUID,
+    actor_id: UUID, target_id: UUID, reason: str | None = None,
+    *, metadata: dict[str, Any] | None = None,
 ) -> None:
-    _record_security_event(
-        event_type=event_type,
-        outcome=outcome,
-        operation_id=operation_id,
-        actor_id=actor_id,
-        subject_id=target_id,
-        reason=reason,
-        org_id=session_organization(db),
-    )
+    # Reads `_record_security_event` here at call time, so a test can replace either one.
+    record_outcome(db, event_type, outcome, operation_id, actor_id, target_id, reason,
+                   metadata=metadata, record=_record_security_event)
 
 
 @router.patch("/{user_id}", response_model=UserResponse)
@@ -218,11 +177,13 @@ def _change_membership_status(
         destination_status=destination_status,
     )
     before = snapshot_access(db, (user,))
+    opening = opening_count(db, user.id) if destination_status == UserStatus.DISABLED else 0
     membership.status = destination_status
     membership.performed_by = actor_id
     notify_access_changes(db, before)
     revoke_stale(db)
     commit(db, "Unable to update membership")
+    record_opened(db, opening, "membership_disabled", actor_id, user.id, _record_outcome)
     return membership_view(user, membership)
 
 
@@ -239,13 +200,14 @@ def _remove_membership(db: Session, user: User, membership: Membership, actor_id
         destination_status=membership.status,
         destination_deleted=True,
     )
-    before = snapshot_access(db, (user,))
+    before, opening = snapshot_access(db, (user,)), opening_count(db, user.id)
     membership.is_deleted = True
     membership.deleted_at = datetime.now(UTC)
     membership.performed_by = actor_id
     notify_access_changes(db, before)
     revoke_stale(db)
     commit(db, "Unable to remove membership")
+    record_opened(db, opening, "membership_removed", actor_id, user.id, _record_outcome)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -319,7 +281,7 @@ def _disable_user(
     destination_role: str,
     before: AccessSnapshot | None,
 ) -> UserResponse:
-    operation_id = uuid7()
+    operation_id, opening = uuid7(), opening_count(db, user.id)
     _record_outcome(
         db,
         "user.authentication_disable",
@@ -357,6 +319,7 @@ def _disable_user(
         actor_id,
         target_id,
     )
+    record_opened(db, opening, "account_disabled", actor_id, target_id, _record_outcome)
     return membership_view(user, membership)
 
 
@@ -387,7 +350,7 @@ def delete_user(
         destination_status=user.status,
         destination_deleted=True,
     )
-    operation_id = uuid7()
+    operation_id, opening = uuid7(), opening_count(db, user.id)
     user.is_deleted = True
     user.deleted_at = datetime.now(UTC)
     if user.status != UserStatus.PENDING.value:
@@ -424,6 +387,7 @@ def delete_user(
         actor_id,
         target_id,
     )
+    record_opened(db, opening, "account_deleted", actor_id, target_id, _record_outcome)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

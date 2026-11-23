@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.systems.access.users.models import User
-from app.systems.openview.worksheets.models import WorksheetRow
+from app.systems.openview.worksheets.models import WorksheetRow, WorksheetRowLink
 from tests.rbac.support import _client, add_module
 from tests.worksheets.support import (
     SheetWorld,
@@ -156,3 +156,60 @@ def test_a_type_change_on_a_column_with_values_is_refused(
     empty = editable_structure(students)
     empty["columns"][3] = {"key": "c4", "name": "Points", "type": "number"}
     assert _save(application, db, world.owner, world, empty, 2).status_code == 200
+
+
+def _link_row(db: Session, world: SheetWorld, target: object) -> WorksheetRowLink:
+    row = WorksheetRow(org_id=world.sheet.org_id, worksheet_id=world.sheet.id,
+                       position=1024, data={}, data_bytes=2)
+    db.add(row)
+    db.flush()
+    link = WorksheetRowLink(org_id=row.org_id, worksheet_id=row.worksheet_id, row_id=row.id,
+                            column_key="c1", target_record_id=target)
+    db.add(link)
+    db.flush()
+    return link
+
+
+def test_a_link_column_with_links_keeps_its_module(
+    application: FastAPI, integration_db: Session, world: SheetWorld, students: Students,
+) -> None:
+    db = integration_db
+    structure = editable_structure(students)
+    assert _save(application, db, world.owner, world, structure).status_code == 200
+    _link_row(db, world, students.alice.id)
+    staff = add_students(db, world, [world.owner], "Staff List")
+    moved = editable_structure(students)
+    moved["columns"][0]["link"]["moduleId"] = str(staff.module.id)
+    moved["columns"][1]["lookup"]["fieldId"] = str(staff.name.id)
+    assert _code(_save(application, db, world.owner, world, moved, 2)) == (
+        409, "column_has_values"
+    )
+
+
+def test_a_removed_link_column_takes_its_links_along(
+    application: FastAPI, integration_db: Session, world: SheetWorld, students: Students,
+) -> None:
+    db = integration_db
+    structure = editable_structure(students)
+    assert _save(application, db, world.owner, world, structure).status_code == 200
+    link = _link_row(db, world, students.alice.id)
+    without = {**structure, "columns": structure["columns"][2:]}  # the link and its lookup
+    assert _save(application, db, world.owner, world, without, 2).status_code == 200
+    db.refresh(link)
+    assert link.is_deleted is True
+
+
+def test_a_lookup_through_a_module_the_saver_cannot_read_is_refused(
+    application: FastAPI, integration_db: Session, world: SheetWorld,
+) -> None:
+    db = integration_db
+    private = add_students(db, world, [world.owner], "Private List")
+    structure = editable_structure(private)
+    structure["columns"] = structure["columns"][:1] + structure["columns"][2:]  # no lookup
+    assert _save(application, db, world.owner, world, structure).status_code == 200
+    lookup = {"key": "c10", "name": "Name", "type": "lookup",
+              "lookup": {"linkKey": "c1", "fieldId": str(private.name.id)}}
+    added = {**structure, "columns": [*structure["columns"], lookup]}
+    assert _code(_save(application, db, world.editor, world, added, 2)) == (
+        422, "lookup_field_invalid"
+    )

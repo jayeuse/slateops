@@ -240,19 +240,24 @@ class SheetCellChange(BaseModel):
     expected: Cell
 
 
+_AFTER_ROW = (
+    "Where the row goes. Absent: the end of the sheet (a save leaves the row in place). "
+    "Null: the top. A row ID: right after that row."
+)
+
+
 class SheetRowCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     cells: dict[str, JsonValue] = Field(default_factory=dict)
-    # Absent: the end of the sheet. Null: the top. A row ID: right after that row.
-    after_row_id: UUID | None = None
+    after_row_id: UUID | None = Field(default=None, description=_AFTER_ROW)
 
 
 class SheetRowUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     cells: dict[str, SheetCellChange] = Field(default_factory=dict)
-    after_row_id: UUID | None = None
+    after_row_id: UUID | None = Field(default=None, description=_AFTER_ROW)
 
 
 class SheetRowBatchUpdate(BaseModel):
@@ -275,6 +280,8 @@ class SheetRowBatch(BaseModel):
     def _bounded(self) -> "SheetRowBatch":
         if len(self.creates) + len(self.updates) > 100:
             raise ValueError("A batch holds at most 100 creates and updates")
+        if len({update.row_id for update in self.updates}) != len(self.updates):
+            raise ValueError("row_repeated: a batch changes each row once")
         return self
 
 

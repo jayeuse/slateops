@@ -67,6 +67,7 @@ class LifecyclePlan:
     impact_digest: str
     field_positions: dict[UUID, int] = field(default_factory=dict)
     derived_changes: tuple[DerivedChange, ...] = ()
+    worksheet_count: int = 0  # sheets a purge removes (F2); a count, never titles
 
     def response(self) -> LifecycleImpactResponse:
         return LifecycleImpactResponse(
@@ -80,6 +81,7 @@ class LifecyclePlan:
             blockers=list(self.blockers),
             derived_changes=list(self.derived_changes),
             impact_digest=self.impact_digest,
+            worksheet_count=self.worksheet_count,
         )
 
 

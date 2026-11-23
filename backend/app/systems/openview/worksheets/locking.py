@@ -2,8 +2,11 @@
 
 1. the owner's user row, FOR SHARE: a leave takes it FOR UPDATE, so a write either commits
    before the leave or sees the open state afterwards;
-2. the anchor record (or module), FOR SHARE;
-3. the sheet row, FOR UPDATE.
+2. the records the write reads or links (the anchor and link targets), FOR SHARE, in ID
+   order, then a module anchor;
+3. a share the write changes, FOR UPDATE, then the actor's live shares, FOR SHARE;
+4. the sheet row, FOR UPDATE;
+5. the rows the write changes, FOR UPDATE.
 
 Every wait is bounded (2 s) and answers 503, as relationship writes do.
 """
@@ -80,6 +83,7 @@ def _locked[T](db: Session, read: Callable[[], T]) -> T:
 
 def lock_for_write(
     db: Session, sheet: Worksheet, actor_id: UUID, record_ids: Iterable[UUID],
+    changed_share_ids: Iterable[UUID] = (),
 ) -> Worksheet:
     """Steps 1 to 4 for a row or structure write; the sheet is read again under lock.
 
@@ -96,16 +100,24 @@ def lock_for_write(
         ).all())
     if sheet.module_id is not None:
         lock_anchor(db, record_id=None, module_id=sheet.module_id)
+    changed = sorted(set(changed_share_ids))
+    if changed:  # a share the write changes, FOR UPDATE, before the sheet (step 3)
+        _locked(db, lambda: db.scalars(
+            select(WorksheetShare.id).where(WorksheetShare.id.in_(changed))
+            .order_by(WorksheetShare.id).with_for_update(of=WorksheetShare)
+        ).all())
     _locked(db, lambda: db.scalars(
         select(WorksheetShare.id)
         .where(
+            WorksheetShare.org_id == sheet.org_id,
             WorksheetShare.worksheet_id == sheet.id,
             WorksheetShare.is_deleted.is_(False),
             or_(
                 WorksheetShare.user_id == actor_id,
                 WorksheetShare.group_id.in_(
                     select(GroupMember.group_id).where(
-                        GroupMember.user_id == actor_id, GroupMember.is_deleted.is_(False)
+                        GroupMember.org_id == sheet.org_id,
+                        GroupMember.user_id == actor_id, GroupMember.is_deleted.is_(False),
                     )
                 ),
             ),

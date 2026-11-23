@@ -1,6 +1,7 @@
 """Local user invitations coordinated with the Identity capability."""
 
 from datetime import timedelta
+from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -33,65 +34,28 @@ from app.systems.access.users.coordination import (
 )
 from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
+from app.systems.access.users.outcomes import (
+    invitation_security_event,
+    record_invitation_failure,
+)
 from app.systems.access.users.schemas import InvitationCreate
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.security_events import (
-    SecurityEventPersistenceError,
     append_committed_security_event,
     append_security_event,
 )
 from app.systems.manage.workspace.models import WorkspaceProfile
 
 
-def _security_event(
-    *,
-    event_type: str,
-    outcome: SecurityEventOutcome,
-    operation_id: UUID,
-    actor_id: UUID | None = None,
-    subject_id: UUID | None = None,
-    reason: str | None = None,
-    org_id: UUID | None = None,
-) -> None:
-    try:
-        append_committed_security_event(
-            SecurityEventIngestRequest(
-                event_type=event_type,
-                outcome=outcome,
-                source="users.service",
-                operation_id=operation_id,
-                actor_id=actor_id,
-                subject_id=subject_id,
-                reason=reason,
-            ),
-            org_id=org_id,
-        )
-    except SecurityEventPersistenceError as error:
-        raise InvitationError("Unable to record security event") from error
+# Thin seams over `outcomes`: they read this module's names when called, so a test that
+# replaces `append_committed_security_event` or `_security_event` here still takes effect.
+def _security_event(**values: Any) -> None:
+    invitation_security_event(**values, append=append_committed_security_event)
 
 
-def _record_invitation_failure(
-    operation_id: UUID,
-    actor_id: UUID | None,
-    *,
-    event_type: str = "user.invitation",
-    subject_id: UUID | None = None,
-    org_id: UUID | None = None,
-) -> None:
-    """Record a secondary failure event without replacing the primary safe error."""
-
-    try:
-        _security_event(
-            event_type=event_type,
-            outcome=SecurityEventOutcome.FAILURE,
-            operation_id=operation_id,
-            actor_id=actor_id,
-            subject_id=subject_id,
-            org_id=org_id,
-        )
-    except InvitationError:
-        pass
+def _record_invitation_failure(*args: Any, **values: Any) -> None:
+    record_invitation_failure(*args, **values, event=_security_event)
 
 
 def _lock_administrator_changes(db: Session, org_id: UUID | None = None) -> None:
@@ -242,6 +206,7 @@ def invite_user(
         membership.invitation_accepted_at, membership.mfa_required_since = None, None
         membership.is_deleted, membership.deleted_at = False, None
         membership.performed_by = actor_id
+        membership.worksheets_released_at = utc_now() if removed is not None else None
         db.add(membership)
         if owner_organization is not None:
             owner_organization.owner_user_id = user.id

@@ -29,6 +29,8 @@ def _single_organization_accounts(monkeypatch):
     # Comms grant revocation uses real PostgreSQL in test_realtime_grant_routes.py.
     # These finite mock result queues continue to own account/session outcomes only.
     monkeypatch.setattr(account_operations, "revoke_stale", lambda db: None)
+    # The sheet count of a leave is owned by tests/worksheets/test_worksheet_leave_paths.py.
+    monkeypatch.setattr(account_operations, "opening_count", lambda db, user_id: 0)
 
 
 pytestmark = pytest.mark.usefixtures("local_identity_security_events")

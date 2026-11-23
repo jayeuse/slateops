@@ -37,10 +37,11 @@ from app.systems.openview.worksheets.models import (
     WorksheetRowLink,
     WorksheetRowRevision,
 )
-from app.systems.openview.worksheets.query import read_row
+from app.systems.openview.worksheets.query import read_rows
 from app.systems.openview.worksheets.schemas import (
     SheetCellChange,
     SheetLinkCell,
+    SheetRow,
     SheetRowBatchUpdate,
     SheetRowCreate,
     SheetStateCell,
@@ -130,6 +131,15 @@ def raw_targets(cells: dict[str, Any]) -> set[UUID]:
             except ValueError:
                 continue
     return found
+
+
+def readable_records(db: Session, user: User, record_ids: set[UUID]) -> set[UUID]:
+    """The named records in a module the person can read (Security review F5)."""
+
+    if not record_ids:
+        return set()
+    rows = db.execute(select(Record.id, Record.module_id).where(Record.id.in_(record_ids)))
+    return {record_id for record_id, module_id in rows if module_level(db, user, module_id)}
 
 
 def live_links(db: Session, row_ids: list[UUID]) -> dict[UUID, dict[str, WorksheetRowLink]]:
@@ -288,13 +298,12 @@ def create_row(db: Session, user: User, context: Context, create: SheetRowCreate
 
 def update_row(
     db: Session, user: User, context: Context, row: WorksheetRow,
-    cells: dict[str, SheetCellChange], conflict: Conflict,
+    cells: dict[str, SheetCellChange], conflict: Conflict, current: SheetRow | None,
 ) -> None:
     for key in cells:
         column = context.columns.get(key)
         if column is None:
             raise cell_error("cell_invalid", key, "The sheet has no such column")
-    current = read_row(db, user, context.sheet, row.id)
     if current is None:
         raise row_not_found()
     for key in cells:
@@ -360,10 +369,12 @@ def write_rows(
     row_ids = [update.row_id for update in updates]
     seen = link_targets(db, row_ids)
     targets = {target for links in seen.values() for target in links.values() if target}
+    named: set[UUID] = set()
     for create in creates:
-        targets |= raw_targets(dict(create.cells))
+        named |= raw_targets(dict(create.cells))
     for update in updates:
-        targets |= raw_targets(dict(update.cells))
+        named |= raw_targets(dict(update.cells))
+    targets |= readable_records(db, user, named)  # an unreadable one is refused, never locked
     sheet = lock_and_recheck(db, user, sheet, targets)
     if structure_revision is not None and structure_revision != sheet.revision:
         raise error(status.HTTP_409_CONFLICT, "structure_changed",
@@ -371,8 +382,10 @@ def write_rows(
     context = Context.read(db, user, sheet)
     rows = locked_rows(db, context, row_ids, seen)
     written = []
+    shown = read_rows(db, user, sheet, row_ids)  # one statement for every updated row
     for update in updates:
-        update_row(db, user, context, rows[update.row_id], update.cells, conflict)
+        update_row(db, user, context, rows[update.row_id], update.cells, conflict,
+                   shown.get(update.row_id))
         if move is not None:
             move_row(db, context, rows[update.row_id], move)
         written.append(update.row_id)

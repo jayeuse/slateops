@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.systems.access.policy.checks import module_level
 from app.systems.access.users.models import User
 from app.systems.openview.worksheets.cells import worksheet_limit
@@ -86,7 +87,8 @@ def _check_links(db: Session, user: User, old: dict[str, Column], columns: list[
             if changed or link_changed:
                 field = db.get(Field, column.lookup.fieldId)
                 if (field is None or field.is_deleted or field.module_id != target
-                        or FieldType(field.type) is FieldType.RELATIONSHIP):
+                        or FieldType(field.type) is FieldType.RELATIONSHIP
+                        or module_level(db, user, field.module_id) is None):
                     raise _invalid("lookup_field_invalid",
                                    f"{column.name}: choose a field of the linked module")
 
@@ -108,6 +110,26 @@ def _has_values(db: Session, sheet: Worksheet, key: str) -> bool:
         *live, WorksheetRowLink.column_key == key, WorksheetRowLink.is_deleted.is_(False),
     ))
     return bool(db.scalar(select(stored | linked)))
+
+
+def _drop_removed_links(
+    db: Session, sheet: Worksheet, before: list[Column], after: list[Column],
+) -> None:
+    """A removed link column takes its links along, so nothing reads them as live."""
+
+    kept = {column.key for column in after}
+    removed = [
+        column.key for column in before
+        if isinstance(column, SheetLinkColumn) and column.key not in kept
+    ]
+    if not removed:
+        return
+    for link in db.scalars(select(WorksheetRowLink).where(
+        WorksheetRowLink.worksheet_id == sheet.id,
+        WorksheetRowLink.column_key.in_(removed),
+        WorksheetRowLink.is_deleted.is_(False),
+    )):
+        link.is_deleted, link.deleted_at = True, utc_now()
 
 
 def save_structure(
@@ -140,11 +162,16 @@ def save_structure(
         raise _invalid("structure_invalid", message) from failure
     for column in structure.columns:
         previous = old_columns.get(column.key)
-        if previous is not None and previous.type != column.type and _has_values(
-            db, sheet, column.key
+        retargeted = (
+            isinstance(previous, SheetLinkColumn) and isinstance(column, SheetLinkColumn)
+            and previous.link.moduleId != column.link.moduleId
+        )
+        if previous is not None and (previous.type != column.type or retargeted) and (
+            _has_values(db, sheet, column.key)
         ):
             raise error(status.HTTP_409_CONFLICT, "column_has_values",
-                        f"{column.name} has values; clear them before changing its type")
+                        f"{column.name} has values; clear them before changing it")
+    _drop_removed_links(db, sheet, old.columns, structure.columns)
     # A new dict: `structure` is plain JSONB, so only a new value marks it changed.
     sheet.structure = structure.model_dump(mode="json")
     sheet.revision += 1

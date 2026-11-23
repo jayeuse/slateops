@@ -2,8 +2,8 @@
 
 Only the owner of a private sheet shares it. A person target must be an active member of
 the bound organization whom the owner can see (`visible_person_ids`); a group target must
-be a live group of the bound organization. Any other target answers the same 404 as an ID
-that does not exist, and no answer names it. A guest gets View only.
+be a live group of the bound organization that the owner belongs to. Any other target answers
+the same 404 as an ID that does not exist, and no answer names it. A guest gets View only.
 """
 
 from collections.abc import Sequence
@@ -19,7 +19,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
 from app.core.base_model import utc_now
 from app.core.database.organization_scope import bound_organization_column
-from app.systems.access.policy.models import Group
+from app.systems.access.policy.models import Group, GroupMember
 from app.systems.access.policy.readers import active_account_clause
 from app.systems.access.policy.transaction_access import forget_access
 from app.systems.access.users.membership import bound_membership_join
@@ -72,8 +72,10 @@ def owned_private(db: Session, user: User, worksheet_id: UUID) -> Worksheet:
     return sheet
 
 
-def _locked(db: Session, user: User, sheet: Worksheet) -> Worksheet:
-    lock_for_write(db, sheet, user.id, [])
+def _locked(
+    db: Session, user: User, sheet: Worksheet, share_id: UUID | None = None,
+) -> Worksheet:
+    lock_for_write(db, sheet, user.id, [], [share_id] if share_id else [])
     forget_access(db, user.id)  # R4: the owner check again, from fresh reads
     return owned_private(db, user, sheet.id)
 
@@ -90,10 +92,13 @@ def _person(db: Session, owner: User, user_id: UUID) -> Membership:
     return membership
 
 
-def _group(db: Session, group_id: UUID) -> Group:
-    group = db.scalar(select(Group).where(
+def _group(db: Session, owner: User, group_id: UUID) -> Group:
+    """A live group of the organization that the owner is a live member of (DEC-0047 1)."""
+
+    group = db.scalar(select(Group).join(GroupMember, GroupMember.group_id == Group.id).where(
         Group.id == group_id, Group.org_id == bound_organization_column(),
-        Group.is_deleted.is_(False),
+        Group.is_deleted.is_(False), GroupMember.user_id == owner.id,
+        GroupMember.org_id == bound_organization_column(), GroupMember.is_deleted.is_(False),
     ))
     if group is None:
         raise _target_not_found()
@@ -147,7 +152,7 @@ def create_share(
         if payload.level == "edit" and membership.role == UserRole.GUEST.value:
             raise _guest_view_only()
     else:
-        _group(db, cast(UUID, payload.group_id))
+        _group(db, user, cast(UUID, payload.group_id))
     existing = db.scalar(select(WorksheetShare.id).where(
         WorksheetShare.worksheet_id == sheet.id, WorksheetShare.is_deleted.is_(False),
         WorksheetShare.subject == payload.subject,
@@ -178,15 +183,15 @@ def change_share(
 ) -> WorksheetShare:
     sheet = owned_private(db, user, worksheet_id)
     _live_share(db, sheet, share_id)
-    sheet = _locked(db, user, sheet)
+    sheet = _locked(db, user, sheet, share_id)
     share = _live_share(db, sheet, share_id)
-    if level == "edit" and share.user_id is not None:
-        membership = db.scalar(select(Membership).where(
-            Membership.user_id == share.user_id,
-            Membership.org_id == bound_organization_column(),
-        ))
-        if membership is not None and membership.role == UserRole.GUEST.value:
+    # D14 R1 again under the lock: a target that left, or a group the owner left, is gone.
+    if share.user_id is not None:
+        membership = _person(db, user, share.user_id)
+        if level == "edit" and membership.role == UserRole.GUEST.value:
             raise _guest_view_only()
+    elif share.group_id is not None:
+        _group(db, user, share.group_id)
     share.level = level
     return share
 
@@ -194,6 +199,6 @@ def change_share(
 def remove_share(db: Session, user: User, worksheet_id: UUID, share_id: UUID) -> None:
     sheet = owned_private(db, user, worksheet_id)
     _live_share(db, sheet, share_id)
-    sheet = _locked(db, user, sheet)
+    sheet = _locked(db, user, sheet, share_id)
     share = _live_share(db, sheet, share_id)
     share.is_deleted, share.deleted_at = True, utc_now()

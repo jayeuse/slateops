@@ -145,6 +145,8 @@ class LifecycleImpactResponse(BaseModel):
     blockers: list[LifecycleBlocker] = Field(default_factory=list)
     derived_changes: list[DerivedChange] = Field(default_factory=list)
     impact_digest: str
+    # Sheets a purge removes (sheets spec F2): a count, never titles or records.
+    worksheet_count: int = 0
 
 
 class LifecycleClosePreviewResponse(BaseModel):

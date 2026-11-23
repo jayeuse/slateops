@@ -12181,6 +12181,11 @@
           },
           "target_type": {
             "$ref": "#/components/schemas/LifecycleTargetType"
+          },
+          "worksheet_count": {
+            "default": 0,
+            "title": "Worksheet Count",
+            "type": "integer"
           }
         },
         "required": [
@@ -22173,6 +22178,7 @@
                 "type": "null"
               }
             ],
+            "description": "Where the row goes. Absent: the end of the sheet (a save leaves the row in place). Null: the top. A row ID: right after that row.",
             "title": "After Row Id"
           },
           "cells": {
@@ -22290,6 +22296,7 @@
                 "type": "null"
               }
             ],
+            "description": "Where the row goes. Absent: the end of the sheet (a save leaves the row in place). Null: the top. A row ID: right after that row.",
             "title": "After Row Id"
           },
           "cells": {
@@ -26803,6 +26810,19 @@
           "created_at"
         ],
         "title": "WorksheetDetail",
+        "type": "object"
+      },
+      "WorksheetImpact": {
+        "properties": {
+          "opening_count": {
+            "title": "Opening Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "opening_count"
+        ],
+        "title": "WorksheetImpact",
         "type": "object"
       },
       "WorksheetRename": {
@@ -65591,6 +65611,73 @@
           }
         ],
         "summary": "Set User Temporary Password",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/worksheet-impact": {
+      "get": {
+        "description": "Route 24: how many private sheets a disable or removal would open (L5, SH-55).",
+        "operationId": "worksheet_impact_api_users__user_id__worksheet_impact_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorksheetImpact"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Worksheet Impact",
         "tags": [
           "users"
         ]

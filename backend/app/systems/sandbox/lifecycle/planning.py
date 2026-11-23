@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.systems.openview.worksheets.lifecycle import SheetPurge, plan_sheet_purge
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.lifecycle.batch_dependencies import load_purge_dependencies
@@ -336,6 +337,12 @@ def plan_lifecycle(
         )
     )
 
+    sheets = plan_sheet_purge(  # sheets spec D4: anchored on purged records and modules
+        db, [record.id for record in scope.records] if resolved_target is not
+        LifecycleTargetType.FIELD else [], [module.id for module in scope.modules]
+        if resolved_target in {LifecycleTargetType.DEPARTMENT, LifecycleTargetType.MODULE}
+        else [],
+    ) if resolved_operation is LifecycleOperation.PURGE else SheetPurge()
     internal_state, binding_ids = design_review_state(db, scope, resolved_target)
     if resolved_target is LifecycleTargetType.RECORD:
         record = scope.records[0]
@@ -354,6 +361,8 @@ def plan_lifecycle(
         }
     if position_states:
         internal_state = {"design": internal_state, "field_order": position_states}
+    if sheets.state:
+        internal_state = {"state": internal_state, "worksheets": sheets.state}
     digest = canonical_lifecycle_digest(
         resolved_operation,
         resolved_target,
@@ -369,6 +378,7 @@ def plan_lifecycle(
     scope_ids = scope.ids
     scope_ids.update(dependency_ids)
     scope_ids.update(derived.scope_ids)
+    scope_ids.update(sheets.ids)
     scope_ids["sandbox_bindings"] = tuple(
         sorted(set(binding_ids) | set(scope_ids.get("sandbox_bindings", ())))
     )
@@ -402,6 +412,7 @@ def plan_lifecycle(
         impact_digest=digest,
         field_positions=field_positions,
         derived_changes=derived.changes,
+        worksheet_count=sheets.count,
     )
 
 

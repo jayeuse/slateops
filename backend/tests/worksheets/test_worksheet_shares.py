@@ -102,7 +102,9 @@ def test_a_group_share_follows_membership_and_the_higher_level_wins(
     db.add(team)
     db.flush()
     member = GroupMember(org_id=team.org_id, group_id=team.id, user_id=friend.id)
-    db.add(member)
+    # The owner shares only with groups they belong to (DEC-0047 1).
+    db.add_all([member, GroupMember(org_id=team.org_id, group_id=team.id,
+                                    user_id=world.owner.id)])
     db.flush()
     created = _share(application, db, world,
                      {"subject": "group", "group_id": str(team.id), "level": "view"})
@@ -216,3 +218,38 @@ def test_a_recipient_who_loses_record_read_gets_not_found_until_it_returns(
     row.is_deleted, row.deleted_at = False, None
     db.flush()
     assert _level(application, db, world, world.viewer) == "view"
+
+
+def test_a_group_the_owner_is_not_in_answers_like_a_random_id(
+    application: FastAPI, integration_db: Session, world: SheetWorld,
+) -> None:
+    db = integration_db
+    others = Group(org_id=world.sheet.org_id, name=f"Others {uuid7().hex}")
+    db.add(others)
+    db.flush()
+    db.add(GroupMember(org_id=others.org_id, group_id=others.id, user_id=world.peer.id))
+    db.flush()
+    answers = [
+        _share(application, db, world, {"subject": "group", "group_id": str(group_id),
+                                        "level": "view"})
+        for group_id in (others.id, uuid7())
+    ]
+    assert [(answer.status_code, _body(answer)) for answer in answers] == [
+        (404, TARGET_NOT_FOUND), (404, TARGET_NOT_FOUND),
+    ]
+    assert others.name not in str([answer.json() for answer in answers])
+
+
+def test_a_share_to_a_person_who_left_cannot_change_but_can_be_removed(
+    application: FastAPI, integration_db: Session, world: SheetWorld,
+) -> None:
+    db = integration_db
+    friend = _reader(db, world, "share-leaver")
+    created = _share(application, db, world,
+                     {"subject": "user", "user_id": str(friend.id), "level": "view"})
+    path = f"/api/worksheets/{world.sheet.id}/shares/{created.json()['id']}"
+    membership_of(db, friend.id).status = "disabled"
+    db.flush()
+    raised = _as(application, db, world.owner).patch(path, json={"level": "edit"})
+    assert (raised.status_code, _body(raised)) == (404, TARGET_NOT_FOUND)
+    assert _as(application, db, world.owner).delete(path).status_code == 204

@@ -12,6 +12,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.database.organization_scope import bound_organization_column
 from app.systems.access.policy.models import Group, GroupMember
 from app.systems.access.users.models import User
 from app.systems.openview.worksheets.models import Worksheet, WorksheetShare
@@ -71,6 +72,8 @@ def _group_access(db: Session, user: User, sheet_ids: list[UUID]) -> dict[UUID, 
             WorksheetShare.worksheet_id.in_(sheet_ids), WorksheetShare.subject == "group",
             WorksheetShare.is_deleted.is_(False), Group.is_deleted.is_(False),
             GroupMember.user_id == user.id, GroupMember.is_deleted.is_(False),
+            Group.org_id == bound_organization_column(),
+            GroupMember.org_id == bound_organization_column(),
         )
     ).tuples().all()
     best: dict[UUID, tuple[int, str]] = {}

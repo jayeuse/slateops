@@ -29,6 +29,7 @@ from app.systems.openview.charts.models import Chart
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
 from app.systems.openview.views.models import SavedView
+from app.systems.openview.worksheets.lifecycle import SHEET_LOCK_MODELS, purge_sheets
 from app.systems.platform.files.models import File
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork
 from app.systems.sandbox.departments.models import Department
@@ -93,6 +94,7 @@ _LOCK_MODELS: tuple[tuple[str, type[Any]], ...] = (
     ("records", Record),
     ("report_run_rows", ReportRunRow),
     ("relationship_edges", RelationshipEdge),
+    *SHEET_LOCK_MODELS,
     ("files", File),
     ("saved_views", SavedView),
     ("record_triggers", RecordTrigger),
@@ -318,6 +320,7 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
         db.delete(link)
     db.flush()
 
+    purge_sheets(db, plan.scope_ids)  # sheets spec D4, before their records and modules
     for entity_type in (
         "group_access",
         "files",

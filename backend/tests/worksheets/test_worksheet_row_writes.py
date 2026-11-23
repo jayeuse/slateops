@@ -10,7 +10,7 @@ from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -24,6 +24,7 @@ from app.systems.openview.worksheets.models import (
 )
 from tests.rbac.support import _client
 from tests.worksheets.support import (
+    STRUCTURE,
     SheetWorld,
     Students,
     add_students,
@@ -301,3 +302,135 @@ def test_a_save_drops_the_values_of_removed_columns(
     }).status_code == 200
     integration_db.refresh(row)
     assert row.data == {"c3": "y"}
+
+
+NUMBERS = {
+    **STRUCTURE, "nextColumnSeq": 4,
+    "columns": [
+        {"key": "c1", "name": "Amount", "type": "number"},
+        {"key": "c2", "name": "Count", "type": "int"},
+        {"key": "c3", "name": "Mark", "type": "decimal",
+         "decimal": {"places": 2, "currency": False}},
+    ],
+}
+REFUSED = None
+
+
+@pytest.mark.parametrize(
+    ("locale", "text", "stored"),
+    [
+        ("en-US", "1.5", 1.5), ("en-US", "1234.5", 1234.5),
+        ("en-US", "1,5", REFUSED), ("en-US", "1.234,5", REFUSED),
+        ("de-DE", "1,5", 1.5), ("de-DE", "1.234,5", 1234.5),
+        ("de-DE", "1.5", REFUSED), ("de-DE", "1234.5", REFUSED),
+        *((locale, text, REFUSED) for locale in ("en-US", "de-DE")
+          for text in ("NaN", "Infinity", "1e5000")),
+    ],
+)
+def test_a_number_typed_as_text_follows_the_locale_strictly_and_stays_finite(
+    application: FastAPI, integration_db: Session, locale: str, text: str,
+    stored: float | None,
+) -> None:
+    db = integration_db
+    world = sheet_world(db)
+    world.sheet.structure = dict(NUMBERS)
+    organization = db.get(WorkspaceProfile, world.sheet.org_id)
+    assert organization is not None
+    organization.locale = locale
+    db.flush()
+    rows = Rows(application, db, world)
+    answer = rows.create(world.owner, {"c1": text})
+    if stored is REFUSED:
+        assert _code(answer) == (422, "cell_invalid")
+    else:
+        assert answer.status_code == 201, answer.text
+        assert answer.json()["cells"]["c1"] == {"value": stored}
+
+
+@pytest.mark.parametrize(
+    ("cells", "accepted"),
+    [
+        ({"c2": 9007199254740991}, True),
+        ({"c2": 9007199254740992}, False),
+        ({"c1": 9007199254740992}, False),
+        ({"c1": 10**40}, False),
+        ({"c3": "1e5000"}, False),
+    ],
+    ids=["largest-safe-integer", "integer-past-browser-precision",
+         "whole-number-past-browser-precision", "huge-number", "huge-decimal"],
+)
+def test_numbers_stay_within_what_a_browser_reads_exactly(
+    application: FastAPI, integration_db: Session, cells: dict[str, Any], accepted: bool,
+) -> None:
+    db = integration_db
+    world = sheet_world(db)
+    world.sheet.structure = dict(NUMBERS)
+    db.flush()
+    answer = Rows(application, db, world).create(world.owner, cells)
+    if accepted:
+        assert answer.status_code == 201, answer.text
+    else:
+        assert _code(answer) == (422, "cell_invalid")
+
+
+def test_a_batch_reads_its_rows_in_a_fixed_number_of_statements(
+    integration_db: Session, world: SheetWorld, rows: Rows,
+) -> None:
+    db = integration_db
+    client = _client(rows.application, world.owner, db)
+
+    def selects_for(count: int) -> int:
+        added = [
+            WorksheetRow(org_id=world.sheet.org_id, worksheet_id=world.sheet.id,
+                         position=(position + 1) * 1024, data={"c3": "x"},
+                         data_bytes=10)  # the stored size of {"c3":"x"}
+            for position in range(count)
+        ]
+        db.add_all(added)
+        db.flush()
+        ids = [row.id for row in added]
+        seen: list[str] = []
+
+        def count_select(_conn: Any, _cursor: Any, statement: str, *_args: Any) -> None:
+            if statement.lstrip().upper().startswith("SELECT"):
+                seen.append(statement)
+
+        connection = db.connection()
+        event.listen(connection, "before_cursor_execute", count_select)
+        try:
+            answer = client.post(f"{rows.base}/batch", json={
+                "structure_revision": 1,
+                "updates": [{"row_id": str(row_id),
+                             "cells": {"c3": {"value": "y", "expected": {"value": "x"}}}}
+                            for row_id in ids],
+            })
+        finally:
+            event.remove(connection, "before_cursor_execute", count_select)
+        assert answer.status_code == 200, answer.text
+        return len(seen)
+
+    assert selects_for(100) - selects_for(10) < 10
+
+
+def test_a_number_too_small_to_keep_is_refused(
+    application: FastAPI, integration_db: Session,
+) -> None:
+    db = integration_db
+    world = sheet_world(db)
+    world.sheet.structure = dict(NUMBERS)
+    db.flush()
+    answer = Rows(application, db, world).create(world.owner, {"c1": "1e-400"})
+    assert _code(answer) == (422, "cell_invalid")
+
+
+def test_a_batch_that_names_one_row_twice_is_refused(
+    integration_db: Session, world: SheetWorld, rows: Rows,
+) -> None:
+    row_id = rows.create(world.owner, {"c3": "x"}).json()["id"]
+    change = {"c3": {"value": "y", "expected": {"value": "x"}}}
+    answer = _client(rows.application, world.owner, integration_db).post(
+        f"{rows.base}/batch",
+        json={"structure_revision": 1, "updates": [{"row_id": row_id, "cells": change}] * 2},
+    )
+    assert answer.status_code == 422
+    assert "row_repeated" in answer.text

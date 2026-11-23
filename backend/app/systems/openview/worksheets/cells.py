@@ -10,7 +10,6 @@ formula stays text: nothing in a cell is ever evaluated (X11).
 import json
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from math import isfinite
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -36,6 +35,9 @@ READ_ONLY_TYPES = frozenset({"lookup", "computed", "sheet_lookup"})
 _TEXT_TYPES = frozenset({"text", "long_text", "email", "url"})
 # A JSON number keeps a decimal exactly when it has at most 15 significant digits.
 _DECIMAL_DIGITS = 15
+# The largest whole number a browser reads exactly, and the largest decimal exponent kept.
+_LARGEST_EXACT_INTEGER = 2**53 - 1
+_LARGEST_EXPONENT = 37
 
 
 @dataclass(frozen=True)
@@ -87,22 +89,32 @@ def _text(key: str, value: Any) -> str:
 
 
 def _number(key: str, value: Any, locale: str) -> Decimal:
+    """A finite number of a sane size: JSON numbers, or text in the locale, strictly (O4)."""
+
     if isinstance(value, bool):
         raise cell_error("cell_invalid", key, "Enter a number")
-    if isinstance(value, int | float):
-        if not isfinite(value):
-            raise cell_error("cell_invalid", key, "Enter a number")
-        return Decimal(str(value))
-    if isinstance(value, str) and value.strip():
-        try:
-            return parse_decimal(value.strip(), locale=Locale.parse(locale, sep="-"))
-        except (NumberFormatError, InvalidOperation, ValueError) as error:
-            raise cell_error("cell_invalid", key, "Enter a number") from error
-    raise cell_error("cell_invalid", key, "Enter a number")
+    try:
+        if isinstance(value, int | float):
+            number = Decimal(str(value))
+        elif isinstance(value, str) and value.strip():
+            number = parse_decimal(
+                value.strip(), locale=Locale.parse(locale, sep="-"), strict=True,
+            )
+        else:
+            raise ValueError("not a number")
+    except (NumberFormatError, InvalidOperation, ValueError, OverflowError) as error:
+        raise cell_error("cell_invalid", key, "Enter a number") from error
+    if not number.is_finite() or number.adjusted() > _LARGEST_EXPONENT or (
+        number != 0 and number.adjusted() < -_LARGEST_EXPONENT  # it would read back as 0
+    ):
+        raise cell_error("cell_invalid", key, "Enter a number")
+    return number
 
 
 def _json_number(key: str, number: Decimal) -> int | float:
     if number == number.to_integral_value():
+        if abs(number) > _LARGEST_EXACT_INTEGER:
+            raise cell_error("cell_invalid", key, "The number is too large")
         return int(number)
     if len(number.normalize().as_tuple().digits) > _DECIMAL_DIGITS:
         raise cell_error("cell_invalid", key, "Use at most 15 significant digits")

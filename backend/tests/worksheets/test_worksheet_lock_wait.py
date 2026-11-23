@@ -28,7 +28,10 @@ from tests.rbac.support import _client
 from tests.worksheets.support import STRUCTURE
 
 pytestmark = pytest.mark.integration
-_TABLES = ("worksheets", "records", "modules", "departments", "memberships")
+_TABLES = (
+    "worksheet_row_revisions", "worksheet_rows", "worksheets", "records", "modules",
+    "departments", "memberships",
+)
 
 
 @dataclass(frozen=True)
@@ -107,3 +110,21 @@ def test_a_rename_behind_a_held_sheet_lock_answers_busy_and_changes_nothing(
         title = reader.scalar(text("SELECT title FROM public.worksheets WHERE id = :id"),
                               {"id": committed.sheet_id})
     assert title == "Held"
+
+
+def test_a_row_save_behind_a_held_sheet_lock_answers_busy_and_writes_nothing(
+    integration_db: Session, committed: Committed,
+) -> None:
+    owner = integration_db.get(User, committed.user_id)
+    assert owner is not None
+    client = _client(create_app(), owner, integration_db)
+    with committed.owner_engine.connect() as holder:
+        holder.execute(text("SELECT id FROM public.worksheets WHERE id = :id FOR UPDATE"),
+                       {"id": committed.sheet_id})
+        refused = client.post(f"/api/worksheets/{committed.sheet_id}/rows", json={"cells": {}})
+        holder.rollback()
+    assert (refused.status_code, refused.json()["detail"]["code"]) == (503, "worksheet_busy")
+    with committed.owner_engine.connect() as reader:
+        rows = reader.scalar(text("SELECT count(*) FROM public.worksheet_rows "
+                                  "WHERE worksheet_id = :id"), {"id": committed.sheet_id})
+    assert rows == 0

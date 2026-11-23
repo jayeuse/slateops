@@ -164,3 +164,19 @@ def read_row(db: Session, user: User, sheet: Worksheet, row_id: UUID) -> SheetRo
         _rows(projection, sheet).where(WorksheetRow.id == row_id)
     ).mappings().one_or_none()
     return None if found is None else _view(found, [column.key for column in structure.columns])
+
+
+def read_rows(
+    db: Session, user: User, sheet: Worksheet, row_ids: list[UUID],
+) -> dict[UUID, SheetRow]:
+    """Several rows as the person sees them, in one statement (batch saves, responses)."""
+
+    if not row_ids:
+        return {}
+    structure = WorksheetStructure.model_validate(sheet.structure)
+    projection = project_rows(db, user, structure)
+    keys = [column.key for column in structure.columns]
+    found = db.execute(
+        _rows(projection, sheet).where(WorksheetRow.id.in_(row_ids))
+    ).mappings().all()
+    return {row["id"]: _view(row, keys) for row in found}

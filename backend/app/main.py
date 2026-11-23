@@ -76,6 +76,7 @@ from app.systems.openview.dashboards.router import router as dashboards_router
 from app.systems.openview.reports.router import router as reports_router
 from app.systems.openview.reports.schedule_router import router as report_schedule_router
 from app.systems.openview.views.router import router as views_router
+from app.systems.openview.worksheets.leave import router as worksheet_impact_router
 from app.systems.openview.worksheets.router import router as worksheets_router
 from app.systems.openview.worksheets.row_router import router as worksheet_rows_router
 from app.systems.openview.worksheets.share_router import router as worksheet_shares_router
@@ -270,6 +271,7 @@ def create_app() -> FastAPI:
     app.include_router(worksheets_router, prefix="/api")
     app.include_router(worksheet_rows_router, prefix="/api")
     app.include_router(worksheet_shares_router, prefix="/api")
+    app.include_router(worksheet_impact_router, prefix="/api")
     app.include_router(notifications_router, prefix="/api")
     app.include_router(search_router, prefix="/api")
     app.include_router(workspace_router, prefix="/api")

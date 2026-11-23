@@ -10,7 +10,7 @@ from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.systems.access.users.models import User
 from app.systems.openview.worksheets.access import load_visible_worksheet
-from app.systems.openview.worksheets.query import read_row
+from app.systems.openview.worksheets.query import read_rows
 from app.systems.openview.worksheets.row_writes import delete_row, row_not_found, write_rows
 from app.systems.openview.worksheets.schemas import (
     SheetRow,
@@ -35,11 +35,10 @@ _ETAG: dict[str, dict[str, Any]] = {"ETag": {"schema": {"type": "string"}}}
 
 def _rows(db: Session, user: User, worksheet_id: UUID, row_ids: list[UUID]) -> list[SheetRow]:
     sheet = load_visible_worksheet(db, user, worksheet_id)
-    found = [read_row(db, user, sheet, row_id) for row_id in row_ids] if sheet else []
-    rows = [row for row in found if row is not None]
-    if len(rows) != len(row_ids):
+    found = read_rows(db, user, sheet, row_ids) if sheet else {}
+    if len(found) != len(set(row_ids)):
         raise row_not_found()
-    return rows
+    return [found[row_id] for row_id in row_ids]
 
 
 @router.post(
