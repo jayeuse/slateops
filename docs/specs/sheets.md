@@ -310,7 +310,7 @@ Each criterion names its rules. "Not found" means the same response as for a she
 | SH-54 | A keyboard-only person moves between cells with the arrow keys, edits a cell, and leaves it, with visible focus at each step. A screen reader announces the column name and value of the focused cell. With reduced motion, the grid has no motion. | P9 |
 | SH-55 | `GET /api/users/{user_id}/worksheet-impact` answers an admin with `{"opening_count": n}`, where n is the number of sheets that the leave would open in this organization. It carries no titles and no records. A non-admin gets 403. The count is taken before the change, so it is not 0 after the leave starts. | L5, D3.1, D3.2 |
 | SH-56 | A sheet is created on a record after an admin opens the purge preview. The purge is then refused with "Lifecycle impact changed after planning", and nothing is removed. The preview response has `worksheet_count`. | F1, F2, D4 |
-| SH-57 | An Edit recipient saves a row while an admin disables the owner. Either the save commits before the disable, or it is refused because the sheet is settled in Decisions. No save commits after the sheet reads as open. | L3, D3.3 |
+| SH-57 | An Edit recipient saves a row while an admin disables the owner. Either the save commits before the disable, or it is refused because the sheet is open. No save commits after the sheet reads as open. | L3, D3.3 |
 | SH-58 | A viewer who cannot read a lookup's module sees "No access" in the lookup and in each computed cell that reads it. Sorting and searching on those columns place and match those cells as blank. Totals skip them and report the number hidden. The export writes "No access". | K6, N4, D7.3 |
 | SH-59 | Each Excel parse, accepted or refused, writes one `worksheets.import.file_parsed` event with its outcome and reason, and no file content. A CSV import writes none. | H6 |
 | SH-60 | An installation owner disables an account that belongs to two organizations. The person's sheets in both organizations read as open. The `worksheets.opened_on_leave` event is written only in the organization of the request. | L0, L3, H5, D3.4 |
@@ -550,7 +550,7 @@ This table copies `comms_channel_access` (`comms/conversations/models.py`, class
 | `subject` | `text NOT NULL`, `user` or `group`. |
 | `user_id` | `uuid NULL`; FK `users.id`, `RESTRICT`. |
 | `group_id` | `uuid NULL`; FK `(org_id, group_id)` to `groups`, `RESTRICT`. |
-| `level` | `text NOT NULL`, `CHECK (level IN ('view', 'edit'))`. This is the level kept for the leave event: the leave never changes it (D0), and the access rule reads it as `view` while the sheet is settled in Decisions. |
+| `level` | `text NOT NULL`, `CHECK (level IN ('view', 'edit'))`. This is the level kept for the leave event: the leave never changes it (D0), and the access rule reads it as `view` while the sheet is open. |
 | `created_by` | `uuid NOT NULL`; FK `users.id`, `RESTRICT`. |
 
 - `CHECK ((subject = 'user' AND user_id IS NOT NULL AND group_id IS NULL) OR (subject = 'group' AND group_id IS NOT NULL AND user_id IS NULL))`.
@@ -669,7 +669,7 @@ How each V7 surface applies the rule:
 | --- | --- | --- |
 | `_change_membership_status` to `disabled` (`:204-226`) | `memberships.status` | Open (not present) |
 | `_disable_user` (`:311-361`) | `users.status` | Open in every organization of the account |
-| `_remove_membership` (`:229-249`) | `memberships.is_deleted` | Settled (DEC-0045) |
+| `_remove_membership` (`:229-249`) | `memberships.is_deleted` | Open |
 | `delete_user` (`:364-428`) | `users.is_deleted` | Open in every organization |
 | `_change_membership_status` to `active`, `_activate_user` (`:252-308`) | status back to `active` | Private again, with the earlier shares (L4) |
 | `restore_user` (`:431-500`) | `is_deleted` back to false | Private again, with the earlier shares (Decision 6a) |
@@ -971,7 +971,7 @@ Conventions for every route (`backend/AGENTS.md`, "API conventions"; `fastapi-ap
 
 Shapes:
 
-- `WorksheetSummary`: `id`, `record_id`, `title`, `owner {id, display_name}`, `state` (`private` or `open`), `my_level` (`owner`, `edit` or `view`), `live_row_count`, `revision`, `updated_at`, `is_deleted`.
+- `WorksheetSummary`: `id`, `record_id` (null for a module sheet), `module_id` (null for a record sheet), `title`, `owner {id, display_name}`, `state` (`private` or `open`), `my_level` (`owner`, `edit` or `view`), `live_row_count`, `revision`, `updated_at`, `is_deleted`.
 - `WorksheetDetail`: the summary, plus `structure` (with names), `etag` and `created_at`.
 - `Row`: `id`, `revision`, `etag`, `position`, `cells: {key: Cell}`.
 - `Cell` is one of:
