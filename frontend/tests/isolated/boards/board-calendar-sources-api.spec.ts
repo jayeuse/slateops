@@ -304,3 +304,21 @@ test("Kanban stage, card and label changes reach the stream as board invalidatio
       ),
     ).toEqual({ type: "invalidate", entity, boardId });
 });
+
+test("a sheet change reaches the stream with its sheet id, and nothing else", () => {
+  const sheetId = "00000000-0000-4000-8000-00000000000a";
+  expect(
+    parseWorkspaceInvalidation(
+      "invalidate",
+      JSON.stringify({ entity: "worksheets", entity_id: sheetId }),
+    ),
+  ).toEqual({ type: "invalidate", entity: "worksheets", worksheetId: sheetId });
+  for (const payload of [
+    { entity: "worksheets" },
+    { entity: "worksheets", entity_id: "not-a-uuid" },
+    { entity: "worksheets", entity_id: sheetId, module_id: moduleId },
+  ])
+    expect(
+      parseWorkspaceInvalidation("invalidate", JSON.stringify(payload)),
+    ).toBeNull();
+});

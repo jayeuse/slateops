@@ -52,7 +52,7 @@ import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import { ServerConnectionBanner } from "@/components/server-connection-banner";
 import { ShellAccountChecks } from "@/components/shell-account-checks";
 import { isModulePage } from "@/components/department-navigation-model";
-import { isMySheetsPage } from "@/components/workspace-navigation";
+import { isMySheetsPage, isSheetPage } from "@/components/workspace-navigation";
 import { HelpPanel } from "@/components/help/help-panel";
 import {
   GuardedWorkspaceLink,
@@ -146,6 +146,9 @@ export function AppShell({
   const router = useRouter();
   const isComms = pathname === "/comms";
   const isAccess = pathname === "/access";
+  // A sheet's page is still at every width, the phone included: only its
+  // grid pane scrolls (docs/specs/sheets.md P3, P5).
+  const isSheet = isSheetPage(pathname, searchParams);
   // On desktop (1280px and up) the Sandbox fills the viewport and never
   // scrolls; its panels do. Phones and tablets scroll the page.
   const isSandbox = pathname === "/sandbox";
@@ -615,7 +618,7 @@ export function AppShell({
           <div
             className={cn(
               "flex min-w-0 flex-1 flex-col",
-              isComms || isAccess
+              isComms || isAccess || isSheet
                 ? "h-dvh min-h-0"
                 : isSandbox || isManage || isModule || isBoards || isAccountPane
                   ? "min-h-screen xl:h-dvh xl:min-h-0"
@@ -660,7 +663,7 @@ export function AppShell({
               data-skin="page"
               data-page-spacing={isComms ? "excluded" : undefined}
               className={cn(
-                isComms || isAccess
+                isComms || isAccess || isSheet
                   ? "flex min-h-0 flex-1 flex-col overflow-hidden"
                   : isSandbox
                     ? "flex-1 p-4 sm:px-5 sm:py-7 xl:flex xl:min-h-0 xl:flex-col xl:overflow-hidden"

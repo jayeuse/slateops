@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
+import { lazy, Suspense } from "react";
 import Link from "next/link";
 import { Alert } from "@/components/ui/alert";
 import { usePathname, useSearchParams } from "next/navigation";
@@ -15,6 +15,8 @@ import ServerBackedViewsWorkspace, {
   OpenViewHeader,
 } from "./server-backed-views-workspace";
 
+const SheetPage = lazy(() => import("./sheet-page"));
+
 function OpenViewRouteContent() {
   const pathname = usePathname();
   const query = useSearchParams();
@@ -22,8 +24,7 @@ function OpenViewRouteContent() {
   const isLegacySampleRecordLink = Boolean(
     urlState.section === "views" && urlState.record?.startsWith("sample-"),
   );
-  // A sheet's own address (P6). Its page arrives with TASK-0102 F3; until
-  // then the address holds and says the sheet cannot be shown.
+  // A sheet's own address (P6): its page is its own chunk.
   const sheetAddress = query.get("sheet") !== null;
   const section =
     isLegacySampleRecordLink || sheetAddress ? null : urlState.section;
@@ -33,15 +34,9 @@ function OpenViewRouteContent() {
   let content;
   if (sheetAddress)
     content = (
-      <Alert className="flex flex-wrap items-center justify-between gap-3">
-        <p>This sheet cannot be shown here yet</p>
-        <Link
-          href="/openview?section=sheets"
-          className="text-action-text inline-flex min-h-11 items-center font-medium underline underline-offset-4"
-        >
-          My sheets
-        </Link>
-      </Alert>
+      <Suspense fallback={<OpenViewLoading />}>
+        <SheetPage sheetId={query.get("sheet") ?? ""} />
+      </Suspense>
     );
   else if (section === "views")
     content = (

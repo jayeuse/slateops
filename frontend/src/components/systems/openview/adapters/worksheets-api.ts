@@ -338,3 +338,119 @@ export function restoreWorksheet(id: string): Promise<WorksheetDetail> {
     { method: "POST" },
   );
 }
+
+// ------------------------------------------------------------------- rows
+
+const jsonValue: z.ZodType<unknown> = z.unknown();
+
+// A cell as the viewer may see it (D10 `Cell`, D7.3): a value, a link, text
+// that matched no record, or a state with no value.
+const cellSchema = z.union([
+  z.object({ value: jsonValue }).strict(),
+  z
+    .object({
+      link: z.object({ record_id: uuid, label: z.string() }).strict(),
+    })
+    .strict(),
+  z.object({ unlinked: z.string() }).strict(),
+  z
+    .object({
+      state: z.enum([
+        "no_access",
+        "deleted",
+        "removed",
+        "unavailable",
+        "field_removed",
+        "column_removed",
+        "multiple_matches",
+      ]),
+    })
+    .strict(),
+]);
+
+export type WorksheetCell = z.output<typeof cellSchema>;
+export type WorksheetCellState = Extract<
+  WorksheetCell,
+  { state: unknown }
+>["state"];
+
+const rowSchema = z
+  .object({
+    id: uuid,
+    revision: z.number().int().min(0),
+    etag: z.string().min(1),
+    position: z.number().int(),
+    cells: z.record(z.string(), cellSchema),
+  })
+  .strict();
+
+export type WorksheetRow = z.output<typeof rowSchema>;
+
+const totalSchema = z
+  .object({
+    fn: totalFunction,
+    value: z.union([z.number(), z.string(), z.null()]),
+    hidden_count: z.number().int().min(0),
+  })
+  .strict();
+
+export type WorksheetTotal = z.output<typeof totalSchema>;
+
+const rowPageSchema = z
+  .object({
+    items: z.array(rowSchema),
+    pagination: z
+      .object({
+        limit: z.number().int().min(1).max(200),
+        offset: z.number().int().min(0),
+        count: z.number().int().min(0),
+        total: z.number().int().min(0),
+        has_more: z.boolean(),
+      })
+      .strict(),
+    totals: z.record(z.string(), totalSchema),
+  })
+  .strict()
+  .transform(({ items, pagination, totals }) => ({
+    rows: items,
+    total: pagination.total,
+    totals,
+  }));
+
+export type WorksheetRowPage = z.output<typeof rowPageSchema>;
+
+/** The grid reads rows in pages of this size (route 9). */
+export const WORKSHEET_ROW_PAGE = 200;
+
+export type WorksheetRowSort = { key: string; order: "asc" | "desc" };
+
+/**
+ * A page of the sheet's rows (route 9) in one column's order and matching
+ * the search, with the totals of every row (F7). Neither is saved.
+ */
+export function queryWorksheetRows(
+  id: string,
+  query: {
+    sort: WorksheetRowSort | null;
+    search: string;
+    offset: number;
+    signal?: AbortSignal;
+  },
+): Promise<WorksheetRowPage> {
+  const search = query.search.trim();
+  return apiFetch(
+    `/worksheets/${encodeURIComponent(id)}/rows/query`,
+    rowPageSchema,
+    {
+      method: "POST",
+      cache: "no-store",
+      signal: query.signal,
+      body: JSON.stringify({
+        limit: WORKSHEET_ROW_PAGE,
+        offset: query.offset,
+        ...(query.sort ? { sort: query.sort } : {}),
+        ...(search ? { search } : {}),
+      }),
+    },
+  );
+}

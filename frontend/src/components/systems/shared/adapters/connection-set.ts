@@ -554,6 +554,9 @@ function createSet(context: CommsContext) {
                     ...(normalized.boardId
                       ? { board_id: normalized.boardId }
                       : {}),
+                    ...(normalized.worksheetId
+                      ? { entity_id: normalized.worksheetId }
+                      : {}),
                   }),
                 );
           if (event) for (const listener of sseListeners) listener.event(event);

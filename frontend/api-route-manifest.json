@@ -2365,6 +2365,12 @@
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "queryWorksheetRows",
+    "method": "POST",
+    "path": "/api/worksheets/{param}/rows/query"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
     "function": "restoreWorksheet",
     "method": "POST",
     "path": "/api/worksheets/{param}/restore"

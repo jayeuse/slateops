@@ -102,9 +102,9 @@ test("a reader lists the record's sheets in its last tab and creates a blank she
   await dialog.getByRole("textbox", { name: "Name" }).fill("  Class 4D  ");
   await page.keyboard.press("Enter");
 
-  // The sheet page arrives with F3; until then its address holds.
+  // The new sheet opens on its own page.
   await expect(
-    page.getByText("This sheet cannot be shown here yet"),
+    page.getByRole("heading", { level: 1, name: "Class 4D" }),
   ).toBeVisible();
   await expect(page).toHaveURL(`/openview?sheet=${api.createdId}`);
   expect(api.creates).toEqual([

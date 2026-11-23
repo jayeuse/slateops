@@ -53,9 +53,9 @@ test("a reader opens the module's Sheets view and creates a module sheet", async
   await dialog.getByRole("textbox", { name: "Name" }).fill("Visit plan");
   await dialog.getByRole("button", { name: "Create sheet" }).click();
 
-  // The sheet page arrives with F3; until then its address holds.
+  // The new sheet opens on its own page.
   await expect(
-    page.getByText("This sheet cannot be shown here yet"),
+    page.getByRole("heading", { level: 1, name: "Visit plan" }),
   ).toBeVisible();
   await expect(page).toHaveURL(`/openview?sheet=${api.createdId}`);
   expect(api.creates).toEqual([

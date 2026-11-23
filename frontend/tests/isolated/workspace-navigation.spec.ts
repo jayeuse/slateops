@@ -722,6 +722,16 @@ test("My sheets is its own place for every account", () => {
     ).toEqual({ workspace: null, section: "My sheets" });
 });
 
+// docs/specs/sheets.md P3: a sheet's own page is its own place.
+test("a sheet page is its own place in the navigation", () => {
+  expect(
+    currentNavigationKey(
+      "/openview",
+      new URLSearchParams("sheet=00000000-0000-4000-8000-0000000000aa"),
+    ),
+  ).toBe("openview:sheet");
+});
+
 test("a link leaves the organization only when it names another one", () => {
   const current = "00000000-0000-4000-8000-000000000102";
   const other = "00000000-0000-4000-8000-000000000199";

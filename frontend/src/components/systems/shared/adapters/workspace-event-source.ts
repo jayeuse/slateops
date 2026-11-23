@@ -49,6 +49,24 @@ export function parseWorkspaceInvalidation(
       };
     }
     if ("board_id" in value) return null;
+    // A sheet event names only its sheet; the server sends it only to people
+    // who can see that sheet (docs/specs/sheets.md D6).
+    if (value.entity === "worksheets") {
+      if (
+        Object.keys(value).some(
+          (key) => key !== "entity" && key !== "entity_id",
+        ) ||
+        !("entity_id" in value) ||
+        typeof value.entity_id !== "string" ||
+        !uuid.test(value.entity_id)
+      )
+        return null;
+      return {
+        type: "invalidate",
+        entity: value.entity,
+        worksheetId: value.entity_id.toLowerCase(),
+      };
+    }
     if (!("module_id" in value) || value.module_id === undefined)
       return { type: "invalidate", entity: value.entity };
     return typeof value.module_id === "string" && uuid.test(value.module_id)

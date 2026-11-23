@@ -553,6 +553,14 @@ const SETTINGS_NAVIGATION_KEY = "account-settings";
 /** My sheets sits in the sidebar foot for every account (docs/specs/sheets.md P4). */
 const MY_SHEETS_NAVIGATION_KEY = "my-sheets";
 
+/** Whether a URL shows one sheet's own page (`/openview?sheet=<id>`). */
+export function isSheetPage(
+  pathname: string,
+  searchParams: URLSearchParams,
+): boolean {
+  return pathname === "/openview" && searchParams.has("sheet");
+}
+
 /** Whether a URL shows My sheets, OpenView's sheets section. */
 export function isMySheetsPage(
   pathname: string,
@@ -571,6 +579,8 @@ export function currentNavigationKey(
     return COMMS_NAVIGATION_KEY;
   if (pathname === "/profile") return PROFILE_NAVIGATION_KEY;
   if (isMySheetsPage(pathname, searchParams)) return MY_SHEETS_NAVIGATION_KEY;
+  // A sheet's own page (docs/specs/sheets.md P3); "openview" keeps its guide.
+  if (isSheetPage(pathname, searchParams)) return "openview:sheet";
   if (pathname === "/settings" || pathname === "/settings/appearance")
     return SETTINGS_NAVIGATION_KEY;
   const definition = workspaceNavigationDefinitions.find(

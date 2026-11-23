@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { skipToken, useQuery } from "@tanstack/react-query";
 import type { Route } from "next";
@@ -8,6 +8,7 @@ import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import {
   accessNavigationFor,
   getWorkspaceLocation,
+  isSheetPage,
 } from "@/components/workspace-navigation";
 import { cn } from "@/lib/utils";
 import {
@@ -47,6 +48,12 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
+
+// A sheet's crumbs load with the sheet page's chunk, so the shell carries no
+// sheet code (docs/specs/sheets.md Screens 3).
+const SheetCrumbs = lazy(
+  () => import("@/components/systems/openview/components/sheet-crumbs"),
+);
 
 // Routes without sections in the sidebar name only themselves.
 const routeLabels: Record<string, string> = {
@@ -98,6 +105,22 @@ export function AppBreadcrumbs() {
       : undefined;
   const current =
     location?.section ?? openViewLabel ?? routeLabels[pathname] ?? "Workspace";
+  const sheetId = isSheetPage(
+    pathname,
+    new URLSearchParams(searchParams.toString()),
+  )
+    ? searchParams.get("sheet")
+    : null;
+  if (sheetId !== null)
+    return (
+      <Suspense
+        fallback={
+          <span className="block min-h-6 truncate leading-6">Sheet</span>
+        }
+      >
+        <SheetCrumbs sheetId={sheetId} />
+      </Suspense>
+    );
   const moduleId = currentModuleId(
     pathname,
     new URLSearchParams(searchParams.toString()),

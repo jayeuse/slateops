@@ -6,6 +6,7 @@ import {
   listModuleWorksheets,
   listMyWorksheets,
   listRecordWorksheets,
+  queryWorksheetRows,
   restoreWorksheet,
 } from "../../../src/components/systems/openview/adapters/worksheets-api";
 import { wirePagination } from "../../helpers/pagination";
@@ -278,6 +279,95 @@ test("a new blank sheet is created on exactly one record or module, with a trimm
       ],
     ]);
     expect(sheet.id).toBe(sheetId(11));
+  } finally {
+    mock.restore();
+  }
+});
+
+test("a sheet's rows are read a page at a time with its sort and search", async () => {
+  const page = {
+    items: [
+      {
+        id: sheetId(21),
+        revision: 2,
+        etag: `"${sheetId(21)}:2"`,
+        position: 0,
+        cells: {
+          c1: { link: { record_id: recordId, label: "Ana Cruz" } },
+          c2: { state: "no_access" },
+          c3: { value: 18 },
+          c4: { unlinked: "A. Cruz" },
+        },
+      },
+    ],
+    pagination: {
+      limit: 200,
+      offset: 200,
+      count: 1,
+      total: 201,
+      has_more: false,
+    },
+    totals: { c3: { fn: "average", value: "17.5", hidden_count: 0 } },
+  };
+  const mock = installFetch(() => json(page));
+  try {
+    const result = await queryWorksheetRows(sheetId(9), {
+      sort: { key: "c3", order: "desc" },
+      search: "an",
+      offset: 200,
+    });
+    expect(
+      mock.requests.map(({ input, init }) => [
+        String(input),
+        init?.method,
+        JSON.parse(String(init?.body)),
+      ]),
+    ).toEqual([
+      [
+        `/api/worksheets/${sheetId(9)}/rows/query`,
+        "POST",
+        {
+          limit: 200,
+          offset: 200,
+          sort: { key: "c3", order: "desc" },
+          search: "an",
+        },
+      ],
+    ]);
+    expect(result).toEqual({
+      rows: page.items,
+      total: 201,
+      totals: page.totals,
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("an empty search and no sort are not sent", async () => {
+  const mock = installFetch(() =>
+    json({
+      items: [],
+      pagination: {
+        limit: 200,
+        offset: 0,
+        count: 0,
+        total: 0,
+        has_more: false,
+      },
+      totals: {},
+    }),
+  );
+  try {
+    await queryWorksheetRows(sheetId(9), {
+      sort: null,
+      search: "  ",
+      offset: 0,
+    });
+    expect(JSON.parse(String(mock.requests[0]?.init?.body))).toEqual({
+      limit: 200,
+      offset: 0,
+    });
   } finally {
     mock.restore();
   }

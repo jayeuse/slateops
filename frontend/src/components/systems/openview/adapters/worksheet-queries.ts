@@ -1,10 +1,13 @@
 "use client";
 
 import { queryOptions } from "@tanstack/react-query";
+import { getOpenViewRecord } from "./records-api";
 import {
+  getWorksheet,
   listModuleWorksheets,
   listMyWorksheets,
   listRecordWorksheets,
+  type WorksheetDetail,
 } from "./worksheets-api";
 
 // Sheet reads (docs/specs/sheets.md). They live apart from openview-queries.ts,
@@ -25,6 +28,9 @@ export const worksheetKeys = {
     ["openview", "worksheets", "record", recordId] as const,
   onModule: (moduleId: string) =>
     ["openview", "worksheets", "module", moduleId] as const,
+  detail: (id: string) => ["openview", "worksheets", "detail", id] as const,
+  /** Where a sheet sits; the header's breadcrumb reads it (no fetch). */
+  place: (id: string) => ["openview", "worksheets", "place", id] as const,
 };
 
 export const myWorksheetsOptions = (deleted: MyWorksheetsList) =>
@@ -45,4 +51,46 @@ export const moduleWorksheetsOptions = (moduleId: string) =>
   queryOptions({
     queryKey: worksheetKeys.onModule(moduleId),
     queryFn: ({ signal }) => listModuleWorksheets(moduleId, signal),
+  });
+
+/** One sheet (route 4); its rows are kept by the page, never cached. */
+export const worksheetDetailOptions = (id: string) =>
+  queryOptions({
+    queryKey: worksheetKeys.detail(id),
+    queryFn: ({ signal }) => getWorksheet(id, signal),
+  });
+
+/** The department, module and record a sheet's breadcrumb names. */
+export type WorksheetPlace = {
+  sheetTitle: string;
+  moduleId: string;
+  moduleName: string;
+  recordId: string | null;
+  recordTitle: string | null;
+};
+
+/**
+ * A record sheet's summary names its record but not the record's module;
+ * one record read gives it (a module sheet needs none).
+ */
+export const worksheetPlaceOptions = (
+  id: string,
+  detail: WorksheetDetail | undefined,
+) =>
+  queryOptions({
+    queryKey: worksheetKeys.place(id),
+    enabled: Boolean(detail),
+    queryFn: async (): Promise<WorksheetPlace> => {
+      if (!detail) throw new Error("The sheet is not loaded");
+      const moduleId =
+        detail.moduleId ??
+        (await getOpenViewRecord(detail.recordId ?? "")).moduleId;
+      return {
+        sheetTitle: detail.title,
+        moduleId,
+        moduleName: detail.moduleName,
+        recordId: detail.recordId,
+        recordTitle: detail.recordId ? detail.anchorTitle : null,
+      };
+    },
   });
