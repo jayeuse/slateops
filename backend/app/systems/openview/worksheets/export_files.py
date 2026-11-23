@@ -24,6 +24,7 @@ from app.systems.openview.worksheets.schemas import (
     Cell,
     SheetErrorCell,
     SheetLinkCell,
+    SheetMatchesCell,
     SheetStateCell,
     SheetUnlinkedCell,
     SheetValueCell,
@@ -45,9 +46,8 @@ STATE_WORDS = {
     "unavailable": "Unavailable",
     "field_removed": "Field removed",
     "column_removed": "Column removed",
-    "multiple_matches": "Several matches",
 }
-ERROR_WORDS = "Division by zero"
+ERROR_WORDS = {"division_by_zero": "Division by zero", "overflow": "Number too large"}
 XlsxValue = str | int | float | bool | date | datetime | None
 
 
@@ -75,7 +75,9 @@ class CellFormat:
 
 def _words(cell: Cell) -> str | None:
     if isinstance(cell, SheetErrorCell):
-        return ERROR_WORDS
+        return ERROR_WORDS[cell.error]
+    if isinstance(cell, SheetMatchesCell):
+        return f"{cell.count} matches"
     if isinstance(cell, SheetStateCell):
         return STATE_WORDS.get(cell.state, "No access")
     if isinstance(cell, SheetLinkCell):

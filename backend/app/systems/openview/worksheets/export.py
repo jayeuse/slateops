@@ -37,6 +37,7 @@ from app.systems.openview.worksheets.export_files import (
     encode_csv,
     encode_xlsx,
 )
+from app.systems.openview.worksheets.expression import MAX_CHAIN
 from app.systems.openview.worksheets.models import Worksheet as SheetModel
 from app.systems.openview.worksheets.models import WorksheetRow
 from app.systems.openview.worksheets.projection import project_rows
@@ -45,6 +46,7 @@ from app.systems.openview.worksheets.schemas import Cell, SheetValueCell
 from app.systems.openview.worksheets.serializers import person_refs
 from app.systems.openview.worksheets.structure import (
     Column,
+    SheetFromSheetColumn,
     SheetLinkColumn,
     SheetLookupColumn,
     SheetSelectColumn,
@@ -85,8 +87,19 @@ def _slug(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-")[:80] or "sheet"
 
 
-def _export_column(db: Session, column: Column) -> ExportColumn:
-    """The field kind each column's values are written as; lookups as their source field."""
+def _export_column(db: Session, column: Column, depth: int = 0) -> ExportColumn:
+    """The field kind each column's values are written as; lookups as their source field,
+    From another sheet columns as their source column (a choice arrives as its label)."""
+
+    if isinstance(column, SheetFromSheetColumn):
+        sheet = db.get(SheetModel, column.sheet_lookup.sourceWorksheetId)
+        found = None if sheet is None or depth >= MAX_CHAIN else next(
+            (item for item in WorksheetStructure.model_validate(sheet.structure).columns
+             if item.key == column.sheet_lookup.sourceColumnKey), None,
+        )
+        if found is None or isinstance(found, SheetSelectColumn):
+            return ExportColumn(column.name, FieldType.TEXT)
+        return replace(_export_column(db, found, depth + 1), name=column.name)
 
     if isinstance(column, SheetSelectColumn):
         options = {option.id: option.label for option in column.select.options}
@@ -100,7 +113,7 @@ def _export_column(db: Session, column: Column) -> ExportColumn:
         return ExportColumn(column.name, kind)
     if column.type == "computed":
         return ExportColumn(column.name, FieldType.DECIMAL)
-    if isinstance(column, SheetLinkColumn) or column.type == "sheet_lookup":
+    if isinstance(column, SheetLinkColumn):
         return ExportColumn(column.name, FieldType.TEXT)
     return ExportColumn(column.name, FieldType(column.type))
 

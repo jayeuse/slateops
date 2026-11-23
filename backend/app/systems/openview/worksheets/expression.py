@@ -20,9 +20,15 @@ from app.systems.openview.worksheets.structure import (
     MAX_EXPRESSION_CHARACTERS,
     Column,
     SheetComputedColumn,
+    SheetFromSheetColumn,
     SheetLookupColumn,
 )
 
+# The stored form (keys, spaces around operators) may be longer than the typed one; reads
+# and saves share this bound, and route 6's request schema allows it (B10 review B1).
+MAX_STORED_CHARACTERS = 2 * MAX_EXPRESSION_CHARACTERS
+# Digits a number may carry on each side of the point when it is saved (B10 review U1).
+MAX_LITERAL_DIGITS = 38
 MAX_NODES = 100
 MAX_DEPTH = 20
 MAX_CHAIN = 10
@@ -101,9 +107,11 @@ class _Token:
     text: str
 
 
-def _tokens(text: str, decimal_mark: str) -> Iterator[_Token]:
-    separators = ";" if decimal_mark == "," else ",;"
-    marks = ",." if decimal_mark == "," else "."
+def _tokens(text: str, decimal_mark: str, stored: bool) -> Iterator[_Token]:
+    """``stored`` reads the canonical form only: ``.`` in numbers, ``,`` between values."""
+
+    separators = "," if stored else (";" if decimal_mark == "," else ",;")
+    marks = "." if stored else (",." if decimal_mark == "," else ".")
     index = 0
     while index < len(text):
         char = text[index]
@@ -146,8 +154,10 @@ def _tokens(text: str, decimal_mark: str) -> Iterator[_Token]:
 
 
 class _Parser:
-    def __init__(self, text: str, decimal_mark: str, resolve: "_Resolver") -> None:
-        self.tokens = list(_tokens(text, decimal_mark))
+    def __init__(self, text: str, decimal_mark: str, resolve: "_Resolver", *,
+                 stored: bool, saving: bool) -> None:
+        self.tokens = list(_tokens(text, decimal_mark, stored))
+        self.saving = saving
         self.position = 0
         self.depth = 0
         self.nodes = 0
@@ -205,6 +215,10 @@ class _Parser:
     def primary(self) -> Node:
         token = self.take()
         if token.kind == "number":
+            whole, _point, fraction = token.text.partition(".")
+            if self.saving and max(len(whole), len(fraction)) > MAX_LITERAL_DIGITS:
+                raise _Refused("number_too_large", f"use at most {MAX_LITERAL_DIGITS} digits "
+                                                   "before and after the point")
             return self.counted(Number(token.text))
         if token.kind == "ref":
             return self.counted(Ref(self.resolve(token.text)))
@@ -280,19 +294,22 @@ class _Resolver:
         return found
 
 
-def _parse(text: str, resolve: _Resolver, decimal_mark: str) -> Parsed:
-    if len(text) > MAX_EXPRESSION_CHARACTERS:
+def _parse(text: str, resolve: _Resolver, decimal_mark: str, *, stored: bool,
+           saving: bool) -> Parsed:
+    limit = MAX_STORED_CHARACTERS if stored else MAX_EXPRESSION_CHARACTERS
+    if len(text) > limit:
         raise _Refused("too_long", f"use at most {MAX_EXPRESSION_CHARACTERS:,} characters")
     if not text.strip():
         raise _Refused("syntax", "enter an expression")
-    return _Parser(text, decimal_mark, resolve).parse()
+    return _Parser(text, decimal_mark, resolve, stored=stored, saving=saving).parse()
 
 
 def parse_stored(text: str) -> Parsed:
     """A stored expression, read back for a request: keys only, canonical separators."""
 
     try:
-        return _parse(text, _Resolver(_StoredKeys(), {}, stored=True), ".")
+        return _parse(text, _Resolver(_StoredKeys(), {}, stored=True), ".", stored=True,
+                      saving=False)
     except _Refused as refused:
         raise ExpressionError("", refused.reason, refused.message) from refused
 
@@ -376,11 +393,40 @@ def _graph(parsed: dict[str, Parsed], names: dict[str, str]) -> None:
         visit(key, [key])
 
 
+_BRACED = re.compile(r"\{([^}]*)\}")
+
+
+def _keys_only(text: str, keys: Collection[str], names: Mapping[str, str]) -> bool:
+    """The text names columns only by key, the way a copy or a template sends it."""
+
+    braced = _BRACED.findall(text)
+    return bool(braced) and all(
+        item in keys and names.get(item.strip().casefold(), item) == item for item in braced
+    )
+
+
+def _saved_form(column: SheetComputedColumn, keys: Collection[str], names: Mapping[str, str],
+                unchanged: Collection[str], decimal_mark: str) -> Parsed:
+    """The stored form when the text is saved again or sent in it (B10 review N-2), else
+    the editor form with names and the organization's separators."""
+
+    text = column.computed.expression
+    if column.key in unchanged:
+        return _parse(text, _Resolver(keys, names, True), ".", stored=True, saving=True)
+    if _keys_only(text, keys, names):
+        try:
+            return _parse(text, _Resolver(keys, names, True), ".", stored=True, saving=True)
+        except _Refused:
+            pass  # typed with keys in the editor form, such as "{c3} * 1,5"
+    return _parse(text, _Resolver(keys, names, False), decimal_mark, stored=False, saving=True)
+
+
 def check_expressions(columns: list[Column], *, numeric_lookups: Collection[str],
                       unchanged: Collection[str], decimal_mark: str) -> dict[str, str]:
     """The stored text of each computed column, or :class:`ExpressionError` (route 6).
 
-    ``numeric_lookups`` are the lookup keys whose field holds numbers; ``unchanged`` are
+    ``numeric_lookups`` are the lookup and From another sheet keys that hold numbers
+    (route 6 checks the From another sheet ones across sheets afterwards); ``unchanged`` are
     computed keys saved again with their stored text, read in the stored form.
     """
 
@@ -390,19 +436,21 @@ def check_expressions(columns: list[Column], *, numeric_lookups: Collection[str]
     numeric = {
         column.key for column in columns
         if column.type in NUMERIC_TYPES or isinstance(column, SheetComputedColumn)
-        or (isinstance(column, SheetLookupColumn) and column.key in numeric_lookups)
+        or (isinstance(column, SheetLookupColumn | SheetFromSheetColumn)
+            and column.key in numeric_lookups)
     }
     parsed: dict[str, Parsed] = {}
     for column in columns:
         if not isinstance(column, SheetComputedColumn):
             continue
-        stored = column.key in unchanged
-        resolve = _Resolver(keys, by_name, stored)
         try:
-            found = _parse(column.computed.expression, resolve, "." if stored else decimal_mark)
+            found = _saved_form(column, keys, by_name, unchanged, decimal_mark)
         except _Refused as refused:
             raise ExpressionError(column.key, refused.reason,
                                   f"{column.name}: {refused.message}") from refused
+        if len(stored_text(found.node)) > MAX_STORED_CHARACTERS:
+            raise ExpressionError(column.key, "too_long", f"{column.name}: the expression is "
+                                  "too long to keep; shorten it")
         for ref in references(found.node):
             if ref not in numeric:
                 raise ExpressionError(column.key, "not_numeric",

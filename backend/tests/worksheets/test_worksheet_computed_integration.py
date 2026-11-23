@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.systems.access.users.models import User
 from app.systems.openview.worksheets.export import build_export
+from app.systems.openview.worksheets.models import WorksheetRow
 from tests.rbac.support import _client
 from tests.worksheets.support import SheetWorld, Students, add_students, sheet_world
 
@@ -213,3 +214,38 @@ def test_route_six_refuses_an_expression_with_its_reason_and_keeps_the_sheet(
     for name in named:
         assert name in detail["message"]
     assert sheet.revision == 2
+
+
+def test_a_value_too_large_for_a_row_query_reads_as_an_overflow_mark(
+    application: FastAPI, integration_db: Session,
+) -> None:
+    """B10 review U1: a 1,000-digit literal raised to the 150th power is never computed;
+    each column stops at 10^38 and the cells read as an error, so the page still loads."""
+
+    world = sheet_world(integration_db)
+    huge = "9" * 1_000  # saved before the literal cap, so read as stored
+    world.sheet.structure = {
+        "structureVersion": 1, "nextColumnSeq": 5, "groups": [], "totals": {"c3": "sum"},
+        "columns": [
+            {"key": "c1", "name": "A", "type": "computed", "computed": {"expression": huge}},
+            {"key": "c2", "name": "B", "type": "computed",
+             "computed": {"expression": " * ".join(["{c1}"] * 50)}},
+            {"key": "c3", "name": "C", "type": "computed",
+             "computed": {"expression": "{c2} * {c2} * {c2}"}},
+            {"key": "c4", "name": "Small", "type": "computed", "computed": {"expression": "2"}},
+        ],
+    }
+    for position in range(1, 11):
+        integration_db.add(WorksheetRow(org_id=world.sheet.org_id, worksheet_id=world.sheet.id,
+                                        position=position * 1024, data={}, data_bytes=2))
+    integration_db.flush()
+    page = _client(application, world.owner, integration_db).post(
+        f"/api/worksheets/{world.sheet.id}/rows/query", json={"limit": 10},
+    )
+    assert page.status_code == 200, page.text
+    overflow = {"value": None, "error": "overflow"}
+    first = page.json()["items"][0]["cells"]
+    assert (first["c1"], first["c2"], first["c3"], first["c4"]) == (
+        overflow, overflow, overflow, {"value": "2"},
+    )
+    assert page.json()["totals"]["c3"] == {"fn": "sum", "value": None, "hidden_count": 0}

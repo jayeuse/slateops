@@ -101,7 +101,7 @@ def test_a_relationship_column_is_refused(
         ("unreadable link module", "link_module_invalid"),
         ("lookup of another module", "lookup_field_invalid"),
         ("non-adjacent group", "structure_invalid"),
-        ("From another sheet before B11", "column_type_unavailable"),
+        ("From another sheet reading itself", "sheet_lookup_invalid"),
     ],
 )
 def test_a_structure_that_breaks_a_column_rule_is_refused(

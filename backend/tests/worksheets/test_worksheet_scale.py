@@ -225,3 +225,55 @@ def test_a_full_sheet_with_two_link_columns_reads_a_bounded_number_of_pages(
     assert page < 9_000 // 10, (small, large)
     for grown in (count, totals, sorted_page):
         assert grown < 9_000 // 4, (small, large)
+
+
+def _computed_chain() -> list[dict[str, Any]]:
+    """Ten computed columns, each reading the one before twice and SUM or AVERAGE first."""
+
+    keys = ["c3", "c4", "c5", "c6", "c7", "c8", "c9", "ca", "cb", "cc"]
+    expressions = ["SUM({c1}, {c2})", "AVERAGE({c3}, {c1})"]
+    expressions += [f"{{{keys[i - 1]}}} * 2 + {{{keys[i - 1]}}} - {{{keys[i - 2]}}}"
+                    for i in range(2, 10)]
+    return [{"key": key, "name": f"Step {index}", "type": "computed",
+             "computed": {"expression": expression}}
+            for index, (key, expression) in enumerate(zip(keys, expressions, strict=True))]
+
+
+def test_a_ten_column_computed_chain_reads_a_bounded_number_of_pages(
+    integration_owner_db: Session,
+) -> None:
+    """B10 review item 3. Each computed column is its own fenced LATERAL; pulled up into the
+    row query, the copies doubled at each step and the database server ran out of memory.
+
+    Measured on 2026-11-24 at 10,000 rows (owner role, load 3.7): count 93 ms, page 5 ms,
+    totals 85 ms, page sorted by the last column 85 ms; the statement timeout is 15,000 ms.
+    """
+
+    db = integration_owner_db
+    world = sheet_world(db)
+    world.sheet.structure = {
+        "structureVersion": 1, "nextColumnSeq": 13, "groups": [], "totals": {"cc": "sum"},
+        "columns": [{"key": "c1", "name": "A", "type": "int"},
+                    {"key": "c2", "name": "B", "type": "decimal", "decimal": {"places": 2}},
+                    *_computed_chain()],
+    }
+    db.flush()
+
+    def add(start: int, count: int) -> None:
+        db.connection().execute(WorksheetRow.__table__.insert(), [
+            {"id": uuid7(), "org_id": world.sheet.org_id, "worksheet_id": world.sheet.id,
+             "position": (index + 1) * 1024,
+             "data": {"c1": index % 97, "c2": f"{index % 13}.5"}, "data_bytes": 30}
+            for index in range(start, start + count)
+        ])
+        db.connection().execute(text("ANALYZE public.worksheet_rows"))
+
+    sorted_page = SheetRowsQuery.model_validate(
+        {"limit": 200, "sort": {"key": "cc", "order": "desc"}}
+    )
+    add(0, 1_000)
+    small = _route_nine_pages(db, world.owner, world.sheet, sorted_page)
+    add(1_000, 9_000)
+    large = _route_nine_pages(db, world.owner, world.sheet, sorted_page)
+    for earlier, later in zip(small, large, strict=True):
+        assert later - earlier < 9_000 // 4, (small, large)

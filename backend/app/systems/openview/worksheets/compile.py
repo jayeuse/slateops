@@ -7,13 +7,29 @@ argument appears once; ``MIN`` and ``MAX`` are ``LEAST`` and ``GREATEST``. A div
 zero gives ``NULL`` through ``NULLIF`` (never a database error, even when the planner folds
 bound values) and sets the error flag, which every computed column that reads it carries.
 A column that reads a value the viewer cannot read is hidden, like that value (D7.3).
+A value of 10^38 or more becomes blank with the ``overflow`` mark inside its own column,
+so no chain of columns can grow a number past what a row query can hold (B10 review U1).
 """
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Integer, Numeric, case, column, false, func, literal, null, or_, select
+from sqlalchemy import (
+    Integer,
+    Numeric,
+    Text,
+    and_,
+    case,
+    column,
+    false,
+    func,
+    literal,
+    null,
+    or_,
+    select,
+)
 from sqlalchemy import cast as sql_cast
 from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.sql.elements import ColumnElement
@@ -25,15 +41,23 @@ Expression = ColumnElement[Any]
 
 @dataclass(frozen=True)
 class Operand:
-    """What a reference reads: the masked number, and whether it is hidden or an error."""
+    """What a reference reads: the masked number, whether it is hidden, and its error code
+    (``division_by_zero``, ``overflow`` or NULL)."""
 
     number: Expression
     hidden: Expression
     error: Expression
 
 
+LIMIT = Decimal(10) ** 38
+
+
 def _no_number() -> Expression:
     return sql_cast(null(), Numeric)
+
+
+def no_error() -> Expression:
+    return sql_cast(null(), Text)
 
 
 def _any(flags: list[Expression]) -> Expression:
@@ -74,7 +98,8 @@ class _Compiler:
                 return left - right
             if node.operator == "*":
                 return left * right
-            self.errors.append(func.coalesce(right == 0, false()))
+            self.errors.append(case((right == 0, literal("division_by_zero")),
+                                    else_=no_error()))
             return left / func.nullif(right, 0)
         return self.call(node)
 
@@ -94,7 +119,7 @@ class _Compiler:
 def compile_expression(
     node: Node, operands: Mapping[str, Operand],
 ) -> tuple[Expression, Expression, Expression]:
-    """The masked value, the error flag and the hidden flag of one computed column.
+    """The masked value, the error code and the hidden flag of one computed column.
 
     A hidden or erroneous cell has no value, so the sort, the search and the totals treat
     it as blank, as the grid shows it (K6).
@@ -103,6 +128,10 @@ def compile_expression(
     compiler = _Compiler(operands)
     raw = compiler.value(node)
     hidden = _any(compiler.hidden)
-    error = _any(compiler.errors)
-    masked = case((or_(hidden, error), _no_number()), else_=raw)
-    return masked, case((hidden, false()), else_=error), hidden
+    found = func.coalesce(*compiler.errors) if compiler.errors else no_error()
+    error = case(
+        (and_(found.is_(None), func.abs(raw) >= literal(LIMIT, Numeric())), literal("overflow")),
+        else_=found,
+    )
+    masked = case((or_(hidden, error.is_not(None)), _no_number()), else_=raw)
+    return masked, case((hidden, no_error()), else_=error), hidden

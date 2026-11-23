@@ -21596,6 +21596,9 @@
               },
               {
                 "$ref": "#/components/schemas/SheetErrorCell"
+              },
+              {
+                "$ref": "#/components/schemas/SheetMatchesCell"
               }
             ],
             "title": "Expected"
@@ -21750,10 +21753,13 @@
       },
       "SheetErrorCell": {
         "additionalProperties": false,
-        "description": "A computed cell whose expression divides by zero, or reads a cell that does (K5).",
+        "description": "A computed cell whose expression divides by zero or reaches 10^38, or reads a cell\nthat does (K5).",
         "properties": {
           "error": {
-            "const": "division_by_zero",
+            "enum": [
+              "division_by_zero",
+              "overflow"
+            ],
             "title": "Error",
             "type": "string"
           },
@@ -22040,6 +22046,28 @@
         "title": "SheetLookupOptions",
         "type": "object"
       },
+      "SheetMatchesCell": {
+        "additionalProperties": false,
+        "description": "A From another sheet cell whose linked record has several source rows (K9).",
+        "properties": {
+          "count": {
+            "minimum": 2.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "state": {
+            "const": "multiple_matches",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "count"
+        ],
+        "title": "SheetMatchesCell",
+        "type": "object"
+      },
       "SheetPeople": {
         "description": "The people list: active members the person can see, up to 20 (person cells).",
         "properties": {
@@ -22133,6 +22161,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/SheetErrorCell"
+                },
+                {
+                  "$ref": "#/components/schemas/SheetMatchesCell"
                 }
               ]
             },
@@ -22370,6 +22401,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/SheetErrorCell"
+                },
+                {
+                  "$ref": "#/components/schemas/SheetMatchesCell"
                 }
               ]
             },

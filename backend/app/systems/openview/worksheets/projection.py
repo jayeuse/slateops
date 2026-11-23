@@ -6,8 +6,8 @@ number that totals add. A value the viewer cannot read never leaves the database
 expressions are already masked, so sort, search and totals see only readable values.
 
 A link column whose target module the viewer cannot read shows ``no_access`` in every cell,
-with its lookups (N4 is per column). Computed columns are blank until B10 compiles their
-expressions here; ``sheet_lookup`` columns are blank until B11.
+with its lookups (N4 is per column). Computed columns compile in ``compile``; From another
+sheet columns read their source sheet's projection (``from_sheet``).
 """
 
 from dataclasses import dataclass, field
@@ -38,7 +38,7 @@ from sqlalchemy.sql.selectable import FromClause
 from app.systems.access.policy.checks import module_filter, module_level
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
-from app.systems.openview.worksheets.compile import Operand, compile_expression
+from app.systems.openview.worksheets.compile import Operand, compile_expression, no_error
 from app.systems.openview.worksheets.expression import (
     ExpressionError,
     Node,
@@ -49,6 +49,7 @@ from app.systems.openview.worksheets.models import WorksheetRow, WorksheetRowLin
 from app.systems.openview.worksheets.structure import (
     SheetComputedColumn,
     SheetDecimalColumn,
+    SheetFromSheetColumn,
     SheetLinkColumn,
     SheetLookupColumn,
     SheetPlainColumn,
@@ -61,8 +62,9 @@ from app.systems.sandbox.records.models import Record
 
 CellState = Literal[
     "no_access", "deleted", "removed", "unavailable", "field_removed", "link", "unlinked",
-    "division_by_zero",
+    "division_by_zero", "overflow", "column_removed", "multiple_matches",
 ]
+ERROR_STATES = ("division_by_zero", "overflow")
 NUMERIC_TYPES = frozenset({"int", "number", "decimal"})
 # A record decimal field stores a canonical decimal string; only that shape is read as a number.
 _DECIMAL_TEXT = r"^-?(0|[1-9][0-9]*)(\.[0-9]+)?$"
@@ -166,14 +168,18 @@ def _plain(
     )
 
 
-def _blank(key: str) -> ColumnProjection:
+def blank_column(key: str) -> ColumnProjection:
+    """A column with no value in any row."""
+
     return ColumnProjection(
         key, _no_text(), _no_value(), _no_text(), _no_text(), _no_text(), _no_number(),
         false(), false(),
     )
 
 
-def _hidden(key: str) -> ColumnProjection:
+def hidden_column(key: str) -> ColumnProjection:
+    """A column the viewer cannot read: ``no_access`` in every row."""
+
     return ColumnProjection(
         key, literal("no_access"), _no_value(), _no_text(), _no_text(), _no_text(),
         _no_number(), true(), false(),
@@ -181,9 +187,12 @@ def _hidden(key: str) -> ColumnProjection:
 
 
 @dataclass(frozen=True)
-class _Link:
+class Link:
+    """A link column's per-row state, its target record's data and the target's ID."""
+
     state: Expression
     data: Any
+    target: Expression
 
 
 def _title_option_label(title: Any, raw: Expression) -> Expression:
@@ -223,7 +232,7 @@ def _record_label(target: Any, title: Any) -> Expression:
 
 def _join_link(
     db: Session, user: User, projection: RowProjection, key: str
-) -> tuple[_Link, ColumnProjection]:
+) -> tuple[Link, ColumnProjection]:
     """One LATERAL read of the cell's live link, its record, module and title field."""
 
     link = aliased(WorksheetRowLink, name=f"row_link_{key}")
@@ -296,10 +305,10 @@ def _join_link(
         hidden=state == "no_access",
         shown=state.in_(("link", "unlinked")),
     )
-    return _Link(state, cell.c.data), column
+    return Link(state, cell.c.data, cell.c.target_id), column
 
 
-def _lookup(db: Session, key: str, column: SheetLookupColumn, link: _Link,
+def _lookup(db: Session, key: str, column: SheetLookupColumn, link: Link,
             target_module: UUID) -> ColumnProjection:
     source = db.get(Field, column.lookup.fieldId)
     live = (
@@ -357,8 +366,7 @@ def _computed_column(key: str, value: Expression, error: Expression,
     text = sql_cast(func.trim_scale(value), Text)
     return ColumnProjection(
         key=key,
-        state=case((hidden, literal("no_access")), (error, literal("division_by_zero")),
-                   else_=_no_text()),
+        state=case((hidden, literal("no_access")), else_=error),
         value=case((value.is_not(None), func.to_jsonb(text)), else_=_no_value()),
         label=_no_text(), text=text, sort=value, number=value, hidden=hidden,
         shown=value.is_not(None),
@@ -378,25 +386,34 @@ def _computed(projection: RowProjection, structure: WorksheetStructure) -> None:
             try:
                 trees[column.key] = parse_stored(column.computed.expression).node
             except ExpressionError:
-                projection.columns.append(_blank(column.key))  # never saved like this
+                projection.columns.append(blank_column(column.key))  # never saved like this
     kinds = {column.key: column.type for column in structure.columns}
     operands: dict[str, Operand] = {
-        projected.key: Operand(projected.number, projected.hidden, false())
+        projected.key: Operand(
+            projected.number, projected.hidden,
+            case((projected.state.in_(ERROR_STATES), projected.state), else_=no_error())
+            if kinds[projected.key] == "sheet_lookup" else no_error(),
+        )
         for projected in projection.columns
-        if kinds[projected.key] in NUMERIC_TYPES or kinds[projected.key] == "lookup"
+        if kinds[projected.key] in NUMERIC_TYPES or kinds[projected.key] in {"lookup",
+                                                                             "sheet_lookup"}
     }
     pending = dict(trees)
     while pending:
         ready = [key for key, tree in pending.items()
                  if not any(ref in pending for ref in references(tree))]
         if not ready:  # a loop, refused on save: leave the rest blank
-            projection.columns.extend(_blank(key) for key in pending)
+            projection.columns.extend(blank_column(key) for key in pending)
             return
         for key in ready:
             value, error, hidden = compile_expression(pending.pop(key), operands)
+            # OFFSET 0 keeps PostgreSQL from pulling the subquery up into the row query:
+            # pulled up, each later column would copy this expression for every reference,
+            # and a chain of columns would grow exponentially (B10 review item 3).
             cell = (
                 select(value.label("value"), error.label("error"), hidden.label("hidden"))
                 .correlate_except(None)
+                .offset(0)
                 .lateral(f"computed_{key}")
             )
             projection.source = projection.source.outerjoin(cell, true())
@@ -417,16 +434,21 @@ def link_column_hidden(db: Session, user: User, module_id: UUID) -> bool:
     return module_level(db, user, module_id) is None and db.get(Module, module_id) is not None
 
 
-def project_rows(db: Session, user: User, structure: WorksheetStructure) -> RowProjection:
-    """Compile every column of ``structure`` for ``user`` over ``worksheet_rows``."""
+def project_rows(db: Session, user: User, structure: WorksheetStructure,
+                 sources: frozenset[UUID] = frozenset()) -> RowProjection:
+    """Compile every column of ``structure`` for ``user`` over ``worksheet_rows``.
+
+    ``sources`` are the sheets already being read on the way here (From another sheet).
+    """
+    from app.systems.openview.worksheets.from_sheet import project_sheet_lookup
 
     projection = RowProjection(source=WorksheetRow.__table__)
-    links: dict[str, tuple[_Link, UUID] | None] = {}
+    links: dict[str, tuple[Link, UUID] | None] = {}
     for column in structure.columns:
         if isinstance(column, SheetLinkColumn):
             if link_column_hidden(db, user, column.link.moduleId):
                 links[column.key] = None
-                projection.columns.append(_hidden(column.key))
+                projection.columns.append(hidden_column(column.key))
                 continue
             joined, projected = _join_link(db, user, projection, column.key)
             links[column.key] = (joined, column.link.moduleId)
@@ -437,13 +459,16 @@ def project_rows(db: Session, user: User, structure: WorksheetStructure) -> RowP
         if isinstance(column, SheetLookupColumn):
             found = links.get(column.lookup.linkKey)
             projection.columns.append(
-                _hidden(column.key) if found is None
+                hidden_column(column.key) if found is None
                 else _lookup(db, column.key, column, found[0], found[1])
             )
         elif isinstance(column, SheetPlainColumn | SheetSelectColumn | SheetDecimalColumn):
             projection.columns.append(_plain(column.key, column))
-        elif not isinstance(column, SheetComputedColumn):
-            projection.columns.append(_blank(column.key))  # sheet_lookup (B11)
+        elif isinstance(column, SheetFromSheetColumn):
+            found = links.get(column.sheet_lookup.linkKey)
+            projection.columns.append(project_sheet_lookup(
+                db, user, projection, column, None if found is None else found[0], sources,
+            ))
     _computed(projection, structure)
     order = {column.key: index for index, column in enumerate(structure.columns)}
     projection.columns.sort(key=lambda item: order[item.key])

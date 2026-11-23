@@ -171,3 +171,35 @@ def test_a_stored_expression_parses_with_keys_only() -> None:
     assert parse_stored("ROUND({c3} * 1.5, 2)").node_count == 5
     with pytest.raises(ExpressionError):
         parse_stored("{Quiz 1} + 1")
+
+
+def test_a_stored_form_longer_than_the_typed_one_still_reads_back() -> None:
+    """B10-B1: spaces around 49 operators make 949 typed characters 1,047 stored."""
+
+    typed = "+".join(["1" * 18] * 50)
+    assert len(typed) == 949
+    stored = _check(_computed("c7", "Total", typed))["c7"]
+    assert len(stored) == 1_047
+    assert parse_stored(stored).node_count == 99
+
+
+@pytest.mark.parametrize(("typed", "stored"), [
+    ("SUM({c3}, {c4})", "SUM({c3}, {c4})"),
+    ("{c3} * 1,5", "{c3} * 1.5"),
+    ("SUM({c3}; 1,5)", "SUM({c3}, 1.5)"),
+])
+def test_a_comma_decimal_locale_reads_a_keys_only_stored_form_from_a_copy(
+    typed: str, stored: str,
+) -> None:
+    """B10 review N-2: a copy or template sends the stored form, not the saved text."""
+
+    assert _check(_computed("c7", "Total", typed), decimal_mark=",") == {"c7": stored}
+
+
+@pytest.mark.parametrize("number", ["1" * 39, "0." + "1" * 39])
+def test_a_number_with_more_than_38_digits_on_a_side_is_refused(number: str) -> None:
+    """B10 review U1: no literal can carry a value past what a row query can hold."""
+
+    refused = _refused(_computed("c7", "Total", f"{{Quiz 1}} * {number}"))
+    assert refused.reason == "number_too_large"
+    assert _check(_computed("c7", "Total", "1" * 38 + "." + "1" * 38))["c7"].startswith("1")

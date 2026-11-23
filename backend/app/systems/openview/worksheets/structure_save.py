@@ -4,8 +4,8 @@ The rules the stored model cannot check need the database: a new or changed link
 targets a live module the saver can read; a new or changed lookup reads a live field of its
 link column's module; a column with values keeps its type; a key is never used twice
 (``nextColumnSeq`` only grows). A computed column's expression is checked and stored with
-column keys (D7.1); From another sheet columns are saved by B11, so until then a new or
-changed one is refused.
+column keys (D7.1). A From another sheet column reads a sheet the saver can see, and the
+column graph across sheets has no loop and stays inside the size budget (D7.3a, S3).
 """
 
 import re
@@ -37,10 +37,12 @@ from app.systems.openview.worksheets.row_writes import (
 )
 from app.systems.openview.worksheets.schemas import SheetStructureUpdate
 from app.systems.openview.worksheets.serializers import worksheet_etag
+from app.systems.openview.worksheets.sheet_lookup_save import check_sheet_graph, check_sources
 from app.systems.openview.worksheets.structure import (
     MAX_COLUMNS,
     Column,
     SheetComputedColumn,
+    SheetFromSheetColumn,
     SheetLinkColumn,
     SheetLookupColumn,
     WorksheetStructure,
@@ -49,7 +51,6 @@ from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 
 _SEQUENCED_KEY = re.compile(r"^c([0-9]{1,8})$")
-_LATER_UNITS = frozenset({"sheet_lookup"})
 
 
 def _invalid(code: str, message: str) -> Any:
@@ -82,9 +83,6 @@ def _check_links(db: Session, user: User, old: dict[str, Column], columns: list[
     for column in columns:
         previous = old.get(column.key)
         changed = previous is None or previous != column
-        if column.type in _LATER_UNITS and changed:
-            raise _invalid("column_type_unavailable",
-                           f"{column.name}: this column type is not available yet")
         if isinstance(column, SheetLinkColumn) and changed:
             module = db.get(Module, column.link.moduleId)
             if (module is None or module.is_deleted
@@ -114,7 +112,10 @@ def _with_stored_expressions(
 ) -> list[Column]:
     """Each computed column with its expression checked and in the stored form (D7.1)."""
 
-    numeric_lookups = set()
+    # From another sheet columns count as numbers here; the graph below checks them.
+    numeric_lookups = {
+        column.key for column in columns if isinstance(column, SheetFromSheetColumn)
+    }
     for column in columns:
         if isinstance(column, SheetLookupColumn):
             field = db.get(Field, column.lookup.fieldId)
@@ -129,15 +130,17 @@ def _with_stored_expressions(
     try:
         stored = check_expressions(columns, numeric_lookups=numeric_lookups,
                                    unchanged=unchanged, decimal_mark=_decimal_mark(db, sheet))
+        saved = [
+            column.model_copy(update={"computed": column.computed.model_copy(
+                update={"expression": stored[column.key]},
+            )}) if isinstance(column, SheetComputedColumn) else column
+            for column in columns
+        ]
+        check_sheet_graph(db, sheet.id, saved)
     except ExpressionError as refused:
         raise error(status.HTTP_422_UNPROCESSABLE_CONTENT, "expression_invalid",
                     refused.message, key=refused.key, reason=refused.reason) from refused
-    return [
-        column.model_copy(update={"computed": column.computed.model_copy(
-            update={"expression": stored[column.key]},
-        )}) if isinstance(column, SheetComputedColumn) else column
-        for column in columns
-    ]
+    return saved
 
 
 def _old_module(old: dict[str, Column], key: str) -> UUID | None:
@@ -197,6 +200,7 @@ def save_structure(
     old_columns = {column.key: column for column in old.columns}
     sequence = _next_sequence(old, payload.columns)
     _check_links(db, user, old_columns, payload.columns)
+    check_sources(db, user, sheet, old_columns, payload.columns)
     columns = _with_stored_expressions(db, sheet, old_columns, payload.columns)
     try:
         structure = WorksheetStructure.model_validate({

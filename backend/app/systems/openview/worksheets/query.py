@@ -16,12 +16,17 @@ from sqlalchemy.orm import Session
 
 from app.systems.access.users.models import User
 from app.systems.openview.worksheets.models import Worksheet, WorksheetRow
-from app.systems.openview.worksheets.projection import RowProjection, project_rows
+from app.systems.openview.worksheets.projection import (
+    ERROR_STATES,
+    RowProjection,
+    project_rows,
+)
 from app.systems.openview.worksheets.schemas import (
     Cell,
     SheetErrorCell,
     SheetLinkCell,
     SheetLinkTarget,
+    SheetMatchesCell,
     SheetRow,
     SheetRowPage,
     SheetRowPagination,
@@ -66,8 +71,10 @@ def projected_cell(row: Any, key: str) -> Cell:
         ))
     if state == "unlinked":
         return SheetUnlinkedCell(unlinked=row[f"{key}__label"])
-    if state == "division_by_zero":
-        return SheetErrorCell(value=None, error="division_by_zero")
+    if state in ERROR_STATES:
+        return SheetErrorCell(value=None, error=state)
+    if state == "multiple_matches":
+        return SheetMatchesCell(state="multiple_matches", count=int(row[f"{key}__value"]))
     if state is not None:
         return SheetStateCell(state=state)
     return SheetValueCell(value=row[f"{key}__value"])

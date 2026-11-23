@@ -193,15 +193,28 @@ class SheetStateCell(BaseModel):
 
 
 class SheetErrorCell(BaseModel):
-    """A computed cell whose expression divides by zero, or reads a cell that does (K5)."""
+    """A computed cell whose expression divides by zero or reaches 10^38, or reads a cell
+    that does (K5)."""
 
     model_config = ConfigDict(extra="forbid")
 
     value: None
-    error: Literal["division_by_zero"]
+    error: Literal["division_by_zero", "overflow"]
 
 
-Cell = SheetValueCell | SheetLinkCell | SheetUnlinkedCell | SheetStateCell | SheetErrorCell
+class SheetMatchesCell(BaseModel):
+    """A From another sheet cell whose linked record has several source rows (K9)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    state: Literal["multiple_matches"]
+    count: int = Field(ge=2)
+
+
+Cell = (
+    SheetValueCell | SheetLinkCell | SheetUnlinkedCell | SheetStateCell | SheetErrorCell
+    | SheetMatchesCell
+)
 
 
 class SheetRow(BaseModel):
