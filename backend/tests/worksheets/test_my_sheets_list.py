@@ -134,3 +134,35 @@ def test_the_sheets_tab_hides_an_unreadable_record_like_a_missing_one(
     for record_id in (world.record.id, uuid7()):
         hidden = stranger.get(f"/api/records/{record_id}/worksheets")
         assert (hidden.status_code, hidden.json()["detail"]["code"]) == (404, "record_not_found")
+
+
+def test_my_sheets_items_name_their_anchor_sharing_group_and_deletion(
+    application: FastAPI, integration_db: Session, world: SheetWorld,
+) -> None:
+    db = integration_db
+    on_module = add_sheet(db, world.owner, module=world.module)
+    gone = add_sheet(db, world.owner, record=world.record)
+    _deleted(gone)
+    db.flush()
+
+    def items(person: User, **params: str) -> dict[str, dict[str, Any]]:
+        listed = _as(application, db, person).get("/api/worksheets", params=params).json()
+        return {item["id"]: item for item in listed["items"]}
+
+    facts = ("anchor_title", "module_name", "shared", "access_group")
+    record_title = f"Record {str(world.record.id)[:8]}"
+    owner = items(world.owner)
+    assert {key: owner[str(world.sheet.id)][key] for key in facts} == {
+        "anchor_title": record_title, "module_name": world.module.module_name,
+        "shared": True, "access_group": None,
+    }
+    assert {key: owner[str(on_module.id)][key] for key in facts} == {
+        "anchor_title": world.module.module_name, "module_name": world.module.module_name,
+        "shared": False, "access_group": None,
+    }
+    assert owner[str(world.sheet.id)]["deleted_at"] is None
+    for person, group in ((world.viewer, None), (world.group_member, world.share_group.name)):
+        item = items(person)[str(world.sheet.id)]
+        assert (item["shared"], item["access_group"]) == (None, group)
+    deleted = items(world.owner, deleted="only")[str(gone.id)]
+    assert deleted["deleted_at"] is not None

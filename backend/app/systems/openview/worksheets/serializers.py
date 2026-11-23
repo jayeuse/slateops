@@ -29,6 +29,7 @@ from app.systems.openview.worksheets.structure import (
     SheetFromSheetColumn,
     WorksheetStructure,
 )
+from app.systems.openview.worksheets.summary_facts import SummaryFacts, summary_facts
 
 
 def worksheet_etag(sheet: Worksheet) -> str:
@@ -81,7 +82,8 @@ def structure_view(db: Session, user: User, sheet: Worksheet) -> SheetStructureV
 
 
 def _summary(
-    sheet: Worksheet, owner: SheetPersonRef, present: bool, level: WorksheetLevel
+    sheet: Worksheet, owner: SheetPersonRef, present: bool, level: WorksheetLevel,
+    facts: SummaryFacts,
 ) -> WorksheetSummary:
     return WorksheetSummary(
         id=sheet.id,
@@ -95,16 +97,22 @@ def _summary(
         revision=sheet.revision,
         updated_at=sheet.updated_at,
         is_deleted=sheet.is_deleted,
+        deleted_at=sheet.deleted_at,
+        anchor_title=facts.anchor_title,
+        module_name=facts.module_name,
+        shared=facts.shared,
+        access_group=facts.access_group,
     )
 
 
 def summaries(db: Session, user: User, sheets: Sequence[Worksheet]) -> list[WorksheetSummary]:
-    """List items in two statements for the whole page: states and owner names."""
+    """List items in a fixed number of statements for the whole page."""
 
     states = worksheet_states(db, user, list(sheets))
     owners = person_refs(db, (sheet.owner_id for sheet in sheets))
+    facts = summary_facts(db, user, sheets)
     return [
-        _summary(sheet, owners[sheet.owner_id], *states[sheet.id])
+        _summary(sheet, owners[sheet.owner_id], *states[sheet.id], facts[sheet.id])
         for sheet in sheets
         if sheet.id in states
     ]
@@ -113,8 +121,9 @@ def summaries(db: Session, user: User, sheets: Sequence[Worksheet]) -> list[Work
 def detail(db: Session, user: User, sheet: Worksheet) -> WorksheetDetail:
     present, level = worksheet_states(db, user, [sheet])[sheet.id]
     owner = person_refs(db, [sheet.owner_id])[sheet.owner_id]
+    facts = summary_facts(db, user, [sheet])[sheet.id]
     return WorksheetDetail(
-        **_summary(sheet, owner, present, level).model_dump(),
+        **_summary(sheet, owner, present, level, facts).model_dump(),
         structure=structure_view(db, user, sheet),
         etag=worksheet_etag(sheet),
         created_at=sheet.created_at,

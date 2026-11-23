@@ -22,6 +22,11 @@ Route = tuple[str, str]
 SEEDER_ROUTES: frozenset[Route] = frozenset(
     {
         *COMMS_ROUTES,
+        # Sheets (TASK-0101): the routes the My sheets page calls. The sheet sample
+        # controls (B16) exercise them; until then a run lists them as uncovered.
+        ("GET", "/api/worksheets"),
+        ("GET", "/api/worksheets/{worksheet_id}"),
+        ("POST", "/api/worksheets/{worksheet_id}/restore"),
         ("PATCH", "/api/auth/me/profile"),
         ("GET", "/api/users/{user_id}/card"),
         ("GET", "/api/users/{user_id}/profile"),

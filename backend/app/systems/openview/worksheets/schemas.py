@@ -109,6 +109,14 @@ class WorksheetSummary(BaseModel):
     revision: int
     updated_at: datetime
     is_deleted: bool
+    deleted_at: datetime | None
+    # The record's title for a record sheet, the module's name for a module sheet.
+    anchor_title: str
+    module_name: str
+    # Whether the sheet has a live share; answered to its owner only (else null).
+    shared: bool | None
+    # The group whose share alone gives the viewer the sheet, else null.
+    access_group: str | None
 
 
 class WorksheetDetail(WorksheetSummary):
@@ -211,3 +219,64 @@ class SheetRowPage(BaseModel):
     items: list[SheetRow]
     pagination: SheetRowPagination
     totals: dict[str, SheetTotal]
+
+
+class SheetStructureUpdate(BaseModel):
+    """Route 6: the whole column list. New columns use keys from ``nextColumnSeq`` on."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    columns: list[Column]
+    groups: list[SheetColumnGroup] = Field(default_factory=list)
+    totals: dict[str, TotalFunction] = Field(default_factory=dict)
+
+
+class SheetCellChange(BaseModel):
+    """One changed cell and the cell as the person last saw it (F4)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: JsonValue
+    expected: Cell
+
+
+class SheetRowCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cells: dict[str, JsonValue] = Field(default_factory=dict)
+    # Absent: the end of the sheet. Null: the top. A row ID: right after that row.
+    after_row_id: UUID | None = None
+
+
+class SheetRowUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cells: dict[str, SheetCellChange] = Field(default_factory=dict)
+    after_row_id: UUID | None = None
+
+
+class SheetRowBatchUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    row_id: UUID
+    cells: dict[str, SheetCellChange]
+
+
+class SheetRowBatch(BaseModel):
+    """Route 14: up to 100 creates and updates in one transaction (paste, import)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    structure_revision: int = Field(ge=1)
+    creates: list[SheetRowCreate] = Field(default_factory=list)
+    updates: list[SheetRowBatchUpdate] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _bounded(self) -> "SheetRowBatch":
+        if len(self.creates) + len(self.updates) > 100:
+            raise ValueError("A batch holds at most 100 creates and updates")
+        return self
+
+
+class SheetRowBatchResult(BaseModel):
+    rows: list[SheetRow]

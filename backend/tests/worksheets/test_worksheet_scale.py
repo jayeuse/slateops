@@ -101,3 +101,21 @@ def test_a_grid_page_does_not_read_the_rows_of_other_sheets(
     add_rows(other, LARGE - SMALL, SMALL)
     at_large = page_pages()
     assert at_large - at_small < (LARGE - SMALL) // 10, (at_small, at_large)
+
+
+def test_the_sse_snapshot_finds_a_sheet_opened_by_a_release_cutoff(
+    integration_owner_db: Session,
+) -> None:
+    from datetime import timedelta
+
+    from tests.conftest import membership_of
+
+    db = integration_owner_db
+    world = sheet_world(db)
+    org_id = world.sheet.org_id
+    assert world.sheet.id not in visible_worksheet_ids(db, world.peer, org_id)
+    membership_of(db, world.owner.id).worksheets_released_at = (
+        world.sheet.created_at + timedelta(seconds=1)
+    )
+    db.flush()
+    assert world.sheet.id in visible_worksheet_ids(db, world.peer, org_id)

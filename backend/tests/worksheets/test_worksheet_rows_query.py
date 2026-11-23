@@ -309,3 +309,84 @@ def test_a_hidden_sheet_answers_like_a_missing_one_on_both_row_routes(
             peer.get(f"/api/worksheets/{sheet_id}/rows/{graded.rows[0]}"),
         ):
             assert (answer.status_code, _body(answer)) == (404, NOT_FOUND)
+
+
+def _simple_sheet(db: Session, columns: list[dict[str, Any]], rows: list[dict[str, Any]],
+                  totals: dict[str, str] | None = None) -> tuple[SheetWorld, list[UUID]]:
+    world = sheet_world(db)
+    world.sheet.structure = {
+        **STRUCTURE, "nextColumnSeq": len(columns) + 1, "columns": columns,
+        "totals": totals or {},
+    }
+    ids = []
+    for position, data in enumerate(rows, start=1):
+        row = WorksheetRow(org_id=world.sheet.org_id, worksheet_id=world.sheet.id,
+                           position=position * 1024, data=data, data_bytes=64)
+        db.add(row)
+        db.flush()
+        ids.append(row.id)
+    return world, ids
+
+
+def _post(application: FastAPI, db: Session, world: SheetWorld, **body: Any) -> dict[str, Any]:
+    response = _client(application, world.owner, db).post(
+        f"/api/worksheets/{world.sheet.id}/rows/query", json=body,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_decimal_cells_stored_as_decimal_text_sort_and_total_as_numbers(
+    application: FastAPI, integration_db: Session,
+) -> None:
+    world, ids = _simple_sheet(
+        integration_db,
+        [{"key": "c1", "name": "Mark", "type": "decimal",
+          "decimal": {"places": 2, "currency": False}}],
+        [{"c1": "12.50"}, {"c1": "7.5"}],
+        {"c1": "sum"},
+    )
+    body = _post(application, integration_db, world, sort={"key": "c1", "order": "asc"})
+    assert [item["id"] for item in body["items"]] == [str(ids[1]), str(ids[0])]
+    assert body["totals"]["c1"] == {"fn": "sum", "value": "20", "hidden_count": 0}
+
+
+def test_search_skips_person_and_checkbox_columns(
+    application: FastAPI, integration_db: Session,
+) -> None:
+    person = uuid7()
+    world, _ids = _simple_sheet(
+        integration_db,
+        [{"key": "c1", "name": "Teacher", "type": "user"},
+         {"key": "c2", "name": "Done", "type": "boolean"}],
+        [{"c1": str(person), "c2": True}],
+    )
+    for search in (str(person)[:8], "true"):
+        assert _post(application, integration_db, world, search=search)["items"] == []
+
+
+def test_a_link_to_a_record_titled_by_a_choice_shows_the_option_label(
+    application: FastAPI, integration_db: Session,
+) -> None:
+    db = integration_db
+    world = sheet_world(db)
+    houses = add_module(db, world.department, "Houses")
+    make_group_access(db, [world.owner], world.department, houses, level=AccessLevel.READ)
+    house = _field(db, houses, "House", "select", 0,
+                   {"options": [{"id": EXCELLENT, "label": "Excellent"}]})
+    houses.title_field_id = house.id
+    record = _record(db, houses, {str(house.id): EXCELLENT})
+    world.sheet.structure = {
+        **STRUCTURE, "nextColumnSeq": 2,
+        "columns": [{"key": "c1", "name": "House", "type": "link",
+                     "link": {"moduleId": str(houses.id)}}],
+    }
+    row = WorksheetRow(org_id=world.sheet.org_id, worksheet_id=world.sheet.id, position=1024,
+                       data={}, data_bytes=2)
+    db.add(row)
+    db.flush()
+    db.add(WorksheetRowLink(org_id=row.org_id, worksheet_id=row.worksheet_id, row_id=row.id,
+                            column_key="c1", target_record_id=record.id))
+    db.flush()
+    cell = _post(application, db, world)["items"][0]["cells"]["c1"]
+    assert cell == {"link": {"record_id": str(record.id), "label": "Excellent"}}

@@ -8,16 +8,17 @@
 Every wait is bounded (2 s) and answers 503, as relationship writes do.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from app.systems.access.policy.models import GroupMember
 from app.systems.access.users.models import User
-from app.systems.openview.worksheets.models import Worksheet
+from app.systems.openview.worksheets.models import Worksheet, WorksheetRow, WorksheetShare
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.locking import wait_briefly_for_locks
@@ -75,3 +76,64 @@ def _locked[T](db: Session, read: Callable[[], T]) -> T:
         db.rollback()
         raise worksheet_busy() from error
 
+
+
+def lock_for_write(
+    db: Session, sheet: Worksheet, actor_id: UUID, record_ids: Iterable[UUID],
+) -> Worksheet:
+    """Steps 1 to 4 for a row or structure write; the sheet is read again under lock.
+
+    Records come in ID order: the anchor and every link target the write reads or sets.
+    The actor's live share rows are held so a share removal waits for the write.
+    """
+
+    lock_owner(db, sheet.owner_id)
+    records = sorted({*record_ids, *([sheet.record_id] if sheet.record_id else [])})
+    if records:
+        _locked(db, lambda: db.scalars(
+            select(Record.id).where(Record.id.in_(records)).order_by(Record.id)
+            .with_for_update(read=True, of=Record)
+        ).all())
+    if sheet.module_id is not None:
+        lock_anchor(db, record_id=None, module_id=sheet.module_id)
+    _locked(db, lambda: db.scalars(
+        select(WorksheetShare.id)
+        .where(
+            WorksheetShare.worksheet_id == sheet.id,
+            WorksheetShare.is_deleted.is_(False),
+            or_(
+                WorksheetShare.user_id == actor_id,
+                WorksheetShare.group_id.in_(
+                    select(GroupMember.group_id).where(
+                        GroupMember.user_id == actor_id, GroupMember.is_deleted.is_(False)
+                    )
+                ),
+            ),
+        )
+        .order_by(WorksheetShare.id)
+        .with_for_update(read=True, of=WorksheetShare)
+    ).all())
+    locked = _locked(db, lambda: db.scalar(
+        select(Worksheet)
+        .where(Worksheet.id == sheet.id)
+        .execution_options(populate_existing=True)
+        .with_for_update(of=Worksheet)
+    ))
+    if not isinstance(locked, Worksheet):
+        raise worksheet_busy()
+    return locked
+
+
+def lock_rows(db: Session, row_ids: Iterable[UUID]) -> list[WorksheetRow]:
+    """Step 5: the rows a write changes, FOR UPDATE, in ID order."""
+
+    ids = sorted(set(row_ids))
+    if not ids:
+        return []
+    return list(_locked(db, lambda: db.scalars(
+        select(WorksheetRow)
+        .where(WorksheetRow.id.in_(ids))
+        .order_by(WorksheetRow.id)
+        .execution_options(populate_existing=True)
+        .with_for_update(of=WorksheetRow)
+    ).all()))

@@ -29,6 +29,7 @@ from sqlalchemy import (
     true,
 )
 from sqlalchemy import cast as sql_cast
+from sqlalchemy import column as sql_column
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy.sql.elements import ColumnElement
@@ -72,7 +73,9 @@ def _no_value() -> Expression:
 
 
 # Title fields whose stored value is its own label (a choice-list title falls back).
-_TITLE_TYPES = ("text", "long_text", "email", "url", "int", "number", "decimal")
+_TITLE_TYPES = ("text", "long_text", "email", "url", "int", "number", "decimal", "select")
+# As records: a person or checkbox value is no search text (`SEARCHABLE_FIELD_TYPES`).
+_UNSEARCHED = frozenset({"user", "boolean"})
 
 
 @dataclass(frozen=True)
@@ -138,15 +141,16 @@ def _plain(
     value = WorksheetRow.data[key]
     kind = column.type
     if kind in NUMERIC_TYPES:
-        number = _number(value)
+        number = _number(value, decimal_text=kind == "decimal")
         text, sort = _scalar_text(value), number
     elif isinstance(column, SheetSelectColumn):
         labels = {option.id: option.label for option in column.select.options}
         text = _option_label(value, labels)
         sort, number = func.lower(text), _no_number()
     else:
-        text = _scalar_text(value)
-        sort, number = func.lower(text), _no_number()
+        # A person sorts by the stored ID, as on record pages (B4 review item 3).
+        sort, number = func.lower(_scalar_text(value)), _no_number()
+        text = _no_text() if kind in _UNSEARCHED else _scalar_text(value)
     present = and_(value.is_not(None), func.jsonb_typeof(value) != "null")
     return ColumnProjection(
         key, _no_text(), value, _no_text(), text, sort, number, false(), present,
@@ -173,9 +177,37 @@ class _Link:
     data: Any
 
 
+def _title_option_label(title: Any, raw: Expression) -> Expression:
+    """The label of a choice-list title, as `record_title` and platform search show it."""
+
+    options = title.config["options"]
+    rows = (
+        func.jsonb_array_elements(
+            case(
+                (func.jsonb_typeof(options) == "array", options),
+                else_=sql_cast(literal("[]"), JSONB),
+            )
+        )
+        .table_valued(sql_column("value", JSONB), with_ordinality="ordinality")
+        .render_derived()
+    )
+    return (
+        select(rows.c.value["label"].astext)
+        .where(
+            func.jsonb_typeof(rows.c.value["id"]) == "string",
+            func.jsonb_typeof(rows.c.value["label"]) == "string",
+            rows.c.value["id"].astext == raw,
+        )
+        .order_by(rows.c.ordinality.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+
+
 def _record_label(target: Any, title: Any) -> Expression:
     raw = target.data.op("->>")(func.cast(title.id, String))
-    named = func.nullif(func.btrim(raw), "")
+    label = case((title.type == "select", _title_option_label(title, raw)), else_=raw)
+    named = func.nullif(func.btrim(label), "")
     fallback = literal("Record ") + func.left(func.cast(target.id, String), 8)
     return func.coalesce(named, fallback)
 
@@ -273,6 +305,7 @@ def _lookup(db: Session, key: str, column: SheetLookupColumn, link: _Link,
     )
     readable = state == "link"
     value, text, number = _no_value(), _no_text(), _no_number()
+    sorted_text = text
     numeric = False
     if live and source is not None:
         raw = link.data[str(source.id)]
@@ -291,6 +324,9 @@ def _lookup(db: Session, key: str, column: SheetLookupColumn, link: _Link,
             value, text = raw, _scalar_text(raw)
         else:
             value, text = raw, _scalar_text(raw)
+        sorted_text = text
+        if kind.value in _UNSEARCHED:
+            sorted_text, text = _scalar_text(raw), _no_text()
     masked_text = case((readable, text), else_=null())
     masked_number = case((readable, number), else_=null())
     masked_value = case((readable, value), else_=null())
@@ -300,7 +336,7 @@ def _lookup(db: Session, key: str, column: SheetLookupColumn, link: _Link,
         value=masked_value,
         label=_no_text(),
         text=masked_text,
-        sort=masked_number if numeric else func.lower(masked_text),
+        sort=masked_number if numeric else func.lower(case((readable, sorted_text), else_=null())),
         number=masked_number,
         hidden=link.state == "no_access",
         shown=func.coalesce(func.jsonb_typeof(masked_value) != "null", false()),

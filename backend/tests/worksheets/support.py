@@ -9,6 +9,7 @@ from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, Gr
 from app.systems.access.users.models import User, UserRole
 from app.systems.openview.worksheets.models import Worksheet, WorksheetShare
 from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
@@ -102,3 +103,60 @@ def sheet_world(db: Session, anchor: Anchor = "record") -> SheetWorld:
         department, module, record, sheet, share_group, owner, viewer, editor, group_member,
         guest, peer, manager, admin, reader_access, add_user(db),
     )
+
+
+@dataclass(frozen=True)
+class Students:
+    module: Module
+    name: Field
+    score: Field
+    alice: Record
+    bob: Record
+
+
+def add_students(
+    db: Session, world: SheetWorld, readers: list[User], name: str = "Student List",
+) -> Students:
+    """A Student List module that only ``readers`` can read, with two live records."""
+
+    module = add_module(db, world.department, name)
+    make_group_access(db, readers, world.department, module, level=AccessLevel.READ)
+    title = Field(org_id=module.org_id, module_id=module.id, name="Name", type="text",
+                  position=0, config={})
+    score = Field(org_id=module.org_id, module_id=module.id, name="Score", type="int",
+                  position=1, config={})
+    db.add_all([title, score])
+    db.flush()
+    module.title_field_id = title.id
+    records = []
+    for label, points in (("Alice", 90), ("Bob", 70)):
+        record = Record(org_id=module.org_id, module_id=module.id,
+                        data={str(title.id): label, str(score.id): points})
+        db.add(record)
+        records.append(record)
+    db.flush()
+    return Students(module, title, score, records[0], records[1])
+
+
+def editable_structure(students: Students) -> dict[str, object]:
+    """Every editable column kind, a link to Student List and one lookup through it."""
+
+    return {
+        "structureVersion": 1, "nextColumnSeq": 10,
+        "columns": [
+            {"key": "c1", "name": "Student", "type": "link",
+             "link": {"moduleId": str(students.module.id)}},
+            {"key": "c2", "name": "Name", "type": "lookup",
+             "lookup": {"linkKey": "c1", "fieldId": str(students.name.id)}},
+            {"key": "c3", "name": "Note", "type": "text"},
+            {"key": "c4", "name": "Points", "type": "int"},
+            {"key": "c5", "name": "Mark", "type": "decimal",
+             "decimal": {"places": 2, "currency": False}},
+            {"key": "c6", "name": "Status", "type": "select",
+             "select": {"options": [{"id": "o1", "label": "Pass"}, {"id": "o2", "label": "Fail"}]}},
+            {"key": "c7", "name": "Teacher", "type": "user"},
+            {"key": "c8", "name": "Done", "type": "boolean"},
+            {"key": "c9", "name": "Due", "type": "date"},
+        ],
+        "groups": [], "totals": {},
+    }

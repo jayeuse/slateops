@@ -42,6 +42,7 @@ from app.systems.openview.worksheets.schemas import (
     SheetRowPage,
     SheetRowsQuery,
     SheetShareCandidates,
+    SheetStructureUpdate,
     WorksheetCreate,
     WorksheetDetail,
     WorksheetListRequest,
@@ -50,6 +51,7 @@ from app.systems.openview.worksheets.schemas import (
     WorksheetSummary,
 )
 from app.systems.openview.worksheets.serializers import detail, summaries, worksheet_etag
+from app.systems.openview.worksheets.structure_save import save_structure
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.access import record_access
 
@@ -370,3 +372,20 @@ def get_worksheet_row(
         raise _error(status.HTTP_404_NOT_FOUND, "worksheet_row_not_found", "Row not found")
     response.headers["ETag"] = row.etag
     return row
+
+
+@router.put(
+    "/worksheets/{worksheet_id}/structure", response_model=WorksheetDetail,
+    responses={200: {"headers": _ETAG}, **_CONDITIONAL},
+)
+def save_worksheet_structure(
+    worksheet_id: UUID, payload: SheetStructureUpdate, user: Actor, db: Database,
+    response: Response, if_match: IfMatch = None,
+) -> WorksheetDetail:
+    """Route 6: owner or Edit; ``If-Match`` names the sheet revision the person saw."""
+
+    sheet = save_structure(db, user, worksheet_id, payload, if_match)
+    db.commit()
+    db.refresh(sheet)
+    response.headers["ETag"] = worksheet_etag(sheet)
+    return detail(db, user, sheet)

@@ -342,3 +342,18 @@ def test_an_open_sheet_cannot_be_restored(
     db.flush()
     refused = _as(application, db, world.owner).post(f"/api/worksheets/{world.sheet.id}/restore")
     assert (refused.status_code, refused.json()["detail"]["code"]) == (409, "worksheet_open")
+
+
+def test_a_share_candidate_with_a_blank_display_name_shows_their_username(
+    application: FastAPI, integration_db: Session,
+) -> None:
+    db = integration_db
+    world = sheet_world(db)
+    blank = add_user(db, name="blank-name")
+    blank.display_name = ""
+    make_group_access(db, [blank], world.department, world.module, level=AccessLevel.READ)
+    db.flush()
+    found = _as(application, db, world.owner).get(
+        f"/api/worksheets/{world.sheet.id}/share-candidates", params={"q": "blank-name"},
+    ).json()
+    assert found["people"] == [{"id": str(blank.id), "display_name": blank.username}]

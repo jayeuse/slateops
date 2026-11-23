@@ -32,7 +32,7 @@ def _visible_people(db: Session, owner: User, pattern: str) -> list[SheetPersonR
     """Matching active members in keyset pages, filtered by the visibility rule, until a
     page of visible people is full or the members run out (B3 review B-1)."""
 
-    name = func.coalesce(User.display_name, User.username)
+    name = func.coalesce(func.nullif(User.display_name, ""), User.username)
     members = (
         select(name.label("name"), User.id)
         .join(Membership, bound_membership_join())
