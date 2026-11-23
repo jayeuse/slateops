@@ -10,6 +10,14 @@ and chrony are active; D-2 refuses every drvfs mount and every 9p mount of a Win
 or under ``/mnt``, and logs each 9p and drvfs mount; S85-7 also refuses any mount on
 ``/mnt/<letter>`` or with a ``path=<letter>:`` option, whatever its type. The listener check
 passes only the WSL DNS tunnel lines (``DNS_LOCAL``).
+
+TASK-0097 (W14 round 3, the first run on Windows): the interop check first removes every
+``WSLInterop*`` binfmt entry as root (``remove_interop``; the image also does this at each
+Linux start, ``slateops-interop-off.service``) and still fails closed on an entry that stays
+enabled. A refusal carries ``detail``: each failed check with what it saw (the exact listener
+lines with their owning process, the enabled entry names), redacted, with control characters
+escaped and at most ``DETAIL_LIMIT`` characters, so the Windows side can log it when no report
+can be saved. It holds no input value; a listener line can name a LAN address of the PC.
 """
 
 from __future__ import annotations
@@ -19,6 +27,7 @@ import io
 import json
 import re
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from engine import facts, progress, release, report
@@ -36,6 +45,8 @@ _DRIVE_SOURCE = re.compile(r"[A-Za-z]:(?:\\134|\\|/|\Z)")
 _DRIVE_TARGET = re.compile(r"/mnt/[A-Za-z](?:/|\Z)")
 _PATH_OPTION = re.compile(r"(?:^|[,;])path=[A-Za-z]:")
 _OCTAL = re.compile(r"\\([0-7]{3})")
+DETAIL_LIMIT = 1000
+_DETAILS = "prepare_detail"  # the failed checks' texts, in ``ctx.outputs`` for this run only
 
 Check = Callable[[Context, str, dict[str, Any], str], str | None]
 
@@ -46,7 +57,22 @@ def _pass(ctx: Context, step: str, text: str) -> None:
 
 def _fail(ctx: Context, step: str, code: str, text: str) -> str:
     ctx.log.line(step, "ERROR", f"FAIL {code}: {text}")
+    seen = ctx.outputs.get(_DETAILS)
+    ctx.outputs[_DETAILS] = f"{seen}; {code}: {text}" if seen else f"{code}: {text}"
     return code
+
+
+def _escaped(text: str) -> str:
+    return "".join(
+        character if character.isprintable() else f"\\x{ord(character):02x}"
+        for character in text
+    )
+
+
+def detail(ctx: Context) -> str:
+    """The failed checks and what each saw, safe for standard output (AC-E3)."""
+    text = ctx.redactor(_escaped(" ".join(ctx.outputs.get(_DETAILS, "").split())))
+    return text if len(text) <= DETAIL_LIMIT else text[: DETAIL_LIMIT - 3] + "..."
 
 
 def check_systemd(ctx: Context, step: str, manifest: dict[str, Any], version: str) -> str | None:
@@ -193,23 +219,56 @@ def _is_dns_tunnel(fields: list[str]) -> bool:
     )
 
 
+def unexpected_listeners(text: str) -> tuple[list[str], list[str]]:
+    """(allowed DNS tunnel lines, every other line) of ``ss -H -ltnu`` output; each line is
+    its fields joined by one space. The Linux install proof calls this too."""
+    allowed: list[str] = []
+    others: list[str] = []
+    for line in text.splitlines():
+        fields = line.split()
+        if fields:
+            (allowed if _is_dns_tunnel(fields) else others).append(" ".join(fields))
+    return allowed, others
+
+
+def _owned(ctx: Context, step: str, others: list[str]) -> list[str]:
+    """The refused lines with their owning process (``ss -p``), for the log and ``detail``."""
+    result = ctx.runner.run(step, ["ss", "-H", "-ltnup"], timeout=30)
+    owned = [" ".join(line.split()) for line in result.text().splitlines()] if result.ok else []
+    found = []
+    for line in others:
+        match = next((item for item in owned if item.split()[:6] == line.split()), None)
+        found.append(match or line)
+    return found
+
+
 def check_listeners(ctx: Context, step: str, manifest: dict[str, Any], version: str) -> str | None:
     result = ctx.runner.run(step, ["ss", "-H", "-ltnu"], timeout=30)
     if not result.ok:
         return _fail(ctx, step, "listeners_unknown", f"exit {result.returncode}")
-    others: list[str] = []
-    for line in result.text().splitlines():
-        fields = line.split()
-        if not fields:
-            continue
-        if _is_dns_tunnel(fields):
-            ctx.log.line(step, "INFO", f"allowed WSL DNS listener: {' '.join(fields)}")
-        else:
-            others.append(" ".join(fields))
+    allowed, others = unexpected_listeners(result.text())
+    for line in allowed:
+        ctx.log.line(step, "INFO", f"allowed WSL DNS listener: {line}")
     if others:
-        return _fail(ctx, step, "unexpected_listener", " | ".join(others))
+        return _fail(ctx, step, "unexpected_listener", " | ".join(_owned(ctx, step, others)))
     _pass(ctx, step, "nothing else listens")
     return None
+
+
+def remove_interop(folder: Path, write: Callable[[Path, str], None]) -> tuple[list[str], list[str]]:
+    """Remove every ``WSLInterop*`` binfmt entry (write ``-1``); return (removed, refused).
+    Linux never starts a Windows program: ``wsl.conf`` alone did not keep the entry off on
+    the owner's PC (TASK-0097). The Linux install proof calls this too."""
+    removed: list[str] = []
+    refused_names: list[str] = []
+    for entry in sorted(folder.glob("WSLInterop*")):
+        try:
+            write(entry, "-1")
+        except OSError:
+            refused_names.append(entry.name)
+        else:
+            removed.append(entry.name)
+    return removed, refused_names
 
 
 def check_interop(ctx: Context, step: str, manifest: dict[str, Any], version: str) -> str | None:
@@ -217,6 +276,11 @@ def check_interop(ctx: Context, step: str, manifest: dict[str, Any], version: st
     if not (folder / "status").is_file():
         # Not mounted: an entry could appear later, so the state is unknown (S85-4).
         return _fail(ctx, step, "interop_unknown", "binfmt_misc is not mounted")
+    removed, kept = remove_interop(folder, ctx.deps.write_binfmt)
+    for name in removed:
+        ctx.log.line(step, "INFO", f"removed WSLInterop entry {name}")
+    for name in kept:
+        ctx.log.line(step, "WARN", f"could not remove WSLInterop entry {name}")
     try:
         entries = sorted(folder.glob("WSLInterop*"))
         enabled = [e.name for e in entries if e.read_text().splitlines()[:1] == ["enabled"]]
@@ -342,5 +406,5 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
         if code is not None:
             failures.append(code)
     if failures:
-        raise failed(failures[0], failed=",".join(failures))
+        raise failed(failures[0], failed=",".join(failures), detail=detail(ctx))
     return {"code": "prepared"}

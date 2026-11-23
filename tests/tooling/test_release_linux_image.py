@@ -106,7 +106,9 @@ def valid_files(pins: dict[str, str]) -> Files:
     return files
 
 
-UNITS = ("containerd.service", "docker.service", "chrony.service")
+UNITS = (
+    "containerd.service", "docker.service", "chrony.service", "slateops-interop-off.service",
+)
 
 
 def write_tarball(
@@ -385,6 +387,20 @@ class RootFileSystemCheckTests(unittest.TestCase):
                     self.problems(valid_files(self.pins), units),
                     [f"W4-5: {unit} is not enabled in multi-user.target"],
                 )
+
+    def test_task_0097_the_interop_unit_removes_every_wslinterop_entry_at_each_start(self):
+        # W14 round 3: a WSLInterop entry was enabled on the owner's PC despite wsl.conf.
+        unit = (IMAGE / "rootfs/etc/systemd/system/slateops-interop-off.service").read_text()
+        self.assertIn("After=systemd-binfmt.service", unit)
+        self.assertIn("WantedBy=multi-user.target", unit)
+        [command] = [line for line in unit.splitlines() if line.startswith("ExecStart=")]
+        # Every WSLInterop* entry gets -1 (removal); a missing entry or a refused write never
+        # fails the start; systemd's own "$" expansion is escaped.
+        self.assertIn("/proc/sys/fs/binfmt_misc/WSLInterop*", command)
+        self.assertIn('echo -1 > "$$entry" || :', command)
+        self.assertNotRegex(command, r"(?<!\$)\$(?!\$)")
+        hooks = (IMAGE / "hooks.sh").read_text()
+        self.assertRegex(hooks, r"systemctl enable [^\n]*\\\n\s+slateops-interop-off\.service")
 
     def test_a_missing_required_package_is_named(self):
         for package in ("python3", "restic", "chrony", "systemd-sysv", "iproute2"):

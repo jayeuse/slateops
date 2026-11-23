@@ -54,7 +54,10 @@ REQUIRED_PACKAGES = ("systemd-sysv", "python3", "restic", "chrony", "iproute2")
 REMOTE_LOGIN_PACKAGES = frozenset(
     {"openssh-server", "dropbear", "dropbear-bin", "tinysshd", "telnetd", "inetutils-telnetd"}
 )
-UNITS = ("containerd.service", "docker.service", "chrony.service")
+UNITS = (
+    "containerd.service", "docker.service", "chrony.service",
+    "slateops-interop-off.service",  # TASK-0097: removes the WSLInterop entries at each start
+)
 WANTS = "etc/systemd/system/multi-user.target.wants"
 # Folders where a private key would be a secret of the image. A key is small; larger
 # files (cosign, for example, holds the PEM marker text) are not read.

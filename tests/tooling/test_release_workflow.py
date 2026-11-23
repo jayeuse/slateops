@@ -646,6 +646,13 @@ class InstallProofTests(unittest.TestCase):
             "mail was sent before email was set up",
             '"${engine[@]}" set-email)',
             'fail "expected one password reset email in Mailpit',
+            # TASK-0097 (W14 round 3): prepare's listener rule and interop removal on the
+            # booted image, before receive.
+            "prepare.unexpected_listeners(",
+            "the fresh image has an unexpected listener",
+            "systemctl restart slateops-interop-off.service",
+            "prepare.remove_interop(",
+            "the engine left the WSLInterop entry",
             "the second install changed a file",
             "the second install sent mail",
             "chronyd -x",

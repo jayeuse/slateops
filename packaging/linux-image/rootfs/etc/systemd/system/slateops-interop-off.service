@@ -1,0 +1,20 @@
+# Slate Operations Linux image (TASK-0097, W14 round 3; docs/plans/windows-installer.md 3.2).
+# Linux never starts a Windows program. On the owner's PC a WSLInterop binfmt entry was
+# enabled although /etc/wsl.conf turns interop off, so this removes every WSLInterop* entry
+# as root at each Linux start, after systemd-binfmt, and again 30 and 120 seconds later for
+# an entry that WSL registers late. It never fails the start: with no entry, or with
+# binfmt_misc not mounted, it changes nothing. The engine's prepare removes the entries again
+# and refuses an entry that stays enabled.
+# Assumption (not verified on WSL): WSL 2 runs every distribution of a user in one VM with one
+# kernel, and binfmt_misc belongs to that kernel, so this also removes the entry that another
+# running distribution uses until WSL registers it again.
+[Unit]
+Description=Remove the WSL interop binfmt entries
+After=systemd-binfmt.service proc-sys-fs-binfmt_misc.mount
+
+[Service]
+Type=simple
+ExecStart=/bin/sh -c 'for wait in 0 30 90; do sleep "$$wait"; for entry in /proc/sys/fs/binfmt_misc/WSLInterop*; do [ -e "$$entry" ] && echo -1 > "$$entry" || :; done; done'
+
+[Install]
+WantedBy=multi-user.target

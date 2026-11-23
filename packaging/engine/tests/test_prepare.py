@@ -89,8 +89,15 @@ def paths(tmp_path: Path) -> Paths:
     return paths
 
 
-def _prepare(paths: Paths, script: Script) -> tuple[int, dict[str, Any]]:
-    code, result, _ = call(["prepare"], {"run_id": RUN_ID, "version": VERSION}, deps(paths, script))
+def _kernel_keeps(path: Path, value: str) -> None:
+    """A binfmt write that the kernel ignores: the entry stays as it is."""
+
+
+def _prepare(
+    paths: Paths, script: Script, write_binfmt: Any = _kernel_keeps
+) -> tuple[int, dict[str, Any]]:
+    dependencies = deps(paths, script, write_binfmt=write_binfmt)
+    code, result, _ = call(["prepare"], {"run_id": RUN_ID, "version": VERSION}, dependencies)
     return code, result
 
 
@@ -386,3 +393,82 @@ def test_w14_d5_prepare_reports_each_check(
         "progress prepare 9/10 shells start",
         "progress prepare 10/10 bundle start",
     ]
+
+
+# TASK-0097 owner item 6 (W14 round 3): on Windows, prepare refused
+# `unexpected_listener,interop_enabled` and the engine log was lost.
+
+
+def _removes(written: list[tuple[str, str]]) -> Any:
+    def write(path: Path, value: str) -> None:  # the kernel removes an entry on "-1"
+        written.append((path.name, value))
+        if value == "-1":
+            path.unlink()
+
+    return write
+
+
+def test_ac_e1_prepare_removes_every_wslinterop_entry_before_the_check(paths: Paths) -> None:
+    binfmt = paths.proc / "sys/fs/binfmt_misc"
+    for name in ("WSLInterop", "WSLInterop-late"):
+        (binfmt / name).write_text("enabled\ninterpreter /init\nflags: PF\n")
+    (binfmt / "python3.13").write_text("enabled\ninterpreter /usr/bin/python3.13\n")
+    written: list[tuple[str, str]] = []
+
+    code, result = _prepare(paths, healthy(), _removes(written))
+
+    assert (code, result) == (0, {"code": "prepared"})
+    assert written == [("WSLInterop", "-1"), ("WSLInterop-late", "-1")]
+    assert (binfmt / "python3.13").exists()
+    assert "removed WSLInterop entry WSLInterop-late" in log_text(paths)
+
+
+def test_ac_e1_an_entry_that_the_kernel_keeps_enabled_fails_closed(paths: Paths) -> None:
+    (paths.proc / "sys/fs/binfmt_misc/WSLInterop-late").write_text("enabled\n")
+
+    def refuse(path: Path, value: str) -> None:
+        raise PermissionError("read-only")
+
+    code, result = _prepare(paths, healthy(), refuse)
+
+    assert (code, result["code"]) == (3, "interop_enabled")
+    assert "WSLInterop-late" in result["detail"]
+
+
+def test_ac_e1_with_binfmt_misc_not_mounted_nothing_is_written_and_the_state_is_unknown(
+    paths: Paths,
+) -> None:
+    (paths.proc / "sys/fs/binfmt_misc/status").unlink()
+    written: list[tuple[str, str]] = []
+
+    code, result = _prepare(paths, healthy(), _removes(written))
+
+    assert (code, result["code"], written) == (3, "interop_unknown", [])
+
+
+def test_ac_e3_a_refusal_names_each_failed_check_and_the_exact_lines(paths: Paths) -> None:
+    (paths.proc / "sys/fs/binfmt_misc/WSLInterop").write_text("enabled\n")
+    line = "udp   UNCONN 0      0      0.0.0.0:68        0.0.0.0:*"
+    owned = line + '   users:(("dhcp\x1bc",pid=88,fd=5))'
+    script = healthy(**{"ss__-H__-ltnu": ok(line + "\n"), "ss__-H__-ltnup": ok(owned + "\n")})
+
+    code, result = _prepare(paths, script)
+
+    assert (code, result["code"], result["failed"]) == (
+        3, "unexpected_listener", "unexpected_listener,interop_enabled",
+    )  # fmt: skip
+    detail = result["detail"]
+    assert detail.startswith("unexpected_listener: udp UNCONN 0 0 0.0.0.0:68 0.0.0.0:* users:")
+    assert '"dhcp\\x1bc"' in detail and "\x1b" not in detail.replace("\\x1b", "")
+    assert "; interop_enabled: WSLInterop" in detail
+    assert len(detail) <= 1000
+
+
+def test_ac_e3_a_long_detail_is_cut_to_its_limit(paths: Paths) -> None:
+    lines = [f"tcp   LISTEN 0      4096   0.0.0.0:{port}        0.0.0.0:*" for port in range(200)]
+    script = healthy(ss=ok("\n".join(lines) + "\n"))
+
+    code, result = _prepare(paths, script)
+
+    assert (code, result["code"]) == (3, "unexpected_listener")
+    assert len(result["detail"]) == 1000 and result["detail"].endswith("...")

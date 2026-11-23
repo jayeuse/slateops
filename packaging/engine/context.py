@@ -63,6 +63,12 @@ def served_certificate(host: str, cafile: Path, timeout: float) -> bytes:
         return connection.getpeercert(binary_form=True) or b""
 
 
+def write_binfmt(path: Path, value: str) -> None:
+    """One write to a ``binfmt_misc`` entry: ``-1`` removes it, ``0`` turns it off."""
+    with open(path, "w", encoding="ascii") as entry:
+        entry.write(value)
+
+
 @dataclass
 class Dependencies:
     paths: Paths = field(default_factory=Paths)
@@ -75,6 +81,7 @@ class Dependencies:
     chown: Callable[[Path, int, int], None] = os.chown
     https_get: Callable[[str, str, Path, float], tuple[int, bytes]] = https_get
     served_certificate: Callable[[str, Path, float], bytes] = served_certificate
+    write_binfmt: Callable[[Path, str], None] = write_binfmt
 
 
 @dataclass

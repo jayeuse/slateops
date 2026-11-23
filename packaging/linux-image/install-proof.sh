@@ -20,7 +20,8 @@
 #    the proof uses plain SMTP: after the install the email settings are staged with the
 #    engine's own writer, in place of `smtp-test` (unit-proved, TASK-0085), and `set-email`
 #    applies them.
-# 3. receive, prefetch (status until done), install with no email settings and the first
+# 3. The listener rule and the interop removal of prepare on the booted image (TASK-0097);
+#    receive, prefetch (status until done), install with no email settings and the first
 #    administrator's password (DEC-0041); an independent HTTPS /api/ready with the
 #    installation's CA; sign-in with that password; a password reset refused with
 #    email_not_configured; install again (nothing changes); set-email, then a password reset
@@ -143,6 +144,42 @@ docker exec "$machine" docker compose version
 docker exec "$machine" docker info --format '{{json .DriverStatus}}' | grep -q io.containerd.snapshotter.v1 \
     || fail "the image's Docker does not use the containerd image store"
 docker exec "$machine" df -h /var/lib
+
+# 1b. The checks of prepare that run on any Linux (TASK-0097, W14 round 3) -----------------
+# prepare itself needs WSL (wslinfo), so the proof calls the engine's own listener rule and
+# interop removal on the booted image. Test only: Docker's resolver of this user-defined test
+# network listens on 127.0.0.11 in the machine; WSL has no such listener.
+log "nothing listens on the fresh image but the test network's resolver (prepare's rule)"
+listeners="$(docker exec "$machine" ss -H -ltnup)"
+echo "$listeners"
+others="$(docker exec "$machine" /usr/bin/python3 -I -c '
+import sys
+sys.path.insert(0, f"/opt/slateops/engine/{sys.argv[1]}")
+from engine import prepare
+lines = [line for line in sys.argv[2].splitlines() if " 127.0.0.11:" not in line]
+print("\n".join(prepare.unexpected_listeners("\n".join(lines))[1]))' "$version" "$listeners")"
+[ -z "$others" ] || fail "the fresh image has an unexpected listener: $others"
+log "the interop unit and the engine remove a WSLInterop entry (prepare's interop rule)"
+binfmt=/proc/sys/fs/binfmt_misc
+docker exec "$machine" sh -c "[ -e $binfmt/status ] || mount -t binfmt_misc binfmt_misc $binfmt"
+register() {  # a throwaway entry on this test kernel; the interpreter never runs
+    docker exec "$machine" sh -c "echo ':$1:M::MZ::/bin/false:' > $binfmt/register"
+    docker exec "$machine" test -e "$binfmt/$1" || fail "could not register the test entry $1"
+}
+register WSLInterop-proof
+docker exec "$machine" systemctl restart slateops-interop-off.service
+for _ in $(seq 1 10); do docker exec "$machine" test -e "$binfmt/WSLInterop-proof" || break; sleep 1; done
+docker exec "$machine" test ! -e "$binfmt/WSLInterop-proof" \
+    || fail "slateops-interop-off.service left the WSLInterop entry"
+register WSLInterop-late
+removed="$(docker exec "$machine" /usr/bin/python3 -I -c '
+import sys
+from pathlib import Path
+sys.path.insert(0, f"/opt/slateops/engine/{sys.argv[1]}")
+from engine import context, prepare
+print(prepare.remove_interop(Path("/proc/sys/fs/binfmt_misc"), context.write_binfmt))' "$version")"
+echo "$removed"
+docker exec "$machine" test ! -e "$binfmt/WSLInterop-late" || fail "the engine left the WSLInterop entry"
 
 # 2. receive and prefetch ------------------------------------------------------------------
 staging="$output/payload"

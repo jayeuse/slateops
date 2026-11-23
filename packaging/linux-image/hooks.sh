@@ -105,8 +105,9 @@ customize() {
     # and docker.sources from rootfs/); the build's snapshot list and apt options go.
     rm -f "$root/etc/apt/sources.list" "$root/etc/apt/apt.conf.d/99mmdebstrap"
 
-    chroot "$root" systemctl enable containerd.service docker.service chrony.service
-    log "enabled: containerd.service docker.service chrony.service"
+    chroot "$root" systemctl enable containerd.service docker.service chrony.service \
+        slateops-interop-off.service
+    log "enabled: containerd.service docker.service chrony.service slateops-interop-off.service"
 
     # The engine (W5b), and the folders that later slices fill: secrets, state and logs.
     install_engine
