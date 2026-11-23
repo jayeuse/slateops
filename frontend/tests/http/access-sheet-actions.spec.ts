@@ -314,6 +314,9 @@ test("departments carry their marks and levels use the level chip", async ({
 test("an administrator adds a person to a group and removes them from the person sheet", async ({
   page,
 }) => {
+  // Frames run only when the test moves the clock, so a focus change that
+  // waits for the next frame cannot hide behind the order of two renders.
+  await page.clock.install();
   const api = await mockAccessApi(page);
   const adding = heldResponse();
   let holdAdd = true;
@@ -362,6 +365,11 @@ test("an administrator adds a person to a group and removes them from the person
       api.sent("PUT", `/api/access/groups/${ids.readers}/members`)[1]?.body,
     ),
   ).toEqual([ids.ben]);
+  await expect(
+    ana.getByRole("button", { name: "Add to group", exact: true }),
+  ).toBeFocused();
+  // Focus stays there after the sheet's next frames.
+  await page.clock.runFor(100);
   await expect(
     ana.getByRole("button", { name: "Add to group", exact: true }),
   ).toBeFocused();

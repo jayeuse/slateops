@@ -154,6 +154,10 @@ export function PersonGroups({
     setRowErrors((current) => ({ ...current, [groupId]: null }));
     try {
       await changeGroupMembership(groupId, person.id, false);
+      // Focus leaves the row before the refetch removes it: a focused
+      // element that disappears sends the sheet's focus to its popup on the
+      // next frame, which would win over a later focus.
+      if (mounted.current) addButton.current?.focus();
       await afterAccessGroupChange(client);
       if (!mounted.current) return;
       setAnnouncement(`${name} removed from ${groupName}.`);
