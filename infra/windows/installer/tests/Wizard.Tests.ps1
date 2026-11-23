@@ -157,6 +157,23 @@ Test-Case 'W8-6 Save report holds no seeded secret or personal data, follows no 
     Assert-True ($made.files -ge 1)
 }
 
+Test-Case 'AC-O7 Save report works when nothing is left out (the first file meets an empty list)' {
+    # Add-ReportFile alone: the list of left-out files is empty at the first file.
+    $source = Join-Path (New-TestDirectory 'o7-add') 'install-20261123T010000Z-abc123.log'
+    [System.IO.File]::WriteAllText($source, 'setup.state INFO safe')
+    $leftOut = New-Object System.Collections.Generic.List[string]
+    $staging = New-TestDirectory 'o7-add-staging'
+    Assert-Equal $true (Add-ReportFile -Source $source -StagingDir $staging -Name 'logs__setup__one.log' -LeftOut $leftOut)
+    Assert-Equal 0 $leftOut.Count
+    # The whole staging of a trusted state folder with plain logs only: no link, nothing left out.
+    $parent = New-TestDirectory 'o7-report'
+    $layout = New-SlateOpsLayout -StateRoot (Join-Path $parent 'SlateOps')
+    $null = Initialize-ProtectedTree -Tree $layout.StateTree
+    [System.IO.File]::WriteAllText((Join-Path $layout.StateRoot 'logs\setup\install-20261123T010000Z-abc123.log'), 'setup.state INFO safe')
+    $made = New-ReportStaging -Layout $layout -StagingDir (Join-Path $parent 'staging') -RunId 'report-20261123T010500Z-o7none' -StateTrusted -Facts @{ note = 'x' }
+    Assert-Equal '1 0' ('{0} {1}' -f $made.files, $made.left_out)
+}
+
 Test-Case 'W8-1 spec 4.1 the first screen follows the saved progress, then the installed version by SemVer precedence' {
     Assert-Equal -1 (Compare-ReleaseVersion -Left '0.2.0-rc.1' -Right '0.2.0-rc.2')
     Assert-Equal -1 (Compare-ReleaseVersion -Left '0.2.0-rc.9' -Right '0.2.0')

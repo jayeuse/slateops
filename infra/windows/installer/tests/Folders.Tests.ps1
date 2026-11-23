@@ -173,12 +173,58 @@ Test-Case 'AC-3 P2-3 the recorded service SID keeps the state folder safe after 
     $problems = @(Initialize-ProtectedTree -Tree $layout.StateTree -ServiceSid $script:ServiceSid)
     Assert-Equal 0 $problems.Count ($problems -join '; ')
     Write-JsonFile -Path (Join-Path $layout.State 'windows-changes.json') -Value ([ordered]@{ account_sid = $script:ServiceSid })
-    Assert-Equal 'unsafe' (Test-StateFolder -Layout $layout).code 'without the SID the account entries are unknown'
+    Assert-Equal 'unsafe_access' (Test-StateFolder -Layout $layout).code 'without the SID the account entries are unknown'
     Assert-Equal $script:ServiceSid (Get-RecordedServiceSid -Layout $layout)
     Assert-Equal 'safe' (Test-StateFolder -Layout $layout -ServiceSid (Get-RecordedServiceSid -Layout $layout)).code
     Remove-ServiceAccess -Tree $layout.StateTree -Sid $script:ServiceSid
     $left = @(Get-TreeProblem -Tree $layout.StateTree)
     Assert-Equal 0 $left.Count ($left -join '; ')
+}
+
+Test-Case 'AC-O2 a state folder that a removal left with the entries of its deleted service account is repaired; any other folder stays refused' {
+    $sid = New-TestUser 'slateops-o2svc'
+    $layouts = @{}
+    foreach ($name in @('o2-stale', 'o2-extra')) {
+        $layout = New-TestStateLayout $name
+        $problems = @(Initialize-ProtectedTree -Tree $layout.StateTree -ServiceSid $sid)
+        Assert-Equal 0 $problems.Count ($problems -join '; ')
+        # A log that the service account wrote (it owns it); the removal kept the logs only.
+        $log = Join-Path $layout.StateRoot 'logs\exec\install-o2.log'
+        [System.IO.File]::WriteAllText($log, 'line')
+        $null = & icacls.exe $log /setowner ('*{0}' -f $sid) 2>&1
+        Assert-Equal 0 $LASTEXITCODE 'icacls /setowner'
+        foreach ($folder in @('scripts', 'state', 'requests', 'svc-out')) { Remove-PathNoFollow -Path (Join-Path $layout.StateRoot $folder) }
+        $layouts[$name] = $layout
+    }
+    [void][System.IO.Directory]::CreateDirectory((Join-Path $layouts['o2-extra'].StateRoot 'other'))
+    Remove-LocalUser -SID $sid
+    $stale = $layouts['o2-stale']
+    $before = Test-StateFolder -Layout $stale
+    # Administrators own the root; the removed account still owns its logs and has its entries.
+    Assert-Equal 'unsafe_owner' $before.code 'the rc.28 owner state'
+    Assert-Equal $sid (Get-StaleServiceSid -Layout $stale)
+    Assert-Equal 'safe' (Repair-StaleStateFolder -Layout $stale -Step $before).code
+    Assert-Equal 'line' ([System.IO.File]::ReadAllText((Join-Path $stale.StateRoot 'logs\exec\install-o2.log'))) 'the logs stay'
+    # A folder that is not setup's stays refused, and so do the entries of an account that exists.
+    Assert-Equal '' (Get-StaleServiceSid -Layout $layouts['o2-extra'])
+    $live = New-TestStateLayout 'o2-live'
+    $null = Initialize-ProtectedTree -Tree $live.StateTree -ServiceSid $script:OtherSid
+    foreach ($folder in @('scripts', 'state', 'requests', 'svc-out')) { Remove-PathNoFollow -Path (Join-Path $live.StateRoot $folder) }
+    $refused = Test-StateFolder -Layout $live
+    Assert-Equal '' (Get-StaleServiceSid -Layout $live)
+    Assert-Equal 'unsafe_access' (Repair-StaleStateFolder -Layout $live -Step $refused).code
+}
+
+Test-Case 'AC-O2 the state check names the kind of problem: a link, an owner, an access entry' {
+    $target = New-TestDirectory 'o2-link-target'
+    $parent = New-TestDirectory 'o2-link'
+    $layout = New-SlateOpsLayout -StateRoot (Join-Path $parent 'SlateOps') -DataRoot (Join-Path $parent 'Data')
+    $null = & cmd.exe /c mklink /J $layout.StateRoot $target 2>&1
+    Assert-Equal 'unsafe_link' (Test-StateFolder -Layout $layout).code
+    $owned = New-TestStateLayout 'o2-owner'
+    $null = Initialize-ProtectedTree -Tree $owned.StateTree
+    $null = & icacls.exe (Join-Path $owned.StateRoot 'logs\setup') /setowner ('*{0}' -f $script:OtherSid) 2>&1
+    Assert-Equal 'unsafe_owner' (Test-StateFolder -Layout $owned).code
 }
 
 Test-Case 'AC-3 S91-5 an existing folder never gets the service entry again; Grant-ServiceAccess gives it once' {

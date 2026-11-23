@@ -227,6 +227,28 @@ Test-Case 'R-9 when no startup task can be registered, the record keeps only the
     Assert-Equal $false (Test-Path -LiteralPath $layout.State) 'the record goes'
 }
 
+Test-Case 'AC-O2 the removal leaves no entry or ownership of the service account in the state folder it keeps' {
+    $sid = New-TestUser 'slateops-o2rm'
+    $root = New-TestDirectory 'o2-remove'
+    foreach ($parent in @('ProgramData', 'Data')) { [void][System.IO.Directory]::CreateDirectory((Join-Path $root $parent)) }
+    $layout = New-SlateOpsLayout -StateRoot (Join-Path $root 'ProgramData\SlateOps') -DataRoot (Join-Path $root 'Data\SlateOps')
+    $problems = @(Initialize-ProtectedTree -Tree $layout.StateTree -ServiceSid $sid)
+    Assert-Equal 0 $problems.Count ($problems -join '; ')
+    $log = Join-Path $layout.StateRoot 'logs\start\boot-o2.log'
+    [System.IO.File]::WriteAllText($log, 'line')
+    $null = & icacls.exe $log /setowner ('*{0}' -f $sid) 2>&1
+    Write-JsonFile -Path (Join-Path $layout.State 'windows-changes.json') -Value ([ordered]@{ account_sid = $sid })
+    $hosts = Join-Path (New-TestDirectory 'o2-remove-hosts') 'hosts'
+    [System.IO.File]::WriteAllText($hosts, "127.0.0.1 localhost`r`n")
+    $names = Get-TestNames -Tag 'O2' -HostsPath $hosts
+    $result = Remove-WindowsParts -Layout $layout -Names $names -RemoveProfile { param([string]$Sid, [int]$LimitSeconds = 45) $true } -RegisterFinish { param([string]$Sid) $false }
+    Assert-Equal 'removed' $result.code (ConvertTo-JsonText $result)
+    $left = @(Get-TreeProblem -Tree $layout.StateTree)
+    Assert-Equal 0 $left.Count ('the next start reads no SID, so nothing of the account may stay: {0}' -f ($left -join '; '))
+    Assert-Equal 'safe' (Test-StateFolder -Layout $layout).code
+    Assert-Equal 'line' ([System.IO.File]::ReadAllText($log)) 'the logs stay'
+}
+
 Test-Case 'W9-1 F3 Keep my data moves the disk with kept.json, checks it, and refuses an engine value of the wrong shape' {
     $layout = New-UninstallLayout 'w9-keep'
     $null = Initialize-ProtectedTree -Tree $layout.DataTree

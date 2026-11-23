@@ -838,10 +838,24 @@ end;
 
 { The removal's page in its form: what happens, the stages, the step that runs and the time;
   at the end the last line (Windows finishes at the next restart, or why it stopped). }
+{ AC-O8 (owner, rc.28): the removal runs from its first step until it ends or a step passes its
+  limit; every step has a hard limit, so it always ends. Until then the window cannot close. }
+function RemovalRunning: Boolean;
+begin
+  Result := (ClosePhase <> '') or RemoveStartPending;
+end;
+
+{ The window's X, Alt+F4 and Escape: refused while the removal runs. }
+procedure RemoveCloseQuery(Sender: TObject; var CanClose: Boolean);
+begin
+  CanClose := not RemovalRunning;
+end;
+
 procedure RenderRemove;
 begin
   if RemoveForm = nil then
     Exit;
+  RemoveClose.Enabled := not RemovalRunning;
   if RemovePanel <> nil then
     RemovePanel.Free;
   RemovePanel := TPanel.Create(RemoveForm);
@@ -1035,6 +1049,7 @@ begin
   RemoveClose.Cancel := True;
   RemoveClose.SetBounds(Result.ClientWidth - ScaleX(14) - RemoveClose.Width, Result.ClientHeight - ScaleY(14) - RemoveClose.Height,
     RemoveClose.Width, RemoveClose.Height);
+  Result.OnCloseQuery := @RemoveCloseQuery;
   RenderRemove;
 end;
 
@@ -1059,13 +1074,13 @@ end;
 function RunRemoval(Why: String): Boolean;
 begin
   Result := False;
+  { R-6 (Architect N-8): the window shows first; the first timer tick starts the work. AC-O8:
+    pending before the form is built, so its Close starts off. }
+  RemoveWhy := Why;
+  RemoveStartPending := True;
   BuildRemoveForm(Why);
   try
-    { R-6 (Architect N-8): the window shows first; the first timer tick starts the work. }
-    RemoveWhy := Why;
-    RemoveStartPending := True;
     RemoveForm.ShowModal;
-    RemoveStartPending := False;
     if ClosePhase <> '' then
     begin
       Log('The removal was closed during ' + ClosePhase + '; the next setup run removes the rest.');
@@ -1073,6 +1088,7 @@ begin
     end;
     Result := CloseEnd = 'done';
   finally
+    RemoveStartPending := False;
     FreeRemoveForm;
   end;
 end;

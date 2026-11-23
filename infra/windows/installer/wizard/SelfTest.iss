@@ -778,7 +778,7 @@ end;
 procedure SelfCloseFlow;
 var
   Start, Call, Longest, MaxLimit: Cardinal;
-  Created, LimitsOk, Ok: Boolean;
+  Created, LimitsOk, Ok, CanClose: Boolean;
   Phases, Detail: String;
 begin
   Created := not DirExists(ExpandConstant('{commonappdata}\SlateOps'));
@@ -829,10 +829,19 @@ begin
         SelfRecord('AC-W4 the removal form shows the stages, the step and the time, inside the form', (WaitDrawn = 3) and (WaitNow <> nil)
           and (WaitTime <> nil) and (CurY <= RemovePanel.Height),
           'stage ' + IntToStr(WaitDrawn) + ', content ends at ' + IntToStr(CurY) + ', panel ' + IntToStr(RemovePanel.Height));
+        { AC-O8: while a step runs, Close is off and the window refuses to close. }
+        CanClose := True;
+        RemoveCloseQuery(nil, CanClose);
+        Ok := (not RemoveClose.Enabled) and (not CanClose);
+        Detail := 'while running: Close enabled ' + IntToStr(Ord(RemoveClose.Enabled)) + ', close allowed ' + IntToStr(Ord(CanClose));
         ClosePhase := '';
         CloseEnd := 'done';
         RemoveFeaturesCode := 'removed';
         RenderRemove;
+        CanClose := False;
+        RemoveCloseQuery(nil, CanClose);
+        SelfRecord('AC-O8 the removal window closes only after the removal ended', Ok and RemoveClose.Enabled and CanClose,
+          Detail + '; ended: Close enabled ' + IntToStr(Ord(RemoveClose.Enabled)) + ', close allowed ' + IntToStr(Ord(CanClose)));
         SelfRecord('AC-W3 the last line says Windows finishes at the next restart', (CurY <= RemovePanel.Height)
           and (WaitDrawn = 6), 'content ends at ' + IntToStr(CurY) + ', panel ' + IntToStr(RemovePanel.Height));
         { R-10: both restart lines (features and the account) fit, and the account line shows. }
@@ -1034,6 +1043,80 @@ begin
   end;
 end;
 
+{ AC-O5 (owner, rc.28): a verdict that gets the focus shows no text cursor. The EDIT window of
+  the memo makes its caret on WM_SETFOCUS; the thread's GUI state then names the caret window and
+  whether the caret shows. }
+procedure SelfCaret;
+var
+  Memo, Plain: TNewMemo;
+  Info: TGuiThreadInfo;
+  PlainShown, Shown: Boolean;
+  Detail: String;
+begin
+  try
+    Cur := Bodies[P_INSTALL];
+    CurY := 0;
+    { The control: a plain read-only memo with no subclass shows the caret after the focus, so
+      the check can see a caret at all on this runner. }
+    Plain := TNewMemo.Create(WizardForm);
+    Memo := nil;
+    try
+      Plain.Parent := Cur;
+      Plain.ReadOnly := True;
+      Plain.SetBounds(0, 0, Cur.Width, ScaleY(40));
+      SendMessage(Plain.Handle, WM_SETFOCUS, 0, 0);
+      Info.Size := 48;
+      PlainShown := GetGUIThreadInfo(GetCurrentThreadId, Info) and (Info.CaretWindow = Plain.Handle) and ((Info.Flags and GUI_CARETBLINKING) <> 0);
+      SendMessage(Plain.Handle, WM_KILLFOCUS, 0, 0);
+      Memo := AddVerdict(CM('s12_invalid_input'));
+      SendMessage(Memo.Handle, WM_SETFOCUS, 0, 0);
+      Info.Size := 48;
+      Shown := GetGUIThreadInfo(GetCurrentThreadId, Info) and (Info.CaretWindow = Memo.Handle) and ((Info.Flags and GUI_CARETBLINKING) <> 0);
+      SendMessage(Memo.Handle, WM_KILLFOCUS, 0, 0);
+      Detail := 'subclass ' + IntToStr(VerdictSubclass) + ', plain memo caret ' + IntToStr(Ord(PlainShown)) + ', verdict caret ' + IntToStr(Ord(Shown));
+      if PlainShown then
+        SelfRecord('AC-O5 a verdict that gets the focus shows no text cursor', (VerdictSubclass <> 0) and not Shown, Detail)
+      else
+      begin
+        { No caret to see on this runner: the subclass must still be set; the rest is a measurement. }
+        SelfRecord('AC-O5 the verdict carries the caret subclass', VerdictSubclass <> 0, Detail);
+        SelfInfo('AC-O5 a verdict that gets the focus shows no text cursor', 'not observable here: ' + Detail);
+      end;
+    finally
+      LastVerdict := nil;
+      if Memo <> nil then
+        Memo.Free;
+      Plain.Free;
+    end;
+  except
+    SelfRecord('AC-O5 a verdict that gets the focus shows no text cursor', False, GetExceptionMessage);
+  end;
+end;
+
+procedure SelfFailDetail;
+begin
+  try
+    try
+      JobRaw := '{"code":"done","message_key":"exec.done","values":{"exec":{"job":"prepare","code":"unexpected_listener","exit_code":1},'
+        + '"detail":"unexpected_listener: udp UNCONN 0 0 0.0.0.0:68 0.0.0.0:* users:((\"dhcp\",pid=7,fd=3)); interop_enabled: WSLInterop"}}';
+      InstallFailAt(CM('s12_stage2'), PrepFailText('unexpected_listener'));
+      RenderInstall;
+      SelfRecord('AC-O9 a refused prepare shows its detail under Details on S13', (FailDetailLink <> nil)
+        and (FailDetail = 'unexpected_listener: udp UNCONN 0 0 0.0.0.0:68 0.0.0.0:* users:(("dhcp",pid=7,fd=3)); interop_enabled: WSLInterop'),
+        'detail [' + FailDetail + '], link ' + IntToStr(Ord(FailDetailLink <> nil)));
+      SelfFits('AC-O9 S13 with Details', P_INSTALL);
+    finally
+      InstallFailed := False;
+      InstallFailStage := '';
+      InstallFailText := '';
+      FailDetail := '';
+      JobRaw := '';
+    end;
+  except
+    SelfRecord('AC-O9 a refused prepare shows its detail under Details on S13', False, GetExceptionMessage);
+  end;
+end;
+
 procedure RunSelfTest;
 var
   Text, OutFile: String;
@@ -1098,6 +1181,8 @@ begin
   SelfPageStates;
   SelfS05;
   SelfLinks;
+  SelfCaret;
+  SelfFailDetail;
 
   { Sample state for the other pages. }
   OrgName.Text := 'Riverside Learning Center';

@@ -10,16 +10,77 @@
 
 function Test-StateFolder {
     # Before setup reads or writes C:\ProgramData\SlateOps: the folder must pass the safety
-    # check. A folder that a non-administrator owns stops setup on S01.
+    # check. AC-O2 (owner, rc.28): the code names the kind of problem, so S01 says what it is:
+    # unsafe_link (the root or an item is a link), unsafe_owner (a user who is not an
+    # administrator owns the root or an item), unsafe_access (an entry that setup did not give),
+    # unsafe (anything else, such as an item whose owner cannot be read).
     param([Parameter(Mandatory = $true)][hashtable]$Layout, [string]$ServiceSid = '')
     if (-not (Test-Path -LiteralPath $Layout.StateRoot)) { return New-StepResult -Code 'absent' -MessageKey 'setup.state.absent' }
     $problems = @(Get-TreeProblem -Tree $Layout.StateTree -ServiceSid $ServiceSid)
     if ($problems.Count -eq 0) { return New-StepResult -Code 'safe' -MessageKey 'setup.state.safe' }
     foreach ($problem in $problems) { Write-RunLog 'setup.state' 'FAIL' $problem }
-    if (@($problems | Where-Object { $_ -like 'root_owner:*' }).Count -gt 0) {
-        return New-StepResult -Code 'unsafe_owner' -MessageKey 'setup.state.unsafe_owner'
+    foreach ($kind in @(@{ code = 'unsafe_link'; like = @('root_reparse_point', 'reparse_point:*') }, @{ code = 'unsafe_owner'; like = @('root_owner:*', 'owner:*') }, @{ code = 'unsafe_access'; like = @('root_inherits', 'root_access:*', 'access:*') })) {
+        foreach ($pattern in $kind.like) {
+            if (@($problems | Where-Object { $_ -like $pattern }).Count -gt 0) { return New-StepResult -Code $kind.code -MessageKey ('setup.state.{0}' -f $kind.code) }
+        }
     }
     return New-StepResult -Code 'unsafe' -MessageKey 'setup.state.unsafe'
+}
+
+function Get-StaleServiceSid {
+    # AC-O2 (owner, rc.28): a state folder that an earlier removal left behind. The removal
+    # removes the record that names the service account, so its entries look unknown at the
+    # next start. The SID is setup's own removed account only when all of this holds: the root
+    # is trusted and holds only setup's folders (logs, scripts); every problem is an entry or
+    # the ownership of that one SID, in a place where setup gives the service account access
+    # (the root's read entry, the read and modify folders, items below the modify folders); the
+    # SID is an account of this PC that no longer exists. '' in every other case.
+    param([Parameter(Mandatory = $true)][hashtable]$Layout)
+    $tree = $Layout.StateTree
+    if (-not (Test-TreeRootTrusted -Tree $tree)) { return '' }
+    if (@(Get-ChildItem -LiteralPath $tree.Root -Force | Where-Object { @('logs', 'scripts') -notcontains $_.Name }).Count -gt 0) { return '' }
+    $problems = @(Get-TreeProblem -Tree $tree)
+    if ($problems.Count -eq 0) { return '' }
+    $granted = @($tree.Entries.Keys | Where-Object { $tree.Entries[$_] -ne 'none' } | ForEach-Object { (Join-Path $tree.Root $_).ToLowerInvariant() })
+    $writable = @($tree.Entries.Keys | Where-Object { $tree.Entries[$_] -eq 'modify' } | ForEach-Object { (Join-Path $tree.Root $_).ToLowerInvariant() })
+    $sids = @{}
+    foreach ($problem in $problems) {
+        if ($problem -cmatch '^root_access:(S-1-[0-9-]+)$') { $sids[$Matches[1]] = $true; continue }
+        if (($problem -cmatch '^access:(.+):(S-1-[0-9-]+)$') -and ($granted -contains $Matches[1].ToLowerInvariant())) { $sids[$Matches[2]] = $true; continue }
+        if ($problem -cmatch '^owner:(.+):(S-1-[0-9-]+)$') {
+            $path = $Matches[1].ToLowerInvariant()
+            $sid = $Matches[2]
+            if (@($writable | Where-Object { $path.StartsWith($_ + '\') }).Count -gt 0) { $sids[$sid] = $true; continue }
+        }
+        return ''
+    }
+    if ($sids.Count -ne 1) { return '' }
+    $sid = [string]@($sids.Keys)[0]
+    if ($sid -cnotmatch '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}$') { return '' }
+    $identity = New-Object System.Security.Principal.SecurityIdentifier($sid)
+    $local = @(Get-LocalUser -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if (($local.Count -eq 0) -or ($identity.AccountDomainSid -ne $local[0].SID.AccountDomainSid)) { return '' }
+    try { $null = $identity.Translate([System.Security.Principal.NTAccount]); return '' } catch { $null = $_ }
+    return $sid
+}
+
+function Repair-StaleStateFolder {
+    # AC-O2: state-check. A state folder that fails the check only because of setup's own removed
+    # account (Get-StaleServiceSid) loses that account's entries and ownership, then is checked
+    # again; any other folder keeps its result. A repair that fails keeps the first result, so
+    # S01 still refuses the folder (fail closed).
+    param([Parameter(Mandatory = $true)][hashtable]$Layout, [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Step)
+    if (@('safe', 'absent') -contains $Step.code) { return $Step }
+    try {
+        $sid = Get-StaleServiceSid -Layout $Layout
+        if (-not $sid) { return $Step }
+        $changed = Clear-TreeAccount -Tree $Layout.StateTree -Sid $sid
+        Write-RunLog 'setup.state' 'INFO' ('the state folder held the entries of the removed account {0}; setup removed them ({1} items)' -f $sid, $changed)
+        return (Test-StateFolder -Layout $Layout)
+    } catch {
+        Write-RunLog 'setup.state' 'WARN' ('the repair of the state folder failed: {0}' -f $_.Exception.Message)
+        return $Step
+    }
 }
 
 function Initialize-StateFolder {

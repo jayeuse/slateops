@@ -27,6 +27,11 @@ type
     lpszDatatype: Longword;
     fwType: Longword;
   end;
+  { AC-O5: GUITHREADINFO (32-bit setup), for the self-test's caret check. }
+  TGuiThreadInfo = record
+    Size, Flags, Active, Focus, Capture, MenuOwner, MoveSize, CaretWindow: Longword;
+    CaretLeft, CaretTop, CaretRight, CaretBottom: Integer;
+  end;
   TCheckItem = record
     Id, Cls, Code, Raw: String;
   end;
@@ -96,6 +101,11 @@ const
   { DEC-0041 (AC-W7): WM_UPDATEUISTATE with MAKEWPARAM(UIS_SET, UISF_HIDEFOCUS). }
   WM_UPDATEUISTATE = $0128;
   UIS_SET_HIDEFOCUS = $00010001;
+  { AC-O5: the verdict's window procedure hides the caret after each focus. }
+  WM_SETFOCUS = $0007;
+  WM_KILLFOCUS = $0008;
+  WM_NCDESTROY = $0082;
+  GUI_CARETBLINKING = $0001;
 
 procedure GetSystemTime(var SystemTime: TSystemTime);
   external 'GetSystemTime@kernel32.dll stdcall';
@@ -158,6 +168,21 @@ function TextOut(DC: Longword; X, Y: Integer; Text: String; Count: Integer): Boo
 { W14-D3 (6.1 L1): the read-only verdict box shows no text cursor. }
 function HideCaret(Wnd: HWND): Boolean;
   external 'HideCaret@user32.dll stdcall';
+{ AC-O5 (owner, rc.28): the memo's EDIT window makes a new, visible caret on every WM_SETFOCUS
+  (the page shown later, focus back after a dialog, the window active again), after OnEnter and
+  after any earlier HideCaret. A subclass hides it right after the EDIT window made it. }
+function SetWindowSubclass(Wnd: HWND; Proc, Id, RefData: Longword): Boolean;
+  external 'SetWindowSubclass@comctl32.dll stdcall';
+function RemoveWindowSubclass(Wnd: HWND; Proc, Id: Longword): Boolean;
+  external 'RemoveWindowSubclass@comctl32.dll stdcall';
+function DefSubclassProc(Wnd: HWND; Msg: Longword; W, L: Longint): Longint;
+  external 'DefSubclassProc@comctl32.dll stdcall';
+function GetGUIThreadInfo(Thread: Longword; var Info: TGuiThreadInfo): Boolean;
+  external 'GetGUIThreadInfo@user32.dll stdcall';
+function GetCurrentThreadId: Longword;
+  external 'GetCurrentThreadId@kernel32.dll stdcall';
+function IsWindow(Wnd: HWND): Boolean;
+  external 'IsWindow@user32.dll stdcall';
 { W14-D3 (6.1 L10): the drive name that Windows shows (the volume label). }
 function GetVolumeInformation(Root, Name: String; NameSize: Longword; Serial, MaxLength, Flags: Longword; FsName: String; FsNameSize: Longword): Boolean;
   external 'GetVolumeInformationW@kernel32.dll stdcall';
@@ -265,6 +290,9 @@ var
   InstallStep: Integer;
   InstallStarted, InstallDone, InstallFailed: Boolean;
   InstallFailText, InstallFailStage, InstallOut, PemText, SecurityCode: String;
+  { AC-O9: what a refused job saw (its "detail"), under Details on S13. }
+  FailDetail: String;
+  FailDetailLink: TNewLinkLabel;
   InstallStartedAt: Cardinal;
   { DEC-0041 (AC-W2): the time zone for the install job while the channel self-test and R7 run
     first (AC-W5: the password crosses only a tested channel). }
@@ -342,7 +370,7 @@ var
   BgPending, BgPendingOut: String;
   BgPendingAt, BgBeganAt, KeyStartedAt, UpdStartedAt: Cardinal;
   BackupCheckedDrive, RestartExtra: String;
-  KeySavedDone, RestartFirmware: Boolean;
+  KeySavedDone: Boolean;
   RestartIndex: Integer;
   { The start of a wait with several steps (7.6: the time counts from the start of the wait). }
   MailAt, MaintAt, CdAt: Cardinal;
@@ -354,6 +382,10 @@ var
     self-test's caption and color checks. }
   BodyButtons, FormButtons: array of TNewButton;
   LastVerdict: TNewMemo;
+  VerdictSubclass: Longword;
+  { AC-O5: the windows that carry the subclass; DeinitializeSetup detaches it before the script
+    engine goes, so no message calls back into a script that has ended. }
+  VerdictWindows: array of HWND;
   { The pinned WSL version of this setup (version.json), for the 7.6 lines. }
   WslVersion: String;
   { DEC-0041 (AC-W3): the removal form; while it is open the timer runs only the removal. }
@@ -599,6 +631,15 @@ begin
   Result := JsonValueFrom(Text, Key, 1);
 end;
 
+{ AC-O2 (owner, rc.28): S01 names the kind of problem of the state folder, by its check code. }
+function StateUnsafeText: String;
+begin
+  if (StateCheckCode = 'unsafe_owner') or (StateCheckCode = 'unsafe_access') or (StateCheckCode = 'unsafe_link') then
+    Result := CM('s01_state_' + StateCheckCode)
+  else
+    Result := CM('s01_state_unsafe');
+end;
+
 { A number or a literal (true, false) after "Key": ; '' if absent. }
 function JsonLiteral(Text, Key: String): String;
 var
@@ -813,6 +854,34 @@ begin
   HideCaret(TNewMemo(Sender).Handle);
 end;
 
+{ AC-O5: the verdict's subclass. The EDIT window first makes its caret, then it is hidden; the
+  subclass goes before the window does. }
+function VerdictProc(Wnd: HWND; Msg: Longword; W, L: Longint; Id, RefData: Longword): Longint;
+begin
+  if Msg = WM_NCDESTROY then
+    RemoveWindowSubclass(Wnd, VerdictSubclass, 1);
+  Result := DefSubclassProc(Wnd, Msg, W, L);
+  if Msg = WM_SETFOCUS then
+    HideCaret(Wnd);
+end;
+
+procedure KeepCaretHidden(Memo: TNewMemo);
+begin
+  try
+    if VerdictSubclass = 0 then
+      VerdictSubclass := CreateCallback(@VerdictProc);
+    if SetWindowSubclass(Memo.Handle, VerdictSubclass, 1, 0) then
+    begin
+      SetArrayLength(VerdictWindows, GetArrayLength(VerdictWindows) + 1);
+      VerdictWindows[GetArrayLength(VerdictWindows) - 1] := Memo.Handle;
+    end
+    else
+      Log('The verdict caret subclass was not set.');
+  except
+    Log('The verdict caret subclass failed: ' + GetExceptionMessage);
+  end;
+end;
+
 procedure FocusVerdict(Verdict: TNewMemo);
 begin
   if (Verdict = nil) or not Verdict.CanFocus then
@@ -844,6 +913,7 @@ begin
   Result.Text := S;
   Result.OnClick := @VerdictCaretOff;
   Result.OnKeyUp := @VerdictKeyUp;
+  KeepCaretHidden(Result);
   LastVerdict := Result;
   CurY := CurY + Result.Height + ScaleY(4);
 end;
@@ -2237,51 +2307,37 @@ begin
     Result := FM1(Prefix + '_unsafe', ExpandConstant('{srcexe}'));
 end;
 
-{ C08 "Restart now" and C04 "Restart to startup settings": save the progress (with the resume
-  entries), then restart (spec 5.3, F4a). W14-D9: the save and the restart run from the timer
+{ C04 "Restart to startup settings": save the progress (with the resume entries), then restart
+  (spec 5.3, F4a). AC-O1 (owner, rc.28): C08 only records a waiting restart, so it has no restart. W14-D9: the save and the restart run from the timer
   (7.6 "S02 and S06 restart": "Saving your progress...", then "Restarting this PC..."). }
 procedure CheckRestartConfirm(Code: String);
 var
-  Firmware: Boolean;
   Index: Integer;
-  Text, Extra, Title: String;
+  Text, Title: String;
 begin
-  Firmware := RestartFirmware;
   Index := RestartIndex;
   { D1: the firmware restart has its own title, text and, when BitLocker can ask, the caution. }
-  if Firmware then
-  begin
-    Title := CM('c04_btn_firmware');
-    Text := CM('c04_restart_confirm');
-    if (Index >= 0) and (JsonLiteral(Items[Index].Raw, 'bitlocker_caution') = 'true') then
-      Text := CM('c04_how_caution') + #13#10#13#10 + Text;
-  end
-  else
-  begin
-    Title := CM('c08_btn');
-    Text := CM('s02_restart_confirm');
-  end;
+  Title := CM('c04_btn_firmware');
+  Text := CM('c04_restart_confirm');
+  if (Index >= 0) and (JsonLiteral(Items[Index].Raw, 'bitlocker_caution') = 'true') then
+    Text := CM('c04_how_caution') + #13#10#13#10 + Text;
   if RestartResumeText(Code, 's02_restart') <> '' then
     Text := Text + #13#10#13#10 + RestartResumeText(Code, 's02_restart');
   if not ConfirmBox(Title, Text, Title, CM('btn_go_back')) then
     Exit;
   { DEC-0041: the check restart comes before Install, so no server work is on this PC yet; the
     next start removes what an earlier step added (AC-W4) and starts at S01. }
-  Extra := '';
-  if Firmware then
-    Extra := '-Firmware';
-  if RunStep('restart', Extra, 'cr-restart', CM('later_restarting'), 0, 0, HELPER_LIMIT_MS) then
+  if RunStep('restart', '-Firmware', 'cr-restart', CM('later_restarting'), 0, 0, HELPER_LIMIT_MS) then
     RenderPage(-1);
 end;
 
 { The check restart (S02, the S11 recheck, the C04 firmware restart): the progress and the
   resume entries first. AC-W9: after S05 (in this run, or after its restart) the mark prepared
   lets the resume go on after S05, so nothing that S05 turned on is removed. }
-procedure CheckRestart(Firmware: Boolean; Index: Integer);
+procedure CheckRestart(Index: Integer);
 var
   Extra: String;
 begin
-  RestartFirmware := Firmware;
   RestartIndex := Index;
   Extra := '-Stage check_restart -SetupPath ' + AddQuotes(ExpandConstant('{srcexe}'));
   if (PrepState <> '') or (EntryNext = 'S07') then
@@ -2348,9 +2404,8 @@ begin
   Id := Items[Index].Id;
   if Id = 'C01' then OpenAsUser('ms-settings:windowsupdate', '')
   else if (Id = 'C04') and (Action = 0) then ShowFirmwareHelp(Index)
-  else if (Id = 'C04') and (Action = 1) then CheckRestart(True, Index)
+  else if (Id = 'C04') and (Action = 1) then CheckRestart(Index)
   else if Id = 'C07' then OpenAsUser('ms-settings:storagesense', '')
-  else if Id = 'C08' then CheckRestart(False, Index)
   else if Id = 'C10' then
   begin
     if ConfirmBox(CM('c10_btn'), CM('c10_confirm'), CM('c10_btn'), CM('btn_go_back')) then
@@ -2385,7 +2440,6 @@ begin
       Caption2 := CM('c04_btn_firmware');
   end
   else if Item.Id = 'C07' then Caption := CM('c07_btn')
-  else if Item.Id = 'C08' then Caption := CM('c08_btn')
   else if Item.Id = 'C10' then Caption := CM('c10_btn')
   else if Item.Id = 'C13' then Caption := CM('c13_btn')
   else if (Item.Id = 'C17') and (Item.Code = 'rule_off') then Caption := CM('c17_btn')
@@ -2589,7 +2643,7 @@ begin
   if StateUnsafe then
   begin
     { Spec 4.1: setup reads nothing from an unsafe state folder; Next stays off. }
-    AddVerdict(CM('s01_state_unsafe'));
+    AddVerdict(StateUnsafeText);
     AddReportControls;
     WizardForm.NextButton.Enabled := False;
     Exit;
@@ -4765,7 +4819,11 @@ begin
   if Text = '' then
     Text := CM('s12_not_ready');
   InstallFailText := Text;
+  { AC-O9: the last job's result holds "detail" only when that job was refused. }
+  FailDetail := JsonValue(JobRaw, 'detail');
   Log('Install stopped at "' + StageName + '".');
+  if FailDetail <> '' then
+    Log('What the refused step saw: ' + FailDetail);
   RenderPage(P_INSTALL);
 end;
 
@@ -5032,8 +5090,15 @@ begin
   InstallNextStep;
 end;
 
+{ AC-O9: the detail as selectable text, so the person can copy it. }
+procedure ShowFailDetail(Sender: TObject; const Link: String; LinkType: TSysLinkType);
+begin
+  InfoForm(CM('s13_details_title'), FailDetail);
+end;
+
 procedure RenderInstall;
 begin
+  FailDetailLink := nil;
   BeginBody(P_INSTALL);
   WizardForm.PageNameLabel.Caption := CM('s12_title');
   WizardForm.PageDescriptionLabel.Caption := CM('s12_subtitle');
@@ -5043,6 +5108,11 @@ begin
   begin
     { AC-W3: Save report first (in the row), then Next removes everything and closes setup. }
     AddFailure(InstallFailStage, InstallFailText, False);
+    if FailDetail <> '' then
+    begin
+      FailDetailLink := AddLink(CM('s13_details'), 0);
+      FailDetailLink.OnLinkClick := @ShowFailDetail;
+    end;
     AddText(CM('s13_remove_what'), False);
     SetNextCaption(CM('s13_remove'));
     WizardForm.NextButton.Enabled := True;
@@ -5675,7 +5745,8 @@ begin
     StateCheckCode := ReadResultCode(OutFile);
   Log('State folder check: ' + StateCheckCode);
   Text := ReadText(OutFile);
-  StateUnsafe := (StateCheckCode = 'unsafe_owner') or (StateCheckCode = 'unsafe');
+  { AC-O2: every unsafe code (unsafe, unsafe_owner, unsafe_access, unsafe_link) stops on S01. }
+  StateUnsafe := Pos('unsafe', StateCheckCode) = 1;
   ProgramUnreadable := Pos('"program_unreadable":true', Text) > 0;
   StateUnsafe := StateUnsafe or ProgramUnreadable;
   EntryScreen := JsonValue(Text, 'screen');
@@ -5944,7 +6015,7 @@ begin
       if ProgramUnreadable then
         WizardForm.WelcomeLabel2.Caption := CM('s01_program_unreadable')
       else
-        WizardForm.WelcomeLabel2.Caption := CM('s01_state_unsafe');
+        WizardForm.WelcomeLabel2.Caption := StateUnsafeText;
       WizardForm.NextButton.Enabled := False;
       { W14-D3 (6.1 L6): Save report sits on the page under the message, not in the row. }
       WizardForm.AdjustLabelHeight(WizardForm.WelcomeLabel2);
@@ -6239,6 +6310,13 @@ begin
 end;
 
 procedure DeinitializeSetup;
+var
+  I: Integer;
 begin
   ClosePipe;
+  { AC-O5: no verdict window calls the script after it ends. }
+  if VerdictSubclass <> 0 then
+    for I := 0 to GetArrayLength(VerdictWindows) - 1 do
+      if IsWindow(VerdictWindows[I]) then
+        RemoveWindowSubclass(VerdictWindows[I], VerdictSubclass, 1);
 end;

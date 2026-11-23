@@ -252,6 +252,30 @@ Test-Case 'AC-2 the administrator side refuses an output file that changed after
     Assert-Throws { Read-EngineOutput -Layout $layout -Result $result } 'output_changed'
 }
 
+Test-Case 'AC-O9 a refused prepare gives its detail from the output that Exec measured; a changed file or no file gives none' {
+    $layout = New-SlateOpsLayout -StateRoot (Join-Path (New-TestDirectory 'o9-detail') 'SlateOps')
+    [void][System.IO.Directory]::CreateDirectory($layout.SvcOut)
+    $name = '{0}.stdout.json' -f [guid]::NewGuid().ToString()
+    $path = Join-Path $layout.SvcOut $name
+    $seen = 'unexpected_listener: udp UNCONN 0 0 0.0.0.0:68 0.0.0.0:* users:((\"dhcp\",pid=7,fd=3)); interop_enabled: WSLInterop'
+    [System.IO.File]::WriteAllText($path, ('{"code":"unexpected_listener","message_key":"prepare.unexpected_listener","failed":"unexpected_listener,interop_enabled","detail":"' + $seen + '"}'))
+    $result = [ordered]@{ job = 'prepare'; code = 'unexpected_listener'; exit_code = 1; stdout_file = $name; stdout_bytes = [long](Get-Item -LiteralPath $path).Length; stdout_sha256 = (Get-FileSha256 -Path $path) }
+    Assert-Equal 'unexpected_listener: udp UNCONN 0 0 0.0.0.0:68 0.0.0.0:* users:(("dhcp",pid=7,fd=3)); interop_enabled: WSLInterop' (Get-EngineRefusalDetail -Layout $layout -Result $result)
+    # A file that changed after Exec measured it gives no detail; a job with no output file neither.
+    [System.IO.File]::AppendAllText($path, ' ')
+    Assert-Equal '' (Get-EngineRefusalDetail -Layout $layout -Result $result)
+    $result.stdout_file = ''
+    Assert-Equal '' (Get-EngineRefusalDetail -Layout $layout -Result $result)
+    # A long detail with a line break is one line of at most 1000 characters.
+    [System.IO.File]::WriteAllText($path, ('{"code":"unexpected_listener","detail":"a\nb' + ('x' * 1200) + '"}'))
+    $result.stdout_file = $name
+    $result.stdout_bytes = [long](Get-Item -LiteralPath $path).Length
+    $result.stdout_sha256 = Get-FileSha256 -Path $path
+    $long = Get-EngineRefusalDetail -Layout $layout -Result $result
+    Assert-Equal 1000 $long.Length
+    Assert-True ($long.StartsWith('a b') -and $long.EndsWith('...')) $long.Substring(0, 10)
+}
+
 Test-Case 'AC-2 a JSON text above the 2 MB limit of Windows PowerShell 5.1 parses' {
     $text = '{"code":"ok","bundle_base64":"' + ('A' * (3MB)) + '"}'
     $value = ConvertFrom-JsonUnlimited $text

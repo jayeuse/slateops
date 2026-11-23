@@ -195,7 +195,10 @@ function Test-C08 {
     $pending = Get-FactValue $Facts 'restart_pending'
     if ($null -eq $pending) { return New-UnreadableResult 'C08' }
     $set = Get-OrdinalSorted @($pending.Keys | Where-Object { $pending[$_] -eq $true })
-    if ($set.Count -gt 0) { return New-CheckResult 'C08' 'fix' 'pending' @{ values_set = $set } }
+    # AC-O1 (owner, rc.28): a waiting restart never blocks setup. Programs such as Office
+    # Click-to-Run and printer drivers set PendingFileRenameOperations and it can stay after
+    # restarts; S05 restarts by itself when it turns on a feature. Recorded only, like C24.
+    if ($set.Count -gt 0) { return New-CheckResult 'C08' 'log' 'pending' @{ values_set = $set } }
     return New-CheckResult 'C08' 'pass' 'ok'
 }
 

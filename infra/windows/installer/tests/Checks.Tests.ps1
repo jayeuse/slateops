@@ -81,10 +81,10 @@ Test-Case 'AC-1 C07 counts only fixed NTFS drives that are not compressed or enc
     Assert-Equal 'pass F:' ('{0} {1}' -f $ok.class, $ok.values.letter)
 }
 
-Test-Case 'AC-1 C08 fixes a pending restart and names the values that are set' {
-    $pending = Get-Check C08 @{ restart_pending = @{ RebootPending = $false; RebootRequired = $true; PendingFileRenameOperations = $true } }
-    Assert-Equal 'fix pending' ('{0} {1}' -f $pending.class, $pending.code)
-    Assert-Equal @('PendingFileRenameOperations', 'RebootRequired') $pending.values.values_set
+Test-Case 'AC-O1 C08 only records a waiting restart and never blocks setup, and names the values that are set' {
+    $pending = Get-Check C08 @{ restart_pending = @{ RebootPending = $true; RebootRequired = $true; PendingFileRenameOperations = $true } }
+    Assert-Equal 'log pending' ('{0} {1}' -f $pending.class, $pending.code)
+    Assert-Equal @('PendingFileRenameOperations', 'RebootPending', 'RebootRequired') $pending.values.values_set
     Assert-Equal 'pass' (Get-Check C08 @{ restart_pending = @{ RebootPending = $false; RebootRequired = $false; PendingFileRenameOperations = $false } }).class
 }
 

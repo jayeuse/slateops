@@ -47,7 +47,9 @@ function Add-ReportFile {
         [Parameter(Mandatory = $true)][string]$Source,
         [Parameter(Mandatory = $true)][string]$StagingDir,
         [Parameter(Mandatory = $true)][string]$Name,
-        [Parameter(Mandatory = $true)][System.Collections.Generic.List[string]]$LeftOut,
+        # AC-O7 (owner, rc.28): the list is empty until a file is left out (Windows PowerShell
+        # refuses an empty collection for a Mandatory parameter without this).
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[string]]$LeftOut,
         [string[]]$UserNames = @()
     )
     $item = Get-Item -LiteralPath $Source -Force -ErrorAction SilentlyContinue

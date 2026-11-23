@@ -493,6 +493,34 @@ function Remove-ServiceAccess {
     }
 }
 
+function Clear-TreeAccount {
+    # AC-O2 (owner, rc.28): what a removed service account leaves in a kept tree: its explicit
+    # entries on every item (a folder that .NET created with a protected list gives its children
+    # copies that Windows does not mark as inherited) and its ownership, which goes to
+    # Administrators. Links are never followed. Runs only on a tree whose root is trusted.
+    # Returns the number of changed items.
+    param([Parameter(Mandatory = $true)][hashtable]$Tree, [Parameter(Mandatory = $true)][string]$Sid)
+    if ($Sid -cnotmatch '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}$') { return 0 }
+    if (-not (Test-TreeRootTrusted -Tree $Tree)) { return 0 }
+    $sidType = [System.Security.Principal.SecurityIdentifier]
+    $account = New-Object System.Security.Principal.SecurityIdentifier($Sid)
+    $admins = New-Object System.Security.Principal.SecurityIdentifier($SlateOps.SidAdministrators)
+    $changed = 0
+    $stack = New-Object System.Collections.Generic.Stack[object]
+    $stack.Push((Get-Item -LiteralPath $Tree.Root -Force))
+    while ($stack.Count -gt 0) {
+        $item = $stack.Pop()
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { continue }
+        $acl = Get-Acl -LiteralPath $item.FullName
+        $touched = $false
+        if ($acl.GetOwner($sidType).Value -eq $Sid) { $acl.SetOwner($admins); $touched = $true }
+        if (@($acl.GetAccessRules($true, $false, $sidType) | Where-Object { $_.IdentityReference.Value -eq $Sid }).Count -gt 0) { $acl.PurgeAccessRules($account); $touched = $true }
+        if ($touched) { Set-Acl -LiteralPath $item.FullName -AclObject $acl; $changed++ }
+        if ($item.PSIsContainer) { foreach ($child in @(Get-ChildItem -LiteralPath $item.FullName -Force)) { $stack.Push($child) } }
+    }
+    return $changed
+}
+
 function Test-TreeRootTrusted {
     # The root alone: it exists, is not a reparse point, is protected and has a trusted owner.
     # Setup reads nothing from a state folder that fails this (spec 4.1).

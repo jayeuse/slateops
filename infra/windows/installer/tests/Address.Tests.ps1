@@ -92,6 +92,20 @@ Test-Case 'AC-A3 the responder re-checks the adapter every minute: a new address
     Assert-Equal @('answer group 192.168.1.20', 'answer group 192.168.1.20', 'answer group 10.0.0.7', 'answer group 10.0.0.7') $announced
 }
 
+Test-Case 'AC-O7 an empty UDP packet neither stops the responder nor counts as a conflict' {
+    Assert-Equal '' (Get-MdnsAction -Data ([byte[]]@()) -Name 'riverside.local') 'an empty packet is not a query'
+    Assert-Equal $false (Test-MdnsConflict -Data ([byte[]]@()) -Name 'riverside.local' -Ip '192.168.1.20')
+    $incoming = New-Object System.Collections.ArrayList
+    $net = New-FakeNet -Addresses @('192.168.1.20') -Incoming $incoming
+    # An empty packet while probing, two quiet probes, an empty packet while answering, then a query.
+    $null = $incoming.Add(@{ data = [byte[]]@(); remote = '192.168.1.66:5353' }); $null = $incoming.Add($null); $null = $incoming.Add($null)
+    $null = $incoming.Add(@{ data = [byte[]]@(); remote = '192.168.1.66:5353' })
+    $null = $incoming.Add(@{ data = (New-MdnsQuery -QueryName 'riverside.local' -Unicast); remote = '192.168.1.50:5353' })
+    $lines = New-Object System.Collections.Generic.List[string]
+    Invoke-MdnsResponder -Name 'riverside.local' -GetAddress $net.GetAddress -OpenSocket $net.OpenSocket -Clock $net.Clock -Sleep $net.Sleep -Until { $net.Now -ge 20000 }.GetNewClosure() -Log { param($Level, $Text) $lines.Add(('{0} {1}' -f $Level, $Text)) }.GetNewClosure()
+    Assert-Equal @('probe group 192.168.1.20', 'probe group 192.168.1.20', 'probe group 192.168.1.20', 'answer group 192.168.1.20', 'answer group 192.168.1.20', 'answer group 192.168.1.20', 'answer 192.168.1.50:5353 192.168.1.20') @($net.Sent) ($lines -join ' | ')
+}
+
 Test-Case 'AC-A3 a conflict during probing means no announcement and no answer until the next check' {
     $incoming = New-Object System.Collections.ArrayList
     $net = New-FakeNet -Addresses @('192.168.1.20') -Incoming $incoming

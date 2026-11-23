@@ -108,7 +108,7 @@ function New-MdnsAnswer {
 }
 
 function Read-DnsName {
-    param([Parameter(Mandatory = $true)][byte[]]$Data, [Parameter(Mandatory = $true)][int]$Offset)
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][byte[]]$Data, [Parameter(Mandatory = $true)][int]$Offset)
     $labels = New-Object System.Collections.Generic.List[string]
     $next = -1
     $pos = $Offset
@@ -136,7 +136,9 @@ function Read-DnsName {
 function Get-DnsMessage {
     # @{ response; questions = @(@{name; type; unicast}); addresses = @(@{name; ip}) }. Throws on
     # a message that is not DNS.
-    param([Parameter(Mandatory = $true)][byte[]]$Data)
+    # AC-O7: a zero-length UDP packet reaches here and is not DNS (dns_short), never a binder
+    # error that would end the responder.
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][byte[]]$Data)
     if ($Data.Length -lt 12) { throw 'dns_short' }
     $flags = ([int]$Data[2] * 256) + [int]$Data[3]
     $questionCount = ([int]$Data[4] * 256) + [int]$Data[5]
@@ -170,7 +172,7 @@ function Get-DnsMessage {
 function Get-MdnsAction {
     # What a received packet asks of the responder: 'group' (answer to 224.0.0.251), 'group
     # unicast' (also to the asker, QU bit), or '' (not a query for Name of type A or ANY).
-    param([Parameter(Mandatory = $true)][byte[]]$Data, [Parameter(Mandatory = $true)][string]$Name)
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][byte[]]$Data, [Parameter(Mandatory = $true)][string]$Name)
     try { $message = Get-DnsMessage -Data $Data } catch { return '' }
     if ($message.response) { return '' }
     $action = ''
@@ -185,7 +187,7 @@ function Get-MdnsAction {
 function Test-MdnsConflict {
     # RFC 6762 8.2 (simplified): during probing, a response that gives Name an address other than
     # ours means another device holds the name.
-    param([Parameter(Mandatory = $true)][byte[]]$Data, [Parameter(Mandatory = $true)][string]$Name, [Parameter(Mandatory = $true)][string]$Ip)
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][byte[]]$Data, [Parameter(Mandatory = $true)][string]$Name, [Parameter(Mandatory = $true)][string]$Ip)
     try { $message = Get-DnsMessage -Data $Data } catch { return $false }
     if (-not $message.response) { return $false }
     foreach ($record in $message.addresses) {

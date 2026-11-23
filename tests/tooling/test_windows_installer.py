@@ -286,7 +286,7 @@ class WizardCopyTest(unittest.TestCase):
         code = pascal_code()
         self.assertNotRegex(code, r"\bTLabel\b")
         used = set(re.findall(r"\b(?:CM|FM[1-3])\('([a-z0-9_]+)'", code))
-        prefixed = {"s12_stage", "s12_fail", "stage_", "bg_stage_"}
+        prefixed = {"s12_stage", "s12_fail", "stage_", "bg_stage_", "s01_state_"}
         missing = {key for key in used - set(self.copy()) if key not in prefixed}
         self.assertEqual(missing, set())
 
@@ -1901,7 +1901,7 @@ class Dec0041Test(unittest.TestCase):
             entry.index("if ($stage -eq 'check_restart') {"), entry.rindex("cleanup = $true")
         )
         self.assertIn("if ($Prepared) { $marks.prepared = $true }", self.helper)
-        restart = self.part("procedure CheckRestart(Firmware: Boolean; Index: Integer);")
+        restart = self.part("procedure CheckRestart(Index: Integer);")
         self.assertIn("if (PrepState <> '') or (EntryNext = 'S07') then", restart)
         self.assertIn("Extra := Extra + ' -Prepared';", restart)
         start = self.part("function InitializeSetup(): Boolean;")
@@ -2443,3 +2443,141 @@ class ReviewFixTest(unittest.TestCase):
         ):
             with self.subTest(case=case):
                 self.assertIn(case, tests)
+
+
+class OwnerRc28Test(unittest.TestCase):
+    """The owner's rc.28 list (TASK-0097, W14 round 3): AC-O1, AC-O2, AC-O5, AC-O7, AC-O8, AC-O9
+    and the S12 copy. Behavior: the Pester cases named here and the [Code] self-test."""
+
+    def setUp(self) -> None:
+        self.raw = pascal_code()
+        self.selftest = SELFTEST.read_text(encoding="ascii")
+        self.copy = read_copy()
+
+    def script(self, name: str) -> str:
+        return (SCRIPTS / name).read_text(encoding="ascii")
+
+    def ps_tests(self, name: str) -> str:
+        return (PS_TESTS / name).read_text(encoding="ascii")
+
+    def test_ac_o1_a_waiting_restart_is_recorded_and_never_blocks(self) -> None:
+        checks = self.script("lib/Checks.ps1")
+        self.assertIn("New-CheckResult 'C08' 'log' 'pending' @{ values_set = $set }", checks)
+        self.assertNotIn("New-CheckResult 'C08' 'fix'", checks)
+        self.assertNotIn("Id = 'C08'", self.raw)
+        for key in ("c08_btn", "c08_pending", "s02_restart_confirm"):
+            with self.subTest(key=key):
+                self.assertNotIn(key, self.copy)
+        self.assertIn("CheckRestart(Index)", self.raw)
+        self.assertIn(
+            "Test-Case 'AC-O1 C08 only records a waiting restart", self.ps_tests("Checks.Tests.ps1")
+        )
+
+    def test_ac_o2_setup_accepts_its_own_state_folder_after_a_removal(self) -> None:
+        windows = self.script("lib/Windows.ps1")
+        for code in ("unsafe_link", "unsafe_owner", "unsafe_access"):
+            with self.subTest(code=code):
+                self.assertIn(f"code = '{code}'", windows)
+                self.assertIn(f"s01_state_{code}", self.copy)
+        self.assertIn("function Get-StaleServiceSid {", windows)
+        self.assertIn("$identity.Translate([System.Security.Principal.NTAccount])", windows)
+        self.assertIn(
+            "if (-not $serviceSid) { $step = Repair-StaleStateFolder -Layout $layout -Step $step }",
+            self.script("setup-helper.ps1"),
+        )
+        self.assertIn("function Clear-TreeAccount {", self.script("lib/Common.ps1"))
+        self.assertIn(
+            "$changed = Clear-TreeAccount -Tree $Layout.StateTree -Sid $sid",
+            self.script("lib/Uninstall.ps1"),
+        )
+        self.assertIn("StateUnsafe := Pos('unsafe', StateCheckCode) = 1;", self.raw)
+        self.assertIn("Result := CM('s01_state_' + StateCheckCode)", self.raw)
+        self.assertIn(
+            "Test-Case 'AC-O2 a state folder that a removal left",
+            self.ps_tests("Folders.Tests.ps1"),
+        )
+        self.assertIn(
+            "Test-Case 'AC-O2 the removal leaves no entry", self.ps_tests("Uninstall.Tests.ps1")
+        )
+
+    def test_ac_o5_the_verdict_hides_its_caret_after_every_focus(self) -> None:
+        self.assertIn("function VerdictProc(", self.raw)
+        verdict = routine(self.raw, "function VerdictProc(")
+        self.assertLess(
+            verdict.index("DefSubclassProc(Wnd, Msg, W, L)"), verdict.index("HideCaret(Wnd)")
+        )
+        self.assertIn("RemoveWindowSubclass(Wnd, VerdictSubclass, 1)", verdict)
+        self.assertIn("KeepCaretHidden(Result);", routine(self.raw, "function AddVerdict("))
+        self.assertIn("'AC-O5 a verdict that gets the focus shows no text cursor'", self.selftest)
+
+    def test_ac_o7_report_and_responder_take_an_empty_collection(self) -> None:
+        self.assertIn(
+            "[AllowEmptyCollection()][System.Collections.Generic.List[string]]$LeftOut",
+            self.script("lib/Report.ps1"),
+        )
+        self.assertEqual(
+            self.script("lib/Mdns.ps1").count("[AllowEmptyCollection()][byte[]]$Data"), 4
+        )
+        self.assertIn(
+            "Test-Case 'AC-O7 Save report works when nothing is left out",
+            self.ps_tests("Wizard.Tests.ps1"),
+        )
+        self.assertIn("Test-Case 'AC-O7 an empty UDP packet", self.ps_tests("Address.Tests.ps1"))
+
+    def test_ac_o8_the_removal_window_closes_only_after_the_removal(self) -> None:
+        self.assertIn("Result := (ClosePhase <> '') or RemoveStartPending;", self.raw)
+        self.assertIn("CanClose := not RemovalRunning;", self.raw)
+        self.assertIn(
+            "Result.OnCloseQuery := @RemoveCloseQuery;",
+            routine(self.raw, "function BuildRemoveForm("),
+        )
+        self.assertIn(
+            "RemoveClose.Enabled := not RemovalRunning;",
+            routine(self.raw, "procedure RenderRemove;"),
+        )
+        run = routine(self.raw, "function RunRemoval(Why: String): Boolean;\nbegin")
+        self.assertLess(
+            run.index("RemoveStartPending := True;"), run.index("BuildRemoveForm(Why);")
+        )
+        self.assertIn(
+            "'AC-O8 the removal window closes only after the removal ended'", self.selftest
+        )
+
+    def test_ac_o9_a_refused_job_shows_and_logs_what_it_saw(self) -> None:
+        self.assertIn("function Get-EngineRefusalDetail {", self.script("lib/Exec.ps1"))
+        helper = self.script("setup-helper.ps1")
+        self.assertIn("'WARN' ('refused {0}: {1}'", helper)
+        self.assertIn("$values.detail = $detail", helper)
+        self.assertIn("FailDetail := JsonValue(JobRaw, 'detail');", self.raw)
+        self.assertIn("FailDetailLink.OnLinkClick := @ShowFailDetail;", self.raw)
+        self.assertIn("InfoForm(CM('s13_details_title'), FailDetail);", self.raw)
+        self.assertIn(
+            "'AC-O9 a refused prepare shows its detail under Details on S13'", self.selftest
+        )
+        self.assertIn(
+            "Test-Case 'AC-O9 a refused prepare gives its detail", self.ps_tests("Exec.Tests.ps1")
+        )
+
+    def test_s12_copy_has_no_second_time_line_and_no_drive_before_a_stop(self) -> None:
+        self.assertNotEqual(self.copy["s12_subtitle"], self.copy["wait_up_to_30"])
+        # Each line whose value is a drive letter ("D:") names it as "the D: drive", so no
+        # sentence ends in "D:." (owner, rc.28).
+        drives = {
+            "c07_too_small": "%2",
+            "s10_not_writable": "%1",
+            "s12_backup_failed": "%1",
+            "step_bg_import": "%1",
+            "step_backup_check": "%1",
+            "step_set_backup_target_unmount": "%1",
+            "step_set_backup_target_mount": "%2",
+            "step_set_backup_target_repository": "%2",
+            "step_new_recovery_key_mount": "%1",
+            "m03_mount_line": "%1",
+            "m03_key_line": "%1",
+            "step_repair_backup": "%2",
+            "step_upd_copy": "%2",
+        }
+        for key, value in drives.items():
+            with self.subTest(key=key):
+                self.assertRegex(self.copy[key], rf"the {value} (backup )?drive")
+                self.assertNotIn(f"{value}.", self.copy[key])

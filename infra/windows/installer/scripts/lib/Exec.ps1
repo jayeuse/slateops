@@ -110,7 +110,8 @@ function Get-ReceivePartNames {
 function Test-ReceiveInput {
     # The receive input is the request.json member: exactly {run_id, setup_version}, with the
     # run ID of the Exec request.
-    param([Parameter(Mandatory = $true)][byte[]]$InputBytes, [Parameter(Mandatory = $true)][string]$RunId)
+    # AC-O7: an empty input is refused here ($null), not by the parameter binder.
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][byte[]]$InputBytes, [Parameter(Mandatory = $true)][string]$RunId)
     if ($InputBytes.Length -gt $SlateOpsExec.ReceiveRequestLimit) { return $null }
     try { $value = ConvertFrom-JsonUnlimited ([System.Text.Encoding]::UTF8.GetString($InputBytes)) } catch { return $null }
     if (-not ($value -is [System.Collections.IDictionary])) { return $null }
@@ -1075,6 +1076,22 @@ function Read-EngineOutput {
     if ($item.Length -gt $SlateOpsExec.StdoutCap) { throw 'output_too_large' }
     if (($item.Length -ne [long](Get-DictValue $Result 'stdout_bytes')) -or ((Get-FileSha256 -Path $path) -ne [string](Get-DictValue $Result 'stdout_sha256'))) { throw 'output_changed' }
     return ConvertFrom-JsonUnlimited ([System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8))
+}
+
+function Get-EngineRefusalDetail {
+    # AC-O9 (owner, rc.28): a refused engine job (prepare) names what its checks saw in a
+    # "detail" string (the engine escapes it, holds no secret and cuts it to 1000 characters).
+    # Read from the output file that Exec measured; one line of at most 1000 printable
+    # characters; '' when the job has no output file, the file changed, or there is no detail.
+    param([Parameter(Mandatory = $true)][hashtable]$Layout, [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Result)
+    if (-not (Get-DictValue $Result 'stdout_file')) { return '' }
+    try { $output = Read-EngineOutput -Layout $Layout -Result $Result } catch { return '' }
+    if (-not ($output -is [System.Collections.IDictionary])) { return '' }
+    $detail = Get-DictValue $output 'detail'
+    if (-not ($detail -is [string])) { return '' }
+    $detail = ($detail -replace '[\x00-\x1f\x7f]', ' ').Trim()
+    if ($detail.Length -gt 1000) { $detail = $detail.Substring(0, 997) + '...' }
+    return $detail
 }
 
 function Save-LogBundle {

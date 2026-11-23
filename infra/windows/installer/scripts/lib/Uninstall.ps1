@@ -688,6 +688,14 @@ function Remove-WindowsParts {
             } else { Remove-PathNoFollow -Path $path }
         }
     }
+    # AC-O2 (owner, rc.28): what stays of the state folder (logs, and scripts when data is left)
+    # keeps no entry or ownership of the service account, so the next start accepts it.
+    if ($sid) {
+        Invoke-UninstallPart 'state_entries' {
+            $changed = Clear-TreeAccount -Tree $Layout.StateTree -Sid $sid
+            Write-RunLog $step 'INFO' ('state folder: the entries of {0} removed ({1} items)' -f $sid, $changed)
+        }
+    }
     $left = @(Get-UninstallLeftovers -Record $record -Names $Names -Layout $Layout | Where-Object { $_ -ne 'state_folder:scripts' })
     # W9 review item 4: a data folder that is left over keeps the scripts too.
     if (($left.Count -eq 0) -and -not $DataLeft) {

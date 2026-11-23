@@ -105,6 +105,8 @@ try {
     switch ($Action) {
         'state-check' {
             $step = Test-StateFolder -Layout $layout -ServiceSid $serviceSid
+            # AC-O2: the entries of setup's own removed account (an earlier removal) are repaired.
+            if (-not $serviceSid) { $step = Repair-StaleStateFolder -Layout $layout -Step $step }
             if ($step.code -eq 'safe') { $null = Invoke-LogRotation -Directory (Join-Path $layout.Logs 'setup') }
             $result = $step
             # W8: the installed version decides M01 or M05 (spec 4.1).
@@ -422,6 +424,15 @@ try {
                 if (((Get-DictValue $value 'job') -eq 'log-bundle') -and ((Get-DictValue $value 'exit_code') -eq 0)) {
                     $output = Read-EngineOutput -Layout $layout -Result $value
                     $values.bundle = Save-LogBundle -Output $output -DestinationPath (Join-Path $helperRoot ('linux-{0}.tar.gz' -f $RunId))
+                }
+                # AC-O9: a refused job's detail goes to this setup log (Save report holds it) and
+                # to the wizard, which shows it under Details on S13.
+                if ((Get-DictValue $value 'exit_code') -ne 0) {
+                    $detail = Get-EngineRefusalDetail -Layout $layout -Result $value
+                    if ($detail) {
+                        Write-RunLog ('exec.{0}' -f (Get-DictValue $value 'job')) 'WARN' ('refused {0}: {1}' -f (Get-DictValue $value 'code'), $detail)
+                        $values.detail = $detail
+                    }
                 }
                 # P2-3: a failed update names its journal state and the space it needs.
                 if (((Get-DictValue $value 'job') -eq 'update') -and ((Get-DictValue $value 'exit_code') -ne 0)) {
