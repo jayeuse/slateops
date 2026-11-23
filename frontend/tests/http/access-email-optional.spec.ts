@@ -1,9 +1,11 @@
+import { randomBytes } from "node:crypto";
+
 import { expect, test, type Page } from "./helpers/test";
 import { created, ids, mockAccessApi } from "./helpers/access-api";
 import { openedSheet } from "./helpers/settled";
 
 // Generated per run, so no literal secret sits in the repository (secret scan).
-const TEMPORARY_PASSWORD = `Tp${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
+const TEMPORARY_PASSWORD = `Tp${randomBytes(12).toString("base64url")}9a`;
 
 // DEC-0042: Slate Operations works without email. An administrator invites a
 // person with a one-time link to copy and send by any channel, makes a new

@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import { expect, test } from "@playwright/test";
 
 import { ApiError } from "../../../src/lib/api";
@@ -6,7 +8,7 @@ import { temporaryPasswordFailure } from "../../../src/components/systems/access
 import { ids, installCsrfCookie, installFetch } from "./fixtures";
 
 // Generated per run, so no literal secret sits in the repository (secret scan).
-const TEMPORARY_PASSWORD = `Tp${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
+const TEMPORARY_PASSWORD = `Tp${randomBytes(12).toString("base64url")}9a`;
 
 // DEC-0042: an administrator sets a temporary password for a person. The
 // server chooses one when the body has none and shows it once; a typed one is

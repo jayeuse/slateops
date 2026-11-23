@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import {
   authMeBody,
   defaultSignedInIdentity,
@@ -7,7 +9,7 @@ import {
 } from "./helpers/test";
 
 // Generated per run, so no literal secret sits in the repository (secret scan).
-const TEMPORARY_PASSWORD = `Tp${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
+const TEMPORARY_PASSWORD = `Tp${randomBytes(12).toString("base64url")}9a`;
 
 // DEC-0042: after an administrator sets a temporary password, the server
 // answers every call except a few auth routes with 403
