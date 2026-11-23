@@ -22416,6 +22416,66 @@
         "title": "SheetSelectOptions",
         "type": "object"
       },
+      "SheetShare": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "group": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SheetGroupRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "view",
+              "edit"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "subject": {
+            "enum": [
+              "user",
+              "group"
+            ],
+            "title": "Subject",
+            "type": "string"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SheetPersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "subject",
+          "user",
+          "group",
+          "level",
+          "created_at"
+        ],
+        "title": "SheetShare",
+        "type": "object"
+      },
       "SheetShareCandidates": {
         "properties": {
           "groups": {
@@ -22438,6 +22498,83 @@
           "groups"
         ],
         "title": "SheetShareCandidates",
+        "type": "object"
+      },
+      "SheetShareCreate": {
+        "additionalProperties": false,
+        "description": "Route 17: a View or Edit share to one person or one group (V2).",
+        "properties": {
+          "group_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
+          },
+          "level": {
+            "enum": [
+              "view",
+              "edit"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "subject": {
+            "enum": [
+              "user",
+              "group"
+            ],
+            "title": "Subject",
+            "type": "string"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "subject",
+          "level"
+        ],
+        "title": "SheetShareCreate",
+        "type": "object"
+      },
+      "SheetShareSort": {
+        "enum": [
+          "created_at"
+        ],
+        "title": "SheetShareSort",
+        "type": "string"
+      },
+      "SheetShareUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "level": {
+            "enum": [
+              "view",
+              "edit"
+            ],
+            "title": "Level",
+            "type": "string"
+          }
+        },
+        "required": [
+          "level"
+        ],
+        "title": "SheetShareUpdate",
         "type": "object"
       },
       "SheetStateCell": {
@@ -23536,6 +23673,26 @@
           "pagination"
         ],
         "title": "StandardListResponse[SharedReportRunResponse]",
+        "type": "object"
+      },
+      "StandardListResponse_SheetShare_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SheetShare"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "StandardListResponse[SheetShare]",
         "type": "object"
       },
       "StandardListResponse_TemplateResponse_": {
@@ -67380,6 +67537,373 @@
           }
         ],
         "summary": "List Share Candidates",
+        "tags": [
+          "worksheets"
+        ]
+      }
+    },
+    "/api/worksheets/{worksheet_id}/shares": {
+      "get": {
+        "operationId": "list_worksheet_shares_api_worksheets__worksheet_id__shares_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worksheet_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Worksheet Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SheetShareSort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort By"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deleted",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DeletedFilter",
+              "default": "exclude"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardListResponse_SheetShare_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Worksheet Shares",
+        "tags": [
+          "worksheets"
+        ]
+      },
+      "post": {
+        "operationId": "create_worksheet_share_api_worksheets__worksheet_id__shares_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worksheet_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Worksheet Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SheetShareCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SheetShare"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Worksheet Share",
+        "tags": [
+          "worksheets"
+        ]
+      }
+    },
+    "/api/worksheets/{worksheet_id}/shares/{share_id}": {
+      "delete": {
+        "operationId": "delete_worksheet_share_api_worksheets__worksheet_id__shares__share_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worksheet_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Worksheet Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "share_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Share Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Worksheet Share",
+        "tags": [
+          "worksheets"
+        ]
+      },
+      "patch": {
+        "operationId": "update_worksheet_share_api_worksheets__worksheet_id__shares__share_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worksheet_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Worksheet Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "share_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Share Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SheetShareUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SheetShare"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Worksheet Share",
         "tags": [
           "worksheets"
         ]

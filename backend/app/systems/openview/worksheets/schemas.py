@@ -280,3 +280,45 @@ class SheetRowBatch(BaseModel):
 
 class SheetRowBatchResult(BaseModel):
     rows: list[SheetRow]
+
+
+class SheetShareSort(StrEnum):
+    CREATED_AT = "created_at"
+
+
+class SheetShareListRequest(StandardListRequest[SheetShareSort]):
+    pass
+
+
+class SheetShareCreate(BaseModel):
+    """Route 17: a View or Edit share to one person or one group (V2)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject: Literal["user", "group"]
+    user_id: UUID | None = None
+    group_id: UUID | None = None
+    level: Literal["view", "edit"]
+
+    @model_validator(mode="after")
+    def _one_target(self) -> "SheetShareCreate":
+        if (self.subject == "user") != (self.user_id is not None and self.group_id is None) or (
+            self.subject == "group" and (self.group_id is None or self.user_id is not None)
+        ):
+            raise ValueError("Give user_id for a person share or group_id for a group share")
+        return self
+
+
+class SheetShareUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    level: Literal["view", "edit"]
+
+
+class SheetShare(BaseModel):
+    id: UUID
+    subject: Literal["user", "group"]
+    user: SheetPersonRef | None
+    group: SheetGroupRef | None
+    level: Literal["view", "edit"]
+    created_at: datetime
