@@ -187,6 +187,8 @@ export type LifecycleImpact = {
   blockers: LifecycleBlocker[];
   derived_changes: LifecycleDerivedChange[];
   impact_digest: string;
+  /** Sheets a purge removes (sheets spec F2): a count only. */
+  worksheet_count?: number;
 };
 export type LifecyclePreviewResponse = {
   impact: LifecycleImpact;

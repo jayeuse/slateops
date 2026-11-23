@@ -125,6 +125,7 @@ export const lifecycleImpactSchema: z.ZodType<LifecycleImpact> = z
     blockers: z.array(lifecycleBlockerSchema),
     derived_changes: z.array(lifecycleDerivedChangeSchema),
     impact_digest: z.string().regex(/^[a-f0-9]{64}$/),
+    worksheet_count: z.number().int().nonnegative().optional(),
   })
   .strict();
 
