@@ -656,12 +656,22 @@ try {
         Write-Line ('raw mDNS QU {0} after {1:N1} s: [{2}] (expected {3})' -f $name, $watch.Elapsed.TotalSeconds, ($raw -join ', '), $expected)
         if (@($raw | Where-Object { $_ -like ('{0} from *' -f $expected) }).Count -eq 0) { throw ('no raw mDNS answer with {0} for {1} in 120 s' -f $expected, $name) }
         # The hosts entry does not exist yet (windows-steps writes it), so this is the mDNS path.
-        Clear-DnsClientCache
+        # The Windows resolver can answer "does not exist" from unicast DNS or its negative cache
+        # before it asks mDNS (seen once on a runner, run 45166016324, while the raw query above
+        # got the answer). Like the raw query, it gets a bounded wait: up to 30 s, the cache
+        # cleared before each try. A responder that never answers still fails here.
         $resolved = @()
-        try { $resolved = @(Resolve-DnsName -Name $name -Type A -ErrorAction Stop | Where-Object { $_.PSObject.Properties['IPAddress'] -and ($_.Type -eq 'A') } | ForEach-Object { $_.IPAddress }) }
-        catch { Write-Line ('Resolve-DnsName {0}: {1}' -f $name, $_.Exception.Message) }
-        Write-Line ('Resolve-DnsName {0}: [{1}]' -f $name, ($resolved -join ', '))
-        if ($resolved -notcontains $expected) { throw ('Resolve-DnsName gave no {0} for {1}' -f $expected, $name) }
+        $resolveWatch = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($resolveWatch.Elapsed.TotalSeconds -lt 30) {
+            Clear-DnsClientCache
+            $resolved = @()
+            try { $resolved = @(Resolve-DnsName -Name $name -Type A -ErrorAction Stop | Where-Object { $_.PSObject.Properties['IPAddress'] -and ($_.Type -eq 'A') } | ForEach-Object { $_.IPAddress }) }
+            catch { Write-Line ('Resolve-DnsName {0}: {1}' -f $name, $_.Exception.Message) }
+            if ($resolved -contains $expected) { break }
+            Start-Sleep -Seconds 3
+        }
+        Write-Line ('Resolve-DnsName {0} after {1:N1} s: [{2}]' -f $name, $resolveWatch.Elapsed.TotalSeconds, ($resolved -join ', '))
+        if ($resolved -notcontains $expected) { throw ('Resolve-DnsName gave no {0} for {1} in 30 s' -f $expected, $name) }
     }
 
     Invoke-Step -Always 'windows-steps with a CA certificate made here: firewall rules, hosts entry, trusted CA, power values' {
