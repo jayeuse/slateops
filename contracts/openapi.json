@@ -12703,6 +12703,7 @@
         "additionalProperties": false,
         "properties": {
           "email": {
+            "description": "The account's email address or username",
             "maxLength": 320,
             "minLength": 3,
             "title": "Email",
