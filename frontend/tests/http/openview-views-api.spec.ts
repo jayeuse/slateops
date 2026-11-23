@@ -6068,6 +6068,20 @@ for (const viewport of [
         );
         expect(hit).toBeGreaterThanOrEqual(viewport.width >= 1280 ? 32 : 44);
         expect(target.width).toBeGreaterThanOrEqual(44);
+        // Nothing beside the status covers any part of it: a tap on its
+        // left, middle or right lands on it (the header actions sit on the
+        // title's line).
+        const across = await page.evaluate(
+          ([left, width, y]) =>
+            [0.15, 0.5, 0.85].map(
+              (share) =>
+                document
+                  .elementFromPoint(left + width * share, y)
+                  ?.closest("button")?.textContent === "Open record",
+            ),
+          [target.x, target.width, target.y + target.height / 2],
+        );
+        expect(across).toEqual([true, true, true]);
       }
 
       // The next action ends the status, and the meta text returns.

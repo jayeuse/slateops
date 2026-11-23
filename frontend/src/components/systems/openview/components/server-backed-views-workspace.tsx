@@ -3209,6 +3209,9 @@ export default function ServerBackedViewsWorkspace({
       <div className="shrink-0">
         <PageHeader
           title={moduleName ?? "Records"}
+          // The actions sit on the title's line, never over the meta line,
+          // where a status lies over the meta text from 1280px (DR-6.1).
+          className="sm:items-start"
           description={
             <span className="relative flex flex-wrap items-center gap-x-2 gap-y-1">
               {/* DR-6.1: an item 6 or list status takes the meta text's
