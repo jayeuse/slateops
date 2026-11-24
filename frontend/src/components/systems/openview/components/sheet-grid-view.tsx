@@ -280,6 +280,10 @@ export type SheetGridViewProps = {
   onPaste: (index: number, column: number, grid: string[][]) => void;
   /** A row an address named (Appears in): shown, focused and lit once. */
   highlight?: { index: number } | null;
+  /** A cell took focus: the person's place, for presence (PR2). */
+  onCellFocus?: (index: number, columnKey: string) => void;
+  /** Cells other people are on, `<row index>:<column key>` to a colour. */
+  outlines?: ReadonlyMap<string, string>;
 };
 
 export function SheetGridView({
@@ -301,6 +305,8 @@ export function SheetGridView({
   onOpenRow,
   onPaste,
   highlight = null,
+  onCellFocus,
+  outlines,
 }: SheetGridViewProps) {
   "use no memo"; // TanStack's mutable virtualizer must be read on every range update.
   const pane = useRef<HTMLDivElement | null>(null);
@@ -633,6 +639,14 @@ export function SheetGridView({
             editing?.row.id === row.id &&
             editing.key === column.key;
           const fixed = !canEdit || !editable(column);
+          // Another person's place: an inset ring in their colour, under a
+          // conflict's own ring and apart from the focus outline. A phone
+          // shows avatars only (PR1).
+          const conflicted = note && conflict.key === column.key;
+          const peer =
+            phone || conflicted
+              ? undefined
+              : outlines?.get(`${item.index}:${column.key}`);
           return (
             <td
               key={column.key}
@@ -642,6 +656,7 @@ export function SheetGridView({
               aria-readonly={fixed || undefined}
               onFocus={() => {
                 if (!isActive) setActive({ row: item.index, col: index });
+                onCellFocus?.(item.index, column.key);
               }}
               // On a phone a tap opens the row, the name included: the
               // link does not navigate (Screens 9).
@@ -670,7 +685,14 @@ export function SheetGridView({
                 isActive && "outline-action-text",
                 shine && LIT_ROW,
               )}
-              style={index === 0 ? { left: numberWidth } : undefined}
+              style={
+                index === 0 || peer
+                  ? {
+                      ...(index === 0 ? { left: numberWidth } : {}),
+                      ...(peer ? { boxShadow: `inset 0 0 0 2px ${peer}` } : {}),
+                    }
+                  : undefined
+              }
             >
               {isEditing && editing ? (
                 column.type === "select" ? (

@@ -62,6 +62,9 @@ import {
 } from "../adapters/worksheets-api";
 import { sheetHref } from "./sheet-display";
 import { SheetGridView, type SheetConflict } from "./sheet-grid-view";
+import { SheetPresenceAvatars } from "./sheet-presence-avatars";
+import { useSheetPresence } from "./use-sheet-presence";
+import { presenceOutlines } from "../domain/sheet-presence";
 import type { SaveResult } from "./sheet-row-form";
 import { SheetHeaderActions } from "./sheet-header-actions";
 import { useSheetOrganizationName } from "./use-sheet-organization";
@@ -632,6 +635,19 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
       : { rowId, index: -1 };
   });
   const [highlight, setHighlight] = useState<{ index: number } | null>(null);
+
+  // Who else has the sheet open, and where (PR1, PR2); a phone shows the
+  // avatars only.
+  const presence = useSheetPresence(sheet.id);
+  const columnKeys = useMemo(
+    () => new Set(columns.map((column) => column.key)),
+    [columns],
+  );
+  const outlines = presenceOutlines(
+    presence.peers,
+    (rowId) => rowIndex(store, rowId),
+    columnKeys,
+  );
   useEffect(() => {
     if (!target) return;
     const settled = () => {
@@ -755,18 +771,21 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
           <SheetMeta sheet={sheet} />
           {role === "open" ? <OpenLine sheet={sheet} /> : null}
         </div>
-        <SheetHeaderActions
-          sheet={sheet}
-          role={role}
-          onFailure={setSaveError}
-          onGone={markGone}
-          onRowsChanged={() => {
-            void client.invalidateQueries({
-              queryKey: worksheetKeys.detail(sheet.id),
-            });
-            setGeneration((value) => value + 1);
-          }}
-        />
+        <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
+          <SheetPresenceAvatars peers={presence.peers} />
+          <SheetHeaderActions
+            sheet={sheet}
+            role={role}
+            onFailure={setSaveError}
+            onGone={markGone}
+            onRowsChanged={() => {
+              void client.invalidateQueries({
+                queryKey: worksheetKeys.detail(sheet.id),
+              });
+              setGeneration((value) => value + 1);
+            }}
+          />
+        </div>
       </header>
       <div
         role="toolbar"
@@ -878,6 +897,11 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
         onOpenRow={(index) => setFormRowId(rowAt(store, index)?.id ?? null)}
         onPaste={(index, column, grid) => void paste(index, column, grid)}
         highlight={highlight}
+        onCellFocus={(index, columnKey) => {
+          const row = rowAt(store, index);
+          if (row) presence.move({ rowId: row.id, columnKey });
+        }}
+        outlines={outlines}
       />
       {formRow ? (
         <Suspense fallback={null}>

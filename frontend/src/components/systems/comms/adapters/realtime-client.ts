@@ -1,4 +1,4 @@
-import { RealtimeClient } from "@supabase/realtime-js";
+import type { RealtimeClient } from "@supabase/realtime-js";
 import { z } from "zod";
 import {
   ApiContractError,
@@ -11,6 +11,7 @@ import {
   realtimeEventSchemaFor,
 } from "../contract/schemas";
 import type { CommsContext, EventObserver } from "../contract/types";
+import { createGatewayRealtime } from "../../shared/adapters/realtime-gateway";
 import type { ConnectionFailure } from "../../shared/adapters/workspace-event-source";
 
 const scheduleRefresh = (callback: () => void, milliseconds: number) => {
@@ -106,33 +107,7 @@ export function createCommsRealtime(
         !result.response.headers.get("Cache-Control")?.includes("no-store")
       )
         throw apiContractError(result);
-      const endpoint = new URL("/realtime/v1", globalThis.location.href);
-      endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:";
-      // SDK construction requires a nonempty key. This noncredential marker is
-      // removed by its documented transport seam; only the gateway injects a key.
-      class GatewaySocket extends WebSocket {
-        constructor(address: string | URL, protocols?: string | string[]) {
-          const target = new URL(address);
-          if (
-            target.origin !== endpoint.origin ||
-            target.pathname !== "/realtime/v1/websocket" ||
-            target.searchParams.get("apikey") !== "gateway-header"
-          )
-            throw new Error("Invalid Realtime transport target");
-          target.searchParams.delete("apikey");
-          if (
-            [...target.searchParams.keys()].some((key) => key !== "vsn") ||
-            target.searchParams.get("vsn") !== "1.0.0"
-          )
-            throw new Error("Invalid Realtime transport parameters");
-          super(target, protocols);
-        }
-      }
-      const socket = new RealtimeClient(endpoint.href, {
-        transport: GatewaySocket,
-        params: { apikey: "gateway-header" },
-        vsn: "1.0.0",
-      });
+      const socket = createGatewayRealtime();
       client = socket;
       await socket.setAuth(result.data.access_token);
       if (!active()) throw new DOMException("Connection retired", "AbortError");

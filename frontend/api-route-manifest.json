@@ -2490,6 +2490,12 @@
     "path": "/api/records/{param}/worksheet-rows"
   },
   {
+    "adapter": "frontend/src/components/systems/openview/adapters/sheet-presence.ts",
+    "function": "requestPresenceToken",
+    "method": "POST",
+    "path": "/api/worksheets/{param}/presence-token"
+  },
+  {
     "adapter": "frontend/src/components/systems/platform/adapters/account-api.ts",
     "function": "changeAccountPassword",
     "method": "POST",
