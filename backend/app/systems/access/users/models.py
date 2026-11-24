@@ -157,6 +157,9 @@ class Membership(BaseModel):
     invitation_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     provider_invitation_operation_id: Mapped[UUID | None] = mapped_column(nullable=True)
     mfa_required_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Sheets spec D1.6: a new invitation of a removed person sets this; the person's sheets
+    # created before it stay open. A restore leaves it unchanged.
+    worksheets_released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class PlatformOperator(BaseModel):

@@ -44,6 +44,7 @@ def test_reauth_uses_live_provider_session_not_local_jwt(monkeypatch: pytest.Mon
     monkeypatch.setattr(events_router, "get_supabase_auth_client", lambda: client, raising=False)
     monkeypatch.setattr(events_router, "allowed_module_ids", lambda *_args: None)
     monkeypatch.setattr(events_router, "readable_board_ids", lambda *_args: None, raising=False)
+    monkeypatch.setattr(events_router, "visible_worksheet_ids", lambda *_args: frozenset())
     monkeypatch.setattr(
         events_router, "load_workspace_policy",
         lambda _db, **_kwargs: WorkspaceProfile(ip_allow_list=[]),
@@ -101,6 +102,7 @@ def test_sse_reauthorization_requires_a_current_verified_factor_with_aal2(
     monkeypatch.setattr(events_router, "get_supabase_auth_client", lambda: client, raising=False)
     monkeypatch.setattr(events_router, "allowed_module_ids", lambda *_args: None)
     monkeypatch.setattr(events_router, "readable_board_ids", lambda *_args: None, raising=False)
+    monkeypatch.setattr(events_router, "visible_worksheet_ids", lambda *_args: frozenset())
     monkeypatch.setattr(
         events_router, "load_workspace_policy",
         lambda _db, **_kwargs: WorkspaceProfile(ip_allow_list=[]),
@@ -266,6 +268,7 @@ def test_reauthorization_checks_claims_then_uses_a_short_lived_database_session(
 
         monkeypatch.setattr(events_router, "allowed_module_ids", readable_modules)
         monkeypatch.setattr(events_router, "readable_board_ids", readable_boards, raising=False)
+        monkeypatch.setattr(events_router, "visible_worksheet_ids", lambda *_args: frozenset())
         monkeypatch.setattr(events_router, "get_engine", lambda: "engine")
         monkeypatch.setattr(events_router, "AuditSession", Session)
         monkeypatch.setattr(events_router, "resolve_provider_session", resolve_provider_session)

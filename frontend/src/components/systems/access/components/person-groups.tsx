@@ -1,7 +1,7 @@
 "use client";
 
 import type { Route } from "next";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 
@@ -70,8 +70,11 @@ export function PersonGroups({
       mounted.current = false;
     };
   }, []);
-  useEffect(() => {
-    if (!focusAdd.current || adding || addPending || removing.size) return;
+  // In the commit that closes the add panel: its focused button leaves the
+  // page, and the sheet moves focus to its popup unless focus has already
+  // landed on Add to group by then.
+  useLayoutEffect(() => {
+    if (!focusAdd.current || adding || removing.size) return;
     focusAdd.current = false;
     addButton.current?.focus();
   });
@@ -123,6 +126,11 @@ export function PersonGroups({
     setAddError("");
     try {
       const result = await changeGroupMembership(chosen.value, person.id, true);
+      if (!mounted.current) return;
+      // Close before the refetch: once the person is a member, the chosen
+      // group turns "Already a member" and its button would lose focus while
+      // the panel is still open, and the sheet would take focus to its popup.
+      closeAdd();
       await afterAccessGroupChange(client);
       if (!mounted.current) return;
       setAnnouncement(
@@ -130,7 +138,6 @@ export function PersonGroups({
           ? `${name} added to ${chosen.label}.`
           : `${name} is already in ${chosen.label}.`,
       );
-      closeAdd();
     } catch (caught) {
       if (!mounted.current) return;
       setAddError(
@@ -154,6 +161,10 @@ export function PersonGroups({
     setRowErrors((current) => ({ ...current, [groupId]: null }));
     try {
       await changeGroupMembership(groupId, person.id, false);
+      // Focus leaves the row before the refetch removes it: a focused
+      // element that disappears sends the sheet's focus to its popup on the
+      // next frame, which would win over a later focus.
+      if (mounted.current) addButton.current?.focus();
       await afterAccessGroupChange(client);
       if (!mounted.current) return;
       setAnnouncement(`${name} removed from ${groupName}.`);

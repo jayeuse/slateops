@@ -7,7 +7,14 @@ import {
 /** Opaque authorized change notices; never row snapshots. */
 export type WorkspaceInvalidation =
   | { type: "resync" }
-  | { type: "invalidate"; entity: string; moduleId?: string; boardId?: string };
+  | {
+      type: "invalidate";
+      entity: string;
+      moduleId?: string;
+      boardId?: string;
+      /** The sheet of a `worksheets` event (docs/specs/sheets.md D6). */
+      worksheetId?: string;
+    };
 
 /** Preserve the existing singleton facade and each subscriber's opening resync. */
 export function subscribeWorkspaceInvalidations(

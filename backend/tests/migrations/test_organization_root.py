@@ -54,6 +54,12 @@ ORGANIZATION_TABLES = (
         "board_card_labels",
         "board_card_checklist_items",
         "board_calendar_sources",
+        "worksheets",
+        "worksheet_rows",
+        "worksheet_shares",
+        "worksheet_row_links",
+        "worksheet_row_revisions",
+        "worksheet_realtime_grants",
     }
 )
 MIXED_TABLES = frozenset(

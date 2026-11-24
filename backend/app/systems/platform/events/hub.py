@@ -19,6 +19,7 @@ from app.systems.platform.events.models import (
     PRIVATE_NOTIFICATION_ENTITY,
     RESYNC_ENTITY,
     WORK_ENTITIES,
+    WORKSHEET_SCOPED_ENTITIES,
     InvalidationEvent,
     parse_invalidation_payload,
 )
@@ -66,6 +67,9 @@ class EventViewer:
     # The organization the stream is bound to; events of other organizations never reach it.
     org_id: UUID | None = None
     operator: bool = False
+    # Sheets the subscriber can see now (sheets spec D6). Never a wildcard, administrators
+    # included: an administrator sees only sheets they own, are shared on, or that are open.
+    worksheet_ids: frozenset[UUID] = frozenset()
 
 
 @dataclass(slots=True)
@@ -216,6 +220,8 @@ def _can_receive(subscription: EventSubscription, event: InvalidationEvent) -> b
         # Account events must have been expanded into membership organizations by
         # the publisher; missing scope never substitutes for organization authority.
         return viewer.operator and event.entity in _INSTALLATION_ENTITIES
+    if event.entity in WORKSHEET_SCOPED_ENTITIES:
+        return event.entity_id is not None and event.entity_id in viewer.worksheet_ids
     if event.entity in BOARD_SCOPED_ENTITIES:
         return viewer.role == "admin" or (
             viewer.board_ids is not None and event.board_id in viewer.board_ids
@@ -234,8 +240,9 @@ def _access_signature(viewer: EventViewer) -> tuple[str, ...]:
         return ()
     organization = f"org:{viewer.org_id}"
     authority = ("operator",) if viewer.operator else ()
+    worksheets = tuple(f"worksheet:{sheet_id}" for sheet_id in sorted(viewer.worksheet_ids))
     if viewer.role == "admin":
-        return (organization, viewer.role, *authority)
+        return (organization, viewer.role, *authority, *worksheets)
     modules = (
         ("module:*",)
         if viewer.module_ids is None
@@ -246,7 +253,7 @@ def _access_signature(viewer: EventViewer) -> tuple[str, ...]:
         if viewer.board_ids is None
         else tuple(f"board:{board_id}" for board_id in sorted(viewer.board_ids))
     )
-    return (organization, viewer.role, *authority, *modules, *boards)
+    return (organization, viewer.role, *authority, *modules, *boards, *worksheets)
 
 
 class PostgresInvalidationListener:

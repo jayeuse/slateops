@@ -5337,6 +5337,7 @@ test("an administrator can preview and confirm deleted-record purging with a fre
     derived_changes: [],
     blockers: [],
     impact_digest: "b".repeat(64),
+    worksheet_count: 2,
   };
   const preview = {
     impact,
@@ -5398,6 +5399,8 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   await expect(impactSummary).toContainText("1 record");
   await expect(impactSummary).toContainText("2 links");
   await expect(impactSummary).toContainText("3 automation history entries");
+  // Sheets on the record go with it: a count, never titles (sheets F2).
+  await expect(details.getByText("2 sheets will be removed.")).toBeVisible();
   await expect(details.getByText(/Last successful backup/)).toHaveText(
     "Last successful backup: No successful backup recorded.",
   );
@@ -5557,6 +5560,8 @@ test("a blocked record purge lists the dependency and hides password confirmatio
   await expect(
     details.getByText("This deletes 1 record forever."),
   ).toBeVisible();
+  // No sheets on the record: no sheet line.
+  await expect(details.getByText(/will be removed\./)).toHaveCount(0);
   await expect(details.getByLabel("Administrator password")).toHaveCount(0);
   await expect(
     details.getByRole("button", { name: "Delete record forever" }),
@@ -6068,6 +6073,20 @@ for (const viewport of [
         );
         expect(hit).toBeGreaterThanOrEqual(viewport.width >= 1280 ? 32 : 44);
         expect(target.width).toBeGreaterThanOrEqual(44);
+        // Nothing beside the status covers any part of it: a tap on its
+        // left, middle or right lands on it (the header actions sit on the
+        // title's line).
+        const across = await page.evaluate(
+          ([left, width, y]) =>
+            [0.15, 0.5, 0.85].map(
+              (share) =>
+                document
+                  .elementFromPoint(left + width * share, y)
+                  ?.closest("button")?.textContent === "Open record",
+            ),
+          [target.x, target.width, target.y + target.height / 2],
+        );
+        expect(across).toEqual([true, true, true]);
       }
 
       // The next action ends the status, and the meta text returns.

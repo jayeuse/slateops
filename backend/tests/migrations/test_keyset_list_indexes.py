@@ -211,3 +211,16 @@ def test_record_and_link_writes_commit_while_a_build_waits_dbi_9(
             for table in ("relationship_edges", "records", "fields", "modules", "departments"):
                 connection.execute(text(f"DELETE FROM public.{table} WHERE org_id = :org"), values)
             connection.execute(text("DELETE FROM public.organizations WHERE id = :org"), values)
+        # The upgrade built indexes while a committed edge existed, which left
+        # `relationship_edges` measured (reltuples 1) instead of never measured (-1). Plan
+        # tests that expect an unmeasured empty table then pick another index (CI shard 5,
+        # test_partial_index_predicates). Truncating the now empty table resets the measure;
+        # no foreign key refers to it, and the lock keeps the empty check true.
+        with engine.begin() as connection:
+            connection.execute(text(
+                "LOCK TABLE public.relationship_edges IN ACCESS EXCLUSIVE MODE"))
+            assert connection.scalar(text("SELECT count(*) FROM public.relationship_edges")) == 0
+            assert connection.scalar(text(
+                "SELECT count(*) FROM pg_constraint "
+                "WHERE confrelid = 'public.relationship_edges'::regclass")) == 0
+            connection.execute(text("TRUNCATE public.relationship_edges"))

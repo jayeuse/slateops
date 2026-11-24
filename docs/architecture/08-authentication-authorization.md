@@ -124,3 +124,26 @@ delivery and final installation acceptance are complete.
 Groups are administrator-managed, with one delegation. A non-guest active user with `manage` on every department that a group's live `group_access` rows reach may read that group and replace its members through `PUT /api/access/groups/{id}/members`; a module row counts as its department, and a group with no rows stays administrator-only. The decision is `EffectiveAccess.manages_all` over `group_reach` in [`scope.py`](../../backend/app/systems/access/policy/scope.py). [`delegation.py`](../../backend/app/systems/access/policy/delegation.py) locks the target group and its access rows, then the manager's memberships and their groups' access rows, then the manager's user row, so a concurrent change to the group's reach or to the manager's authority waits for the decision to commit. Membership changes are audited `GroupMember` inserts and deletes; renaming a group or changing its access stays administrator-only.
 
 Sharing a currently readable OpenComms conversation extends person visibility through [`visible_person_ids`](../../backend/app/systems/access/users/person_visibility.py); an organization-scope channel therefore makes eligible members of that organization, including guests, visible to one another without explicit conversation membership.
+
+### Sheets
+
+OpenView sheets belong to the person who made them, not to a department. [`openview/worksheets/access.py`](../../backend/app/systems/openview/worksheets/access.py) is their one access rule, built on `module_filter`; `scope.py` does not change for it. `visible_worksheet_clause` feeds every sheet list, count, read and the SSE set. A person sees a sheet when all of these are true:
+
+1. The sheet is not deleted and is in the bound organization.
+2. Its record or module is live, and the person can read that module.
+3. The person owns the sheet, has a live share to it (directly, or through a live group they belong to), or the sheet is open.
+
+Administrators get no override. A missing, deleted and hidden sheet all get the same 404 (`load_visible_worksheet`).
+
+A sheet is **open** when its owner is not present in the organization: `worksheet_present_clause` finds no membership that passes `active_account_clause` without a release cutoff (`memberships.worksheets_released_at`) after the sheet was made. The state is derived, never stored, so it changes in the same transaction as the leave. The four leave paths (disable or remove a membership, disable or delete an account) change no sheet or share row ([`leave.py`](../../backend/app/systems/openview/worksheets/leave.py)). A re-enable or restore therefore makes the sheets private again with their earlier shares. An invitation that reuses a removed membership sets the release cutoff, so the earlier sheets stay open. Each leave path counts the sheets that open before it changes the account and records the count in a `worksheets.opened_on_leave` security event. The admin-only `GET /api/users/{user_id}/worksheet-impact` returns that count for the disable and remove confirmations. Every sheet write takes the owner's user row `FOR SHARE` first ([`locking.py`](../../backend/app/systems/openview/worksheets/locking.py)), so a write commits before a concurrent leave or sees the open state.
+
+`worksheet_level` gives one level for each visible sheet:
+
+| Case | Level |
+| --- | --- |
+| Open sheet | View, for every person who can see it |
+| Owner of a private sheet | Owner: rename, share, delete, restore, copy, and all Edit actions |
+| Edit share, not a guest | Edit: change rows and columns |
+| Any other share | View: read and export |
+
+Only the owner of a private sheet shares it ([`shares.py`](../../backend/app/systems/openview/worksheets/shares.py)). A person target must be an active member of the bound organization whom the owner can see (`visible_person_ids`). A group target must be a live group of that organization that the owner belongs to. Any other target gets the same 404 as an unknown ID. A share never grants access to the record or module. A guest share is View only. Guests cannot create, copy or import sheets ([`router.py`](../../backend/app/systems/openview/worksheets/router.py), [`import_router.py`](../../backend/app/systems/openview/worksheets/import_router.py)). A copy stays on its record or module and needs the owner of a private sheet or a reader of an open sheet (`check_copy` in [`create_sources.py`](../../backend/app/systems/openview/worksheets/create_sources.py)). Nobody can delete or restore an open sheet.

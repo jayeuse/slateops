@@ -83,6 +83,14 @@ from app.systems.openview.reports.models import (  # noqa: F401
 )
 from app.systems.openview.reports.schedule_models import ReportSchedule  # noqa: F401
 from app.systems.openview.views.models import SavedView  # noqa: F401
+from app.systems.openview.worksheets.models import (  # noqa: F401
+    Worksheet,
+    WorksheetRealtimeGrant,
+    WorksheetRow,
+    WorksheetRowLink,
+    WorksheetRowRevision,
+    WorksheetShare,
+)
 from app.systems.platform.files.models import File  # noqa: F401
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork  # noqa: F401
 from app.systems.sandbox.departments.models import Department  # noqa: F401

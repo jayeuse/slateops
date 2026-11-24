@@ -49,6 +49,24 @@ export function parseWorkspaceInvalidation(
       };
     }
     if ("board_id" in value) return null;
+    // A sheet event names only its sheet; the server sends it only to people
+    // who can see that sheet (docs/specs/sheets.md D6).
+    if (value.entity === "worksheets") {
+      if (
+        Object.keys(value).some(
+          (key) => key !== "entity" && key !== "entity_id",
+        ) ||
+        !("entity_id" in value) ||
+        typeof value.entity_id !== "string" ||
+        !uuid.test(value.entity_id)
+      )
+        return null;
+      return {
+        type: "invalidate",
+        entity: value.entity,
+        worksheetId: value.entity_id.toLowerCase(),
+      };
+    }
     if (!("module_id" in value) || value.module_id === undefined)
       return { type: "invalidate", entity: value.entity };
     return typeof value.module_id === "string" && uuid.test(value.module_id)
@@ -57,6 +75,28 @@ export function parseWorkspaceInvalidation(
   } catch {
     return null;
   }
+}
+
+/**
+ * The invalidation a follower tab gets from the leader's relay. It is parsed
+ * again with the stream's own rules, so a relay can carry nothing that the
+ * stream itself would refuse (a sheet event keeps only its sheet id).
+ */
+export function relayedInvalidation(
+  raw: unknown,
+): WorkspaceInvalidation | null {
+  if (!raw || typeof raw !== "object" || !("type" in raw)) return null;
+  const normalized = raw as WorkspaceInvalidation;
+  if (normalized.type === "resync") return { type: "resync" };
+  return parseWorkspaceInvalidation(
+    "invalidate",
+    JSON.stringify({
+      entity: normalized.entity,
+      ...(normalized.moduleId ? { module_id: normalized.moduleId } : {}),
+      ...(normalized.boardId ? { board_id: normalized.boardId } : {}),
+      ...(normalized.worksheetId ? { entity_id: normalized.worksheetId } : {}),
+    }),
+  );
 }
 
 export function retryAfterSeconds(value: string | null): number | undefined {

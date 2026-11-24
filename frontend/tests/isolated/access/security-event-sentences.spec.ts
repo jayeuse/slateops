@@ -413,6 +413,46 @@ const typeRows: {
       sentence: "Job retry by Mara was denied.",
     },
   },
+  {
+    type: "worksheets.export.authorized",
+    label: "Sheet export authorization",
+    patch: {
+      subject_id: operation,
+      metadata: { format: "xlsx", row_count: 15, column_count: 9 },
+    },
+    success: "Mara was authorized to export a sheet with 15 rows as Excel.",
+    unfinished: {
+      outcome: "denied",
+      sentence: "Sheet export by Mara was denied.",
+    },
+  },
+  {
+    type: "worksheets.opened_on_leave",
+    label: "Sheets opened on leave",
+    patch: {
+      subject_id: jay,
+      metadata: { opened_count: 3, path: "membership_disabled" },
+    },
+    success:
+      "Jay's 3 private sheets opened read-only when their membership was disabled.",
+    unfinished: {
+      outcome: "failure",
+      sentence: "Opening Jay's sheets failed.",
+    },
+  },
+  {
+    type: "worksheets.import.file_parsed",
+    label: "Sheet import file check",
+    patch: {
+      subject_id: null,
+      metadata: { outcome: "success", bytes: 20480, row_count: 120 },
+    },
+    success: "Mara's Excel file was read for a sheet import, with 120 rows.",
+    unfinished: {
+      outcome: "failure",
+      sentence: "Excel file check for Mara failed.",
+    },
+  },
 ];
 
 test("every emitted security event type is an Event type filter label", () => {
@@ -586,6 +626,51 @@ const factRows: {
       },
     },
     sentence: "Unknown person was authorized to export records.",
+  },
+  {
+    name: "a sheet template export",
+    patch: {
+      event_type: "worksheets.export.authorized",
+      metadata: { format: "template", row_count: 0, column_count: 9 },
+    },
+    sentence: "Mara was authorized to export a sheet template.",
+  },
+  {
+    name: "a sheet CSV export of one row",
+    patch: {
+      event_type: "worksheets.export.authorized",
+      metadata: { format: "csv", row_count: 1 },
+    },
+    sentence: "Mara was authorized to export a sheet with 1 row as CSV.",
+  },
+  {
+    name: "sheets opened by each leave path",
+    patch: {
+      event_type: "worksheets.opened_on_leave",
+      subject_id: jay,
+      metadata: { opened_count: 1, path: "membership_removed" },
+    },
+    sentence:
+      "Jay's private sheet opened read-only when they were removed from the organization.",
+  },
+  {
+    name: "sheets opened with malformed facts",
+    patch: {
+      event_type: "worksheets.opened_on_leave",
+      subject_id: jay,
+      metadata: { opened_count: "3", path: "constructor" },
+    },
+    sentence: "Jay's private sheets opened read-only.",
+  },
+  {
+    name: "a refused Excel file names its reason",
+    patch: {
+      event_type: "worksheets.import.file_parsed",
+      outcome: "failure",
+      subject_id: null,
+      metadata: { outcome: "failure", reason: "macro", bytes: 2048 },
+    },
+    sentence: "Excel file check for Mara failed. The file has macros.",
   },
   {
     name: "a snapshot with one bucket",

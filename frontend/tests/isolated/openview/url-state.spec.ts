@@ -111,6 +111,25 @@ test("a module page's Reports view keeps its report and copy in the address", ()
     ).toBe(true);
 });
 
+// docs/specs/sheets.md P2: the module page's third view lists its sheets.
+test("a module page's Sheets view has its own address", () => {
+  const moduleId = "00000000-0000-4000-8000-000000000103";
+  const address = `/openview?section=views&module=${moduleId}&tab=sheets`;
+
+  expect(parseOpenViewUrl(address)).toEqual({
+    section: "views",
+    module: moduleId,
+    tab: "sheets",
+    invalid: false,
+  });
+  expect(serializeOpenViewUrl(parseOpenViewUrl(address))).toBe(address);
+  // A report belongs to the Reports view only.
+  const reportId = "00000000-0000-4000-8000-000000000105";
+  expect(
+    parseOpenViewUrl(`${address}&report=${reportId}`).report,
+  ).toBeUndefined();
+});
+
 for (const layout of ["kanban", "calendar", "timeline"]) {
   test(`an old address with the removed ${layout} layout opens Table and keeps its other changes`, () => {
     const moduleId = "00000000-0000-4000-8000-0000000000b1";

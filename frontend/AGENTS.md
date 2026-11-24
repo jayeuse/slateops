@@ -49,7 +49,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Use explicit `CompleteCollection` and `PageResult` boundaries. Filter/sort before paging; complete exports and aggregates cannot use a visible page. Render a prepared page without a second table slice. Backend pagination must preserve the frontend feature contract; retired list helpers are not an integration template.
 - Authenticated SSE invalidations use `subscribeWorkspaceInvalidations` in `systems/shared/adapters/invalidation-events.ts`. Preserve opaque invalidations, last-listener cleanup, and in-progress forms. The subscriber list is in `frontend/README.md`.
 - Global focus/reconnect refetch stays disabled; only the unread count refreshes on focus while the stream is unavailable.
-- The SSE singleton and the Comms Realtime connection both belong to `systems/shared/adapters/connection-set.ts`, one set per account and organization; Comms subscribes through `subscribeSharedRealtime`. Do not add another stream, socket, or provider.
+- The SSE singleton and the Comms Realtime connection both belong to `systems/shared/adapters/connection-set.ts`, one set per account and organization; Comms subscribes through `subscribeSharedRealtime`. Do not add another stream, socket, or provider. One exception: an open sheet's presence client (spec `docs/specs/sheets.md` D13) uses its own Realtime socket, because a socket carries one access token and the presence token must not authorize OpenComms channels; it shares the gateway transport (`systems/shared/adapters/realtime-gateway.ts`), joins only the sheet's topic, and closes when the sheet page unmounts, the tab stays hidden, or the account or organization changes.
 
 ## Styling
 

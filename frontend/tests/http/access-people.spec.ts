@@ -510,6 +510,62 @@ test("disabling sends the status and a refusal shows the server's reason", async
   );
 });
 
+test("the disable and delete confirmations count the private sheets that will open, never blocking on the count", async ({
+  page,
+}) => {
+  const api = await mockAccessApi(page);
+  let answer: { status: number; json: unknown } = {
+    status: 200,
+    json: { opening_count: 3 },
+  };
+  const impactReads: string[] = [];
+  api.on("GET", `/api/users/${ids.ben}/worksheet-impact`, (route) => {
+    impactReads.push(route.request().url());
+    return route.fulfill(answer);
+  });
+  await page.goto(`/access?view=people&user=${ids.ben}`);
+  const sheet = await openedSheet(panel(page, "Ben Cruz"));
+  await openAdvanced(sheet);
+
+  await sheet.getByRole("button", { name: "Disable" }).click();
+  const disable = page.getByRole("alertdialog", { name: "Disable Ben Cruz?" });
+  await expect(disable).toContainText(
+    "3 private sheets will open read-only to everyone who can read their records or modules.",
+  );
+  await disable.getByRole("button", { name: "Cancel" }).click();
+
+  // The removal confirmation counts them too (L5, SH-15).
+  answer = { status: 200, json: { opening_count: 1 } };
+  await sheet.getByRole("button", { name: "Delete" }).click();
+  const remove = page.getByRole("alertdialog", { name: "Delete Ben Cruz?" });
+  await expect(remove).toContainText(
+    "1 private sheet will open read-only to everyone who can read its record or module.",
+  );
+  await remove.getByRole("button", { name: "Cancel" }).click();
+
+  // Zero sheets: the line does not show.
+  answer = { status: 200, json: { opening_count: 0 } };
+  const zero = page.waitForResponse(/worksheet-impact/);
+  await sheet.getByRole("button", { name: "Delete" }).click();
+  await zero;
+  await expect(remove).toContainText("signed out everywhere");
+  await expect(remove.getByText(/private sheet/)).toHaveCount(0);
+  await remove.getByRole("button", { name: "Cancel" }).click();
+
+  // A failed count shows nothing and the action still runs.
+  answer = { status: 503, json: { detail: "Service unavailable" } };
+  const failed = page.waitForResponse(/worksheet-impact/);
+  await sheet.getByRole("button", { name: "Disable" }).click();
+  await failed;
+  await expect(disable.getByText(/private sheet/)).toHaveCount(0);
+  await disable.getByRole("button", { name: "Disable account" }).click();
+  await expect(disable).toBeHidden();
+  expect(api.sent("PATCH", `/api/users/${ids.ben}`)[0]?.body).toEqual({
+    status: "disabled",
+  });
+  expect(impactReads).toHaveLength(4);
+});
+
 test("the signed-in administrator cannot disable or delete themselves", async ({
   page,
 }) => {

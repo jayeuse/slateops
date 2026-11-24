@@ -253,7 +253,8 @@ def test_realtime_policies_call_a_deny_all_function_until_alembic_replaces_it() 
     assert (
         "create policy slateops_realtime_member_write on realtime.messages for insert "
         "to authenticated with check ((public.can_join_realtime_topic(realtime.topic()) and "
-        "(realtime.topic() ~~ 'org:%:probe'::text)))"
+        "((realtime.topic() ~~ 'org:%:probe'::text) or ((extension = 'presence'::text) and "
+        "(realtime.topic() ~~ 'org:%:worksheet:%'::text)))))"
     ) in statements
 
 
@@ -281,6 +282,17 @@ def test_realtime_provisioning_upgrades_only_the_exact_legacy_write_policy() -> 
     statements = _statements(cursor)
     assert "alter policy slateops_realtime_member_write" in statements
     assert "org:%:probe" in statements
+    # The probe-only rule of an installation from before sheet presence (D13) is upgraded.
+    probe_only = (
+        "(public.can_join_realtime_topic(realtime.topic()) AND "
+        "(realtime.topic() ~~ 'org:%:probe'::text))"
+    )
+    current = [*EXPECTED_POLICIES[:-1], (*EXPECTED_POLICIES[-1][:-1], probe_only)]
+    cursor = _realtime_cursor([(True, True), (provisioner.OWNER_ROLE,)], current)
+    provisioner._provision_realtime_channel_policies(cursor)
+    statements = _statements(cursor)
+    assert "alter policy slateops_realtime_member_write" in statements
+    assert "extension = 'presence'::text" in statements
     altered = [*EXPECTED_POLICIES[:-1], (*EXPECTED_POLICIES[-1][:-1], "true")]
     cursor = _realtime_cursor([(True, True), (provisioner.OWNER_ROLE,)], altered)
     with pytest.raises(RuntimeError, match="unsafe"):

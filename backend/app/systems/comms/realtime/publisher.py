@@ -19,6 +19,7 @@ from app.systems.comms.realtime.grants import sweep_expired
 from app.systems.comms.realtime.presence import sweep_presence
 from app.systems.comms.realtime.publication import request_events, take_committed_events
 from app.systems.manage.workspace.organizations import active_organization_ids
+from app.systems.openview.worksheets.presence import sweep_expired_grants
 
 BATCH_SIZE = 100
 QUEUE_BATCHES = 64
@@ -80,6 +81,7 @@ class CommsPublisher:
                 with worker_organization(org_id), AuditSession(engine) as db:
                     sweep_expired(db, base_model.utc_now())
                     sweep_presence(db, base_model.utc_now())
+                    sweep_expired_grants(db, base_model.utc_now())
                     db.commit()
                     events = take_committed_events(db)
                 self.submit(events)

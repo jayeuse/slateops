@@ -21,6 +21,8 @@ dependencies = [
     "cryptography>=46.0.5",
     # 3.2.9 removes upstream typing required by our strict mypy checks.
     "xlsxwriter>=3.2.8,<3.2.9",
+    # Sheets Excel import (spec D9.4, D14 E6): wheels only, never built from source.
+    "python-calamine>=0.9.1,<0.10",
 ]
 
 [dependency-groups]
@@ -39,6 +41,7 @@ dev = [
 
 [tool.uv]
 package = false
+no-build-package = ["python-calamine"]
 
 [tool.pytest.ini_options]
 # Random order (pytest-randomly) is opt-in for a manual run, never the gates:

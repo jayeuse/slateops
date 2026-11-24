@@ -202,12 +202,23 @@ authorized sequence/history reads, not trust an event as a content snapshot.
 The private topic families are `org:<org>:conversation:<id>`,
 `org:<org>:user:<id>` and `org:<org>:presence`. FastAPI's current-access projection
 in [`realtime/grants.py`](../../backend/app/systems/comms/realtime/grants.py)
-supplies joins; browsers do not publish authoritative messages or presence.
+supplies joins; browsers do not publish authoritative messages or Comms presence.
 [`POST /api/realtime/token`](../../backend/app/systems/platform/realtime/router.py)
 rechecks account/session/membership and issues a five-minute purpose-specific
 token. After removal, content reads are refused immediately; already-joined
 ID-only delivery can continue until token expiry. This bound is not immediate
 socket revocation. Presence snapshots remain current-authorized HTTP projections.
+
+Sheets add one topic family, `org:<org>:worksheet:<id>`, for live presence only.
+[`POST /api/worksheets/{id}/presence-token`](../../backend/app/systems/openview/worksheets/presence.py)
+charges a per-person budget, rechecks sheet visibility, and issues a 60-second
+`purpose: realtime_presence` token bound to that one topic with a matching grant in
+`worksheet_realtime_grants`. On that topic the browser tracks its own current cell
+(row ID and column key); it cannot broadcast. Grants expire with the token and are
+swept by the Comms publisher sweep. Removing a share or deleting the sheet drops the
+grants it ends at once, and an authority write (`revoke_stale`) drops stale ones; a
+channel already joined stays open until its token expires, so a person who loses access
+stops within the 60-second token life.
 
 ### Protected configuration and durable work
 

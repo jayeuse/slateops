@@ -76,6 +76,14 @@ from app.systems.openview.dashboards.router import router as dashboards_router
 from app.systems.openview.reports.router import router as reports_router
 from app.systems.openview.reports.schedule_router import router as report_schedule_router
 from app.systems.openview.views.router import router as views_router
+from app.systems.openview.worksheets.appears_in import router as worksheet_appears_in_router
+from app.systems.openview.worksheets.export_router import router as worksheet_exports_router
+from app.systems.openview.worksheets.import_router import router as worksheet_imports_router
+from app.systems.openview.worksheets.leave import router as worksheet_impact_router
+from app.systems.openview.worksheets.presence import router as worksheet_presence_router
+from app.systems.openview.worksheets.router import router as worksheets_router
+from app.systems.openview.worksheets.row_router import router as worksheet_rows_router
+from app.systems.openview.worksheets.share_router import router as worksheet_shares_router
 from app.systems.platform.events.hub import (
     EventHub,
     PostgresInvalidationListener,
@@ -264,6 +272,14 @@ def create_app() -> FastAPI:
     app.include_router(reports_router, prefix="/api")
     app.include_router(report_schedule_router, prefix="/api")
     app.include_router(views_router, prefix="/api")
+    app.include_router(worksheets_router, prefix="/api")
+    app.include_router(worksheet_rows_router, prefix="/api")
+    app.include_router(worksheet_shares_router, prefix="/api")
+    app.include_router(worksheet_impact_router, prefix="/api")
+    app.include_router(worksheet_exports_router, prefix="/api")
+    app.include_router(worksheet_imports_router, prefix="/api")
+    app.include_router(worksheet_appears_in_router, prefix="/api")
+    app.include_router(worksheet_presence_router, prefix="/api")
     app.include_router(notifications_router, prefix="/api")
     app.include_router(search_router, prefix="/api")
     app.include_router(workspace_router, prefix="/api")

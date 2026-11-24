@@ -1,0 +1,370 @@
+"""The per-viewer projection of sheet rows into SQL (spec D7.3, N2, N4, N6-N8).
+
+Each column compiles to SQL expressions over one row: what the cell shows (a value, a link,
+unlinked text or a state), the text that search matches, the key that sort uses and the
+number that totals add. A value the viewer cannot read never leaves the database: the
+expressions are already masked, so sort, search and totals see only readable values.
+
+A link column whose target module the viewer cannot read shows ``no_access`` in every cell,
+with its lookups (N4 is per column). Computed columns compile in ``compile``; From another
+sheet columns read their source sheet's projection (``from_sheet``).
+"""
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal
+from uuid import UUID
+
+from sqlalchemy import (
+    Numeric,
+    Text,
+    and_,
+    case,
+    false,
+    func,
+    literal,
+    null,
+    select,
+    true,
+)
+from sqlalchemy import cast as sql_cast
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.selectable import FromClause
+
+from app.systems.access.policy.checks import module_level
+from app.systems.access.users.models import User
+from app.systems.openview.worksheets.compile import Operand, computed_cell, no_error
+from app.systems.openview.worksheets.expression import (
+    ExpressionError,
+    Node,
+    parse_stored,
+    references,
+)
+from app.systems.openview.worksheets.models import WorksheetRow
+from app.systems.openview.worksheets.sheet_lookup_cost import Budget
+from app.systems.openview.worksheets.structure import (
+    SheetComputedColumn,
+    SheetDecimalColumn,
+    SheetFromSheetColumn,
+    SheetLinkColumn,
+    SheetLookupColumn,
+    SheetPlainColumn,
+    SheetSelectColumn,
+    WorksheetStructure,
+)
+from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.modules.models import Module
+
+if TYPE_CHECKING:
+    from app.systems.openview.worksheets.link_projection import Link
+
+CellState = Literal[
+    "no_access", "deleted", "removed", "unavailable", "field_removed", "link", "unlinked",
+    "division_by_zero", "overflow", "too_complex", "column_removed", "multiple_matches",
+]
+ERROR_STATES = ("division_by_zero", "overflow", "too_complex")
+NUMERIC_TYPES = frozenset({"int", "number", "decimal"})
+# A record decimal field stores a canonical decimal string; only that shape is read as a number.
+_DECIMAL_TEXT = r"^-?(0|[1-9][0-9]*)(\.[0-9]+)?$"
+Expression = ColumnElement[Any]
+
+
+def _no_number() -> Expression:
+    return sql_cast(null(), Numeric)
+
+
+def _no_text() -> Expression:
+    return sql_cast(null(), Text)
+
+
+def _no_value() -> Expression:
+    return sql_cast(null(), JSONB)
+
+
+# As records: a person or checkbox value is no search text (`SEARCHABLE_FIELD_TYPES`).
+_UNSEARCHED = frozenset({"user", "boolean"})
+
+
+@dataclass(frozen=True)
+class ColumnProjection:
+    """The SQL of one column. ``state`` is NULL for a cell that shows ``value``."""
+
+    key: str
+    state: Expression
+    value: Expression
+    label: Expression
+    text: Expression
+    sort: Expression
+    number: Expression
+    hidden: Expression
+    shown: Expression
+
+
+@dataclass
+class RowProjection:
+    source: FromClause
+    columns: list[ColumnProjection] = field(default_factory=list)
+    # Prefixes every alias, so nested source projections never shadow each other (S-11).
+    scope: str = ""
+
+    def column(self, key: str) -> ColumnProjection:
+        return next(column for column in self.columns if column.key == key)
+
+
+def _number(value: Expression, *, decimal_text: bool = False) -> Expression:
+    """A JSON number (or a canonical decimal string) as ``numeric``; anything else is NULL.
+
+    The type guard comes first, so a stored string never reaches a cast (H5).
+    """
+
+    whens = [(func.jsonb_typeof(value) == "number", value.astext.cast(Numeric))]
+    if decimal_text:
+        whens.append((
+            and_(func.jsonb_typeof(value) == "string", value.astext.op("~")(_DECIMAL_TEXT)),
+            value.astext.cast(Numeric),
+        ))
+    return case(*whens, else_=null())
+
+
+def _scalar_text(value: Expression) -> Expression:
+    """Text of a JSON string, number or boolean; NULL for objects, arrays and null."""
+
+    return case(
+        (func.jsonb_typeof(value).in_(("string", "number", "boolean")), value.astext),
+        else_=null(),
+    )
+
+
+def _option_label(value: Expression, options: dict[str, str]) -> Expression:
+    if not options:
+        return _no_text()
+    return case(
+        *((value.astext == option_id, literal(label)) for option_id, label in options.items()),
+        else_=null(),
+    )
+
+
+def _plain(
+    key: str, column: SheetPlainColumn | SheetSelectColumn | SheetDecimalColumn,
+) -> ColumnProjection:
+    value = WorksheetRow.data[key]
+    kind = column.type
+    if kind in NUMERIC_TYPES:
+        number = _number(value, decimal_text=kind == "decimal")
+        text, sort = _scalar_text(value), number
+    elif isinstance(column, SheetSelectColumn):
+        labels = {option.id: option.label for option in column.select.options}
+        text = _option_label(value, labels)
+        sort, number = func.lower(text), _no_number()
+    else:
+        # A person sorts by the stored ID, as on record pages (B4 review item 3).
+        sort, number = func.lower(_scalar_text(value)), _no_number()
+        text = _no_text() if kind in _UNSEARCHED else _scalar_text(value)
+    present = and_(value.is_not(None), func.jsonb_typeof(value) != "null")
+    return ColumnProjection(
+        key, _no_text(), value, _no_text(), text, sort, number, false(), present,
+    )
+
+
+def blank_column(key: str) -> ColumnProjection:
+    """A column with no value in any row."""
+
+    return ColumnProjection(
+        key, _no_text(), _no_value(), _no_text(), _no_text(), _no_text(), _no_number(),
+        false(), false(),
+    )
+
+
+def hidden_column(key: str) -> ColumnProjection:
+    """A column the viewer cannot read: ``no_access`` in every row."""
+
+    return ColumnProjection(
+        key, literal("no_access"), _no_value(), _no_text(), _no_text(), _no_text(),
+        _no_number(), true(), false(),
+    )
+
+
+def _lookup(db: Session, key: str, column: SheetLookupColumn, link: "Link",
+            target_module: UUID) -> ColumnProjection:
+    source = db.get(Field, column.lookup.fieldId)
+    live = (
+        source is not None and not source.is_deleted and source.module_id == target_module
+        and FieldType(source.type) is not FieldType.RELATIONSHIP
+    )
+    state = case(
+        (link.state.in_(("no_access", "unavailable")), link.state),
+        # Beside a deleted, purged, unlinked or missing link: blank (Decision 17).
+        (link.state.is_distinct_from("link"), null()),
+        else_=literal("link" if live else "field_removed"),
+    )
+    readable = state == "link"
+    value, text, number = _no_value(), _no_text(), _no_number()
+    sorted_text = text
+    numeric = False
+    if live and source is not None:
+        raw = link.data[str(source.id)]
+        kind = FieldType(source.type)
+        if kind is FieldType.SELECT:
+            options = {
+                option["id"]: option["label"] for option in source.config.get("options", [])
+                if isinstance(option, dict) and isinstance(option.get("id"), str)
+                and isinstance(option.get("label"), str)
+            }
+            text = _option_label(raw, options)
+            value = func.to_jsonb(text) if options else _no_value()
+        elif kind.value in NUMERIC_TYPES:
+            numeric = True
+            number = _number(raw, decimal_text=kind is FieldType.DECIMAL)
+            value, text = raw, _scalar_text(raw)
+        else:
+            value, text = raw, _scalar_text(raw)
+        sorted_text = text
+        if kind.value in _UNSEARCHED:
+            sorted_text, text = _scalar_text(raw), _no_text()
+    masked_text = case((readable, text), else_=null())
+    masked_number = case((readable, number), else_=null())
+    masked_value = case((readable, value), else_=null())
+    return ColumnProjection(
+        key=key,
+        state=case((readable, null()), else_=state),
+        value=masked_value,
+        label=_no_text(),
+        text=masked_text,
+        sort=masked_number if numeric else func.lower(case((readable, sorted_text), else_=null())),
+        number=masked_number,
+        hidden=link.state == "no_access",
+        shown=func.coalesce(func.jsonb_typeof(masked_value) != "null", false()),
+    )
+
+
+def _computed_column(key: str, value: Expression, error: Expression,
+                     hidden: Expression) -> ColumnProjection:
+    text = sql_cast(func.trim_scale(value), Text)
+    return ColumnProjection(
+        key=key,
+        state=case((hidden, literal("no_access")), else_=error),
+        value=case((value.is_not(None), func.to_jsonb(text)), else_=_no_value()),
+        label=_no_text(), text=text, sort=value, number=value, hidden=hidden,
+        shown=value.is_not(None),
+    )
+
+
+def _computed(projection: RowProjection, structure: WorksheetStructure) -> None:
+    """One LATERAL per computed column, in dependency order (D7.2).
+
+    A column reads the columns before it by name, so no expression is copied into another
+    and the Python work stays the size of each column's own tree.
+    """
+
+    trees: dict[str, Node] = {}
+    for column in structure.columns:
+        if isinstance(column, SheetComputedColumn):
+            try:
+                trees[column.key] = parse_stored(column.computed.expression).node
+            except ExpressionError:
+                projection.columns.append(blank_column(column.key))  # never saved like this
+    kinds = {column.key: column.type for column in structure.columns}
+    operands: dict[str, Operand] = {
+        projected.key: Operand(
+            projected.number, projected.hidden,
+            case((projected.state.in_(ERROR_STATES), projected.state), else_=no_error())
+            if kinds[projected.key] == "sheet_lookup" else no_error(),
+        )
+        for projected in projection.columns
+        if kinds[projected.key] in NUMERIC_TYPES or kinds[projected.key] in {"lookup",
+                                                                             "sheet_lookup"}
+    }
+    # Each operand once per row, read by name: a reference never copies its SQL (S-11).
+    needed = sorted({ref for tree in trees.values() for ref in references(tree)}
+                    & set(operands))
+    if needed:
+        row_operands = (
+            select(*(item for key in needed for item in (
+                operands[key].number.label(f"number_{key}"),
+                operands[key].hidden.label(f"hidden_{key}"),
+                operands[key].error.label(f"error_{key}"),
+            )))
+            .correlate_except(None)
+            .offset(0)
+            .lateral(f"{projection.scope}operands")
+        )
+        projection.source = projection.source.outerjoin(row_operands, true())
+        for key in needed:
+            operands[key] = Operand(row_operands.c[f"number_{key}"],
+                                    row_operands.c[f"hidden_{key}"],
+                                    row_operands.c[f"error_{key}"])
+    pending = dict(trees)
+    while pending:
+        ready = [key for key, tree in pending.items()
+                 if not any(ref in pending for ref in references(tree))]
+        if not ready:  # a loop, refused on save: leave the rest blank
+            projection.columns.extend(blank_column(key) for key in pending)
+            return
+        for key in ready:
+            cell = computed_cell(pending.pop(key), operands, f"{projection.scope}{key}")
+            projection.source = projection.source.outerjoin(cell, true())
+            operands[key] = Operand(cell.c.value, cell.c.hidden, cell.c.error)
+            projection.columns.append(_computed_column(
+                key, cell.c.value, cell.c.error, cell.c.hidden,
+            ))
+
+
+def link_column_hidden(db: Session, user: User, module_id: UUID) -> bool:
+    """A link column is hidden when its target module exists and the person cannot read it.
+
+    After a module or department purge the module row is gone with its grants, so no one
+    has a level on it; its cells then show their own state (``removed`` for a stripped link,
+    unlinked text as typed), never a whole-column ``no_access`` (B8-B1, N6, SH-29).
+    """
+
+    return module_level(db, user, module_id) is None and db.get(Module, module_id) is not None
+
+
+def project_rows(db: Session, user: User, structure: WorksheetStructure,
+                 sources: frozenset[UUID] = frozenset(),
+                 budget: Budget | None = None, scope: str = "") -> RowProjection:
+    """Compile every column of ``structure`` for ``user`` over ``worksheet_rows``.
+
+    ``sources`` are the sheets already being read on the way here (From another sheet),
+    and ``budget`` the read's remaining units for nested source projections (S-11).
+    ``scope`` prefixes the aliases of a nested projection.
+    """
+    from app.systems.openview.worksheets import from_sheet
+    from app.systems.openview.worksheets.link_projection import join_link
+
+    budget = budget or Budget(from_sheet.READ_BUDGET)
+
+    projection = RowProjection(source=WorksheetRow.__table__, scope=scope)
+    links: dict[str, tuple[Link, UUID] | None] = {}
+    for column in structure.columns:
+        if isinstance(column, SheetLinkColumn):
+            if link_column_hidden(db, user, column.link.moduleId):
+                links[column.key] = None
+                projection.columns.append(hidden_column(column.key))
+                continue
+            joined, projected = join_link(db, user, projection, column.key)
+            links[column.key] = (joined, column.link.moduleId)
+            projection.columns.append(projected)
+    for column in structure.columns:
+        if isinstance(column, SheetLinkColumn):
+            continue
+        if isinstance(column, SheetLookupColumn):
+            found = links.get(column.lookup.linkKey)
+            projection.columns.append(
+                hidden_column(column.key) if found is None
+                else _lookup(db, column.key, column, found[0], found[1])
+            )
+        elif isinstance(column, SheetPlainColumn | SheetSelectColumn | SheetDecimalColumn):
+            projection.columns.append(_plain(column.key, column))
+        elif isinstance(column, SheetFromSheetColumn):
+            found = links.get(column.sheet_lookup.linkKey)
+            projection.columns.append(from_sheet.project_sheet_lookup(
+                db, user, projection, column, None if found is None else found[0], sources,
+                budget,
+            ))
+    _computed(projection, structure)
+    order = {column.key: index for index, column in enumerate(structure.columns)}
+    projection.columns.sort(key=lambda item: order[item.key])
+    return projection
+

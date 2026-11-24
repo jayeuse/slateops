@@ -306,6 +306,12 @@
     "path": "/api/users/{param}"
   },
   {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "getWorksheetImpact",
+    "method": "GET",
+    "path": "/api/users/{param}/worksheet-impact"
+  },
+  {
     "adapter": "frontend/src/components/systems/boards/adapters/board-calendar-sources-api.ts",
     "function": "addBoardCalendarSource",
     "method": "POST",
@@ -2332,6 +2338,162 @@
     "function": "queryOpenViewWindowRecords",
     "method": "POST",
     "path": "/api/records/window-query"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "createWorksheet",
+    "method": "POST",
+    "path": "/api/worksheets"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "createWorksheetRow",
+    "method": "POST",
+    "path": "/api/worksheets/{param}/rows"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "deleteWorksheetRow",
+    "method": "DELETE",
+    "path": "/api/worksheets/{param}/rows/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "getWorksheet",
+    "method": "GET",
+    "path": "/api/worksheets/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "listModuleWorksheets",
+    "method": "GET",
+    "path": "/api/modules/{param}/worksheets"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "listMyWorksheets",
+    "method": "GET",
+    "path": "/api/worksheets"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "listRecordWorksheets",
+    "method": "GET",
+    "path": "/api/records/{param}/worksheets"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "queryWorksheetRows",
+    "method": "POST",
+    "path": "/api/worksheets/{param}/rows/query"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "restoreWorksheet",
+    "method": "POST",
+    "path": "/api/worksheets/{param}/restore"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "saveWorksheetStructure",
+    "method": "PUT",
+    "path": "/api/worksheets/{param}/structure"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "updateWorksheetCells",
+    "method": "PATCH",
+    "path": "/api/worksheets/{param}/rows/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "renameWorksheet",
+    "method": "PATCH",
+    "path": "/api/worksheets/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "deleteWorksheet",
+    "method": "DELETE",
+    "path": "/api/worksheets/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "listWorksheetHistory",
+    "method": "GET",
+    "path": "/api/worksheets/{param}/history"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "listWorksheetShares",
+    "method": "GET",
+    "path": "/api/worksheets/{param}/shares"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "shareWorksheet",
+    "method": "POST",
+    "path": "/api/worksheets/{param}/shares"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "changeWorksheetShare",
+    "method": "PATCH",
+    "path": "/api/worksheets/{param}/shares/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "removeWorksheetShare",
+    "method": "DELETE",
+    "path": "/api/worksheets/{param}/shares/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "searchWorksheetShareCandidates",
+    "method": "GET",
+    "path": "/api/worksheets/{param}/share-candidates"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "searchWorksheetPeople",
+    "method": "GET",
+    "path": "/api/worksheets/{param}/people"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "exportWorksheet",
+    "method": "POST",
+    "path": "/api/worksheets/{param}/export"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "matchImportKeys",
+    "method": "POST",
+    "path": "/api/worksheet-import-matches"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "readImportFile",
+    "method": "POST",
+    "path": "/api/worksheet-import-files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "writeWorksheetRows",
+    "method": "POST",
+    "path": "/api/worksheets/{param}/rows/batch"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheet-appears-api.ts",
+    "function": "listRecordAppearances",
+    "method": "GET",
+    "path": "/api/records/{param}/worksheet-rows"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/sheet-presence.ts",
+    "function": "requestPresenceToken",
+    "method": "POST",
+    "path": "/api/worksheets/{param}/presence-token"
   },
   {
     "adapter": "frontend/src/components/systems/platform/adapters/account-api.ts",

@@ -10,24 +10,28 @@ import {
 } from "@/components/ui/link-tabs";
 
 /**
- * The module page's two views, Records and Reports, with their counts
- * (DC1). They are links: each view has its own address. On a phone they sit
- * under the title (DC12).
+ * The module page's views, Records, Reports (DC1) and its module sheets
+ * (docs/specs/sheets.md P2), with their counts. They are links: each view
+ * has its own address. On a phone they sit under the title (DC12).
  */
 export function ModulePageSwitch({
   moduleName,
-  reports,
+  view,
   recordsHref,
   reportsHref,
+  sheetsHref,
   recordCount,
   reportCount,
+  sheetCount,
 }: {
   moduleName: string;
-  reports: boolean;
+  view: "records" | "reports" | "sheets";
   recordsHref: string;
   reportsHref: string;
+  sheetsHref: string;
   recordCount: number | null;
   reportCount: number | null;
+  sheetCount: number | null;
 }) {
   const count = (value: number | null) =>
     value === null ? null : (
@@ -65,8 +69,10 @@ export function ModulePageSwitch({
       data-slot="tabs-list"
       className={list}
     >
-      {tab("Records", recordsHref, recordCount, !reports)}
-      {tab("Reports", reportsHref, reportCount, reports)}
+      {tab("Records", recordsHref, recordCount, view === "records")}
+      {tab("Reports", reportsHref, reportCount, view === "reports")}
+      {/* A sheet count of 0 shows no number, as the record's Sheets tab. */}
+      {tab("Sheets", sheetsHref, sheetCount || null, view === "sheets")}
     </nav>
   );
 }

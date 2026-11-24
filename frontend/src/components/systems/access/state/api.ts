@@ -202,6 +202,25 @@ export function deleteAccessUser(
   });
 }
 
+/**
+ * How many of a person's private sheets open to their records' readers when
+ * the person is disabled or removed (sheets spec L5, D3.2): a count only,
+ * administrator only.
+ */
+export function getWorksheetImpact(
+  userId: string,
+  options: RequestOptions = {},
+): Promise<number> {
+  return apiFetch(
+    `${userPath(userId)}/worksheet-impact`,
+    z
+      .object({ opening_count: z.number().int().min(0) })
+      .strict()
+      .transform((wire) => wire.opening_count),
+    { cache: "no-store", signal: options.signal },
+  );
+}
+
 export function restoreAccessUser(
   userId: string,
   options: RequestOptions = {},

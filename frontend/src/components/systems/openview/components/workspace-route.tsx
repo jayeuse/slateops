@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
+import { lazy, Suspense } from "react";
 import Link from "next/link";
 import { Alert } from "@/components/ui/alert";
 import { usePathname, useSearchParams } from "next/navigation";
@@ -9,10 +9,13 @@ import { parseOpenViewUrl } from "../domain/model";
 import { OpenViewQuerySync } from "./openview-query-sync";
 import { OpenViewLoading } from "./openview-skeletons";
 import ServerBackedDashboards from "./server-backed-dashboards";
+import { MySheets } from "./my-sheets";
 import { ReportLinkRedirect } from "./report-link-redirect";
 import ServerBackedViewsWorkspace, {
   OpenViewHeader,
 } from "./server-backed-views-workspace";
+
+const SheetPage = lazy(() => import("./sheet-page"));
 
 function OpenViewRouteContent() {
   const pathname = usePathname();
@@ -21,12 +24,21 @@ function OpenViewRouteContent() {
   const isLegacySampleRecordLink = Boolean(
     urlState.section === "views" && urlState.record?.startsWith("sample-"),
   );
-  const section = isLegacySampleRecordLink ? null : urlState.section;
+  // A sheet's own address (P6): its page is its own chunk.
+  const sheetAddress = query.get("sheet") !== null;
+  const section =
+    isLegacySampleRecordLink || sheetAddress ? null : urlState.section;
   // On the module page a file dropped beside the record Files tab opens
   // nothing (DR-SI-7.4).
   usePageFileDropGuard(section === "views");
   let content;
-  if (section === "views")
+  if (sheetAddress)
+    content = (
+      <Suspense fallback={<OpenViewLoading />}>
+        <SheetPage sheetId={query.get("sheet") ?? ""} />
+      </Suspense>
+    );
+  else if (section === "views")
     content = (
       <ServerBackedViewsWorkspace invalidUrl={Boolean(urlState.invalid)} />
     );
@@ -34,6 +46,8 @@ function OpenViewRouteContent() {
   // with the builder's saved-chart list.
   else if (section === "dashboards" || section === "charts")
     content = <ServerBackedDashboards />;
+  // My sheets reads its own list, with no records.read and no stream (P4).
+  else if (section === "sheets") content = <MySheets />;
   // The Reports page is gone (DC8, DC9): its links open a module page's
   // Reports view.
   else if (section === "reports")

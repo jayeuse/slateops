@@ -86,6 +86,14 @@ export function LifecyclePurgeReview({
       <p className="text-sm" role="status">
         {summary}
       </p>
+      {/* Sheets go with their record or module: a count, never titles (sheets F2). */}
+      {impact.worksheet_count ? (
+        <p className="text-sm">
+          {impact.worksheet_count === 1
+            ? "1 sheet will be removed."
+            : `${impact.worksheet_count} sheets will be removed.`}
+        </p>
+      ) : null}
       <p className="text-muted-foreground text-sm break-words">
         Last successful backup:{" "}
         {last_successful_backup_at === null

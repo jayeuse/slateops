@@ -1,0 +1,1147 @@
+import { z } from "zod";
+import {
+  ApiError,
+  apiContractError,
+  apiFetch,
+  apiRequest,
+  keepRequestId,
+} from "@/lib/api";
+import { requestSessionRecheck } from "@/lib/auth-api";
+import { openViewReadFetch } from "./openview-access";
+
+// Sheet routes (docs/specs/sheets.md D10). Code says "worksheet"; users read
+// "sheet" (P7). Add routes here only as a unit needs them.
+
+const uuid = z.string().uuid();
+const timestamp = z.iso.datetime({ offset: true });
+const columnKey = z.string().regex(/^c[0-9a-z]{1,8}$/);
+const places = z.number().int().min(0).max(18);
+const totalFunction = z.enum(["sum", "average", "min", "max", "count"]);
+
+const worksheetLevelSchema = z.enum(["owner", "edit", "view"]);
+export type WorksheetLevel = z.output<typeof worksheetLevelSchema>;
+
+const summaryFields = {
+  id: uuid,
+  record_id: uuid.nullable(),
+  module_id: uuid.nullable(),
+  title: z.string().min(1).max(200),
+  owner: z.object({ id: uuid, display_name: z.string() }).strict(),
+  state: z.enum(["private", "open"]),
+  my_level: worksheetLevelSchema,
+  live_row_count: z.number().int().min(0),
+  revision: z.number().int().min(0),
+  updated_at: timestamp,
+  is_deleted: z.boolean(),
+  deleted_at: timestamp.nullable(),
+  // The record's title, or the module's name for a module sheet.
+  anchor_title: z.string(),
+  module_name: z.string(),
+  // Whether the owner's sheet has a live share; null for anyone else.
+  shared: z.boolean().nullable(),
+  // The group whose share alone gives the viewer the sheet, else null.
+  access_group: z.string().nullable(),
+};
+
+type SummaryWire = z.output<z.ZodObject<typeof summaryFields>>;
+
+function toSummary(wire: SummaryWire) {
+  return {
+    id: wire.id,
+    recordId: wire.record_id,
+    moduleId: wire.module_id,
+    title: wire.title,
+    owner: { id: wire.owner.id, displayName: wire.owner.display_name },
+    state: wire.state,
+    myLevel: wire.my_level,
+    liveRowCount: wire.live_row_count,
+    revision: wire.revision,
+    updatedAt: wire.updated_at,
+    isDeleted: wire.is_deleted,
+    deletedAt: wire.deleted_at,
+    anchorTitle: wire.anchor_title,
+    moduleName: wire.module_name,
+    shared: wire.shared,
+    accessGroup: wire.access_group,
+  };
+}
+
+export type WorksheetSummary = ReturnType<typeof toSummary>;
+
+const summarySchema = z.object(summaryFields).strict().transform(toSummary);
+
+// The structure as the viewer may see it (D1.7, D14 S1).
+const columnBase = { key: columnKey, name: z.string().max(150) };
+const columnSchema = z.union([
+  z
+    .object({
+      ...columnBase,
+      type: z.enum([
+        "text",
+        "long_text",
+        "email",
+        "url",
+        "number",
+        "int",
+        "boolean",
+        "date",
+        "datetime",
+        "user",
+      ]),
+    })
+    .strict(),
+  z
+    .object({
+      ...columnBase,
+      type: z.literal("decimal"),
+      decimal: z.object({ places, currency: z.boolean() }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      ...columnBase,
+      type: z.literal("select"),
+      select: z
+        .object({
+          options: z
+            .array(
+              z
+                .object({
+                  id: z.string().regex(/^o[0-9a-z]{1,8}$/),
+                  label: z.string().max(100),
+                })
+                .strict(),
+            )
+            .min(1),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      ...columnBase,
+      type: z.literal("link"),
+      link: z.object({ moduleId: uuid }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      ...columnBase,
+      type: z.literal("lookup"),
+      lookup: z.object({ linkKey: columnKey, fieldId: uuid }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      ...columnBase,
+      type: z.literal("computed"),
+      computed: z
+        .object({
+          // The stored form names keys and may be longer than the typed
+          // text; the contract allows 2,000 characters (D7.1).
+          expression: z.string().min(1).max(2000),
+          places: places.nullable().optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  // A From another sheet column: the full options when the viewer can see
+  // the source sheet, or its key and name with the no-access mark when not;
+  // never both, never neither (D14 S1).
+  z
+    .object({
+      ...columnBase,
+      type: z.literal("sheet_lookup"),
+      sheet_lookup: z
+        .object({
+          sourceWorksheetId: uuid,
+          sourceColumnKey: columnKey,
+          linkKey: columnKey,
+          sourceLinkKey: columnKey,
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      ...columnBase,
+      type: z.literal("sheet_lookup"),
+      state: z.literal("no_access"),
+    })
+    .strict(),
+]);
+
+const structureSchema = z
+  .object({
+    structureVersion: z.number().int(),
+    nextColumnSeq: z.number().int().min(1),
+    columns: z.array(columnSchema),
+    groups: z.array(
+      z
+        .object({ name: z.string().max(150), keys: z.array(columnKey).min(1) })
+        .strict(),
+    ),
+    // The server checks that each key is a column key; the contract names only
+    // the function.
+    totals: z.record(z.string(), totalFunction),
+  })
+  .strict();
+
+export type WorksheetStructure = z.output<typeof structureSchema>;
+
+const detailSchema = z
+  .object({
+    ...summaryFields,
+    structure: structureSchema,
+    etag: z.string().min(1),
+    created_at: timestamp,
+  })
+  .strict()
+  .transform((wire) => ({
+    ...toSummary(wire),
+    structure: wire.structure,
+    etag: wire.etag,
+    createdAt: wire.created_at,
+  }));
+
+export type WorksheetDetail = z.output<typeof detailSchema>;
+
+const pageSchema = z
+  .object({
+    items: z.array(summarySchema),
+    pagination: z
+      .object({
+        limit: z.number().int().min(1).max(100),
+        offset: z.number().int().min(0),
+        count: z.number().int().min(0),
+        total: z.number().int().min(0),
+        has_more: z.boolean(),
+        total_is_capped: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict();
+
+/** One person's sheets, complete (route 1). */
+export type MyWorksheets = { items: WorksheetSummary[]; total: number };
+
+const MY_SHEETS_PAGE = 100;
+// A bound on the read, so a server that keeps answering has_more cannot loop it.
+const MY_SHEETS_MAX_PAGES = 50;
+
+type SheetPage = z.output<typeof pageSchema>;
+
+/** Reads every page of a sheet list, newest change first. */
+async function readEveryPage(
+  read: (query: URLSearchParams) => Promise<SheetPage>,
+  deleted: "exclude" | "only" = "exclude",
+): Promise<MyWorksheets> {
+  const items: WorksheetSummary[] = [];
+  let total = 0;
+  for (let page = 0; page < MY_SHEETS_MAX_PAGES; page += 1) {
+    const result = await read(
+      new URLSearchParams({
+        limit: String(MY_SHEETS_PAGE),
+        offset: String(items.length),
+        sort_by: "updated_at",
+        sort_order: "desc",
+        deleted,
+      }),
+    );
+    items.push(...result.items);
+    total = result.pagination.total;
+    if (!result.pagination.has_more || result.items.length === 0) break;
+  }
+  // Past the bound the list is its newest 5,000 sheets, and `total` says how
+  // many there are; the screen says so (parent decision, N5).
+  return { items, total };
+}
+
+/**
+ * My sheets (route 1): the sheets the person owns or that are shared with
+ * them, or with `deleted: "only"` their own deleted sheets. It reads every
+ * page, so the screen can count and filter the whole list. It needs no
+ * records.read, so it does not report to the OpenView access latch.
+ */
+export function listMyWorksheets(options: {
+  deleted: "exclude" | "only";
+  signal?: AbortSignal;
+}): Promise<MyWorksheets> {
+  return readEveryPage(
+    (query) =>
+      apiFetch(`/worksheets?${query}`, pageSchema, {
+        cache: "no-store",
+        signal: options.signal,
+      }),
+    options.deleted,
+  );
+}
+
+/** The sheets on a record that the person can see (route 2, Sheets tab). */
+export function listRecordWorksheets(
+  recordId: string,
+  signal?: AbortSignal,
+): Promise<MyWorksheets> {
+  return readEveryPage((query) =>
+    openViewReadFetch(
+      `/records/${encodeURIComponent(recordId)}/worksheets?${query}`,
+      pageSchema,
+      { cache: "no-store", signal },
+    ),
+  );
+}
+
+/** The module sheets that the person can see (route 2a, module page). */
+export function listModuleWorksheets(
+  moduleId: string,
+  signal?: AbortSignal,
+): Promise<MyWorksheets> {
+  return readEveryPage((query) =>
+    openViewReadFetch(
+      `/modules/${encodeURIComponent(moduleId)}/worksheets?${query}`,
+      pageSchema,
+      { cache: "no-store", signal },
+    ),
+  );
+}
+
+const createSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    recordId: uuid.optional(),
+    moduleId: uuid.optional(),
+  })
+  .refine((input) => Boolean(input.recordId) !== Boolean(input.moduleId));
+
+/** Where a new sheet's columns (and a copy's rows) come from (D9.5, X6). */
+export type WorksheetSource =
+  | { kind: "blank" }
+  | { kind: "copy" | "structure"; worksheetId: string }
+  | {
+      kind: "template";
+      /** The template file as read; the server validates it again. */
+      template: Record<string, unknown>;
+      /** Each link column's module, or null to make it a text column. */
+      moduleMapping: Record<string, string | null>;
+    };
+
+function sourceWire(source: WorksheetSource) {
+  if (source.kind === "blank") return { kind: "blank" };
+  if (source.kind === "template")
+    return {
+      kind: "template",
+      template: source.template,
+      module_mapping: source.moduleMapping,
+    };
+  return { kind: source.kind, worksheet_id: uuid.parse(source.worksheetId) };
+}
+
+/**
+ * A new sheet on exactly one record or one module (route 3); the person who
+ * creates it owns it (C5). Blank by default; a copy, a structure or a
+ * template names its source.
+ */
+export function createWorksheet(
+  raw: { title: string; source?: WorksheetSource } & (
+    | { recordId: string; moduleId?: never }
+    | { moduleId: string; recordId?: never }
+  ),
+): Promise<WorksheetDetail> {
+  const input = createSchema.parse(raw);
+  return apiFetch("/worksheets", detailSchema, {
+    method: "POST",
+    body: JSON.stringify({
+      ...(input.recordId
+        ? { record_id: input.recordId }
+        : { module_id: input.moduleId }),
+      title: input.title,
+      source: sourceWire(raw.source ?? { kind: "blank" }),
+    }),
+  });
+}
+
+/** One sheet the person can see (route 4); a hidden sheet answers 404 (P6). */
+export function getWorksheet(
+  id: string,
+  signal?: AbortSignal,
+): Promise<WorksheetDetail> {
+  return apiFetch(`/worksheets/${encodeURIComponent(id)}`, detailSchema, {
+    cache: "no-store",
+    signal,
+  });
+}
+
+/** The owner restores their deleted sheet while its record is live (route 8). */
+export function restoreWorksheet(id: string): Promise<WorksheetDetail> {
+  return apiFetch(
+    `/worksheets/${encodeURIComponent(id)}/restore`,
+    detailSchema,
+    { method: "POST" },
+  );
+}
+
+// ------------------------------------------------------------------- rows
+
+const jsonValue: z.ZodType<unknown> = z.unknown();
+
+// A cell as the viewer may see it (D10 `Cell`, D7.3): a value, a link, text
+// that matched no record, a state with no value, or a computed cell that
+// cannot be worked out (D7.2).
+const cellSchema = z.union([
+  z.object({ value: jsonValue }).strict(),
+  z.object({ value: z.null(), error: z.string().min(1) }).strict(),
+  z
+    .object({
+      link: z.object({ record_id: uuid, label: z.string() }).strict(),
+    })
+    .strict(),
+  z.object({ unlinked: z.string() }).strict(),
+  z
+    .object({
+      state: z.enum([
+        "no_access",
+        "deleted",
+        "removed",
+        "unavailable",
+        "field_removed",
+        "column_removed",
+        "multiple_matches",
+      ]),
+      // How many source rows matched (multiple_matches, D7.3a).
+      count: z.number().int().min(2).optional(),
+    })
+    .strict(),
+]);
+
+export type WorksheetCell = z.output<typeof cellSchema>;
+export type WorksheetCellState = Extract<
+  WorksheetCell,
+  { state: unknown }
+>["state"];
+
+export const worksheetRowSchema = z
+  .object({
+    id: uuid,
+    revision: z.number().int().min(0),
+    etag: z.string().min(1),
+    position: z.number().int(),
+    cells: z.record(z.string(), cellSchema),
+  })
+  .strict();
+
+export type WorksheetRow = z.output<typeof worksheetRowSchema>;
+
+const totalSchema = z
+  .object({
+    fn: totalFunction,
+    value: z.union([z.number(), z.string(), z.null()]),
+    hidden_count: z.number().int().min(0),
+  })
+  .strict();
+
+export type WorksheetTotal = z.output<typeof totalSchema>;
+
+const rowPageSchema = z
+  .object({
+    items: z.array(worksheetRowSchema),
+    pagination: z
+      .object({
+        limit: z.number().int().min(1).max(200),
+        offset: z.number().int().min(0),
+        count: z.number().int().min(0),
+        total: z.number().int().min(0),
+        has_more: z.boolean(),
+      })
+      .strict(),
+    totals: z.record(z.string(), totalSchema),
+  })
+  .strict()
+  .transform(({ items, pagination, totals }) => ({
+    rows: items,
+    total: pagination.total,
+    totals,
+  }));
+
+export type WorksheetRowPage = z.output<typeof rowPageSchema>;
+
+/** The grid reads rows in pages of this size (route 9). */
+export const WORKSHEET_ROW_PAGE = 200;
+
+export type WorksheetRowSort = { key: string; order: "asc" | "desc" };
+
+/**
+ * A page of the sheet's rows (route 9) in one column's order and matching
+ * the search, with the totals of every row (F7). Neither is saved.
+ */
+export function queryWorksheetRows(
+  id: string,
+  query: {
+    sort: WorksheetRowSort | null;
+    search: string;
+    offset: number;
+    signal?: AbortSignal;
+  },
+): Promise<WorksheetRowPage> {
+  const search = query.search.trim();
+  return apiFetch(
+    `/worksheets/${encodeURIComponent(id)}/rows/query`,
+    rowPageSchema,
+    {
+      method: "POST",
+      cache: "no-store",
+      signal: query.signal,
+      body: JSON.stringify({
+        limit: WORKSHEET_ROW_PAGE,
+        offset: query.offset,
+        ...(query.sort ? { sort: query.sort } : {}),
+        ...(search ? { search } : {}),
+      }),
+    },
+  );
+}
+
+// ------------------------------------------------------------------ writes
+
+/** One cell's new value and the cell as the person saw it (F4). */
+export type WorksheetCellChange = { value: unknown; expected: WorksheetCell };
+
+/**
+ * Saves changed cells of one row (route 12). A cell someone else changed
+ * since the person saw it answers 412 `cell_changed` with the newer row
+ * (`cellConflict` reads it); other cells of the row save normally.
+ */
+export function updateWorksheetCells(
+  sheetId: string,
+  rowId: string,
+  cells: Record<string, WorksheetCellChange>,
+): Promise<WorksheetRow> {
+  return apiFetch(
+    `/worksheets/${encodeURIComponent(sheetId)}/rows/${encodeURIComponent(rowId)}`,
+    worksheetRowSchema,
+    { method: "PATCH", body: JSON.stringify({ cells }) },
+  );
+}
+
+/** A blank row at the end of the sheet (route 10). */
+export function createWorksheetRow(sheetId: string): Promise<WorksheetRow> {
+  return apiFetch(
+    `/worksheets/${encodeURIComponent(sheetId)}/rows`,
+    worksheetRowSchema,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+/** Deletes a row at the version the person saw (route 13). */
+export function deleteWorksheetRow(
+  sheetId: string,
+  row: { id: string; etag: string },
+): Promise<null> {
+  return apiFetch(
+    `/worksheets/${encodeURIComponent(sheetId)}/rows/${encodeURIComponent(row.id)}`,
+    z.null(),
+    { method: "DELETE", headers: { "If-Match": row.etag } },
+  );
+}
+
+type StructureColumn = WorksheetStructure["columns"][number];
+type SheetLookupOptions = NonNullable<
+  Extract<StructureColumn, { sheet_lookup: unknown }>["sheet_lookup"]
+>;
+
+/**
+ * A From another sheet column whose source the person cannot see, as route
+ * 4 gives it: no source. Route 6 takes it back unchanged and keeps the
+ * stored column (D14 S1).
+ */
+export type WorksheetHiddenSourceColumn = {
+  key: string;
+  name: string;
+  type: "sheet_lookup";
+  state: "no_access";
+};
+
+/** A column as a person can change it: never a masked one. */
+export type WorksheetColumnInput =
+  | Exclude<StructureColumn, { type: "sheet_lookup" }>
+  | {
+      key: string;
+      name: string;
+      type: "sheet_lookup";
+      sheet_lookup: SheetLookupOptions;
+    };
+
+/** The column as it can be changed, or the masked placeholder it came as. */
+export function editableColumn(
+  column: StructureColumn,
+): WorksheetColumnInput | WorksheetHiddenSourceColumn {
+  if (column.type !== "sheet_lookup") return column;
+  return "sheet_lookup" in column
+    ? {
+        key: column.key,
+        name: column.name,
+        type: "sheet_lookup",
+        sheet_lookup: column.sheet_lookup,
+      }
+    : {
+        key: column.key,
+        name: column.name,
+        type: "sheet_lookup",
+        state: "no_access",
+      };
+}
+
+/**
+ * Saves the whole column list, groups and totals at the sheet's version
+ * (route 6, `If-Match`). A new column's key comes from `nextColumnSeq`.
+ */
+export function saveWorksheetStructure(
+  sheetId: string,
+  etag: string,
+  structure: {
+    columns: (WorksheetColumnInput | WorksheetHiddenSourceColumn)[];
+    groups: WorksheetStructure["groups"];
+    totals: WorksheetStructure["totals"];
+  },
+): Promise<WorksheetDetail> {
+  return apiFetch(
+    `/worksheets/${encodeURIComponent(sheetId)}/structure`,
+    detailSchema,
+    {
+      method: "PUT",
+      headers: { "If-Match": etag },
+      body: JSON.stringify(structure),
+    },
+  );
+}
+
+// ------------------------------------------------- sheet actions (F5)
+
+const titleSchema = z.string().trim().min(1).max(200);
+
+function sheetPath(id: string) {
+  return `/worksheets/${encodeURIComponent(id)}`;
+}
+
+/** The owner renames a sheet that is not open (route 5, `If-Match`). */
+export function renameWorksheet(
+  id: string,
+  etag: string,
+  title: string,
+): Promise<WorksheetDetail> {
+  return apiFetch(sheetPath(id), detailSchema, {
+    method: "PATCH",
+    headers: { "If-Match": etag },
+    body: JSON.stringify({ title: titleSchema.parse(title) }),
+  });
+}
+
+/** The owner deletes a sheet that is not open (route 7, `If-Match`). */
+export function deleteWorksheet(id: string, etag: string): Promise<null> {
+  return apiFetch(sheetPath(id), z.null(), {
+    method: "DELETE",
+    headers: { "If-Match": etag },
+  });
+}
+
+const personRefSchema = z
+  .object({ id: uuid, display_name: z.string() })
+  .strict()
+  .transform((wire) => ({ id: wire.id, displayName: wire.display_name }));
+// A person and a group as the Share dialog shows them: a guest can get View
+// only (V2), and a group says how many live members it has.
+const sharePersonSchema = z
+  .object({ id: uuid, display_name: z.string(), is_guest: z.boolean() })
+  .strict()
+  .transform((wire) => ({
+    id: wire.id,
+    displayName: wire.display_name,
+    isGuest: wire.is_guest,
+  }));
+const shareGroupSchema = z
+  .object({ id: uuid, name: z.string(), member_count: z.number().int().min(0) })
+  .strict()
+  .transform((wire) => ({
+    id: wire.id,
+    name: wire.name,
+    memberCount: wire.member_count,
+  }));
+
+const listPagination = z
+  .object({
+    limit: z.number().int().min(1).max(100),
+    offset: z.number().int().min(0),
+    count: z.number().int().min(0),
+    total: z.number().int().min(0),
+    has_more: z.boolean(),
+    total_is_capped: z.boolean().optional(),
+  })
+  .strict();
+
+const revisionSchema = z
+  .object({
+    id: uuid,
+    row_id: uuid,
+    revision: z.number().int(),
+    action: z.enum(["create", "update", "delete", "restore"]),
+    changed_keys: z.array(z.string()),
+    cells: z.record(z.string(), cellSchema),
+    author: personRefSchema.nullable(),
+    created_at: timestamp,
+  })
+  .strict()
+  .transform((wire) => ({
+    id: wire.id,
+    rowId: wire.row_id,
+    revision: wire.revision,
+    action: wire.action,
+    changedKeys: wire.changed_keys,
+    cells: wire.cells,
+    author: wire.author,
+    createdAt: wire.created_at,
+  }));
+
+export type WorksheetRevision = z.output<typeof revisionSchema>;
+
+/** History reads this many changes at a time. */
+export const WORKSHEET_HISTORY_PAGE = 50;
+
+/** A page of a sheet's row changes, newest first (route 15, H3). */
+export function listWorksheetHistory(
+  id: string,
+  options: { offset: number; signal?: AbortSignal },
+): Promise<{ items: WorksheetRevision[]; hasMore: boolean }> {
+  const query = new URLSearchParams({
+    limit: String(WORKSHEET_HISTORY_PAGE),
+    offset: String(options.offset),
+    sort_order: "desc",
+  });
+  return apiFetch(
+    `${sheetPath(id)}/history?${query}`,
+    z
+      .object({ items: z.array(revisionSchema), pagination: listPagination })
+      .strict()
+      .transform((page) => ({
+        items: page.items,
+        hasMore: page.pagination.has_more,
+      })),
+    { cache: "no-store", signal: options.signal },
+  );
+}
+
+const shareSchema = z
+  .object({
+    id: uuid,
+    subject: z.enum(["user", "group"]),
+    user: sharePersonSchema.nullable(),
+    group: shareGroupSchema.nullable(),
+    level: z.enum(["view", "edit"]),
+    created_at: timestamp,
+  })
+  .strict()
+  .transform((wire, context) => {
+    if (wire.subject === "user")
+      return {
+        id: wire.id,
+        level: wire.level,
+        subject: "user" as const,
+        person: wire.user,
+      };
+    if (!wire.group) {
+      context.addIssue({
+        code: "custom",
+        message: "group share without a group",
+      });
+      return z.NEVER;
+    }
+    return {
+      id: wire.id,
+      level: wire.level,
+      subject: "group" as const,
+      group: wire.group,
+    };
+  });
+
+export type WorksheetShare = z.output<typeof shareSchema>;
+
+const SHARE_PAGE = 100;
+const SHARE_MAX_PAGES = 20;
+
+/** Every live share of the owner's sheet (route 16). */
+export async function listWorksheetShares(
+  id: string,
+  signal?: AbortSignal,
+): Promise<WorksheetShare[]> {
+  const shares: WorksheetShare[] = [];
+  for (let page = 0; page < SHARE_MAX_PAGES; page += 1) {
+    const query = new URLSearchParams({
+      limit: String(SHARE_PAGE),
+      offset: String(shares.length),
+    });
+    const result = await apiFetch(
+      `${sheetPath(id)}/shares?${query}`,
+      z
+        .object({ items: z.array(shareSchema), pagination: listPagination })
+        .strict(),
+      { cache: "no-store", signal },
+    );
+    shares.push(...result.items);
+    if (!result.pagination.has_more || result.items.length === 0) break;
+  }
+  return shares;
+}
+
+export type WorksheetShareTarget =
+  { subject: "user"; id: string } | { subject: "group"; id: string };
+
+/** A View or Edit share to one person or one group (route 17). */
+export function shareWorksheet(
+  id: string,
+  target: WorksheetShareTarget,
+  level: "view" | "edit",
+): Promise<WorksheetShare> {
+  const targetId = uuid.parse(target.id);
+  return apiFetch(`${sheetPath(id)}/shares`, shareSchema, {
+    method: "POST",
+    body: JSON.stringify(
+      target.subject === "user"
+        ? { subject: "user", user_id: targetId, level }
+        : { subject: "group", group_id: targetId, level },
+    ),
+  });
+}
+
+/** A share's new level (route 18). */
+export function changeWorksheetShare(
+  id: string,
+  shareId: string,
+  level: "view" | "edit",
+): Promise<WorksheetShare> {
+  return apiFetch(
+    `${sheetPath(id)}/shares/${encodeURIComponent(shareId)}`,
+    shareSchema,
+    { method: "PATCH", body: JSON.stringify({ level }) },
+  );
+}
+
+/** Removes a share (route 19). */
+export function removeWorksheetShare(
+  id: string,
+  shareId: string,
+): Promise<null> {
+  return apiFetch(
+    `${sheetPath(id)}/shares/${encodeURIComponent(shareId)}`,
+    z.null(),
+    { method: "DELETE" },
+  );
+}
+
+function searchText(query: string) {
+  return new URLSearchParams({ q: query.trim().slice(0, 100) });
+}
+
+const candidatesSchema = z
+  .object({
+    people: z.array(sharePersonSchema),
+    groups: z.array(shareGroupSchema),
+  })
+  .strict();
+
+export type WorksheetShareCandidates = z.output<typeof candidatesSchema>;
+
+/** People the owner can see and the owner's groups (route 25). */
+export function searchWorksheetShareCandidates(
+  id: string,
+  query: string,
+  signal?: AbortSignal,
+): Promise<WorksheetShareCandidates> {
+  return apiFetch(
+    `${sheetPath(id)}/share-candidates?${searchText(query)}`,
+    candidatesSchema,
+    { cache: "no-store", signal },
+  );
+}
+
+/** Up to 20 people an editor may put in a person cell (people route). */
+export function searchWorksheetPeople(
+  id: string,
+  query: string,
+  signal?: AbortSignal,
+): Promise<{ id: string; displayName: string }[]> {
+  return apiFetch(
+    `${sheetPath(id)}/people?${searchText(query)}`,
+    z
+      .object({ people: z.array(personRefSchema) })
+      .strict()
+      .transform((wire) => wire.people),
+    { cache: "no-store", signal },
+  );
+}
+
+export type WorksheetExportFormat = "csv" | "xlsx" | "template";
+
+const EXPORT_FILES: Record<
+  WorksheetExportFormat,
+  { type: RegExp; extension: string }
+> = {
+  csv: { type: /^text\/csv(?:;\s*charset=utf-8)?$/, extension: ".csv" },
+  xlsx: {
+    type: /^application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet$/,
+    extension: ".xlsx",
+  },
+  template: {
+    type: /^application\/json(?:;\s*charset=utf-8)?$/,
+    extension: ".json",
+  },
+};
+
+// The record export's file cap (D9.1).
+const EXPORT_MAX_BYTES = 8 * 1024 * 1024;
+
+const exportErrorSchema = z.object({
+  detail: z.union([
+    z.string(),
+    z.object({ code: z.string(), message: z.string().optional() }),
+  ]),
+});
+
+/**
+ * The sheet as a file (route 20): CSV or Excel with every row, or the
+ * template (columns only). The server writes one security event per file
+ * (X3). A refusal keeps its status and code, never the server's words.
+ */
+export async function exportWorksheet(
+  id: string,
+  format: WorksheetExportFormat,
+  signal?: AbortSignal,
+): Promise<{ blob: Blob; filename: string }> {
+  const response = await apiRequest(`${sheetPath(id)}/export`, {
+    method: "POST",
+    signal,
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ format }),
+  });
+  if (!response.ok) {
+    const parsed = exportErrorSchema.safeParse(
+      await response.json().catch(() => null),
+    );
+    const code =
+      parsed.success && typeof parsed.data.detail !== "string"
+        ? parsed.data.detail.code
+        : undefined;
+    // A session that now needs a second step or another network is checked
+    // again, as the record export does.
+    if (["mfa_required", "ip_not_allowed"].includes(code ?? ""))
+      queueMicrotask(() => {
+        if (!signal?.aborted) requestSessionRecheck();
+      });
+    throw keepRequestId(
+      new ApiError(
+        response.status,
+        "Export could not be downloaded.",
+        undefined,
+        code,
+      ),
+      response,
+    );
+  }
+  const expected = EXPORT_FILES[format];
+  const type = response.headers.get("Content-Type")?.trim().toLowerCase();
+  const filename = response.headers
+    .get("Content-Disposition")
+    ?.match(/^attachment; filename="([A-Za-z0-9][A-Za-z0-9_.-]{0,179})"$/)?.[1];
+  if (
+    response.status !== 200 ||
+    !type ||
+    !expected.type.test(type) ||
+    !filename ||
+    filename.includes("..") ||
+    !filename.endsWith(expected.extension) ||
+    !response.headers
+      .get("Cache-Control")
+      ?.toLowerCase()
+      .split(",")
+      .some((part) => part.trim() === "no-store") ||
+    response.headers.get("X-Content-Type-Options")?.trim().toLowerCase() !==
+      "nosniff"
+  )
+    throw apiContractError(response);
+  const blob = await response.blob();
+  if (blob.size > EXPORT_MAX_BYTES) throw apiContractError(response);
+  return { blob, filename };
+}
+
+// ------------------------------------------------------------ import (F7)
+
+const batchSchema = z
+  .object({
+    rows: z.array(worksheetRowSchema).max(100),
+    // Cells stored empty because they failed their column's rule.
+    emptied: z.number().int().min(0),
+  })
+  .strict();
+
+/**
+ * Adds up to 100 rows in one transaction at the sheet's version (route 14):
+ * a changed column list answers 409 `structure_changed` and adds nothing.
+ * Not idempotent: a batch is never sent twice. The server is the one judge
+ * of cells (R5): with `invalid_cells: "empty"` a cell that fails its
+ * column's rule is stored empty and counted in `emptied`. Import uses it;
+ * paste does not.
+ */
+export async function writeWorksheetRows(
+  sheetId: string,
+  structureRevision: number,
+  creates: Record<string, unknown>[],
+): Promise<{ added: number; emptied: number }> {
+  const result = await apiFetch(
+    `${sheetPath(sheetId)}/rows/batch`,
+    batchSchema,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        structure_revision: structureRevision,
+        creates: creates.map((cells) => ({ cells })),
+        invalid_cells: "empty",
+      }),
+    },
+  );
+  return { added: result.rows.length, emptied: result.emptied };
+}
+
+const importCell = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+
+const importFileSchema = z
+  .object({
+    tabs: z.array(
+      z.object({ index: z.number().int().min(0), name: z.string() }).strict(),
+    ),
+    tab_index: z.number().int().min(0),
+    rows: z.array(z.array(importCell)).max(10_001),
+    formula_without_value_count: z.number().int().min(0),
+    row_count: z.number().int().min(0),
+    column_count: z.number().int().min(0),
+  })
+  .strict()
+  .transform((wire) => ({
+    tabs: wire.tabs,
+    tabIndex: wire.tab_index,
+    rows: wire.rows,
+    formulaWithoutValue: wire.formula_without_value_count,
+  }));
+
+export type WorksheetImportFile = z.output<typeof importFileSchema>;
+
+const importRefusalSchema = z.object({
+  detail: z.union([
+    z.string(),
+    z.record(z.string(), z.unknown()),
+    z.array(z.unknown()),
+  ]),
+});
+
+/**
+ * One tab of an `.xlsx` file, read by the server (route 21): the bytes go as
+ * they are, and the answer holds cell values only (X10). A refusal keeps its
+ * status, code and details (reason, limit), never the server's words.
+ */
+export async function readImportFile(
+  file: Blob,
+  tab: number,
+  signal?: AbortSignal,
+): Promise<WorksheetImportFile> {
+  const response = await apiRequest(`/worksheet-import-files?tab=${tab}`, {
+    method: "POST",
+    signal,
+    cache: "no-store",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: file,
+  });
+  const body: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const parsed = importRefusalSchema.safeParse(body);
+    const detail = parsed.success ? parsed.data.detail : undefined;
+    const details =
+      detail && typeof detail === "object" && !Array.isArray(detail)
+        ? detail
+        : undefined;
+    throw keepRequestId(
+      new ApiError(
+        response.status,
+        "The file could not be read.",
+        details,
+        typeof details?.code === "string" ? details.code : undefined,
+      ),
+      response,
+    );
+  }
+  const parsed = importFileSchema.safeParse(body);
+  if (!parsed.success) throw apiContractError(response);
+  return parsed.data;
+}
+
+export type WorksheetKeyMatch =
+  | { state: "matched"; recordId: string; label: string }
+  | { state: "unmatched" }
+  | { state: "ambiguous" };
+
+const matchesSchema = z
+  .object({
+    results: z.array(
+      z
+        .object({
+          key: z.string(),
+          state: z.enum(["matched", "unmatched", "ambiguous"]),
+          record: z
+            .object({ record_id: uuid, label: z.string() })
+            .strict()
+            .nullable(),
+        })
+        .strict(),
+    ),
+    counts: z
+      .object({
+        matched: z.number().int().min(0),
+        unmatched: z.number().int().min(0),
+        ambiguous: z.number().int().min(0),
+      })
+      .strict(),
+  })
+  .strict();
+
+/**
+ * Matches up to 2,000 keys against one field of a module the person can
+ * read (route 22): only live records they can read count (X8). Answers per
+ * key; the screen counts rows itself.
+ */
+export async function matchImportKeys(query: {
+  moduleId: string;
+  fieldId: string;
+  keys: string[];
+  signal?: AbortSignal;
+}): Promise<Map<string, WorksheetKeyMatch>> {
+  const result = await apiFetch("/worksheet-import-matches", matchesSchema, {
+    method: "POST",
+    signal: query.signal,
+    body: JSON.stringify({
+      module_id: uuid.parse(query.moduleId),
+      field_id: uuid.parse(query.fieldId),
+      keys: query.keys,
+    }),
+  });
+  const found = new Map<string, WorksheetKeyMatch>();
+  for (const item of result.results) {
+    if (item.state === "matched" && item.record)
+      found.set(item.key, {
+        state: "matched",
+        recordId: item.record.record_id,
+        label: item.record.label,
+      });
+    // A match with no record cannot be linked: it counts as not matched.
+    else
+      found.set(item.key, {
+        state: item.state === "ambiguous" ? "ambiguous" : "unmatched",
+      });
+  }
+  return found;
+}

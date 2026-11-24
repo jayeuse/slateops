@@ -30,6 +30,7 @@ from app.systems.access.users.membership import current_membership, is_platform_
 from app.systems.boards.access import readable_board_ids
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.security_policy import ip_allowed, load_workspace_policy
+from app.systems.openview.worksheets.access import visible_worksheet_ids
 from app.systems.platform.events.hub import (
     EventHub,
     EventSubscription,
@@ -300,6 +301,7 @@ def _reauthorize_in_database(principal: EventPrincipal) -> EventViewer | None:
                 board_ids=readable_board_ids(db, user),
                 org_id=org_id,
                 operator=is_platform_operator(db, user.id),
+                worksheet_ids=visible_worksheet_ids(db, user, org_id),
             )
     except MFARequired as error:
         raise HTTPException(

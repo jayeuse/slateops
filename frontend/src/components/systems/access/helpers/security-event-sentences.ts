@@ -37,6 +37,26 @@ export const eventLabels: Record<string, string> = {
   "records.aggregate_snapshots.authorized": "Record summaries authorization",
   "lifecycle.record_purge": "Record deleted forever",
   "job.retry": "Job retry",
+  "worksheets.export.authorized": "Sheet export authorization",
+  "worksheets.opened_on_leave": "Sheets opened on leave",
+  "worksheets.import.file_parsed": "Sheet import file check",
+};
+
+// How a sheet owner left (sheets spec D5.4 `path`).
+const leavePaths: Record<string, string> = {
+  membership_disabled: "when their membership was disabled",
+  account_disabled: "when their account was disabled",
+  membership_removed: "when they were removed from the organization",
+  account_deleted: "when their account was deleted",
+};
+
+// Why an Excel file was refused (sheets spec D5.4 `reason`).
+const importReasons: Record<string, string> = {
+  too_large: "The file is too large.",
+  archive_bounds: "The file expands past the size limit.",
+  macro: "The file has macros.",
+  unreadable: "The file could not be read.",
+  limit: "The file has more rows or columns than a sheet allows.",
 };
 
 export function address(event: AccessSecurityEvent) {
@@ -289,6 +309,50 @@ export function securityEventSentence(
         `${actor} queued a retry for ${kind ? `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind}` : "a"} job.`,
         `Job retry by ${actor}`,
       );
+    }
+    case "worksheets.export.authorized": {
+      const rows = count("row_count");
+      const format =
+        event.metadata.format === "xlsx"
+          ? "Excel"
+          : event.metadata.format === "csv"
+            ? "CSV"
+            : null;
+      const what =
+        event.metadata.format === "template"
+          ? "a sheet template"
+          : `a sheet${rows === null ? "" : ` with ${rows} row${rows === 1 ? "" : "s"}`}${format ? ` as ${format}` : ""}`;
+      return result(
+        `${actor} was authorized to export ${what}.`,
+        `Sheet export by ${actor}`,
+      );
+    }
+    case "worksheets.opened_on_leave": {
+      const opened = count("opened_count");
+      const path =
+        typeof event.metadata.path === "string" &&
+        Object.hasOwn(leavePaths, event.metadata.path)
+          ? ` ${leavePaths[event.metadata.path]}`
+          : "";
+      return result(
+        opened === null
+          ? `${subject}'s private sheets opened read-only${path}.`
+          : opened === 1
+            ? `${subject}'s private sheet opened read-only${path}.`
+            : `${subject}'s ${opened} private sheets opened read-only${path}.`,
+        `Opening ${subject}'s sheets`,
+      );
+    }
+    case "worksheets.import.file_parsed": {
+      const rows = count("row_count");
+      const reason =
+        typeof event.metadata.reason === "string" &&
+        Object.hasOwn(importReasons, event.metadata.reason)
+          ? ` ${importReasons[event.metadata.reason]}`
+          : "";
+      return event.outcome === "success"
+        ? `${actor}'s Excel file was read for a sheet import${rows === null ? "" : `, with ${rows} row${rows === 1 ? "" : "s"}`}.`
+        : `${result("", `Excel file check for ${actor}`)}${reason}`;
     }
     default:
       return "Other security event";

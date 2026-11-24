@@ -28,6 +28,7 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { cn } from "@/lib/utils";
 
 export type RecordInspectionPageSource = {
   kind: "records";
@@ -108,6 +109,12 @@ type LiveRecordInspectorProps = {
    * card's "On this board" (BR64) is the one caller; OpenView passes none.
    */
   leadingTab?: { value: string; label: string; content: ReactNode };
+  /**
+   * A tab after the record's own tabs: the last one, after History, or after
+   * Files when History is hidden. OpenView's Sheets tab (docs/specs/sheets.md
+   * P2) is the one caller; the Boards card sheet passes none.
+   */
+  trailingTab?: { value: string; label: ReactNode; content: ReactNode };
 };
 
 function readableValue(value: unknown): string {
@@ -160,6 +167,7 @@ export function LiveRecordInspector({
   onRetryRecord,
   controls,
   leadingTab,
+  trailingTab,
 }: LiveRecordInspectorProps) {
   const rowPrefix = useId();
   const firstTab = leadingTab?.value ?? "details";
@@ -254,7 +262,13 @@ export function LiveRecordInspector({
             <div className="shrink-0 border-b px-5 py-3">
               <TabsList
                 aria-label="Record sections"
-                className="max-w-full flex-nowrap justify-start overflow-x-auto overflow-y-hidden"
+                className={cn(
+                  "max-w-full flex-nowrap justify-start overflow-x-auto overflow-y-hidden",
+                  // Five tabs scroll sideways on a phone; the edge fades so
+                  // the strip reads as one that scrolls (OpenView only).
+                  trailingTab &&
+                    "max-md:[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] max-md:pr-8",
+                )}
               >
                 {leadingTab ? (
                   <TabsTrigger value={leadingTab.value} className="shrink-0">
@@ -273,6 +287,11 @@ export function LiveRecordInspector({
                 {controls.canReadHistory ? (
                   <TabsTrigger value="history" className="shrink-0">
                     History
+                  </TabsTrigger>
+                ) : null}
+                {trailingTab ? (
+                  <TabsTrigger value={trailingTab.value} className="shrink-0">
+                    {trailingTab.label}
                   </TabsTrigger>
                 ) : null}
               </TabsList>
@@ -346,6 +365,11 @@ export function LiveRecordInspector({
                   manages={controls.managesHistory}
                   version={`${record.updatedAt}:${String(record.isDeleted)}`}
                 />
+              </TabsContent>
+            ) : null}
+            {trailingTab ? (
+              <TabsContent value={trailingTab.value} className={panelClassName}>
+                {trailingTab.content}
               </TabsContent>
             ) : null}
           </Tabs>

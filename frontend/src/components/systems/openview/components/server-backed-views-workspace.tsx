@@ -2,6 +2,8 @@
 import { useDisplayRegion } from "@/components/use-display-region";
 
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -176,6 +178,12 @@ import { useCreatedRecord } from "../hooks/use-created-record";
 import { RecordCreateDialog } from "./record-create-dialog";
 import { ModulePageSwitch } from "./module-page-switch";
 import {
+  ModuleSheets,
+  RecordSheetsPanel,
+  RecordSheetsTabLabel,
+} from "./sheet-lists";
+import { moduleWorksheetsOptions } from "../adapters/worksheet-queries";
+import {
   MakeReportFromViewItem,
   ModuleReports,
   type ReportsRoute,
@@ -218,6 +226,9 @@ const GROUP_PAGE_SIZE = 12;
 /** The module page's search, where focus returns when nothing else fits. */
 const SEARCH_ID = "openview-search";
 const DEFAULT_RECORD_PAGE_SIZE = 25;
+
+// The record panel's Appears in, apart from OpenView's first load (F8).
+const RecordAppearsIn = lazy(() => import("./sheet-appears-in"));
 // The running view action, also the meta line's status. A button that
 // starts one compares against it to show its own busy state (TASK-0061).
 const UPDATING_VIEW = "Updating saved view…";
@@ -398,6 +409,8 @@ export default function ServerBackedViewsWorkspace({
   const requestedChanges = searchParams.get(TEMPORARY_VIEW_PARAM);
   // The page's Reports view, its report and its copy (DC1).
   const reportsTab = searchParams.get("tab") === "reports";
+  // The page's Sheets view lists its module sheets (docs/specs/sheets.md P2).
+  const sheetsTab = searchParams.get("tab") === "sheets";
   const requestedReport = searchParams.get("report");
   const requestedCopy = searchParams.get("copy");
   const resource = useServerViewsResource(requestedModule);
@@ -2692,6 +2705,16 @@ export default function ServerBackedViewsWorkspace({
       : null;
   const reportCountCapped =
     reportCountQuery.data?.pagination.totalIsCapped ?? false;
+  // The Sheets view's count reads the same entry as its list; a failed read
+  // shows no number.
+  const sheetCountQuery = useQuery({
+    ...moduleWorksheetsOptions(moduleId ?? ""),
+    enabled: Boolean(moduleId),
+  });
+  const sheetCount =
+    sheetCountQuery.data && !exportAccessDenied
+      ? sheetCountQuery.data.total
+      : null;
   // The dialog keeps its module and name, so a refused read that hides the
   // catalog does not close it or drop the draft.
   const [reportDialog, setReportDialog] = useState<{
@@ -2870,9 +2893,15 @@ export default function ServerBackedViewsWorkspace({
         : reportCount === 0
           ? "no reports yet"
           : listCountText(reportCount, reportCountCapped, "report", "reports")
-      : recordTotal === null
-        ? null
-        : `${recordTotal} ${recordTotal === 1 ? "record" : "records"}`,
+      : sheetsTab
+        ? sheetCount === null
+          ? null
+          : sheetCount === 0
+            ? "no sheets yet"
+            : `${sheetCount} ${sheetCount === 1 ? "sheet" : "sheets"}`
+        : recordTotal === null
+          ? null
+          : `${recordTotal} ${recordTotal === 1 ? "record" : "records"}`,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -3134,7 +3163,14 @@ export default function ServerBackedViewsWorkspace({
     </>
   ) : null;
   const reportsActive = Boolean(reportsTab && moduleId && moduleName);
-  const pageHref = (tab: "records" | "reports") =>
+  // Only the module the address names: a module the person cannot read keeps
+  // the Records view's notice, never another module's sheets (SH-67).
+  const sheetsActive = Boolean(
+    sheetsTab && moduleId && moduleName && requestedModule === moduleId,
+  );
+  // Reports or Sheets: the Records view's list, statuses and actions rest.
+  const otherViewActive = reportsActive || sheetsActive;
+  const pageHref = (tab: "records" | "reports" | "sheets") =>
     serializeOpenViewUrl({
       section: "views",
       module: moduleId,
@@ -3146,20 +3182,22 @@ export default function ServerBackedViewsWorkspace({
     moduleId && moduleName ? (
       <ModulePageSwitch
         moduleName={moduleName}
-        reports={reportsTab}
+        view={reportsTab ? "reports" : sheetsActive ? "sheets" : "records"}
         recordsHref={pageHref("records")}
         reportsHref={pageHref("reports")}
+        sheetsHref={pageHref("sheets")}
         recordCount={recordTotal}
         reportCount={reportCount}
+        sheetCount={sheetCount}
       />
     ) : null;
   // Item 6: its status holds the meta text's place while it is active, even
   // while a page status ("Refreshing records…") shows over it for a moment.
   const createdStatusActive =
-    Boolean(createdRecord.status) && !reportsActive && !listNotice;
+    Boolean(createdRecord.status) && !otherViewActive && !listNotice;
   // G7 (PR4 screen review): a list change's status takes the meta text's
   // place too, on one line; its words shrink first.
-  const listStatusActive = Boolean(listNotice) && !reportsActive;
+  const listStatusActive = Boolean(listNotice) && !otherViewActive;
   // FX-SR-2b: the one line lies over the meta text only where it has room:
   // below 640px (the header stacks) and from 1280px. Between them the
   // header actions sit beside the title and would cover it, so the status
@@ -3167,7 +3205,8 @@ export default function ServerBackedViewsWorkspace({
   const statusOverMeta = createdStatusActive || listStatusActive;
   const overMetaClassName = "max-sm:invisible xl:invisible";
   // Its "Open record" shows with its words, not over a page status.
-  const createdOpenShown = createdRecord.openable && !reportsActive && !status;
+  const createdOpenShown =
+    createdRecord.openable && !otherViewActive && !status;
   const isAdmin =
     identity.data?.role === "admin" && identity.data.id === verifiedUserId;
   return (
@@ -3175,6 +3214,9 @@ export default function ServerBackedViewsWorkspace({
       <div className="shrink-0">
         <PageHeader
           title={moduleName ?? "Records"}
+          // The actions sit on the title's line, never over the meta line,
+          // where a status lies over the meta text from 1280px (DR-6.1).
+          className="sm:items-start"
           description={
             <span className="relative flex flex-wrap items-center gap-x-2 gap-y-1">
               {/* DR-6.1: an item 6 or list status takes the meta text's
@@ -3191,7 +3233,7 @@ export default function ServerBackedViewsWorkspace({
               {/* DR-1.2: only a view manager can save, so only they see it.
                 It yields with the meta text while an item 6 status shows;
                 Save view still shows the change. */}
-              {dirty && canManageViews && !reportsActive ? (
+              {dirty && canManageViews && !otherViewActive ? (
                 <Badge
                   variant="outline"
                   className={cn(statusOverMeta && overMetaClassName)}
@@ -3220,7 +3262,7 @@ export default function ServerBackedViewsWorkspace({
                     listStatusActive && "min-w-0 max-sm:truncate xl:truncate",
                   )}
                 >
-                  {reportsActive ? (
+                  {otherViewActive ? (
                     ""
                   ) : status ? (
                     status
@@ -3230,7 +3272,7 @@ export default function ServerBackedViewsWorkspace({
                     createdRecord.status
                   )}
                 </span>
-                {listNotice && !reportsActive && !status ? (
+                {listNotice && !otherViewActive && !status ? (
                   // R4-5: with a record sheet open, its header holds the
                   // only Undo; opening a record from the list ends this one
                   // (G8), and an address-opened sheet hides it.
@@ -3270,7 +3312,7 @@ export default function ServerBackedViewsWorkspace({
             </span>
           }
           actions={
-            reportsActive ? (
+            otherViewActive ? (
               pageSwitch
             ) : (
               <>
@@ -3302,6 +3344,13 @@ export default function ServerBackedViewsWorkspace({
           onOpenDialog={openReportDialog}
         />
       ) : null}
+      {sheetsActive && moduleId && moduleName ? (
+        <ModuleSheets
+          key={moduleId}
+          anchor={{ kind: "module", moduleId, moduleName }}
+          canCreate={identity.data ? identity.data.role !== "guest" : false}
+        />
+      ) : null}
       {reportDialog ? (
         <ReportRecipeEditor
           moduleId={reportDialog.moduleId}
@@ -3313,7 +3362,7 @@ export default function ServerBackedViewsWorkspace({
       ) : null}
       {/* Records stay mounted under the Reports view, so their drafts and
           leave guard keep working (DC1). */}
-      <div className={reportsActive ? "hidden" : "contents"}>
+      <div className={otherViewActive ? "hidden" : "contents"}>
         <LoadingRegion
           loading={catalogLoading && !catalog}
           label="Loading OpenView catalog…"
@@ -4167,6 +4216,47 @@ export default function ServerBackedViewsWorkspace({
                         fields={queriedFields}
                         onRetryRecord={() =>
                           setRecordRetry((value) => value + 1)
+                        }
+                        trailingTab={
+                          linkedRecord && moduleId && moduleName
+                            ? {
+                                value: "sheets",
+                                label: (
+                                  <RecordSheetsTabLabel
+                                    recordId={linkedRecord.id}
+                                  />
+                                ),
+                                content: (
+                                  <div className="flex min-w-0 flex-col gap-4">
+                                    <RecordSheetsPanel
+                                      key={linkedRecord.id}
+                                      anchor={{
+                                        kind: "record",
+                                        recordId: linkedRecord.id,
+                                        recordTitle: recordTitle(
+                                          linkedRecord,
+                                          queriedFields,
+                                          draft.presentation.primaryFieldId,
+                                        ),
+                                        moduleName,
+                                      }}
+                                      canCreate={
+                                        identity.data
+                                          ? identity.data.role !== "guest"
+                                          : false
+                                      }
+                                    />
+                                    {/* Appears in loads on first use of the tab (F8). */}
+                                    <Suspense fallback={null}>
+                                      <RecordAppearsIn
+                                        key={linkedRecord.id}
+                                        recordId={linkedRecord.id}
+                                      />
+                                    </Suspense>
+                                  </div>
+                                ),
+                              }
+                            : undefined
                         }
                         controls={
                           moduleId && source

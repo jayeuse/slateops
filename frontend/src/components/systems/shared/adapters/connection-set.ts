@@ -19,9 +19,9 @@ import type {
 } from "../../comms/contract/types";
 import type { WorkspaceInvalidation } from "./invalidation-events";
 import {
-  openWorkspaceEventStream,
-  parseWorkspaceInvalidation,
   type ConnectionFailure,
+  openWorkspaceEventStream,
+  relayedInvalidation,
 } from "./workspace-event-source";
 
 type SseListener = {
@@ -538,24 +538,7 @@ function createSet(context: CommsContext) {
               listener.heartbeat(receipt.data);
         }
         if (message.type === "sse") {
-          const raw = message.payload;
-          if (!raw || typeof raw !== "object" || !("type" in raw)) return;
-          const normalized = raw as WorkspaceInvalidation;
-          const event =
-            normalized.type === "resync"
-              ? { type: "resync" as const }
-              : parseWorkspaceInvalidation(
-                  "invalidate",
-                  JSON.stringify({
-                    entity: normalized.entity,
-                    ...(normalized.moduleId
-                      ? { module_id: normalized.moduleId }
-                      : {}),
-                    ...(normalized.boardId
-                      ? { board_id: normalized.boardId }
-                      : {}),
-                  }),
-                );
+          const event = relayedInvalidation(message.payload);
           if (event) for (const listener of sseListeners) listener.event(event);
         }
       }

@@ -3,6 +3,7 @@ import {
   boundedCatalogOptions,
   moduleWorkspaceOptions,
   departmentsOptions,
+  openViewKeysForEntity,
 } from "../../../src/components/systems/openview/adapters/openview-queries";
 import { QueryClient } from "@tanstack/react-query";
 
@@ -97,4 +98,13 @@ test("module workspace leaves field and saved-view continuations for the load-mo
     client.clear();
     globalThis.fetch = originalFetch;
   }
+});
+
+test("a sheets event refreshes My sheets and the record and module sheet lists", () => {
+  expect(openViewKeysForEntity("worksheets")).toEqual([
+    ["openview", "worksheets", "mine"],
+    ["openview", "worksheets", "record"],
+    ["openview", "worksheets", "module"],
+    ["openview", "worksheets", "appears"],
+  ]);
 });
