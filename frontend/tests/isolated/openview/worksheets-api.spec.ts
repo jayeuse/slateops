@@ -817,3 +817,74 @@ test("a long stored expression reads, and a save sends a hidden-source column ba
     mock.restore();
   }
 });
+
+test("a sheet list longer than the read's bound fails instead of showing part of it", async () => {
+  let offset = 0;
+  const mock = installFetch((input) => {
+    offset = Number(
+      new URL(String(input), "http://localhost").searchParams.get("offset"),
+    );
+    return json({
+      items: Array.from({ length: 100 }, (_, index) =>
+        wireSummary(offset + index + 1),
+      ),
+      pagination: wirePagination({
+        limit: 100,
+        offset,
+        count: 100,
+        total: 5_100,
+        has_more: true,
+      }),
+    });
+  });
+  try {
+    await expect(listMyWorksheets({ deleted: "exclude" })).rejects.toThrow(
+      "The sheet list is longer than one read allows",
+    );
+    expect(mock.requests).toHaveLength(50);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("a From another sheet column carries its options or the no-access mark, never both or neither", async () => {
+  const detail = (column: Record<string, unknown>) => ({
+    ...wireSummary(1),
+    structure: {
+      structureVersion: 1,
+      nextColumnSeq: 3,
+      columns: [
+        { key: "c1", name: "Student", type: "link", link: { moduleId } },
+        { key: "c2", name: "Grade in 1A", type: "sheet_lookup", ...column },
+      ],
+      groups: [],
+      totals: {},
+    },
+    etag: '"s:1"',
+    created_at: "2026-11-01T08:30:00Z",
+  });
+  const options = {
+    sheet_lookup: {
+      sourceWorksheetId: sheetId(9),
+      sourceColumnKey: "c4",
+      linkKey: "c1",
+      sourceLinkKey: "c1",
+    },
+  };
+  for (const [column, accepted] of [
+    [options, true],
+    [{ state: "no_access" }, true],
+    [{ ...options, state: "no_access" }, false],
+    [{}, false],
+  ] as const) {
+    const mock = installFetch(() => json(detail(column)));
+    try {
+      const read = getWorksheet(sheetId(1));
+      if (accepted)
+        expect((await read).structure.columns[1]?.name).toBe("Grade in 1A");
+      else await expect(read).rejects.toThrow(ApiContractError);
+    } finally {
+      mock.restore();
+    }
+  }
+});

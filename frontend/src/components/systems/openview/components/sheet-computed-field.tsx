@@ -77,9 +77,7 @@ function useExpressionColumns(sheet: WorksheetDetail): ExpressionColumn[] {
   const sources = [
     ...new Set(
       columns.flatMap((column) =>
-        column.type === "sheet_lookup" && column.sheet_lookup
-          ? [column.sheet_lookup.sourceWorksheetId]
-          : [],
+        "sheet_lookup" in column ? [column.sheet_lookup.sourceWorksheetId] : [],
       ),
     ),
   ];
@@ -114,7 +112,7 @@ function useExpressionColumns(sheet: WorksheetDetail): ExpressionColumn[] {
     }
     if (column.type === "sheet_lookup") {
       // A hidden source still has a name a computed column can read (K9).
-      if (!column.sheet_lookup)
+      if (!("sheet_lookup" in column))
         return [{ key: column.key, name: column.name, numeric: true }];
       const type = sourceType.get(
         `${column.sheet_lookup.sourceWorksheetId}:${column.sheet_lookup.sourceColumnKey}`,

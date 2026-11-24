@@ -25,6 +25,7 @@ import type {
 } from "../adapters/worksheets-api";
 import {
   cellView,
+  datetimeValue,
   editInput,
   inputValue,
   type GridColumn,
@@ -213,7 +214,11 @@ export function SheetRowForm({
       const before = editInput(column, seen.cells[column.key], format);
       if (drafts[column.key] === before) continue;
       changes[column.key] = {
-        value: inputValue(column, drafts[column.key] ?? ""),
+        // Dates and times as the grid sends them (organization time zone).
+        value:
+          column.type === "datetime"
+            ? datetimeValue(drafts[column.key] ?? "", format.timezone)
+            : inputValue(column, drafts[column.key] ?? ""),
         expected: seen.cells[column.key] ?? { value: null },
       };
       texts[column.key] = drafts[column.key] ?? "";
@@ -390,6 +395,13 @@ export function SheetRowForm({
                       : "h-11 min-h-11 text-base"
                   }
                   inputMode={column.numeric ? "decimal" : undefined}
+                  type={
+                    column.type === "date"
+                      ? "date"
+                      : column.type === "datetime"
+                        ? "datetime-local"
+                        : "text"
+                  }
                   value={drafts[column.key] ?? ""}
                   onChange={(event) =>
                     setDrafts((current) => ({

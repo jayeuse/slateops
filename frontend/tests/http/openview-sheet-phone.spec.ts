@@ -283,3 +283,30 @@ test("an editor picks a person and deletes a row from the row form", async ({
   );
   expect(writes.deletes).toEqual([{ rowId: second.id, ifMatch: second.etag }]);
 });
+
+test("scrolled sideways, a column group's name stays clear of the pinned column", async ({
+  page,
+}) => {
+  const { grid } = await openSheet(page, "view");
+  const pane = page.getByRole("region", { name: "Class roster rows" });
+  const first = grid.getByRole("columnheader", {
+    name: "Student",
+    exact: true,
+  });
+  const band = grid.getByRole("columnheader", { name: "Prelim" });
+  await expect(band).toBeVisible();
+  await pane.evaluate((element) => {
+    element.scrollLeft = 200;
+  });
+  const pinned = await first.boundingBox();
+  const label = await band.getByText("Prelim").boundingBox();
+  if (!pinned || !label) throw new Error("The headers have no box");
+  // The name moves right with the pane instead of under (or over) Student.
+  expect(label.x).toBeGreaterThanOrEqual(pinned.x + pinned.width);
+  // In the band row, the pinned corner covers what scrolls beneath it.
+  const corner = await page.evaluate(
+    ([x, y]) => document.elementFromPoint(x, y)?.textContent ?? "",
+    [pinned.x + pinned.width - 8, label.y + label.height / 2],
+  );
+  expect(corner).not.toContain("Prelim");
+});

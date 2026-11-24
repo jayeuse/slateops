@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { ApiError } from "@/lib/api";
+import { formatDateTimeLocal } from "@/lib/date-time";
+import { Temporal } from "@js-temporal/polyfill";
 import {
   WORKSHEET_ROW_PAGE,
+  worksheetRowSchema,
   type WorksheetCell,
   type WorksheetCellState,
   type WorksheetRow,
@@ -297,13 +300,27 @@ export function rowQueryKey(query: {
 export type RowStore = {
   queryKey: string;
   total: number | null;
+  /** The totals cover every row, whatever the search: they outlive a key. */
+  totals: Readonly<Record<string, WorksheetTotal>>;
+  /** The request number of the answer that set `total` and `totals`. */
+  answered: number;
   pages: Readonly<Record<number, readonly WorksheetRow[]>>;
   /** The request number of each stored page; an older answer is stale. */
   sequences: Readonly<Record<number, number>>;
 };
 
-export function emptyRowStore(queryKey: string): RowStore {
-  return { queryKey, total: null, pages: {}, sequences: {} };
+export function emptyRowStore(
+  queryKey: string,
+  totals: RowStore["totals"] = {},
+): RowStore {
+  return {
+    queryKey,
+    total: null,
+    totals,
+    answered: -1,
+    pages: {},
+    sequences: {},
+  };
 }
 
 /**
@@ -315,17 +332,35 @@ export function storeRowPage(
   store: RowStore,
   queryKey: string,
   offset: number,
-  page: { rows: readonly WorksheetRow[]; total: number },
+  page: {
+    rows: readonly WorksheetRow[];
+    total: number;
+    totals?: Record<string, WorksheetTotal>;
+  },
   sequence = 0,
 ): RowStore {
   if (queryKey !== store.queryKey) return store;
   if (sequence < (store.sequences[offset] ?? -1)) return store;
+  // The row count and totals come from the newest answer of any page: an
+  // older answer for another page must not bring back older ones.
+  const newest = sequence >= store.answered;
   return {
-    queryKey,
-    total: page.total,
+    ...store,
+    total: newest ? page.total : store.total,
+    totals: newest && page.totals ? page.totals : store.totals,
+    answered: newest ? sequence : store.answered,
     pages: { ...store.pages, [offset]: page.rows },
     sequences: { ...store.sequences, [offset]: sequence },
   };
+}
+
+/** Where a row is in the loaded pages, by its id; -1 when not loaded. */
+export function rowIndex(store: RowStore, rowId: string): number {
+  for (const [offset, rows] of Object.entries(store.pages)) {
+    const at = rows.findIndex((row) => row.id === rowId);
+    if (at >= 0) return Number(offset) + at;
+  }
+  return -1;
 }
 
 export function rowAt(
@@ -384,23 +419,34 @@ export function editInput(
       }).format(number);
   }
   if (typeof value === "boolean") return value ? "Yes" : "No";
+  // A date and time is edited in the organization's time zone (O3).
+  if (column.type === "datetime")
+    return formatDateTimeLocal(value, format.timezone);
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
+/**
+ * The instant a "date and time" edit names in the organization's time zone,
+ * sent as an ISO value with its offset; a time that a clock change skips
+ * moves forward, as the clock does. Empty clears the cell.
+ */
+export function datetimeValue(draft: string, timezone: string): string | null {
+  if (!draft.trim()) return null;
+  return Temporal.PlainDateTime.from(draft)
+    .toZonedDateTime(timezone, { disambiguation: "compatible" })
+    .toInstant()
+    .toString();
+}
+
 const conflictSchema = z.object({
+  code: z.literal("cell_changed"),
   keys: z.array(z.string()),
   // Who changed the cells, when the editor can see them (F4); else null.
   changed_by: z
     .object({ id: z.string(), display_name: z.string() })
     .nullable()
     .optional(),
-  current: z.object({
-    id: z.string(),
-    revision: z.number(),
-    etag: z.string(),
-    position: z.number(),
-    cells: z.record(z.string(), z.unknown()),
-  }),
+  current: worksheetRowSchema,
 });
 
 /** A 412 `cell_changed`: the cells someone else changed, and the newer row. */
@@ -414,7 +460,7 @@ export function cellConflict(error: unknown): {
   return parsed.success
     ? {
         keys: parsed.data.keys,
-        current: parsed.data.current as WorksheetRow,
+        current: parsed.data.current,
         changedBy: parsed.data.changed_by?.display_name ?? null,
       }
     : null;

@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, Lock, Users, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Dialog,
   DialogCloseButton,
@@ -273,14 +274,21 @@ export default function SheetShareDialog({
                 Edit
               </NativeSelectOption>
             </NativeSelect>
-            <Button
-              variant="outline"
-              className="min-h-11"
-              aria-disabled={!chosen || pending || undefined}
-              onClick={() => void share()}
+            <DisabledReason
+              stable
+              reason={
+                !chosen && !pending ? "Choose a person or group first." : null
+              }
             >
-              Share
-            </Button>
+              <Button
+                variant="outline"
+                className="min-h-11"
+                aria-disabled={pending || undefined}
+                onClick={() => void share()}
+              >
+                Share
+              </Button>
+            </DisabledReason>
           </div>
         </div>
         {error ? (
@@ -311,9 +319,11 @@ export default function SheetShareDialog({
             return (
               <li
                 key={item.id}
-                className="flex min-h-14 items-center gap-3 px-3 py-2"
+                className="flex min-h-14 flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2"
               >
                 <Avatar group={item.subject === "group"} name={name} />
+                {/* Below sm the level and Remove take a line of their own,
+                    under the name. */}
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate text-sm font-medium">{name}</span>
                   {detail ? (
@@ -322,39 +332,41 @@ export default function SheetShareDialog({
                     </span>
                   ) : null}
                 </span>
-                <NativeSelect
-                  aria-label={`Level for ${name}`}
-                  value={item.level}
-                  disabled={pending}
-                  onChange={(event) =>
-                    void run(name, () =>
-                      changeWorksheetShare(
-                        sheet.id,
-                        item.id,
-                        event.target.value as Level,
-                      ),
-                    )
-                  }
-                  className="w-24 [&_select]:h-11 xl:[&_select]:h-8"
-                >
-                  <NativeSelectOption value="view">View</NativeSelectOption>
-                  <NativeSelectOption value="edit" disabled={guest}>
-                    Edit
-                  </NativeSelectOption>
-                </NativeSelect>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={`Remove ${name}`}
-                  className="size-11 shrink-0 xl:size-8"
-                  onClick={() =>
-                    void run(name, () =>
-                      removeWorksheetShare(sheet.id, item.id),
-                    )
-                  }
-                >
-                  <X aria-hidden="true" />
-                </Button>
+                <div className="flex items-center gap-2 max-sm:w-full max-sm:pl-11">
+                  <NativeSelect
+                    aria-label={`Level for ${name}`}
+                    value={item.level}
+                    disabled={pending}
+                    onChange={(event) =>
+                      void run(name, () =>
+                        changeWorksheetShare(
+                          sheet.id,
+                          item.id,
+                          event.target.value as Level,
+                        ),
+                      )
+                    }
+                    className="w-24 max-sm:flex-1 [&_select]:h-11 xl:[&_select]:h-8"
+                  >
+                    <NativeSelectOption value="view">View</NativeSelectOption>
+                    <NativeSelectOption value="edit" disabled={guest}>
+                      Edit
+                    </NativeSelectOption>
+                  </NativeSelect>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Remove ${name}`}
+                    className="size-11 shrink-0 xl:size-8"
+                    onClick={() =>
+                      void run(name, () =>
+                        removeWorksheetShare(sheet.id, item.id),
+                      )
+                    }
+                  >
+                    <X aria-hidden="true" />
+                  </Button>
+                </div>
               </li>
             );
           })}

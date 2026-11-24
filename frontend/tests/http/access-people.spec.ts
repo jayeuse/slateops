@@ -530,7 +530,7 @@ test("the disable and delete confirmations count the private sheets that will op
   await sheet.getByRole("button", { name: "Disable" }).click();
   const disable = page.getByRole("alertdialog", { name: "Disable Ben Cruz?" });
   await expect(disable).toContainText(
-    "3 private sheets will open to everyone who can read their records.",
+    "3 private sheets will open read-only to everyone who can read their records or modules.",
   );
   await disable.getByRole("button", { name: "Cancel" }).click();
 

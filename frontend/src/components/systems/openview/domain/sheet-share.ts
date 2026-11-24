@@ -54,7 +54,9 @@ type Place = Pick<WorksheetDetail, "recordId" | "anchorTitle" | "moduleName">;
 
 /** What a reader must be able to read: the record, or a module sheet's module. */
 function readable(sheet: Place) {
-  return sheet.recordId ? `${sheet.anchorTitle}'s record` : sheet.moduleName;
+  return sheet.recordId
+    ? `${sheet.anchorTitle}'s record`
+    : `the ${sheet.moduleName} module`;
 }
 
 /** The two lines under the Share dialog's list (V4, V8). */

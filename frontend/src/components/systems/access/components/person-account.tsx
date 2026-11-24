@@ -218,8 +218,8 @@ function useOpeningSheets(
 
 function openingSheetsLine(count: number) {
   return count === 1
-    ? "1 private sheet will open to everyone who can read its record."
-    : `${count} private sheets will open to everyone who can read their records.`;
+    ? "1 private sheet will open read-only to everyone who can read its record or module."
+    : `${count} private sheets will open read-only to everyone who can read their records or modules.`;
 }
 
 /** Sending an invitation is the pending person's next step, so it stays in view. */

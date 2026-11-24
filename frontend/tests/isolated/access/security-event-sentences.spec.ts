@@ -434,7 +434,7 @@ const typeRows: {
       metadata: { opened_count: 3, path: "membership_disabled" },
     },
     success:
-      "3 of Jay's private sheets opened read-only when their membership was disabled.",
+      "Jay's 3 private sheets opened read-only when their membership was disabled.",
     unfinished: {
       outcome: "failure",
       sentence: "Opening Jay's sheets failed.",
@@ -651,7 +651,7 @@ const factRows: {
       metadata: { opened_count: 1, path: "membership_removed" },
     },
     sentence:
-      "1 of Jay's private sheets opened read-only when they were removed from the organization.",
+      "Jay's 1 private sheet opened read-only when they were removed from the organization.",
   },
   {
     name: "sheets opened with malformed facts",

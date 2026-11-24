@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  cloneElement,
   lazy,
   Suspense,
   useId,
@@ -12,7 +13,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Input } from "@/components/ui/input";
+import {
+  NativeSelect,
+  NativeSelectOptGroup,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 import { PopoverTitle } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { apiErrorReference } from "@/lib/api-errors";
@@ -515,14 +522,14 @@ function ColumnSettings({
       setProblem(built);
       return;
     }
+    // Add column says why it waits (DisabledReason); a submit by Enter
+    // stops here too.
     if (
       draft.kind === "computed" &&
       !draft.expressionOk &&
       draft.expression !== null
-    ) {
-      setProblem("Fix the expression first.");
+    )
       return;
-    }
     const choice = groupChoice();
     if (typeof choice === "string") {
       setProblem(choice);
@@ -578,19 +585,28 @@ function ColumnSettings({
       onDone();
   };
 
-  const field = (label: string, control: ReactElement, hint?: string) => (
-    <div className="flex flex-col gap-1">
-      <label className="flex flex-col gap-1">
-        <span className="text-xs font-medium">{label}</span>
-        {control}
-      </label>
-      {hint ? (
-        <span className="text-muted-foreground text-xs">{hint}</span>
-      ) : null}
-    </div>
-  );
-  const select =
-    "border-input bg-background h-11 rounded-md border px-2 text-sm xl:h-8";
+  const field = (label: string, control: ReactElement, hint?: string) => {
+    const hintId = `${id}-hint-${label.replace(/\W+/g, "-")}`;
+    return (
+      <div className="flex flex-col gap-1">
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-medium">{label}</span>
+          {hint
+            ? cloneElement(
+                control as ReactElement<{ "aria-describedby"?: string }>,
+                { "aria-describedby": hintId },
+              )
+            : control}
+        </label>
+        {hint ? (
+          <span id={hintId} className="text-muted-foreground text-xs">
+            {hint}
+          </span>
+        ) : null}
+      </div>
+    );
+  };
+  const select = "w-full [&_select]:h-11 xl:[&_select]:h-8";
   const loading = (
     <p className="text-muted-foreground text-xs" role="status">
       Loading…
@@ -623,7 +639,7 @@ function ColumnSettings({
       )}
       {field(
         "Type",
-        <select
+        <NativeSelect
           className={select}
           value={draft.kind}
           disabled={draft.kind === "other"}
@@ -639,23 +655,25 @@ function ColumnSettings({
           }
         >
           {draft.kind === "other" ? (
-            <option value="other">{column?.type}</option>
+            <NativeSelectOption value="other">
+              {column?.type}
+            </NativeSelectOption>
           ) : null}
-          <optgroup label="Values">
+          <NativeSelectOptGroup label="Values">
             {KINDS.slice(0, 11).map((item) => (
-              <option key={item.kind} value={item.kind}>
+              <NativeSelectOption key={item.kind} value={item.kind}>
                 {item.label}
-              </option>
+              </NativeSelectOption>
             ))}
-          </optgroup>
-          <optgroup label="From other data">
+          </NativeSelectOptGroup>
+          <NativeSelectOptGroup label="From other data">
             {KINDS.slice(11).map((item) => (
-              <option key={item.kind} value={item.kind}>
+              <NativeSelectOption key={item.kind} value={item.kind}>
                 {item.label}
-              </option>
+              </NativeSelectOption>
             ))}
-          </optgroup>
-        </select>,
+          </NativeSelectOptGroup>
+        </NativeSelect>,
       )}
       {draft.kind === "decimal" ? (
         <>
@@ -695,18 +713,18 @@ function ColumnSettings({
       {draft.kind === "link"
         ? field(
             "Links to",
-            <select
+            <NativeSelect
               className={select}
               value={draft.linkModule}
               onChange={(event) => update({ linkModule: event.target.value })}
             >
-              <option value="">Choose a module</option>
+              <NativeSelectOption value="">Choose a module</NativeSelectOption>
               {moduleChoices.map((module) => (
-                <option key={module.id} value={module.id}>
+                <NativeSelectOption key={module.id} value={module.id}>
                   {module.name}
-                </option>
+                </NativeSelectOption>
               ))}
-            </select>,
+            </NativeSelect>,
             "Each cell links to one record that you can read.",
           )
         : null}
@@ -714,36 +732,38 @@ function ColumnSettings({
         <>
           {field(
             "From",
-            <select
+            <NativeSelect
               className={select}
               value={draft.lookupFrom}
               onChange={(event) =>
                 update({ lookupFrom: event.target.value, lookupField: "" })
               }
             >
-              <option value="">Choose a link column</option>
+              <NativeSelectOption value="">
+                Choose a link column
+              </NativeSelectOption>
               {linkColumns.map((item) => (
-                <option key={item.key} value={item.key}>
+                <NativeSelectOption key={item.key} value={item.key}>
                   {item.name}
-                </option>
+                </NativeSelectOption>
               ))}
-            </select>,
+            </NativeSelect>,
           )}
           {field(
             "Shows",
-            <select
+            <NativeSelect
               className={select}
               value={draft.lookupField}
               disabled={!fromModule}
               onChange={(event) => update({ lookupField: event.target.value })}
             >
-              <option value="">Choose a field</option>
+              <NativeSelectOption value="">Choose a field</NativeSelectOption>
               {(fields.data?.items ?? []).map((item) => (
-                <option key={item.id} value={item.id}>
+                <NativeSelectOption key={item.id} value={item.id}>
                   {item.name}
-                </option>
+                </NativeSelectOption>
               ))}
-            </select>,
+            </NativeSelect>,
             "Read-only. It shows the record's current value.",
           )}
         </>
@@ -804,7 +824,7 @@ function ColumnSettings({
       ) : null}
       {field(
         "Column group",
-        <select
+        <NativeSelect
           className={select}
           value={draft.group}
           onChange={(event) => {
@@ -817,14 +837,17 @@ function ColumnSettings({
             });
           }}
         >
-          <option value="">No group</option>
+          <NativeSelectOption value="">No group</NativeSelectOption>
           {groups.map((group, index) => (
-            <option key={`${group.name}-${index}`} value={`g${index}`}>
+            <NativeSelectOption
+              key={`${group.name}-${index}`}
+              value={`g${index}`}
+            >
               {group.name}
-            </option>
+            </NativeSelectOption>
           ))}
-          <option value="new">New group…</option>
-        </select>,
+          <NativeSelectOption value="new">New group…</NativeSelectOption>
+        </NativeSelect>,
         draft.removedGroup !== null
           ? `${groups[draft.removedGroup]?.name ?? "The group"} is removed when you save. Its columns stay, without a group.`
           : undefined,
@@ -840,6 +863,9 @@ function ColumnSettings({
                 value={draft.groupName}
                 onChange={(event) => update({ groupName: event.target.value })}
               />,
+              draft.group === "new"
+                ? undefined
+                : "Renames the group for all its columns.",
             )}
           </div>
           {draft.group.startsWith("g") ? (
@@ -862,20 +888,20 @@ function ColumnSettings({
       ) : null}
       {field(
         "Total",
-        <select
+        <NativeSelect
           className={select}
           value={draft.total}
           onChange={(event) => update({ total: event.target.value })}
         >
-          <option value="">None</option>
+          <NativeSelectOption value="">None</NativeSelectOption>
           {TOTALS.filter(([fn]) => fn === "count" || numeric).map(
             ([fn, label]) => (
-              <option key={fn} value={fn}>
+              <NativeSelectOption key={fn} value={fn}>
                 {label}
-              </option>
+              </NativeSelectOption>
             ),
           )}
-        </select>,
+        </NativeSelect>,
       )}
       {problem ? (
         <p role="alert" className="text-destructive text-sm">
@@ -906,15 +932,19 @@ function ColumnSettings({
         >
           Cancel
         </Button>
-        <Button
-          type="submit"
-          className="min-h-11 xl:h-8 xl:min-h-8"
-          pending={saving}
-          pendingLabel="Saving…"
-          aria-disabled={computedSaveBlocked || undefined}
+        <DisabledReason
+          stable
+          reason={computedSaveBlocked ? "Fix the expression first." : null}
         >
-          {column ? "Save column" : "Add column"}
-        </Button>
+          <Button
+            type="submit"
+            className="min-h-11 xl:h-8 xl:min-h-8"
+            pending={saving}
+            pendingLabel="Saving…"
+          >
+            {column ? "Save column" : "Add column"}
+          </Button>
+        </DisabledReason>
       </div>
     </form>
   );

@@ -58,7 +58,6 @@ import {
   type WorksheetDetail,
   type WorksheetRow,
   type WorksheetRowSort,
-  type WorksheetTotal,
 } from "../adapters/worksheets-api";
 import { SheetGridView, type SheetConflict } from "./sheet-grid-view";
 import type { SaveResult } from "./sheet-row-form";
@@ -86,6 +85,7 @@ import {
   gridColumns,
   pagesForRange,
   rowAt,
+  rowIndex,
   rowQueryKey,
   sortLabel,
   storeRowPage,
@@ -296,7 +296,12 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
     }),
     [region?.locale, region?.timezone],
   );
-  const columns = useMemo(() => gridColumns(sheet.structure), [sheet]);
+  // Keyed on the structure: a rename or a new row count is no new columns,
+  // so it neither resubscribes the events nor rereads the rows.
+  const columns = useMemo(
+    () => gridColumns(sheet.structure),
+    [sheet.structure],
+  );
   const [typed, setTyped] = useState("");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<WorksheetRowSort | null>(null);
@@ -304,7 +309,6 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
   const [failure, setFailure] = useState<unknown>(null);
   const queryKey = rowQueryKey({ sort, search });
   const [store, setStore] = useState<RowStore>(() => emptyRowStore(queryKey));
-  const [totals, setTotals] = useState<Record<string, WorksheetTotal>>({});
   const [generation, setGeneration] = useState(0);
   const loading = useRef(new Set<string>());
   // Each request is numbered, so a slow, older answer never wins (sheet-grid).
@@ -318,8 +322,19 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
     row: WorksheetRow;
     index: number;
   } | null>(null);
-  const [formRow, setFormRow] = useState<number | null>(null);
-  const markGone = useCallback(() => setGone(true), []);
+  // The row form follows its row by id: a refresh may move rows.
+  const [formRowId, setFormRowId] = useState<string | null>(null);
+  const formIndex = formRowId === null ? -1 : rowIndex(store, formRowId);
+  const formRow = formIndex >= 0 ? rowAt(store, formIndex) : undefined;
+  // A row that a loaded list no longer holds closes its form.
+  if (formRowId !== null && formIndex < 0 && store.total !== null)
+    setFormRowId(null);
+  // A sheet that is gone takes its cached detail along, so a later visit
+  // never shows its title first.
+  const markGone = useCallback(() => {
+    client.removeQueries({ queryKey: worksheetKeys.detail(sheet.id) });
+    setGone(true);
+  }, [client, sheet.id]);
   // A saved column list rereads the rows: new columns have cells.
   const seenRevision = useRef(sheet.revision);
   useEffect(() => {
@@ -376,7 +391,7 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
         };
       }
       if (isNotFound(error)) {
-        setGone(true);
+        markGone();
         return { outcome: "refused", message: "" };
       }
       const detailKey =
@@ -420,7 +435,7 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
     cells: Record<string, WorksheetCellChange>,
     drafts: Record<string, string>,
   ): Promise<SaveResult> => {
-    const row = formRow === null ? undefined : rowAt(store, formRow);
+    const row = formRow;
     const key = Object.keys(cells)[0];
     const column = columns.find((item) => item.key === key);
     if (!row || !key || !column)
@@ -494,7 +509,9 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
       pasted ? `Pasted ${pasted} ${pasted === 1 ? "cell" : "cells"}.` : null,
     );
   };
-  if (store.queryKey !== queryKey) setStore(emptyRowStore(queryKey));
+  // Totals cover every row whatever the search, so a new key keeps them.
+  if (store.queryKey !== queryKey)
+    setStore(emptyRowStore(queryKey, store.totals));
 
   // The search waits for typing to pause; sort and search are never saved.
   useEffect(() => {
@@ -505,6 +522,20 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
     return () => window.clearTimeout(timer);
   }, [typed]);
 
+  // Each search and sort has its own load markers and requests: leaving it
+  // aborts what it still waits for and forgets what it loaded, so a return
+  // to it loads again (its store starts empty).
+  const requests = useRef(new Set<AbortController>());
+  useEffect(() => {
+    const open = requests.current;
+    const markers = loading.current;
+    return () => {
+      for (const controller of open) controller.abort();
+      open.clear();
+      markers.clear();
+    };
+  }, [queryKey]);
+
   const load = useCallback(
     (offset: number, refresh: number) => {
       const marker = `${queryKey}|${offset}|${refresh}`;
@@ -512,26 +543,34 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
       loading.current.add(marker);
       sequence.current += 1;
       const asked = sequence.current;
-      queryWorksheetRows(sheet.id, { sort, search, offset })
+      const controller = new AbortController();
+      requests.current.add(controller);
+      queryWorksheetRows(sheet.id, {
+        sort,
+        search,
+        offset,
+        signal: controller.signal,
+      })
         .then((page) => {
           setStore((current) =>
             storeRowPage(current, queryKey, offset, page, asked),
           );
-          setTotals(page.totals);
           setFailure(null);
         })
         .catch((error: unknown) => {
+          if (controller.signal.aborted) return;
           loading.current.delete(marker);
           if (isNotFound(error)) {
             // A sheet that became hidden leaves no title behind (V7).
             void client.resetQueries({
               queryKey: worksheetKeys.place(sheet.id),
             });
-            setGone(true);
+            markGone();
           } else setFailure(error);
-        });
+        })
+        .finally(() => requests.current.delete(controller));
     },
-    [client, sheet.id, sort, search, queryKey],
+    [client, sheet.id, sort, search, queryKey, markGone],
   );
 
   const onRange = useCallback(
@@ -567,7 +606,7 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
     () =>
       new Set(
         sheet.structure.columns.flatMap((column) =>
-          column.type === "sheet_lookup" && column.sheet_lookup
+          "sheet_lookup" in column
             ? [column.sheet_lookup.sourceWorksheetId]
             : [],
         ),
@@ -752,7 +791,7 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
         sheet={sheet}
         columns={columns}
         store={store}
-        totals={totals}
+        totals={store.totals}
         searching={searching}
         format={format}
         phone={phone}
@@ -764,15 +803,15 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
         onDismissConflict={() => setConflict(null)}
         onAddRow={() => void addRow()}
         onDeleteRow={(row, index) => setDeleting({ row, index })}
-        onOpenRow={setFormRow}
+        onOpenRow={(index) => setFormRowId(rowAt(store, index)?.id ?? null)}
         onPaste={(index, column, grid) => void paste(index, column, grid)}
       />
-      {formRow !== null && rowAt(store, formRow) ? (
+      {formRow ? (
         <Suspense fallback={null}>
           <SheetRowForm
-            key={rowAt(store, formRow)?.id}
-            row={rowAt(store, formRow) as WorksheetRow}
-            index={formRow}
+            key={formRow.id}
+            row={formRow}
+            index={formIndex}
             total={store.total ?? 0}
             sheetTitle={sheet.title}
             columns={columns}
@@ -781,13 +820,14 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
             sheetId={sheet.id}
             onSave={saveRow}
             onDelete={(row, index) => {
-              setFormRow(null);
+              setFormRowId(null);
               setDeleting({ row, index });
             }}
             onMove={(index) => {
-              if (rowAt(store, index)) setFormRow(index);
+              const next = rowAt(store, index);
+              if (next) setFormRowId(next.id);
             }}
-            onClose={() => setFormRow(null)}
+            onClose={() => setFormRowId(null)}
           />
         </Suspense>
       ) : null}

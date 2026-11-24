@@ -72,7 +72,7 @@ const summarySchema = z.object(summaryFields).strict().transform(toSummary);
 
 // The structure as the viewer may see it (D1.7, D14 S1).
 const columnBase = { key: columnKey, name: z.string().max(150) };
-const columnSchema = z.discriminatedUnion("type", [
+const columnSchema = z.union([
   z
     .object({
       ...columnBase,
@@ -146,7 +146,8 @@ const columnSchema = z.discriminatedUnion("type", [
     })
     .strict(),
   // A From another sheet column: the full options when the viewer can see
-  // the source sheet, its key and name only when not.
+  // the source sheet, or its key and name with the no-access mark when not;
+  // never both, never neither (D14 S1).
   z
     .object({
       ...columnBase,
@@ -158,9 +159,14 @@ const columnSchema = z.discriminatedUnion("type", [
           linkKey: columnKey,
           sourceLinkKey: columnKey,
         })
-        .strict()
-        .optional(),
-      state: z.literal("no_access").optional(),
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      ...columnBase,
+      type: z.literal("sheet_lookup"),
+      state: z.literal("no_access"),
     })
     .strict(),
 ]);
@@ -244,9 +250,11 @@ async function readEveryPage(
     );
     items.push(...result.items);
     total = result.pagination.total;
-    if (!result.pagination.has_more || result.items.length === 0) break;
+    if (!result.pagination.has_more || result.items.length === 0)
+      return { items, total };
   }
-  return { items, total };
+  // A complete list or none (CompleteCollection): never part of one.
+  throw new Error("The sheet list is longer than one read allows");
 }
 
 /**
@@ -387,7 +395,7 @@ export type WorksheetCellState = Extract<
   { state: unknown }
 >["state"];
 
-const rowSchema = z
+export const worksheetRowSchema = z
   .object({
     id: uuid,
     revision: z.number().int().min(0),
@@ -397,7 +405,7 @@ const rowSchema = z
   })
   .strict();
 
-export type WorksheetRow = z.output<typeof rowSchema>;
+export type WorksheetRow = z.output<typeof worksheetRowSchema>;
 
 const totalSchema = z
   .object({
@@ -411,7 +419,7 @@ export type WorksheetTotal = z.output<typeof totalSchema>;
 
 const rowPageSchema = z
   .object({
-    items: z.array(rowSchema),
+    items: z.array(worksheetRowSchema),
     pagination: z
       .object({
         limit: z.number().int().min(1).max(200),
@@ -485,7 +493,7 @@ export function updateWorksheetCells(
 ): Promise<WorksheetRow> {
   return apiFetch(
     `/worksheets/${encodeURIComponent(sheetId)}/rows/${encodeURIComponent(rowId)}`,
-    rowSchema,
+    worksheetRowSchema,
     { method: "PATCH", body: JSON.stringify({ cells }) },
   );
 }
@@ -494,7 +502,7 @@ export function updateWorksheetCells(
 export function createWorksheetRow(sheetId: string): Promise<WorksheetRow> {
   return apiFetch(
     `/worksheets/${encodeURIComponent(sheetId)}/rows`,
-    rowSchema,
+    worksheetRowSchema,
     { method: "POST", body: JSON.stringify({}) },
   );
 }
@@ -513,7 +521,7 @@ export function deleteWorksheetRow(
 
 type StructureColumn = WorksheetStructure["columns"][number];
 type SheetLookupOptions = NonNullable<
-  Extract<StructureColumn, { type: "sheet_lookup" }>["sheet_lookup"]
+  Extract<StructureColumn, { sheet_lookup: unknown }>["sheet_lookup"]
 >;
 
 /**
@@ -543,7 +551,7 @@ export function editableColumn(
   column: StructureColumn,
 ): WorksheetColumnInput | WorksheetHiddenSourceColumn {
   if (column.type !== "sheet_lookup") return column;
-  return column.sheet_lookup
+  return "sheet_lookup" in column
     ? {
         key: column.key,
         name: column.name,

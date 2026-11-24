@@ -117,13 +117,13 @@ test("the share lines and the open line name the record, or the module of a modu
     "If you leave Larkspur College, this sheet opens read-only to everyone who can read Andrea Villamor's record.",
   ]);
   expect(shareLines(onModule, "Larkspur College")).toEqual([
-    "People see this sheet only while they can read Faculty Members.",
-    "If you leave Larkspur College, this sheet opens read-only to everyone who can read Faculty Members.",
+    "People see this sheet only while they can read the Faculty Members module.",
+    "If you leave Larkspur College, this sheet opens read-only to everyone who can read the Faculty Members module.",
   ]);
   expect(openLine(onRecord, "Larkspur College")).toBe(
     "Andrea Villamor no longer has access to Larkspur College. Everyone who can read Andrea Villamor's record can read this sheet. Nobody can change it.",
   );
   expect(openLine(onModule, "Larkspur College")).toBe(
-    "Andrea Villamor no longer has access to Larkspur College. Everyone who can read Faculty Members can read this sheet. Nobody can change it.",
+    "Andrea Villamor no longer has access to Larkspur College. Everyone who can read the Faculty Members module can read this sheet. Nobody can change it.",
   );
 });

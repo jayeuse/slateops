@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   cellConflict,
+  datetimeValue,
   editInput,
   gridColumns,
   inputValue,
@@ -117,6 +118,37 @@ test("a refused save reads the changed columns and the newer row", () => {
   expect(cellConflict(new ApiError(422, "Enter a number"))).toBeNull();
 });
 
+test("a 412 is a conflict only with the cell_changed code and a valid row", () => {
+  const current = row(1, 18, 2);
+  const body = {
+    code: "cell_changed",
+    message: "Someone changed these cells",
+    keys: ["c2"],
+    current,
+  };
+  expect(
+    cellConflict(
+      new ApiError(412, "The row changed", { ...body, code: "row_changed" }),
+    ),
+  ).toBeNull();
+  expect(
+    cellConflict(
+      new ApiError(412, "Someone changed these cells", {
+        ...body,
+        current: { ...current, cells: { c2: { formula: "=1" } } },
+      }),
+    ),
+  ).toBeNull();
+  expect(
+    cellConflict(
+      new ApiError(412, "Someone changed these cells", {
+        ...body,
+        current: { ...current, id: "row-1" },
+      }),
+    ),
+  ).toBeNull();
+});
+
 test("a saved row replaces its stale copy, and an older refresh cannot undo it", () => {
   const key = rowQueryKey({ sort: null, search: "" });
   const loaded = storeRowPage(
@@ -137,4 +169,27 @@ test("a saved row replaces its stale copy, and an older refresh cannot undo it",
       2,
     ),
   ).toBe(saved);
+});
+
+test("a date and time is edited in the organization's time zone and saved as an instant", () => {
+  const due = {
+    key: "c9",
+    name: "Due",
+    type: "datetime" as const,
+    readOnly: false,
+    numeric: false,
+    group: null,
+  };
+  const manila = { locale: "en-US", timezone: "Asia/Manila" };
+  expect(editInput(due, { value: "2026-11-24T00:30:00Z" }, manila)).toBe(
+    "2026-11-24T08:30",
+  );
+  expect(datetimeValue("2026-11-24T08:30", "Asia/Manila")).toBe(
+    "2026-11-24T00:30:00Z",
+  );
+  expect(datetimeValue("", "Asia/Manila")).toBeNull();
+  // A time skipped by a clock change moves forward, as the clock does.
+  expect(datetimeValue("2026-03-08T02:30", "America/New_York")).toBe(
+    "2026-03-08T07:30:00Z",
+  );
 });

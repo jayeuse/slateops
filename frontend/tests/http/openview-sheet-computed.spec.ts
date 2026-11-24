@@ -221,6 +221,7 @@ test("an unknown name is marked and blocks the save; a server refusal shows unde
   await expect(expression).toHaveAttribute("aria-invalid", "true");
   const add = popover.getByRole("button", { name: "Add column" });
   await expect(add).toHaveAttribute("aria-disabled", "true");
+  await expect(add).toHaveAccessibleDescription("Fix the expression first.");
   expect(writes.structures).toHaveLength(0);
 
   // The size across computed columns is the server's to check (SH-72).
@@ -279,7 +280,11 @@ test("column groups are made, renamed and removed in Column settings, and the ba
   await expect(
     popover.getByRole("combobox", { name: "Column group" }),
   ).toHaveValue("g0");
-  await popover.getByRole("textbox", { name: "Group name" }).fill("Period 1");
+  const groupName = popover.getByRole("textbox", { name: "Group name" });
+  await expect(groupName).toHaveAccessibleDescription(
+    "Renames the group for all its columns.",
+  );
+  await groupName.fill("Period 1");
   await popover.getByRole("button", { name: "Save column" }).click();
   await expect(popover).toBeHidden();
   await expect(
@@ -391,6 +396,8 @@ test("cells that cannot be worked out read in words, and a total says how many c
   // Long words stay inside their cell, cut with an ellipsis.
   const cell = grid.getByRole("gridcell", { name: "Number too large" });
   const words = cell.getByText("Number too large");
+  // A cut word can be read whole on hover.
+  await expect(words).toHaveAttribute("title", "Number too large");
   const [outer, inner] = [await cell.boundingBox(), await words.boundingBox()];
   expect(inner && outer && inner.x + inner.width).toBeLessThanOrEqual(
     (outer?.x ?? 0) + (outer?.width ?? 0),

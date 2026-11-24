@@ -409,3 +409,94 @@ test.describe("on a phone", () => {
     expect(Math.round(name.x + name.width - number.x)).toBe(160);
   });
 });
+
+test("going back to the sheet order after a search or a sort shows its rows again", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await signedInAs(page, reader);
+  await installSheetPageApi(page, sheet({ count: 20 }));
+  await page.goto(address);
+  const table = grid(page);
+  const first = table.getByRole("link", { name: "Student 1", exact: true });
+  await expect(first).toBeVisible();
+
+  const search = page.getByRole("searchbox", { name: "Search this sheet" });
+  await search.fill("Student 7");
+  await page.clock.runFor(500);
+  await expect(page.getByText("1 of 20 rows")).toBeVisible();
+  await search.fill("");
+  await page.clock.runFor(500);
+  await expect(first).toBeVisible();
+
+  await page.getByRole("button", { name: "Sort" }).click();
+  await page.getByRole("menuitem", { name: "Quiz 1, high to low" }).click();
+  await expect(table.locator("tbody tr").first()).toContainText("Student 18");
+  await page.getByRole("button", { name: "Quiz 1, high to low" }).click();
+  await page.getByRole("menuitem", { name: "Sheet order" }).click();
+  await expect(first).toBeVisible();
+});
+
+test("a refresh answered after a newer one leaves the newer totals", async ({
+  page,
+}) => {
+  await signedInAs(page, reader);
+  await installOpenViewEventSource(page);
+  const data = sheet({ count: 20 });
+  const api = await installSheetPageApi(page, data);
+  await page.goto(address);
+  const totals = grid(page).locator("tfoot");
+  await expect(totals).toContainText("9.5");
+
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let calls = 0;
+  await page.route(
+    (url) => url.pathname === `/api/worksheets/${sheetId}/rows/query`,
+    async (route) => {
+      calls += 1;
+      const average = calls === 1 ? "1.5" : "12.5";
+      if (calls === 1) await held;
+      await route.fulfill({
+        json: {
+          items: api.rows,
+          pagination: {
+            limit: 200,
+            offset: 0,
+            count: api.rows.length,
+            total: api.rows.length,
+            has_more: false,
+          },
+          totals: {
+            ...data.totals,
+            c3: { fn: "average", value: average, hidden_count: 0 },
+          },
+        },
+      });
+    },
+  );
+  const refresh = () =>
+    sendOpenViewEvent(page, "invalidate", {
+      entity: "worksheets",
+      entity_id: sheetId,
+    });
+  await refresh();
+  await expect.poll(() => calls).toBe(1);
+  await refresh();
+  await expect(totals).toContainText("12.5");
+
+  const late = page.waitForResponse((response) =>
+    response.url().endsWith("/rows/query"),
+  );
+  release();
+  await late;
+  // Two frames for the late answer to be applied, if it ever were.
+  for (let frame = 0; frame < 2; frame += 1)
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(resolve)),
+    );
+  await expect(totals).toContainText("12.5");
+  await expect(totals).not.toContainText("1.5");
+});

@@ -1,5 +1,9 @@
 "use client";
 
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 import type { ReactElement } from "react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -70,7 +74,7 @@ export default function SheetFromSheetField({
     <>
       {field(
         "Sheet",
-        <select
+        <NativeSelect
           className={selectClass}
           value={value.sourceSheet}
           onChange={(event) =>
@@ -81,15 +85,15 @@ export default function SheetFromSheetField({
             })
           }
         >
-          <option value="">
+          <NativeSelectOption value="">
             {sheets.isPending ? "Loading sheets…" : "Choose a sheet"}
-          </option>
+          </NativeSelectOption>
           {choices.map((item) => (
-            <option key={item.id} value={item.id}>
+            <NativeSelectOption key={item.id} value={item.id}>
               {item.title}
-            </option>
+            </NativeSelectOption>
           ))}
-        </select>,
+        </NativeSelect>,
         sheets.isError
           ? "Your sheets could not be loaded. Close this and try again."
           : undefined,
@@ -97,21 +101,21 @@ export default function SheetFromSheetField({
       {value.sourceSheet
         ? field(
             "Match rows by",
-            <select
+            <NativeSelect
               className={selectClass}
               value={value.match}
               disabled={pairs.length === 0}
               onChange={(event) => onChange({ match: event.target.value })}
             >
-              <option value="">
+              <NativeSelectOption value="">
                 {source.isPending ? "Loading…" : "Choose the link columns"}
-              </option>
+              </NativeSelectOption>
               {pairs.map((pair) => (
-                <option key={pair.value} value={pair.value}>
+                <NativeSelectOption key={pair.value} value={pair.value}>
                   {pair.label}
-                </option>
+                </NativeSelectOption>
               ))}
-            </select>,
+            </NativeSelect>,
             ownLinks.length === 0
               ? "Add a Link to records column first. Rows match through the record it points to."
               : source.data && pairs.length === 0
@@ -122,20 +126,20 @@ export default function SheetFromSheetField({
       {value.match
         ? field(
             "Shows",
-            <select
+            <NativeSelect
               className={selectClass}
               value={value.sourceColumn}
               onChange={(event) =>
                 onChange({ sourceColumn: event.target.value })
               }
             >
-              <option value="">Choose a column</option>
+              <NativeSelectOption value="">Choose a column</NativeSelectOption>
               {shown.map((column) => (
-                <option key={column.key} value={column.key}>
+                <NativeSelectOption key={column.key} value={column.key}>
                   {column.name}
-                </option>
+                </NativeSelectOption>
               ))}
-            </select>,
+            </NativeSelect>,
             `Read-only. It shows the value from the row of ${sourceName} that links to the same record.`,
           )
         : null}

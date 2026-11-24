@@ -335,7 +335,9 @@ export function securityEventSentence(
           ? ` ${leavePaths[event.metadata.path]}`
           : "";
       return result(
-        `${opened === null ? `${subject}'s` : `${opened} of ${subject}'s`} private sheets opened read-only${path}.`,
+        opened === null
+          ? `${subject}'s private sheets opened read-only${path}.`
+          : `${subject}'s ${opened} private ${opened === 1 ? "sheet" : "sheets"} opened read-only${path}.`,
         `Opening ${subject}'s sheets`,
       );
     }

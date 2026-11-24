@@ -92,7 +92,7 @@ function Entry({
     <li className="flex flex-col gap-1.5 py-3">
       <p className="flex flex-wrap items-baseline justify-between gap-x-3 text-sm">
         <span className="font-medium">
-          {entry.author?.displayName ?? "Someone"}
+          {entry.author?.displayName ?? "Unknown person"}
         </span>
         <time
           dateTime={entry.createdAt}

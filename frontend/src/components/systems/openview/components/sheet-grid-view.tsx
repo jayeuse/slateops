@@ -65,11 +65,13 @@ import {
 import {
   cellView,
   conflictWords,
+  datetimeValue,
   editInput,
   gridBands,
   inputValue,
   parsePastedGrid,
   rowAt,
+  rowIndex,
   totalView,
   type GridColumn,
   type GridFormat,
@@ -195,7 +197,8 @@ function CellContent({
         ) : view.state === "deleted" ? (
           <Trash2 aria-hidden="true" className="size-3.5 shrink-0" />
         ) : null}
-        <span className="truncate">{view.words}</span>
+        {/* Room for the italic's last glyph at the clip edge. */}
+        <span className="truncate pr-0.5">{view.words}</span>
       </span>
     );
   if (view.kind === "error")
@@ -207,16 +210,37 @@ function CellContent({
         )}
       >
         <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0" />
-        <span className="truncate">{view.words}</span>
+        <span className="truncate" title={view.words}>
+          {view.words}
+        </span>
       </span>
     );
   if (column.type === "user" && view.kind === "value")
     return <PersonName id={view.text} />;
-  return <span className="block truncate">{view.text}</span>;
+  // A From another sheet column's type is not in the structure: each cell
+  // that holds a number lines up as one (Product Designer, F6).
+  const numberFromSheet =
+    column.type === "sheet_lookup" &&
+    cell !== undefined &&
+    "value" in cell &&
+    (typeof cell.value === "number" ||
+      (typeof cell.value === "string" && /^-?\d+(\.\d+)?$/.test(cell.value)));
+  return (
+    <span
+      className={cn(
+        "block truncate",
+        numberFromSheet && "text-right tabular-nums",
+      )}
+    >
+      {view.text}
+    </span>
+  );
 }
 
+// An edit and a picker follow their row by id, holding the row as it was
+// when they started: a refresh may move rows meanwhile (review B1).
 type Editing = {
-  index: number;
+  row: WorksheetRow;
   key: string;
   draft: string;
   seed: string;
@@ -272,11 +296,17 @@ export function SheetGridView({
 }: SheetGridViewProps) {
   "use no memo"; // TanStack's mutable virtualizer must be read on every range update.
   const pane = useRef<HTMLDivElement | null>(null);
-  const bands = useMemo(() => gridBands(columns), [columns]);
+  // The pinned first column has its own band cell; the bands run from the
+  // second column, under which they scroll (Product Designer F6-B1).
+  const bands = useMemo(() => gridBands(columns.slice(1)), [columns]);
   const [active, setActive] = useState({ row: 0, col: 0 });
   const [editing, setEditing] = useState<Editing | null>(null);
+  // A row that a loaded list no longer holds (deleted meanwhile) ends its
+  // edit, so the grid's keys work again.
+  if (editing && store.total !== null && rowIndex(store, editing.row.id) < 0)
+    setEditing(null);
   const [picking, setPicking] = useState<{
-    index: number;
+    row: WorksheetRow;
     key: string;
     kind: "link" | "person";
   } | null>(null);
@@ -295,7 +325,8 @@ export function SheetGridView({
     columns.reduce((sum, column, index) => sum + widthOf(column, index), 0) +
     (canChangeColumns ? ADD_COLUMN_WIDTH : 0);
   const count = store.total ?? 0;
-  const grouped = bands.some((band) => band.label !== null);
+  const grouped =
+    Boolean(columns[0]?.group) || bands.some((band) => band.label !== null);
   const headerHeight = grouped ? 68 : 36;
   const totalKeys = Object.keys(totals);
   // eslint-disable-next-line react-hooks/incompatible-library -- This component explicitly opts out above; no virtualizer method is memoized or passed to memoized children.
@@ -387,10 +418,12 @@ export function SheetGridView({
     const row = rowAt(store, index);
     const column = columns[col];
     if (!canEdit || !row || !column || !editable(column)) return;
+    // A new edit commits on its own blur, whatever the last one did.
+    cancelled.current = false;
     const cell = row.cells[column.key];
     if (column.type === "link" || column.type === "user") {
       setPicking({
-        index,
+        row,
         key: column.key,
         kind: column.type === "link" ? "link" : "person",
       });
@@ -403,7 +436,7 @@ export function SheetGridView({
     }
     const seed = editInput(column, cell, format);
     setEditing({
-      index,
+      row,
       key: column.key,
       draft: seed,
       seed,
@@ -423,14 +456,14 @@ export function SheetGridView({
   const finishEdit = async (draft: string, cell: HTMLElement | null = null) => {
     if (!editing || saving.current) return;
     const column = columns.find((item) => item.key === editing.key);
-    const row = rowAt(store, editing.index);
-    if (!column || !row || draft === editing.seed) {
+    const row = editing.row;
+    if (!column || draft === editing.seed) {
       leaveEditor(cell);
       return;
     }
     const value =
-      column.type === "datetime" && draft
-        ? new Date(draft).toISOString()
+      column.type === "datetime"
+        ? datetimeValue(draft, format.timezone)
         : column.type === "select"
           ? draft || null
           : inputValue(column, draft);
@@ -560,7 +593,9 @@ export function SheetGridView({
               (active.row < 0 && item.index === 0)) &&
             active.col === index;
           const isEditing =
-            editing?.index === item.index && editing.key === column.key;
+            row !== undefined &&
+            editing?.row.id === row.id &&
+            editing.key === column.key;
           const fixed = !canEdit || !editable(column);
           return (
             <td
@@ -730,21 +765,16 @@ export function SheetGridView({
     rows.push(spacer(virtual.getTotalSize() - edge, "tail"));
 
   function requestEditAgain(entry: SheetConflict) {
-    const index = (() => {
-      for (const [offset, list] of Object.entries(store.pages)) {
-        const at = list.findIndex((row) => row.id === entry.rowId);
-        if (at >= 0) return Number(offset) + at;
-      }
-      return -1;
-    })();
+    const index = rowIndex(store, entry.rowId);
     const col = columns.findIndex((column) => column.key === entry.key);
     const row = index >= 0 ? rowAt(store, index) : undefined;
     const column = columns[col];
     if (!row || !column) return;
     onDismissConflict();
     setActive({ row: index, col });
+    cancelled.current = false;
     setEditing({
-      index,
+      row,
       key: column.key,
       draft: entry.draft,
       seed: editInput(column, row.cells[column.key], format),
@@ -755,7 +785,7 @@ export function SheetGridView({
   const pickingColumn = picking
     ? columns.find((column) => column.key === picking.key)
     : undefined;
-  const pickingRow = picking ? rowAt(store, picking.index) : undefined;
+  const pickingRow = picking?.row;
   return (
     <div
       ref={pane}
@@ -803,10 +833,17 @@ export function SheetGridView({
           {grouped ? (
             <tr role="row">
               <th
-                aria-hidden="true"
-                role="presentation"
-                className={cn(pinned, "left-0 h-8 border-b")}
-              />
+                colSpan={2}
+                role={columns[0]?.group ? "columnheader" : "presentation"}
+                scope={columns[0]?.group ? "colgroup" : undefined}
+                className={cn(
+                  pinned,
+                  "text-muted-foreground left-0 h-8 border-b px-3 text-left text-xs font-semibold",
+                )}
+                style={{ width: numberWidth + firstWidth }}
+              >
+                {columns[0]?.group ?? null}
+              </th>
               {bands.map((band, index) => (
                 <th
                   key={`${band.label ?? "none"}-${index}`}
@@ -815,7 +852,14 @@ export function SheetGridView({
                   scope="colgroup"
                   className="text-muted-foreground h-8 border-b border-l px-3 text-left text-xs font-semibold"
                 >
-                  {band.label}
+                  {/* The name keeps clear of the pinned column while its
+                      band scrolls under it. */}
+                  <span
+                    className="sticky inline-block"
+                    style={{ left: numberWidth + firstWidth + 12 }}
+                  >
+                    {band.label}
+                  </span>
                 </th>
               ))}
               {canChangeColumns ? (
@@ -990,7 +1034,7 @@ export function SheetGridView({
         <Suspense fallback={null}>
           {(() => {
             const col = columns.findIndex((c) => c.key === pickingColumn.key);
-            const index = picking.index;
+            const index = Math.max(rowIndex(store, picking.row.id), 0);
             const cell = pickingRow.cells[pickingColumn.key];
             const close = () => {
               setPicking(null);

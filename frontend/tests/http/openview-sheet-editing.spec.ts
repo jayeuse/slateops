@@ -1,6 +1,10 @@
 import { expect, signedInAs, test, type Page } from "./helpers/test";
 import { memberCard } from "./helpers/person-card-api";
 import {
+  installOpenViewEventSource,
+  sendOpenViewEvent,
+} from "./helpers/openview-event-source";
+import {
   installSheetEditApi,
   installSheetPageApi,
   sheetPeople,
@@ -491,4 +495,69 @@ test("a paste lands only on a cell, never from a row's actions", async ({
       cells: { c3: { value: "17", expected: { value: 10 } } },
     },
   ]);
+});
+
+test("an edit saves into its own row after a refresh moves the rows", async ({
+  page,
+}) => {
+  await installOpenViewEventSource(page);
+  const { api, writes, grid } = await openSheet(page);
+  const anaId = api.rows[0].id;
+  await grid.locator('td[data-cell="0:c5"]').dblclick();
+  const editor = grid.getByRole("textbox", { name: "Notes, row 1" });
+  await editor.fill("Moved");
+
+  // Someone else's change reorders the rows while the editor is open; both
+  // rows' Notes are blank, so a save into the wrong row draws no 412.
+  api.rows.reverse();
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "worksheets",
+    entity_id: sheetId,
+  });
+  await expect(grid.locator("tbody tr").first()).toContainText("Elena Cruz");
+  await page.keyboard.press("Enter");
+
+  await expect.poll(() => writes.patches.length).toBe(1);
+  expect(writes.patches[0].rowId).toBe(anaId);
+});
+
+test("a second edit left by a click elsewhere saves too", async ({ page }) => {
+  const { writes, grid } = await openSheet(page);
+  const notes = (row: number) => grid.locator(`td[data-cell="${row}:c5"]`);
+  const title = page.getByRole("heading", { level: 1, name: "Class roster" });
+
+  await notes(0).dblclick();
+  await grid.getByRole("textbox", { name: "Notes, row 1" }).fill("First");
+  await title.click();
+  await expect.poll(() => writes.patches.length).toBe(1);
+
+  await notes(1).dblclick();
+  await grid.getByRole("textbox", { name: "Notes, row 2" }).fill("Second");
+  await title.click();
+  await expect.poll(() => writes.patches.length).toBe(2);
+  expect(writes.patches.map((patch) => patch.cells.c5?.value)).toEqual([
+    "First",
+    "Second",
+  ]);
+});
+
+test("an edit whose row someone deleted ends, and saves nothing", async ({
+  page,
+}) => {
+  await installOpenViewEventSource(page);
+  const { api, writes, grid } = await openSheet(page);
+  await grid.locator('td[data-cell="0:c5"]').dblclick();
+  await grid.getByRole("textbox", { name: "Notes, row 1" }).fill("Gone");
+  api.rows.shift();
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "worksheets",
+    entity_id: sheetId,
+  });
+  await expect(grid.locator("tbody tr").first()).toContainText("Bea Santos");
+  await expect(grid.getByRole("textbox")).toHaveCount(0);
+  // The grid's keys work again.
+  await grid.locator('td[data-cell="0:c3"]').click();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator(":focus")).toHaveAttribute("data-cell", "1:c3");
+  expect(writes.patches).toEqual([]);
 });

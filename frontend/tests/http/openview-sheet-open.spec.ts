@@ -152,7 +152,7 @@ test("a reader of an open sheet sees why it is read-only, downloads it and reads
   await expect(entries.nth(0)).toContainText("Diego Navarro");
   await expect(entries.nth(0)).toContainText("Changed Quiz 1 · Alyssa Mercado");
   await expect(entries.nth(0)).toContainText("Quiz 1: 18");
-  await expect(entries.nth(1)).toContainText("Someone");
+  await expect(entries.nth(1)).toContainText("Unknown person");
   await expect(entries.nth(1)).toContainText("Added a row");
   await expect(entries.nth(1)).toContainText("Student: No access");
   // Development mode's Strict Mode may read twice; every read asks the same.

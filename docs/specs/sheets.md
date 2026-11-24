@@ -193,7 +193,7 @@ These facts were checked in code at `8c8d2b02`.
 | X1 | A sheet exports and imports two file kinds. **Data** is CSV or Excel. A **template** is the structure only, as versioned JSON. | Decided (DEC-0044 4) |
 | X2 | Anyone who can see a sheet can export it. This includes recipients with View and readers of an open sheet. | Decided (DEC-0044 4) |
 | X3 | Each export writes a security event like `records.export.authorized`. The event is `worksheets.export.authorized`, for data and template exports. | Decided (DEC-0044 4); name Proposed (D5.4) |
-| X4 | Data export uses the record export rules, with formula-safe cells. Computed and lookup columns export as values. A link cell exports as the linked record's display name, or as "No access". | Proposed (REQ-0025 item 10) |
+| X4 | Data export uses the record export rules, with formula-safe cells. Computed and lookup columns export as values. A link cell exports as the linked record's display name, or as "No access". In CSV, numbers use the decimal mark of the organization's `locale` (O4), dates are ISO 8601, and checkboxes are `true` or `false`, so an organization's own export imports back unchanged. | Proposed (REQ-0025 item 10) |
 | X5 | A template has a `schemaVersion`. It holds the columns, types, choice lists, column groups, computed columns, totals and link columns. It holds no data, no shares, and no organization, module, record or person IDs. | Proposed (REQ-0025 item 10) |
 | X6 | On template import, each link column is mapped to a module of the importing organization. The mapping is suggested by name. With no match, the column becomes a text column. A lookup whose field name is not in the mapped module also becomes a text column. A template with an unknown `schemaVersion` is refused, and nothing is created. | Proposed (REQ-0025 item 10); refusal Proposed (PM); lookup Proposed (D9.2) |
 | X7 | **New sheet from this structure** copies a sheet's template into a new private sheet on a record that the person chooses, without data. Anyone who can see the sheet and can create on the target record can use it. | Proposed (REQ-0025 item 10); rights Proposed (PM) |
@@ -201,6 +201,7 @@ These facts were checked in code at `8c8d2b02`.
 | X9 | Data import adds rows to a sheet that the importer can edit (owner or Edit), or creates a new sheet from the file. The file's header row maps to the columns. How a new sheet from a data file gets its column types is settled in Decisions, item 14. Whether an import into an existing sheet also updates matched rows is settled in Decisions, item 15. | Proposed (PM) |
 | X10 | Excel import is new and has these rules: <br>• a size limit and a zip-expansion limit; <br>• values only, so a formula cell imports its saved result, and a formula without a saved result imports as empty and counts in the preview; <br>• macro-enabled files are refused; <br>• one tab per import; <br>• the person chooses the header row. <br>Values (D8, D9.3): `.xlsx` only, at most 10 MiB, each part at most 10 MiB uncompressed, the existing OOXML bounds, at most 10,000 rows and 100 columns. CSV is read in the browser and is the path for large sheets. | Proposed (REQ-0025 item 10); formula cells Proposed (PM); values Proposed (D8, D9) |
 | X11 | Imported or pasted text that starts like a formula (`=`, `+`, `-`, `@`) is stored as text and is never evaluated. | Proposed (PM) |
+| X12 | Import removes the one leading apostrophe that export adds to formula-like text, so the text imports back as it was. A person column cannot be filled from a file: on an import into a sheet it is "Not added", and a new sheet from a file gets a text column for it. | Proposed (parent, B13) |
 
 ### Lifecycle
 
@@ -417,7 +418,7 @@ From TASK-0099 (Product Designer). Its decisions are in Decisions, items 4, 10, 
 **5. Open sheet after the owner left** (SH-13, SH-17, SH-18, SH-31; UI side only)
 - The viewer is a reader of the record. Chip: **Read-only**.
 - Directly under the title: "Andrea Villamor no longer has access to Larkspur College. Everyone who can read Andrea Villamor's record can read this sheet. Nobody can change it." (no date; Decision 10)
-- Actions: only **Export ▾** and **Make a copy** (primary). There is no Share, Import, More, Add row or "+".
+- Actions: **Export ▾**, **More** (Sheet history only) and **Make a copy** (primary). There is no Share, Import, Add row or "+".
 - **Make a copy** opens a dialog:
   - Name: "Class 1A (copy)", with "On Andrea Villamor · Faculty Members, the same record."
   - Line: "You get the same columns, rows and links. Only you can see the copy until you share it."

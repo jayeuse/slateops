@@ -290,3 +290,35 @@ test("an older answer for the same page never replaces a newer one", () => {
   expect(late).toBe(newer);
   expect(rowAt(late, 0)?.id).toBe(row(2).id);
 });
+
+test("an older answer for another page leaves the newer row count and totals", () => {
+  const key = rowQueryKey({ sort: null, search: "" });
+  const newer = storeRowPage(
+    emptyRowStore(key),
+    key,
+    0,
+    {
+      rows: [row(1)],
+      total: 450,
+      totals: { c3: { fn: "average", value: "12.5", hidden_count: 0 } },
+    },
+    5,
+  );
+  const late = storeRowPage(
+    newer,
+    key,
+    200,
+    {
+      rows: [row(201)],
+      total: 300,
+      totals: { c3: { fn: "average", value: "1.5", hidden_count: 0 } },
+    },
+    3,
+  );
+  expect(late.total).toBe(450);
+  expect(late.totals).toEqual({
+    c3: { fn: "average", value: "12.5", hidden_count: 0 },
+  });
+  // Its page itself is still the only copy of rows 200 on.
+  expect(rowAt(late, 200)?.id).toBe(row(201).id);
+});

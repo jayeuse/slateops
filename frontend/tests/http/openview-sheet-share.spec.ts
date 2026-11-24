@@ -135,6 +135,9 @@ test("the owner shares with a group, changes a person's level and removes them",
   // Share is quiet until someone is chosen.
   const send = dialog.getByRole("button", { name: "Share", exact: true });
   await expect(send).toHaveAttribute("aria-disabled", "true");
+  await expect(send).toHaveAccessibleDescription(
+    "Choose a person or group first.",
+  );
   await send.focus();
   await page.keyboard.press("Enter");
   expect(api.shareWrites).toEqual([]);
