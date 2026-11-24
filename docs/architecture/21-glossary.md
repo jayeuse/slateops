@@ -84,7 +84,7 @@ Boards are for communication. The Board scope decides who sees the content. Back
 
 ## OpenView
 
-OpenView is for reading records and reports. Its content belongs to departments and modules, not to people. Backend package: `app/systems/openview/`.
+OpenView is for reading records and reports. Its content belongs to departments and modules, not to people; the one exception is a sheet, which belongs to the person who made it. Backend package: `app/systems/openview/`.
 
 | Term | Also appears as | Meaning | Copy |
 | --- | --- | --- | --- |
@@ -101,6 +101,19 @@ OpenView is for reading records and reports. Its content belongs to departments 
 | Eligible readers | `ReportRunEligibleUser` | The module readers at the time of a report run. To open the run, a person must be an eligible reader and still read the module now. | Internal |
 | Schedule | `ScheduledWork` kind `report-run`, "Create schedule" | A repeated time for a report run. A scheduled run uses the system actor. | Customer |
 | Selection bar | `RecordSelectionBar`, `record-batch-change.ts`, "<n> selected" | The bar that takes the place of a list's toolbar while rows are selected in the table layout: how many are selected, Change (one Choice list or Checkbox field for all of them), and Clear selection. A change reports in the page status with Undo. | Customer |
+| Sheet | `Worksheet`, `/api/worksheets`, "Sheets" tab | A table of rows and columns that a person makes on one record or one module, stored as JSONB rows keyed by column keys. It never changes the record. It is private to its owner and the people it is shared with, until the owner leaves. | Customer |
+| Sheet owner | `Worksheet.owner_id` | The person who made the sheet; it never changes. Only the owner of a private sheet renames, shares, deletes, restores or copies it. | Customer |
+| Sheet share | `WorksheetShare`, "View", "Edit" | Access to a sheet for one person, or for one group that the owner belongs to. View reads and exports; Edit also changes rows and columns. A guest gets View only. A share never gives access to the record. | Customer |
+| Open sheet | `state: "open"` (derived, not stored) | A sheet whose owner is no longer present (disabled, removed, deleted, or re-invited after a removal). Everyone who can read its record or module reads it; nobody edits or deletes it. | Customer |
+| My sheets | `GET /api/worksheets`, sidebar "My sheets" | The sheets that a person owns or that are shared with them. | Customer |
+| Link column | column type `link` | A sheet column whose cells each link to one record of a chosen module that the person can read. | Customer |
+| Lookup column | column type `lookup` | A read-only sheet column that shows a field of the record in a link column. | Customer |
+| Computed column | column type `computed`, "Formula" | A read-only sheet column whose value is an expression over the same row's numeric columns. | Customer |
+| From another sheet | column type `sheet_lookup` | A read-only sheet column that shows a column of another sheet, from the row that links the same record. | Customer |
+| Appears in | `GET /api/records/{record_id}/worksheet-rows` | The read-only list, on a record, of the rows of sheets the viewer can see that link to that record. It differs per person. | Customer |
+| Sheet template | template JSON with `schemaVersion` | A file with a sheet's structure only: columns, types, groups, totals and link columns, with no data, shares or IDs. | Customer |
+| Sheet presence | `realtime_presence` token, topic `org:<org>:worksheet:<id>` | The avatars and cell outlines of the people who have a sheet open now. It carries cell positions only and keeps no history. | Customer |
+| Leave event | `worksheets.opened_on_leave` | The security event, with a count, written when a leave path opens a person's sheets. | Internal |
 
 ## Access
 
