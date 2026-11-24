@@ -8,14 +8,16 @@ may write only presence, and only on sheet topics (besides the retained ``probe`
 
 import json
 import os
+import time
 from collections.abc import Iterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import Connection, text
 from sqlalchemy.orm import Session
+from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import ClientConnection
 
 from app.core.base_model import utc_now
@@ -212,8 +214,8 @@ def test_the_write_policy_admits_presence_only_on_sheet_topics(integration_owner
 
 
 @pytest.fixture
-def live_sheet() -> Iterator[tuple[UUID, UUID, UUID]]:
-    """A committed organization, member, sheet and live grant that Realtime can read."""
+def live_sheet() -> Iterator[tuple[UUID, UUID, UUID, UUID]]:
+    """A committed organization, member, two sheets and live grants that Realtime reads."""
 
     engine = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
     with Session(engine) as db:
@@ -226,14 +228,15 @@ def live_sheet() -> Iterator[tuple[UUID, UUID, UUID]]:
                         module_name=f"Live {uuid4().hex}")
         db.add(module)
         db.flush()
-        sheet = Worksheet(org_id=organization.id, module_id=module.id, owner_id=member.id,
-                          title="Live", structure=dict(STRUCTURE))
-        db.add(sheet)
+        sheets = [Worksheet(org_id=organization.id, module_id=module.id, owner_id=member.id,
+                            title=title, structure=dict(STRUCTURE)) for title in ("Live", "Other")]
+        db.add_all(sheets)
         db.flush()
-        db.add(WorksheetRealtimeGrant(org_id=organization.id, user_id=member.id,
-                                      worksheet_id=sheet.id,
-                                      expires_at=utc_now() + timedelta(seconds=60)))
-        ids = (organization.id, member.id, sheet.id)
+        for sheet in sheets:
+            db.add(WorksheetRealtimeGrant(org_id=organization.id, user_id=member.id,
+                                          worksheet_id=sheet.id,
+                                          expires_at=utc_now() + timedelta(seconds=60)))
+        ids = (organization.id, member.id, sheets[0].id, sheets[1].id)
         db.commit()
     try:
         yield ids
@@ -260,14 +263,14 @@ def _push(ws: ClientConnection, topic: str, ref: str, event: str,
 
 
 def test_a_sheet_topic_takes_presence_and_drops_broadcasts(
-    live_sheet: tuple[UUID, UUID, UUID],
+    live_sheet: tuple[UUID, UUID, UUID, UUID],
 ) -> None:
     """SH-71 on the live Realtime service: the presence token joins its topic and tracks a
     cell; a broadcast on the topic reaches no one; the OpenComms token cannot join it and
     the presence token cannot join the probe."""
 
     settings = get_settings()
-    org, user, sheet = live_sheet
+    org, user, sheet, _other = live_sheet
     topic = f"org:{org}:worksheet:{sheet}"
     token, _expires_at = mint_presence_token(settings, user_id=user, org_id=org, topic=topic)
     refused = "You do not have permissions to read from this Channel topic"
@@ -299,3 +302,55 @@ def test_a_sheet_topic_takes_presence_and_drops_broadcasts(
         [meta] = tracked["payload"]["joins"][str(user)]["metas"]
         assert {key: meta[key] for key in cell} == cell
         assert all(marker not in json.dumps(message) for message in seen)
+
+
+def _ended(ws: ClientConnection, seconds: float) -> dict[str, Any] | None:
+    """The first message that ends the channel, within ``seconds``."""
+
+    deadline = time.monotonic() + seconds
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            message = json.loads(ws.recv(timeout=remaining))
+        except TimeoutError:
+            return None
+        except ConnectionClosed:
+            return {"event": "socket_closed"}
+        event = message.get("event")
+        if event in {"phx_error", "phx_close"} or (
+            event == "system" and message.get("payload", {}).get("status") != "ok"
+        ):
+            return message
+    return None
+
+
+@pytest.mark.parametrize("refresh", ["none", "comms_token", "other_sheet_token"])
+def test_a_joined_sheet_channel_ends_when_its_presence_token_expires(
+    live_sheet: tuple[UUID, UUID, UUID, UUID], refresh: str,
+) -> None:
+    """PR5, SH-65: a joined channel ends at the presence token's expiry. A refresh with the
+    OpenComms token or with another sheet's presence token does not extend it."""
+
+    settings = get_settings()
+    org, user, sheet, other = live_sheet
+    topic = f"org:{org}:worksheet:{sheet}"
+    short, expires_at = mint_presence_token(
+        settings, user_id=user, org_id=org, topic=topic,
+        now=datetime.now(UTC) - timedelta(seconds=50),
+    )
+    replacement = {
+        "comms_token": mint_realtime_token(settings, user_id=user, org_id=org).token,
+        "other_sheet_token": mint_presence_token(
+            settings, user_id=user, org_id=org, topic=f"org:{org}:worksheet:{other}")[0],
+    }.get(refresh)
+    with _socket(settings) as ws:
+        _push(ws, topic, "1", "phx_join", {
+            "config": {"broadcast": {"self": False},
+                       "presence": {"key": str(user), "enabled": True}, "private": True},
+            "access_token": short,
+        })
+        joined = _read_until(ws, lambda m: m.get("event") == "phx_reply" and m.get("ref") == "1")
+        assert joined is not None and joined["payload"]["status"] == "ok", joined
+        if replacement is not None:
+            _push(ws, topic, "2", "access_token", {"access_token": replacement})
+        ended = _ended(ws, (expires_at - datetime.now(UTC)).total_seconds() + 10)
+    assert ended is not None, "the channel outlived its presence token"

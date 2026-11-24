@@ -50,6 +50,7 @@ from app.systems.openview.worksheets.locking import (
     lock_worksheet,
 )
 from app.systems.openview.worksheets.models import Worksheet
+from app.systems.openview.worksheets.presence import revoke_stale_grants
 from app.systems.openview.worksheets.query import query_rows, read_row
 from app.systems.openview.worksheets.row_writes import authorize_edit
 from app.systems.openview.worksheets.schemas import (
@@ -358,6 +359,7 @@ def delete_worksheet(
     sheet = _owned_under_lock(db, user, worksheet_id, if_match)
     sheet.is_deleted = True
     sheet.deleted_at = datetime.now(UTC)
+    revoke_stale_grants(db, sheet.id)  # a deleted sheet has no presence
     db.commit()
 
 

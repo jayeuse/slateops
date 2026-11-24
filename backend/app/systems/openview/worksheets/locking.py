@@ -118,6 +118,21 @@ def lock_for_write(
     return locked
 
 
+def locked_read[T](db: Session, read: Callable[[], T]) -> T:
+    """``read`` under the brief lock wait; a lock timeout answers ``worksheet_busy``."""
+
+    return _locked(db, read)
+
+
+def lock_sheet_for_read(db: Session, worksheet_id: UUID) -> None:
+    """Hold the sheet row for share, so a writer that holds it for update finishes first."""
+
+    _locked(db, lambda: db.scalar(
+        select(Worksheet.id).where(Worksheet.id == worksheet_id)
+        .with_for_update(read=True, of=Worksheet)
+    ))
+
+
 def lock_rows(db: Session, row_ids: Iterable[UUID]) -> list[WorksheetRow]:
     """Step 5: the rows a write changes, FOR UPDATE, in ID order."""
 

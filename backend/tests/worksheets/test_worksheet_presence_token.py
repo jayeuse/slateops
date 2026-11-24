@@ -215,3 +215,25 @@ def test_expired_grants_are_swept_and_an_authority_write_drops_stale_ones(
     revoke_stale(db)
     db.flush()
     assert set(_grants(db, sheet.id)) == {world.owner.id}
+
+
+def test_a_removed_share_or_a_deleted_sheet_drops_its_grants(
+    application: FastAPI, world: SheetWorld, integration_db: Session,
+) -> None:
+    """PR5: removing a share drops that person's grant at once, and deleting the sheet
+    drops every grant on it, without waiting for the 60-second expiry."""
+
+    db = integration_db
+    for person in (world.owner, world.viewer):
+        assert _issue(application, db, person, world.sheet.id).status_code == 200
+    share = db.scalars(select(WorksheetShare).where(
+        WorksheetShare.worksheet_id == world.sheet.id, WorksheetShare.user_id == world.viewer.id,
+    )).one()
+    owner = _client(application, world.owner, db)
+    removed = owner.delete(f"/api/worksheets/{world.sheet.id}/shares/{share.id}")
+    assert removed.status_code == 204, removed.text
+    assert set(_grants(db, world.sheet.id)) == {world.owner.id}
+    etag = owner.get(f"/api/worksheets/{world.sheet.id}").headers["etag"]
+    deleted = owner.delete(f"/api/worksheets/{world.sheet.id}", headers={"If-Match": etag})
+    assert deleted.status_code == 204, deleted.text
+    assert _grants(db, world.sheet.id) == {}

@@ -3,14 +3,17 @@
 ``POST /worksheets/{id}/presence-token`` charges the person's own budget first, so a
 refusal also costs. It then reads the access rule again, under the grant's own lock, and
 answers a hidden sheet with the same 404 as a missing one (dropping any grant the person
-still holds there). A visible sheet gets a token that joins only its topic and a grant that
-expires with the token. Presence itself never touches the database: grants are unaudited,
-publish no event, and are swept once expired or once the person no longer sees the sheet.
+still holds there) at once, without waiting on any writer. For a visible sheet it reads
+access again once it holds the sheet row for share, so a share removal or a delete in
+progress finishes first; both drop the grants they end. A visible sheet gets a token
+that joins only its topic and a grant that expires with the token.
+Presence itself never touches the database: grants are unaudited, publish no event, and
+are swept once expired or once the person no longer sees the sheet.
 """
 
 from datetime import datetime, timedelta
 from math import ceil
-from typing import Annotated
+from typing import Annotated, NoReturn
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response, status
@@ -32,6 +35,7 @@ from app.systems.openview.worksheets.access import (
     load_visible_worksheet,
     visible_worksheet_clause,
 )
+from app.systems.openview.worksheets.locking import lock_sheet_for_read, locked_read
 from app.systems.openview.worksheets.models import Worksheet, WorksheetRealtimeGrant
 from app.systems.openview.worksheets.row_writes import error
 from app.systems.platform.realtime.tokens import mint_presence_token
@@ -95,7 +99,7 @@ def _lock_grant(db: Session, org_id: UUID, user_id: UUID, worksheet_id: UUID) ->
 def _grant(db: Session, org_id: UUID, user_id: UUID, worksheet_id: UUID) -> (
     WorksheetRealtimeGrant | None
 ):
-    return db.scalars(
+    return locked_read(db, lambda: db.scalars(
         select(WorksheetRealtimeGrant)
         .where(
             WorksheetRealtimeGrant.org_id == org_id,
@@ -104,7 +108,25 @@ def _grant(db: Session, org_id: UUID, user_id: UUID, worksheet_id: UUID) -> (
         )
         .with_for_update()
         .execution_options(populate_existing=True)
-    ).one_or_none()
+    ).one_or_none())
+
+
+def _visible(db: Session, user_id: UUID, worksheet_id: UUID) -> bool:
+    """The access rule from fresh reads."""
+
+    forget_access(db, user_id)
+    actor = db.get(User, user_id, populate_existing=True)
+    return actor is not None and load_visible_worksheet(db, actor, worksheet_id) is not None
+
+
+def _refuse(db: Session, org_id: UUID, user_id: UUID, worksheet_id: UUID) -> NoReturn:
+    """The 404 of a missing sheet; the person's grant there, if any, goes."""
+
+    grant = _grant(db, org_id, user_id, worksheet_id)
+    if grant is not None:
+        db.delete(grant)
+    db.commit()
+    raise error(status.HTTP_404_NOT_FOUND, "worksheet_not_found", "Sheet not found")
 
 
 @router.post(
@@ -123,15 +145,14 @@ def issue_presence_token(worksheet_id: UUID, user: Actor, db: Database) -> Sheet
     org_id, user_id = bound_organization(db), user.id
     _charge(db, org_id, user_id, base_model.utc_now())
     _lock_grant(db, org_id, user_id, worksheet_id)
-    forget_access(db, user_id)
-    actor = db.get(User, user_id, populate_existing=True)
-    sheet = load_visible_worksheet(db, actor, worksheet_id) if actor is not None else None
+    # A hidden sheet answers like a missing one at once, without waiting on any writer.
+    if not _visible(db, user_id, worksheet_id):
+        _refuse(db, org_id, user_id, worksheet_id)
+    # A share removal or a delete holds the sheet row for update: read access again after it.
+    lock_sheet_for_read(db, worksheet_id)
+    if not _visible(db, user_id, worksheet_id):
+        _refuse(db, org_id, user_id, worksheet_id)
     grant = _grant(db, org_id, user_id, worksheet_id)
-    if sheet is None:
-        if grant is not None:
-            db.delete(grant)
-        db.commit()
-        raise error(status.HTTP_404_NOT_FOUND, "worksheet_not_found", "Sheet not found")
     topic = presence_topic(org_id, worksheet_id)
     token, expires_at = mint_presence_token(
         get_settings(), user_id=user_id, org_id=org_id, topic=topic, now=base_model.utc_now()
@@ -171,15 +192,19 @@ def sweep_expired_grants(db: Session, now: datetime) -> int:
     return len(rows)
 
 
-def revoke_stale_grants(db: Session) -> None:
-    """After an authority write: drop the grants of people who no longer see their sheet.
+def revoke_stale_grants(db: Session, worksheet_id: UUID | None = None) -> None:
+    """After an authority write, a removed share or a deleted sheet: drop the grants of
+    people who no longer see their sheet (one sheet's, or the organization's).
 
     It never renews or adds a grant; only the token route does that.
     """
 
+    db.flush()
     rows = db.scalars(
         select(WorksheetRealtimeGrant).where(
             WorksheetRealtimeGrant.org_id == bound_organization_column(),
+            *([WorksheetRealtimeGrant.worksheet_id == worksheet_id]
+              if worksheet_id is not None else []),
         )
     ).all()
     sheets: dict[UUID, set[UUID]] = {}

@@ -214,3 +214,6 @@ def remove_share(db: Session, user: User, worksheet_id: UUID, share_id: UUID) ->
     sheet = _locked(db, user, sheet, share_id)
     share = _live_share(db, sheet, share_id)
     share.is_deleted, share.deleted_at = True, utc_now()
+    from app.systems.openview.worksheets.presence import revoke_stale_grants
+
+    revoke_stale_grants(db, sheet.id)  # the people who lost the sheet leave its presence

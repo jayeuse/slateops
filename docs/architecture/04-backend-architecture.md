@@ -215,8 +215,10 @@ charges a per-person budget, rechecks sheet visibility, and issues a 60-second
 `purpose: realtime_presence` token bound to that one topic with a matching grant in
 `worksheet_realtime_grants`. On that topic the browser tracks its own current cell
 (row ID and column key); it cannot broadcast. Grants expire with the token and are
-swept by the Comms publisher sweep; an authority write removes stale ones
-(`revoke_stale`). A person who loses access stops within the 60-second token life.
+swept by the Comms publisher sweep. Removing a share or deleting the sheet drops the
+grants it ends at once, and an authority write (`revoke_stale`) drops stale ones; a
+channel already joined stays open until its token expires, so a person who loses access
+stops within the 60-second token life.
 
 ### Protected configuration and durable work
 
