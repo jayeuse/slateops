@@ -32,6 +32,7 @@ from engine import (
     prepare,
     receive,
     renewal,
+    restore,
     smtp,
     snapshot,
     status,
@@ -92,6 +93,9 @@ JOBS: dict[str, Job] = {
     "set-email": Job(maintenance.set_email, maintenance.KEYS, maintenance.REQUIRED),
     # TASK-0097 AC-B8 (DEC-0042), on the Windows Exec allow-list; reads the secret pipe.
     "admin-password": Job(admin_password.handle, admin_password.KEYS, admin_password.REQUIRED),
+    # Owner decision 2026-11-24 (plan 8.4): M01 "Restore the latest backup"; on the Windows
+    # Exec allow-list.
+    "restore": Job(restore.handle, restore.KEYS, restore.REQUIRED),
 }
 
 

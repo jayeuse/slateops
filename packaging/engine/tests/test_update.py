@@ -98,6 +98,10 @@ class UpdateWorld(World):
         if argv[:3] == ["docker", "rm", "--force"] and argv[3] in self.loose:
             del self.loose[argv[3]]
             return _ok(argv[3] + "\n")
+        if argv[0] == "restic" and argv[-2:] == ["snapshots", "--json"]:
+            assert self.host.mounted is not None, "restic runs only on the mounted drive"
+            return _ok(json.dumps([{"id": snapshot, "time": f"2026-11-17T12:{n:02d}:00.5+08:00"}
+                                   for n, snapshot in enumerate(self.snapshots)]))  # fmt: skip
         if argv[0] == "python3":
             return self._restore_tool(argv)
         if argv[0] == "apt-get":

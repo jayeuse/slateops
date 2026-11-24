@@ -707,9 +707,29 @@ class W9ReviewCorrectionTest(unittest.TestCase):
         self.assertRegex(
             click, r"5: begin\s+if not ConfirmNewKey then\s+Exit;\s+StartMaintKey\('key4'\);"
         )
-        confirm = routine(self.raw, "function ConfirmNewKey: Boolean;")
+        head = "function ConfirmAction(TitleKey, TextKey, GoKey: String): Boolean;"
+        confirm = routine(self.raw, head)
         self.assertIn("Back.Default := True;", confirm)
-        self.assertIn("CM('m04_confirm_text')", confirm)
+        self.assertIn("CM(TextKey)", confirm)
+        key = routine(self.raw, "function ConfirmNewKey: Boolean;")
+        self.assertIn(
+            "ConfirmAction('m04_confirm_title', 'm04_confirm_text', 'm04_confirm_go')", key
+        )
+
+    def test_m01_restore_asks_first_then_runs_the_engine_restore(self) -> None:
+        # Owner decision 2026-11-24: one button, one confirmation ("Go back" is the default).
+        click = routine(self.raw, "procedure MaintActionClick(Sender: TObject);")
+        self.assertRegex(
+            click,
+            r"9: if ConfirmAction\('m01_restore_confirm_title', 'm01_restore_confirm_text', "
+            r"'m01_restore_confirm_go'\) then\s+StartRestore;",
+        )
+        render = routine(self.raw, "procedure RenderMaint;\nvar")
+        self.assertIn("if I = 4 then AddMaintAction(9, 0, CM('m01_restore')", render)
+        start = routine(self.raw, "procedure StartRestore;")
+        self.assertIn("StartJob('restore', '{\"run_id\":\"' + RunId + '\"}', 'restore'", start)
+        poll = routine(self.raw, "procedure PollMaint;\nvar")
+        self.assertIn("MaintLine := RestoreResultLine(JobCode);", poll)
 
     def test_item_13_s06_before_s14_has_no_cancel_answer(self) -> None:
         cancel = routine(
@@ -1470,7 +1490,7 @@ class W14RecheckTest(unittest.TestCase):
         self.assertRegex(
             render,
             r"if StepFor = 'repair' then\s+AddProgress\('repair'[^\n]*\n\s+else\s+begin\s+"
-            r"CurY := CurY \+ ScaleY\(4\);\s+for I := 0 to 3 do",
+            r"CurY := CurY \+ ScaleY\(4\);\s+for I := 0 to 4 do",
         )
         self.assertIn("SelfDraw('AC-5 M01 Repair running', P_MAINT);", self.selftest)
 

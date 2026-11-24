@@ -350,6 +350,23 @@ m01_adminpw_not_installed=Slate Operations is not installed on this PC, so setup
 m01_adminpw_missing=Setup can reset only the admin that setup created.
 m01_adminpw_reset_failed=Setup could not change the admin password. Select Repair, then try again.
 m01_adminpw_failed=Setup could not change the admin password. Select Save report and send the file to Slate Operations support.
+m01_restore=Restore the latest backup
+m01_restore_hint=Puts back your data as it was at the last backup.
+m01_restore_confirm_title=Restore the latest backup?
+m01_restore_confirm_text=All changes made after the last backup are lost, and everyone must sign in again. Slate Operations is unavailable while the restore runs.
+m01_restore_confirm_go=&Restore
+m01_restore_running=Restoring the latest backup…
+step_restore_snapshot=Finding the latest backup.
+step_restore_down=Stopping Slate Operations.
+step_restore_restore=Restoring the latest backup.
+step_restore_rebind=Connecting Slate Operations to the restored data.
+step_restore_finalize=Checking the restored data.
+step_restore_start=Starting Slate Operations.
+step_restore_adopt=Finishing the restore.
+m01_restore_done=The latest backup is restored. Everyone must sign in again.
+m01_restore_no_drive=Setup cannot find the backup drive. Connect it, then try again.
+m01_restore_no_backup=There is no backup to restore yet.
+m01_restore_failed=The restore did not finish. Select Save report and send the file to Slate Operations support.
 s13_remove_what=Select Save report first if you want to send the details to Slate Operations support. Then select Remove and close. Setup removes everything it added, and you can start setup again.
 
 ; ---- S14 Save your recovery key

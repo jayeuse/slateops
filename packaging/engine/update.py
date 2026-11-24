@@ -587,7 +587,9 @@ def _rename(paths: Paths, project: str) -> None:
     _write_json(paths.installation, renamed)
 
 
-def _rollback(ctx: Context, record: dict[str, Any]) -> None:
+def _rollback(ctx: Context, record: dict[str, Any], job: str = "rollback") -> None:
+    """7.5: restore ``record["snapshot_id"]`` into ``<base>-r<n>``. The support restore
+    (``restore``, plan 8.4) runs the same steps with its own progress job."""
     paths, failed_project = ctx.paths, record["project"]
     match = _ROLLBACK.match(failed_project)
     base, first = (match.group("base"), int(match.group("n")) + 1) if match else (failed_project, 1)
@@ -599,11 +601,11 @@ def _rollback(ctx: Context, record: dict[str, Any]) -> None:
     record["state"] = "rolling_back"
     _save(paths, record)
     step = ctx.step(21, "down")
-    progress.report(ctx, "down", job="rollback")
+    progress.report(ctx, "down", job=job)
     for name in earlier:
         _down(ctx, step, name)
     step = ctx.step(22, "restore")
-    progress.report(ctx, "restore", job="rollback")
+    progress.report(ctx, "restore", job=job)
     if not _HEX.match(str(record.get("snapshot_id", ""))):
         raise failed("snapshot_missing")
     directory = private_dir(paths.state / "restore") / project
@@ -624,29 +626,31 @@ def _rollback(ctx: Context, record: dict[str, Any]) -> None:
         pending = json.loads((directory / "restore-pending.json").read_text())
     except (OSError, ValueError) as error:
         raise failed("restore_failed") from error
-    if not isinstance(pending, dict) or (
-        pending.get("snapshot_id"),
-        pending.get("manifest_sha256"),
-    ) != (record["snapshot_id"], record["manifest_sha256"]):
+    expected = record.get("manifest_sha256")  # the support restore knows only the snapshot
+    if (
+        not isinstance(pending, dict)
+        or pending.get("snapshot_id") != record["snapshot_id"]
+        or (expected is not None and pending.get("manifest_sha256") != expected)
+    ):
         raise failed("restore_mismatch")
     step = ctx.step(23, "rebind")
-    progress.report(ctx, "rebind", job="rollback")
+    progress.report(ctx, "rebind", job=job)
     private = directory / "restored-source-private"
     for name in ("provider.env", "app.env"):
         write_private(paths.etc / name, _rebind((private / name).read_text(), project))
     write_private(paths.etc / "provision.env",
                   _rebind((paths.etc / "provision.env").read_text(), project))  # fmt: skip
     step = ctx.step(24, "finalize")
-    progress.report(ctx, "finalize", job="rollback")
+    progress.report(ctx, "finalize", job=job)
     compose.up(ctx, step, project, ("db",), deps=False)
     compose.wait_healthy(ctx, step, project, ("db",))
     finalized = _tool(ctx, step, "finalize", record, project, directory)
     if not finalized.ok or not (directory / "restore-finalized.json").is_file():
         raise failed("finalize_failed")
-    progress.report(ctx, "start", job="rollback")
+    progress.report(ctx, "start", job=job)
     start_all(ctx, ctx.step(25, "start"), project)
     step = ctx.step(26, "adopt")
-    progress.report(ctx, "adopt", job="rollback")
+    progress.report(ctx, "adopt", job=job)
     _rename(paths, project)
     _link(paths, paths.bundle_root)  # the old engine stays the command
     backups.write_config(ctx, step, project)
@@ -660,10 +664,11 @@ def close(ctx: Context, record: dict[str, Any], code: str) -> str:
     boundary = bool(record.get("boundary"))
     try:
         if boundary:
-            _rollback(ctx, record)
+            _rollback(ctx, record, str(record.get("kind", "rollback")))
         else:
             _recover(ctx, record)
-        state = "rolled_back" if boundary else "failed"
+        restored = "restored" if record.get("kind") == "restore" else "rolled_back"
+        state = restored if boundary else "failed"
     except Exception as error:  # the services stay as they are; support takes over
         found = error.code if isinstance(error, JobError) else "engine_failed"
         record["rollback_code" if boundary else "recover_code"] = found

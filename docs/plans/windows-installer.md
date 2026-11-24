@@ -447,13 +447,13 @@ The Restic password lives inside the Linux disk. If that disk is lost, the backu
 
 ### 8.4 Restore in v1
 
-Restore stays **support-run in v1**. The engine wraps the `RESTORE.md` procedure in one command, `slateops-engine restore --snapshot <id>`, which the rollback (7.5) also uses. A support person runs it through a remote session. The reasons:
+**Owner decision 2026-11-24 (replaces H7 a):** the owner restores with one button. M01 has **Restore the latest backup**. A confirmation says that changes after the last backup are lost and that everyone signs in again; "Go back" is the default. The button runs the engine job `restore` (`packaging/engine/restore.py`):
 
-- A restore replaces live data, revokes every session and needs a choice of snapshot. A wrong choice by an owner loses data.
-- The procedure has many guards today. Linux-host runs prove the one-command path (W13a, W13b-2). The owner's end-user pass runs no restore, so a support restore on Windows is its first Windows run.
-- A reinstall with kept data (9.2) covers the most common case (a Windows repair or reinstall) without a restore.
+1. It takes the runner's lock, as an update does.
+2. It mounts the backup drive and chooses the newest Restic snapshot. The restore tool accepts it only when this installation made it.
+3. It runs the rollback steps of 7.5 with that snapshot: the old project's containers and networks go and its volumes stay; the snapshot goes into `<base>-r<n>`; finalization revokes every session; the restored project becomes the installation.
 
-An owner-started restore in the maintenance mode is a candidate for v2 (decision H7).
+A failure before the env files change starts the old project again. A later failure closes `needs_support`. A finished restore closes every update that waits for support. The choice of an older snapshot stays with support (`RESTORE.md`).
 
 ## 9. Uninstall and maintenance (proposed)
 

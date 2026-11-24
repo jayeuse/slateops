@@ -192,8 +192,9 @@ begin
 end;
 
 { D-B (spec M04): the engine removes the old key when it makes the new one, so the person
-  confirms first; "Go back" is the default. }
-function ConfirmNewKey: Boolean;
+  confirms first; "Go back" is the default. The restore (owner decision 2026-11-24) uses the
+  same form. }
+function ConfirmAction(TitleKey, TextKey, GoKey: String): Boolean;
 var
   Form: TSetupForm;
   Text: TNewStaticText;
@@ -202,20 +203,20 @@ var
 begin
   Form := CreateCustomForm(ScaleX(440), ScaleY(170), False, False);
   try
-    Form.Caption := CM('m04_confirm_title');
+    Form.Caption := CM(TitleKey);
     Y := ScaleY(12);
-    Text := AddTextTo(Form, Y, CM('m04_confirm_title'), True);
+    Text := AddTextTo(Form, Y, CM(TitleKey), True);
     Text.Left := ScaleX(14);
     Text.Width := Form.ClientWidth - ScaleX(28);
     WizardForm.AdjustLabelHeight(Text);
     Y := Y + Text.Height + ScaleY(8);
-    Text := AddTextTo(Form, Y, CM('m04_confirm_text'), False);
+    Text := AddTextTo(Form, Y, CM(TextKey), False);
     Text.Left := ScaleX(14);
     Text.Width := Form.ClientWidth - ScaleX(28);
     WizardForm.AdjustLabelHeight(Text);
     Go := TNewButton.Create(Form);
     Go.Parent := Form;
-    Go.Caption := CM('m04_confirm_go');
+    Go.Caption := CM(GoKey);
     Go.ModalResult := mrOk;
     Go.SetBounds(Form.ClientWidth - ScaleX(250), Form.ClientHeight - ScaleY(38), ScaleX(115), ScaleY(26));
     Back := TNewButton.Create(Form);
@@ -232,6 +233,30 @@ begin
     ModalOpen := False;
     Form.Free;
   end;
+end;
+
+function ConfirmNewKey: Boolean;
+begin
+  Result := ConfirmAction('m04_confirm_title', 'm04_confirm_text', 'm04_confirm_go');
+end;
+
+{ Owner decision 2026-11-24 (plan 8.4): "Restore the latest backup". The engine job restore
+  puts the newest backup back into a new project; it takes as long as an update rollback. }
+procedure StartRestore;
+begin
+  MaintPhase := 'restore';
+  MaintAt := GetTickCount;
+  MaintLine := '';
+  StartJob('restore', '{"run_id":"' + RunId + '"}', 'restore', False, False, UPDATE_SLOW_MINUTES);
+  RenderPage(P_MAINT);
+end;
+
+function RestoreResultLine(Code: String): String;
+begin
+  if Code = 'restored' then Result := CM('m01_restore_done')
+  else if Code = 'backup_target_missing' then Result := CM('m01_restore_no_drive')
+  else if Code = 'no_backup' then Result := CM('m01_restore_no_backup')
+  else Result := CM('m01_restore_failed');
 end;
 
 { AC-F4 (DEC-0042): "Reset the admin password". New password, Type it again and Show, with the
@@ -469,6 +494,8 @@ begin
            StartAdminPwChecks(Password);
          Password := '';
        end;
+    9: if ConfirmAction('m01_restore_confirm_title', 'm01_restore_confirm_text', 'm01_restore_confirm_go') then
+         StartRestore;
   end;
 end;
 
@@ -521,7 +548,7 @@ begin
   else
   begin
     CurY := CurY + ScaleY(4);
-    for I := 0 to 3 do
+    for I := 0 to 4 do
     begin
       Bottom := CurY;
       { DEC-0041 (QA N1): no "Send my invitation again": the administrator has a password from
@@ -531,6 +558,8 @@ begin
       if I = 2 then begin AddMaintAction(5, 0, CM('m01_key'), CM('m01_key_hint'), Bottom); AddMaintAction(6, 1, CM('m01_repair'), CM('m01_repair_hint'), Bottom); end;
       { AC-F4 (DEC-0042): "Reset the admin password" beside Save report. }
       if I = 3 then begin AddMaintAction(7, 0, CM('btn_save_report'), CM('m01_report_hint'), Bottom); AddMaintAction(8, 1, CM('m01_adminpw'), CM('m01_adminpw_hint'), Bottom); end;
+      { Owner decision 2026-11-24: "Restore the latest backup". }
+      if I = 4 then AddMaintAction(9, 0, CM('m01_restore'), CM('m01_restore_hint'), Bottom);
       CurY := Bottom + ScaleY(4);
     end;
     AddStepLine;
@@ -650,6 +679,15 @@ begin
       AdminPwValue := '';
       MaintLine := CM('s09_channel_failed');
     end;
+    RenderPage(P_MAINT);
+  end
+  else if MaintPhase = 'restore' then
+  begin
+    MaintPhase := '';
+    if JobCode <> 'restored' then
+      Log('Restore the latest backup: the job answered ' + JobCode + '.');
+    MaintLine := RestoreResultLine(JobCode);
+    StartMaintStatus;
     RenderPage(P_MAINT);
   end
   else if MaintPhase = 'adminpw' then
@@ -2063,6 +2101,15 @@ begin
   end
   else if MaintPhase = 'adminpw-selftest' then
     Result := OneLine(0, 0, CM('s09_channel'), MaintAt)
+  else if MaintPhase = 'restore' then
+  begin
+    Action := '';
+    if JobPurpose = 'restore' then
+      Action := StepText(JobStepJob, JobStepKey, '', '', '');
+    if Action = '' then
+      Action := CM('m01_restore_running');
+    Result := OneLine(0, 0, Action, MaintAt);
+  end
   else if MaintPhase = 'adminpw' then
   begin
     Action := '';
