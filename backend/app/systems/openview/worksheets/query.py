@@ -36,6 +36,7 @@ from app.systems.openview.worksheets.schemas import (
     SheetUnlinkedCell,
     SheetValueCell,
 )
+from app.systems.openview.worksheets.sheet_lookup_cost import Budget
 from app.systems.openview.worksheets.structure import WorksheetStructure
 
 
@@ -185,13 +186,17 @@ def read_row(db: Session, user: User, sheet: Worksheet, row_id: UUID) -> SheetRo
 
 def read_rows(
     db: Session, user: User, sheet: Worksheet, row_ids: list[UUID],
+    budget: Budget | None = None,
 ) -> dict[UUID, SheetRow]:
-    """Several rows as the person sees them, in one statement (batch saves, responses)."""
+    """Several rows as the person sees them, in one statement (batch saves, responses).
+
+    ``budget`` lets several sheets of one request share one read budget (S-11).
+    """
 
     if not row_ids:
         return {}
     structure = WorksheetStructure.model_validate(sheet.structure)
-    projection = project_rows(db, user, structure)
+    projection = project_rows(db, user, structure, budget=budget)
     keys = [column.key for column in structure.columns]
     found = db.execute(
         projected_rows(projection, sheet).where(WorksheetRow.id.in_(row_ids))
