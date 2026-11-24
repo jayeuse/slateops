@@ -97,6 +97,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     from operations.sample.controls.reads import plan_read_controls
     from operations.sample.controls.sandbox import plan_sandbox_controls
     from operations.sample.controls.temporary_password import plan_temporary_password_controls
+    from operations.sample.controls.worksheets import plan_worksheet_controls
 
     prune, *sandbox = plan_sandbox_controls(dataset)
     platform = plan_platform_controls(dataset)
@@ -130,6 +131,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         *plan_temporary_password_controls(dataset),
         *plan_board_controls(dataset),
         *plan_openview_controls(dataset),
+        *plan_worksheet_controls(dataset),
         *plan_access_controls(dataset),
         *sandbox[:split],
         *platform[:3],
@@ -381,6 +383,8 @@ def execute_control_action(
     from operations.sample.controls.temporary_password import (
         execute_temporary_password_control,
     )
+    from operations.sample.controls.worksheets import OPERATION as WORKSHEET_OPERATION
+    from operations.sample.controls.worksheets import execute_worksheet_control
 
     operation = action.values.get("operation")
     if operation == "self_email_change":
@@ -402,6 +406,8 @@ def execute_control_action(
         return execute_file_control(action, dataset, context, on_substep=on_substep)
     if operation == "review_notifications":
         return execute_notification_control(action, dataset, context, on_substep=on_substep)
+    if operation == WORKSHEET_OPERATION:
+        return execute_worksheet_control(action, dataset, context, on_substep=on_substep)
 
     handlers = {
         "comms_controls": execute_comms_control,
