@@ -63,7 +63,7 @@ def fresh_membership(db: Session, user: User) -> Membership | None:
 
 
 def _conversation_access_statement(
-    conversation_ids: Select[tuple[UUID]],
+    conversation_ids: Select[UUID],
     user_ids: Collection[UUID],
 ) -> Select[Any]:
     """Select only requested person/resource pairs; never materialize an org-wide matrix.
@@ -254,7 +254,7 @@ def readable_conversation_ids(db: Session, user: User) -> set[UUID]:
     )
 
 
-def readable_category_ids(db: Session, user: User) -> Select[tuple[UUID | None]]:
+def readable_category_ids(db: Session, user: User) -> Select[UUID | None]:
     """Categories holding a channel the person reads, as one subquery."""
     return select(CommsConversation.category_id).where(
         visible_conversation_clause(db, user),
@@ -265,7 +265,7 @@ def readable_category_ids(db: Session, user: User) -> Select[tuple[UUID | None]]
 def visible_category_clause(
     db: Session,
     user: User,
-    readable: Collection[UUID] | Select[tuple[UUID | None]],
+    readable: Collection[UUID] | Select[UUID | None],
 ) -> ColumnElement[bool]:
     """A department's category is shown only to people who can see into it.
 
@@ -328,9 +328,9 @@ def visible_category_clause(
 
 
 def conversation_reader_statement(
-    conversation_ids: Select[tuple[UUID]],
+    conversation_ids: Select[UUID],
     candidate_ids: Collection[UUID],
-) -> Select[tuple[UUID]]:
+) -> Select[UUID]:
     relation = _conversation_access_statement(conversation_ids, candidate_ids).subquery()
     return select(relation.c.user_id).where(relation.c.level > 0).distinct()
 

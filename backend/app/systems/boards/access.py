@@ -177,7 +177,7 @@ def managed_board_clause(db: Session, user: User) -> ColumnElement[bool]:
     )
 
 
-def _active_accounts() -> Select[tuple[UUID]]:
+def _active_accounts() -> Select[UUID]:
     timestamp = utc_now()
     return select(User.id).join(Membership, bound_membership_join()).where(
         User.status == UserStatus.ACTIVE.value,
@@ -206,7 +206,7 @@ def board_reader_ids(db: Session, board: Board) -> frozenset[UUID]:
     ))))
 
 
-def board_reader_statement(board_ids: Select[tuple[UUID]]) -> Select[tuple[UUID]]:
+def board_reader_statement(board_ids: Select[UUID]) -> Select[UUID]:
     """Readers of a caller-scoped set of live Boards; an empty set has no readers."""
     boards = select(Board.id).where(
         Board.id.in_(board_ids), Board.org_id == bound_organization_column(),

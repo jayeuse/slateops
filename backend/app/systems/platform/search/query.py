@@ -121,7 +121,7 @@ FROM number_magnitude LEFT JOIN number_best ON true
 """
 
 
-def _live_modules(db: Session, actor: User) -> Select[tuple[Any]]:
+def _live_modules(db: Session, actor: User) -> Select[Any]:
     return (
         select(Module.id)
         .join(Department, Department.id == Module.department_id)
@@ -364,7 +364,7 @@ def search_content(db: Session, actor: User, params: SearchRequest) -> SearchRes
     # FTS is already applied. Only clear the builder's generic ILIKE input;
     # preserve its deleted validation, allowed ordering, tie-breaker and paging.
     page_statement, count_statement = build_standard_list_statements(
-        cast(Select[tuple[Any]], statement),
+        cast(Select[Any], statement),
         params.model_copy(update={"search": None}),
         spec,
     )

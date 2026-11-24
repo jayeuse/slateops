@@ -146,7 +146,7 @@ def _history_predicate(kind: str, now: datetime, inactive_days: int) -> ColumnEl
     return and_(_active_account(now), condition)
 
 
-def _filtered_users(params: UserListRequest, now: datetime, org_id: UUID) -> Select[tuple[User]]:
+def _filtered_users(params: UserListRequest, now: datetime, org_id: UUID) -> Select[User]:
     statement = select(User).join(Membership, Membership.user_id == User.id).where(
         Membership.org_id == org_id
     )

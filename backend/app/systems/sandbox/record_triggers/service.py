@@ -1,5 +1,7 @@
 """Read-side projections for record trigger activity."""
 
+from typing import cast
+
 from sqlalchemy import literal, select, tuple_
 from sqlalchemy.orm import Session
 
@@ -11,8 +13,10 @@ from app.systems.sandbox.record_triggers.models import (
     RecordTriggerRun,
 )
 from app.systems.sandbox.record_triggers.schemas import (
+    TriggerRunEventKind,
     TriggerRunListResponse,
     TriggerRunResponse,
+    TriggerRunState,
 )
 
 
@@ -58,8 +62,8 @@ def list_recent_runs(
             created_at=run.created_at,
             trigger_id=definition.id,
             trigger_name=definition.name,
-            event_kind=event.event_kind,
-            state=run.state,
+            event_kind=cast(TriggerRunEventKind, event.event_kind),
+            state=cast(TriggerRunState, run.state),
             details=run.details,
             attempts=event.attempt_count,
         )

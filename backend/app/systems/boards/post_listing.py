@@ -43,8 +43,8 @@ def display_join() -> ColumnElement[bool]:
 
 
 def editable_statement(
-    base: Select[tuple[BoardPost]], actor: User, manager: bool
-) -> Select[tuple[BoardPost]]:
+    base: Select[BoardPost], actor: User, manager: bool
+) -> Select[BoardPost]:
     """Posts the actor can change: their own, or every live post for a manager."""
 
     return base.where(

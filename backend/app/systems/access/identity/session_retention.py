@@ -18,7 +18,7 @@ _BATCH_LIMIT = 1000
 _LOCK_KEY = 0x4F535253455353
 
 
-def _retention_statement(cutoff: datetime) -> Select[tuple[IdentitySession]]:
+def _retention_statement(cutoff: datetime) -> Select[IdentitySession]:
     anchor = func.greatest(
         func.coalesce(IdentitySession.revoked_at, IdentitySession.expires_at),
         func.coalesce(

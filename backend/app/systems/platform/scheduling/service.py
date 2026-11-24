@@ -320,7 +320,7 @@ def _notify_work(
 
 def current_user_notification_query(
     db: Session, user_id: UUID, *, lock_user: bool = True, read: bool = False
-) -> Select[tuple[InAppNotification]]:
+) -> Select[InAppNotification]:
     """Apply one current visibility policy; count reads do not lock the recipient.
 
     A read-state change locks the recipient exclusively, which also holds back a new

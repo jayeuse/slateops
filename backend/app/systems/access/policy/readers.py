@@ -31,7 +31,7 @@ def active_account_clause(now: datetime | None = None) -> ColumnElement[bool]:
     )
 
 
-def _readers(access_target: ColumnElement[bool], now: datetime | None) -> Select[tuple[UUID]]:
+def _readers(access_target: ColumnElement[bool], now: datetime | None) -> Select[UUID]:
     """Active administrators, and active users with a live row that matches the target.
 
     Every level includes ``read`` and the most specific row never goes below it,
@@ -68,8 +68,8 @@ def module_reader_ids(
 
 
 def module_reader_statement(
-    module_ids: Select[tuple[UUID]], *, now: datetime | None = None
-) -> Select[tuple[UUID]]:
+    module_ids: Select[UUID], *, now: datetime | None = None
+) -> Select[UUID]:
     """Active readers of any module in a caller-scoped module query, in one statement.
 
     An empty module query has no readers, including administrators. The caller
@@ -132,8 +132,8 @@ _DEPARTMENT_LEVELS = {
 
 
 def department_level_reader_statement(
-    department_ids: Select[tuple[UUID]], minimum: AccessLevel, *, now: datetime | None = None,
-) -> Select[tuple[UUID]]:
+    department_ids: Select[UUID], minimum: AccessLevel, *, now: datetime | None = None,
+) -> Select[UUID]:
     """Exact department authority, not Boards' broader module reach.
 
     Department rows have no more-specific department override. The maximum across
@@ -154,7 +154,7 @@ def department_level_reader_statement(
     return statement
 
 
-def departments_without_manager_statement(*, now: datetime | None = None) -> Select[tuple[UUID]]:
+def departments_without_manager_statement(*, now: datetime | None = None) -> Select[UUID]:
     """Open departments of the bound organization that no one manages (BE-SD8, R13).
 
     A manager is an active, non-guest, non-administrator account with a live

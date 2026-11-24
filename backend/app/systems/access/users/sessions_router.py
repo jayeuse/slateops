@@ -128,7 +128,7 @@ def _require_admin(identity: CurrentIdentity, db: Session) -> UUID:
     return require_fresh_exact_admin(db, identity.user.id).id
 
 
-def _visible_accounts(db: Session) -> Select[tuple[UUID]]:
+def _visible_accounts(db: Session) -> Select[UUID]:
     return select(Membership.user_id).where(Membership.org_id == bound_organization(db))
 
 

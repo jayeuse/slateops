@@ -154,7 +154,7 @@ def _load_one(db: Session, model: type[Any], object_id: UUID, label: str) -> Any
     return item
 
 
-def _sorted_scalars[ModelT](db: Session, statement: Select[tuple[ModelT]]) -> tuple[ModelT, ...]:
+def _sorted_scalars[ModelT](db: Session, statement: Select[ModelT]) -> tuple[ModelT, ...]:
     return tuple(db.scalars(statement).all())
 
 

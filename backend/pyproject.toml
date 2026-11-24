@@ -11,7 +11,7 @@ dependencies = [
     "pydantic-settings>=2.15.0",
     "python-dotenv>=1.2.3",
     "pyjwt[crypto]>=2.15.1",
-    "sqlalchemy>=2.0.52",
+    "sqlalchemy>=2.1.9",
     "uvicorn[standard]>=0.52.4",
     "uuid6>=2025.0.1",
     "babel>=2.18.0,<3",
@@ -89,7 +89,7 @@ ignore = ["PT006", "PT007", "PT018"]
 
 [tool.mypy]
 python_version = "3.12"
-plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
+plugins = ["pydantic.mypy"]
 strict = true
 
 [[tool.mypy.overrides]]

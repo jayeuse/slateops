@@ -130,7 +130,7 @@ def _manager_board(db: Session, manager: User, board_id: UUID) -> Board:
     return _board_with_access(db, manager, board_id, AccessLevel.MANAGE)
 
 
-def _eligible_users() -> Select[tuple[User]]:
+def _eligible_users() -> Select[User]:
     return (
         select(User)
         .join(Membership, bound_membership_join())

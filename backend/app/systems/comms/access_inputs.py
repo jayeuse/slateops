@@ -32,7 +32,7 @@ from app.systems.comms.conversations.models import (
 from app.systems.sandbox.departments.models import Department
 
 
-def materialized(statement: Select[Any]) -> CTE:
+def materialized(statement: Select[*tuple[Any, ...]]) -> CTE:
     """``WITH <anonymous> AS MATERIALIZED (...)``: PostgreSQL computes it once.
 
     ``prefix_with`` returns a copy that keeps the anonymous name of the first CTE, and

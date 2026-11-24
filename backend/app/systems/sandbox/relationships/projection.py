@@ -1,5 +1,6 @@
 """Relationship list loading and response projection."""
 
+from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
@@ -104,7 +105,9 @@ def relationship_response(edge: RelationshipEdge) -> RelationshipResponse:
     )
 
 
-def _listed_edges(db: Session, params: RelationshipListRequest, reader: User) -> Select[Any]:
+def _listed_edges(
+    db: Session, params: RelationshipListRequest, reader: User
+) -> Select[UUID, datetime, datetime]:
     """The edges that the list shows, decided on `relationship_edges` alone.
 
     Every condition that decides whether an edge is listed sits on the edge or in one EXISTS
@@ -218,7 +221,7 @@ def list_relationships(
     return [_projected_relationship_response(row) for row in rows], pagination
 
 
-def _projected_relationship_response(row: Row[tuple[Any, ...]]) -> RelationshipResponse:
+def _projected_relationship_response(row: Row[*tuple[Any, ...]]) -> RelationshipResponse:
     reasons = _hidden_reasons(
         row.field_is_deleted,
         row.source_record_is_deleted,
