@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type FormEvent,
@@ -153,7 +154,11 @@ export function PersonDetails({
   const undoButton = useRef<HTMLButtonElement>(null);
   const lastField = useRef<string | null>(null);
   const focusNext = useRef<"undo" | "save" | "field" | null>(null);
-  useEffect(() => {
+  // A layout effect, in the commit that removes the bar's button: the
+  // dialog's focus manager sees focus on the body once that commit ends and
+  // takes it to the popup on the next frame, after a passive effect would
+  // have run, so a fast save would lose focus to the sheet.
+  useLayoutEffect(() => {
     const next = focusNext.current;
     // A save's field focus waits until the save has fully ended.
     if (!next || (next === "field" && pending)) return;
@@ -326,6 +331,10 @@ export function PersonDetails({
     }
     finishPersonSubmission(signedInId, person.id, true);
     if (discarded.current !== run) return;
+    // The save ends in the commit that removes the bar, so the field it
+    // focuses is enabled then; a later commit would leave focus on the body
+    // in between, and the dialog would take it.
+    setPending(false);
     setEdit(null);
     if (mounted.current && !focusRoleAfterSave.current)
       focusNext.current = "field";
