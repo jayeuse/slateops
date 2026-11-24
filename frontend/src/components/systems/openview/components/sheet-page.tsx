@@ -561,6 +561,19 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
       ),
     [columns],
   );
+  // The source sheets of From another sheet columns that the viewer can see
+  // (a hidden source carries no id): their changes reach this sheet (D7.3a).
+  const sourceSheets = useMemo(
+    () =>
+      new Set(
+        sheet.structure.columns.flatMap((column) =>
+          column.type === "sheet_lookup" && column.sheet_lookup
+            ? [column.sheet_lookup.sourceWorksheetId]
+            : [],
+        ),
+      ),
+    [sheet.structure.columns],
+  );
   useEffect(() => {
     const refresh = () => setGeneration((value) => value + 1);
     // A resync, and the stream's opening one, reread the sheet and its rows:
@@ -589,13 +602,19 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
         });
         refresh();
       } else if (
+        event.entity === "worksheets" &&
+        event.worksheetId &&
+        sourceSheets.has(event.worksheetId)
+      )
+        refresh();
+      else if (
         event.entity === "records" &&
         event.moduleId &&
         linkModules.has(event.moduleId)
       )
         refresh();
     }, rereadAll);
-  }, [client, sheet.id, linkModules]);
+  }, [client, sheet.id, linkModules, sourceSheets]);
 
   // A refresh rereads the pages on screen in place, so rows never blank.
   // Each page loads once per generation, so a rerun asks for nothing new.
@@ -613,9 +632,8 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
   const searching = search.length > 0;
   const role = sheetRole(sheet);
   const canEdit = role === "owner" || role === "edit";
-  // Route 6 takes every column back; a masked one cannot be sent (D14 S1).
-  const canChangeColumns =
-    canEdit && !sheet.structure.columns.some((column) => "state" in column);
+  // Route 6 takes a masked column back unchanged (D14 S1).
+  const canChangeColumns = canEdit;
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-4 sm:px-5 sm:py-4">
       <header className="flex min-w-0 flex-wrap items-start justify-between gap-3">

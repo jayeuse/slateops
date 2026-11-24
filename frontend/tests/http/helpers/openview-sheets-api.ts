@@ -242,9 +242,10 @@ export async function installSheetsApi(
 
 export type WireSheetCell =
   | { value: unknown }
+  | { value: null; error: string }
   | { link: { record_id: string; label: string } }
   | { unlinked: string }
-  | { state: string };
+  | { state: string; count?: number };
 
 export type WireSheetRow = {
   id: string;
@@ -502,6 +503,11 @@ export async function installSheetEditApi(
       body: Record<string, unknown>;
     }[],
     searches: [] as string[],
+    /** The next structure save's refusal body (`detail`) and status. */
+    refuseNextStructure: null as null | {
+      status: number;
+      detail: Record<string, unknown>;
+    },
     refuseNextPatch: null as null | {
       status: number;
       code: string;
@@ -638,6 +644,14 @@ export async function installSheetEditApi(
         totals: Record<string, string>;
       };
       writes.structures.push({ ifMatch, body });
+      const refusal = writes.refuseNextStructure;
+      if (refusal) {
+        writes.refuseNextStructure = null;
+        return route.fulfill({
+          status: refusal.status,
+          json: { detail: refusal.detail },
+        });
+      }
       const detail = sheetState.detail;
       if (!detail || ifMatch !== detail.etag)
         return route.fulfill({
@@ -655,10 +669,36 @@ export async function installSheetEditApi(
         const sequence = Number(/^c(\d+)$/.exec(column.key)?.[1] ?? 0);
         if (sequence >= next) next = sequence + 1;
       }
+      // The server keeps a computed column's expression with column keys
+      // (D7.1): a typed name becomes its column's key.
+      const keyOf = new Map(
+        body.columns.map((column) => [
+          String(column.name).trim().toLowerCase(),
+          column.key,
+        ]),
+      );
+      const columnsSaved = body.columns.map((column) => {
+        const computed = column.computed as
+          { expression: string; places?: number | null } | undefined;
+        if (column.type !== "computed" || !computed) return column;
+        return {
+          ...column,
+          computed: {
+            ...computed,
+            expression: computed.expression.replace(
+              /\{([^}]*)\}/g,
+              (whole, name: string) => {
+                const key = keyOf.get(name.trim().toLowerCase());
+                return key ? `{${key}}` : whole;
+              },
+            ),
+          },
+        };
+      });
       detail.structure = {
         structureVersion: 1,
         nextColumnSeq: next,
-        columns: body.columns,
+        columns: columnsSaved,
         groups: body.groups,
         totals: body.totals,
       };

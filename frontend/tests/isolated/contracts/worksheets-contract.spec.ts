@@ -97,6 +97,41 @@ describeContracts("OpenView sheets", [
       }),
   },
   {
+    name: "saveWorksheetStructure with computed, From another sheet, a hidden source and a group",
+    run: () =>
+      saveWorksheetStructure(worksheetId, '"s:1"', {
+        columns: [
+          { key: "c1", name: "Student", type: "link", link: { moduleId } },
+          { key: "c2", name: "Quiz", type: "int" },
+          {
+            key: "c3",
+            name: "Final grade",
+            type: "computed",
+            computed: { expression: "ROUND({Quiz} * 1,5; 2)", places: 2 },
+          },
+          {
+            key: "c4",
+            name: "Grade in 1A",
+            type: "sheet_lookup",
+            sheet_lookup: {
+              sourceWorksheetId: recordId,
+              sourceColumnKey: "c9",
+              linkKey: "c1",
+              sourceLinkKey: "c1",
+            },
+          },
+          {
+            key: "c5",
+            name: "From roster",
+            type: "sheet_lookup",
+            state: "no_access",
+          },
+        ],
+        groups: [{ name: "Prelim", keys: ["c2", "c3"] }],
+        totals: { c3: "average" },
+      }),
+  },
+  {
     name: "restoreWorksheet",
     run: () => restoreWorksheet(worksheetId),
   },

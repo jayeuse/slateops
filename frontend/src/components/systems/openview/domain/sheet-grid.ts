@@ -187,7 +187,7 @@ export function cellView(
             : `${cell.count} matches`
           : STATE_WORDS[cell.state],
     };
-  // A computed cell that cannot be worked out (D7.2); F6 refines its mark.
+  // A computed cell that cannot be worked out (D7.2), shown with a warn mark.
   if ("error" in cell)
     return {
       kind: "error",
@@ -223,10 +223,13 @@ export function totalView(
   format: GridFormat,
 ): { label: string; text: string } {
   const word = TOTAL_WORDS[total.fn];
-  const label =
+  const scope =
     place.first && place.searching
       ? `${word} · all ${place.allRows} rows`
       : word;
+  // Cells the viewer cannot read are skipped and counted (K6, D7.3).
+  const label =
+    total.hidden_count > 0 ? `${scope} · ${total.hidden_count} hidden` : scope;
   const text =
     total.value === null
       ? ""

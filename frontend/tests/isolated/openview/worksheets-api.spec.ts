@@ -18,6 +18,8 @@ import {
   searchWorksheetShareCandidates,
   searchWorksheetPeople,
   exportWorksheet,
+  saveWorksheetStructure,
+  editableColumn,
 } from "../../../src/components/systems/openview/adapters/worksheets-api";
 import { wirePagination } from "../../helpers/pagination";
 import { installSyncFetch as installFetch } from "../helpers/fake-fetch";
@@ -757,6 +759,60 @@ test("a computed cell that cannot be worked out, and a lookup with several match
       c5: { value: null, error: "overflow" },
       c6: { state: "multiple_matches", count: 3 },
     });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("a long stored expression reads, and a save sends a hidden-source column back as it came", async () => {
+  // The stored form names keys and may be longer than the typed text (D7.1).
+  const expression = Array.from({ length: 250 }, () => "{c1}").join(" + ");
+  const hidden = {
+    key: "c3",
+    name: "From roster",
+    type: "sheet_lookup",
+    state: "no_access",
+  } as const;
+  const detail = {
+    ...wireSummary(9),
+    structure: {
+      structureVersion: 1,
+      nextColumnSeq: 4,
+      columns: [
+        { key: "c1", name: "Quiz", type: "int" },
+        {
+          key: "c2",
+          name: "Total",
+          type: "computed",
+          computed: { expression, places: 2 },
+        },
+        hidden,
+      ],
+      groups: [{ name: "Prelim", keys: ["c1", "c2"] }],
+      totals: {},
+    },
+    etag: `"${sheetId(9)}:3"`,
+    created_at: "2026-11-01T08:30:00Z",
+  };
+  const mock = installFetch(() => json(detail));
+  try {
+    const read = await getWorksheet(sheetId(9));
+    expect(expression.length).toBeGreaterThan(1000);
+    expect(read.structure.columns[1]).toEqual({
+      key: "c2",
+      name: "Total",
+      type: "computed",
+      computed: { expression, places: 2 },
+    });
+    await saveWorksheetStructure(sheetId(9), `"${sheetId(9)}:3"`, {
+      columns: read.structure.columns.map(editableColumn),
+      groups: read.structure.groups,
+      totals: {},
+    });
+    const sent = JSON.parse(String(mock.requests[1]?.init?.body)) as {
+      columns: unknown[];
+    };
+    expect(sent.columns[2]).toEqual(hidden);
   } finally {
     mock.restore();
   }

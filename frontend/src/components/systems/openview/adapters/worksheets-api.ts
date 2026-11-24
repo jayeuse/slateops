@@ -137,7 +137,9 @@ const columnSchema = z.discriminatedUnion("type", [
       type: z.literal("computed"),
       computed: z
         .object({
-          expression: z.string().min(1).max(1000),
+          // The stored form names keys and may be longer than the typed
+          // text; the contract allows 2,000 characters (D7.1).
+          expression: z.string().min(1).max(2000),
           places: places.nullable().optional(),
         })
         .strict(),
@@ -509,11 +511,52 @@ export function deleteWorksheetRow(
   );
 }
 
-/** A column as route 6 takes it: the stored column, never a masked one. */
-export type WorksheetColumnInput = Exclude<
-  WorksheetStructure["columns"][number],
-  { state: "no_access" }
+type StructureColumn = WorksheetStructure["columns"][number];
+type SheetLookupOptions = NonNullable<
+  Extract<StructureColumn, { type: "sheet_lookup" }>["sheet_lookup"]
 >;
+
+/**
+ * A From another sheet column whose source the person cannot see, as route
+ * 4 gives it: no source. Route 6 takes it back unchanged and keeps the
+ * stored column (D14 S1).
+ */
+export type WorksheetHiddenSourceColumn = {
+  key: string;
+  name: string;
+  type: "sheet_lookup";
+  state: "no_access";
+};
+
+/** A column as a person can change it: never a masked one. */
+export type WorksheetColumnInput =
+  | Exclude<StructureColumn, { type: "sheet_lookup" }>
+  | {
+      key: string;
+      name: string;
+      type: "sheet_lookup";
+      sheet_lookup: SheetLookupOptions;
+    };
+
+/** The column as it can be changed, or the masked placeholder it came as. */
+export function editableColumn(
+  column: StructureColumn,
+): WorksheetColumnInput | WorksheetHiddenSourceColumn {
+  if (column.type !== "sheet_lookup") return column;
+  return column.sheet_lookup
+    ? {
+        key: column.key,
+        name: column.name,
+        type: "sheet_lookup",
+        sheet_lookup: column.sheet_lookup,
+      }
+    : {
+        key: column.key,
+        name: column.name,
+        type: "sheet_lookup",
+        state: "no_access",
+      };
+}
 
 /**
  * Saves the whole column list, groups and totals at the sheet's version
@@ -523,7 +566,7 @@ export function saveWorksheetStructure(
   sheetId: string,
   etag: string,
   structure: {
-    columns: WorksheetColumnInput[];
+    columns: (WorksheetColumnInput | WorksheetHiddenSourceColumn)[];
     groups: WorksheetStructure["groups"];
     totals: WorksheetStructure["totals"];
   },

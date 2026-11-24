@@ -206,6 +206,23 @@ test("totals carry their label; during a search the first names all rows", () =>
       format,
     ),
   ).toEqual({ label: "Max", text: "" });
+  // Cells the viewer cannot read are skipped and counted (K6, SH-58).
+  expect(
+    totalView(
+      column("c4"),
+      { fn: "average", value: "80", hidden_count: 1 },
+      { first: false, searching: false, allRows: 15 },
+      format,
+    ),
+  ).toEqual({ label: "Average · 1 hidden", text: "80.00" });
+  expect(
+    totalView(
+      column("c1"),
+      { fn: "count", value: 12, hidden_count: 3 },
+      { first: true, searching: true, allRows: 15 },
+      format,
+    ),
+  ).toEqual({ label: "Count · all 15 rows · 3 hidden", text: "12" });
 });
 
 test("a sort reads as the column and its direction", () => {

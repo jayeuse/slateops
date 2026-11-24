@@ -1,6 +1,13 @@
 "use client";
 
-import { useId, useMemo, useState, type ReactElement } from "react";
+import {
+  lazy,
+  Suspense,
+  useId,
+  useMemo,
+  useState,
+  type ReactElement,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Alert } from "@/components/ui/alert";
@@ -8,8 +15,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PopoverTitle } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
-import { ApiError } from "@/lib/api";
 import { apiErrorReference } from "@/lib/api-errors";
+import { ApiError } from "@/lib/api";
 
 import {
   catalogFirstPageOptions,
@@ -17,15 +24,31 @@ import {
 } from "../adapters/openview-queries";
 import { worksheetKeys } from "../adapters/worksheet-queries";
 import {
+  editableColumn,
   saveWorksheetStructure,
   type WorksheetColumnInput,
   type WorksheetDetail,
+  type WorksheetHiddenSourceColumn,
 } from "../adapters/worksheets-api";
+import {
+  columnRefusal,
+  placeColumn,
+  removeGroup,
+  renameGroup,
+  withoutColumn,
+  type GroupChoice,
+} from "../domain/sheet-columns";
+import type { SheetPreviewRow } from "./sheet-computed-field";
+import type { FromSheetDraft } from "./sheet-from-sheet-field";
 
-// Add column and Column settings (docs/specs/sheets.md K1, K2, Screens 2):
-// the Sandbox's type names, then Link to records and Lookup. Computed and
-// From another sheet columns arrive with their own unit. The whole column
-// list is saved at the sheet's version (route 6).
+// Add column and Column settings (docs/specs/sheets.md K1, K2, K3 to K9,
+// Screens 2): the Sandbox's type names, then Link to records, Lookup, From
+// another sheet and Computed; the column group; the total; and Delete
+// column. The whole column list is saved at the sheet's version (route 6).
+// The expression editor and the sheet picker load on first use.
+
+const SheetComputedField = lazy(() => import("./sheet-computed-field"));
+const SheetFromSheetField = lazy(() => import("./sheet-from-sheet-field"));
 
 type Kind =
   | "text"
@@ -40,7 +63,9 @@ type Kind =
   | "email"
   | "url"
   | "link"
-  | "lookup";
+  | "lookup"
+  | "sheet_lookup"
+  | "computed";
 
 const KINDS: { kind: Kind; label: string }[] = [
   { kind: "text", label: "Text" },
@@ -56,8 +81,15 @@ const KINDS: { kind: Kind; label: string }[] = [
   { kind: "url", label: "Web link" },
   { kind: "link", label: "Link to records" },
   { kind: "lookup", label: "Lookup" },
+  { kind: "sheet_lookup", label: "From another sheet" },
+  { kind: "computed", label: "Computed" },
 ];
-const NUMERIC: ReadonlySet<string> = new Set(["decimal", "int", "number"]);
+const NUMERIC: ReadonlySet<string> = new Set([
+  "decimal",
+  "int",
+  "number",
+  "computed",
+]);
 const TOTALS = [
   ["count", "Count"],
   ["sum", "Sum"],
@@ -67,15 +99,7 @@ const TOTALS = [
 ] as const;
 
 type Column = WorksheetColumnInput;
-
-function refusal(error: unknown): string {
-  if (error instanceof ApiError) {
-    if (error.status === 412)
-      return "Someone changed this sheet's columns. Close this and try again.";
-    if (error.status === 409 || error.status === 422) return error.message;
-  }
-  return "The column could not be saved. Try again.";
-}
+type Stored = Column | WorksheetHiddenSourceColumn;
 
 type Draft = {
   name: string;
@@ -86,14 +110,23 @@ type Draft = {
   linkModule: string;
   lookupFrom: string;
   lookupField: string;
+  /** The typed expression; null keeps the stored one unchanged. */
+  expression: string | null;
+  expressionOk: boolean;
+  computedPlaces: string;
+  from: FromSheetDraft;
+  /** "" for none, "g<index>" for a group, "new" for a new group. */
   group: string;
+  groupName: string;
+  /** A group to remove on save, by its place. */
+  removedGroup: number | null;
   total: string;
 };
 
 function draftOf(column: Column | null, sheet: WorksheetDetail): Draft {
-  const group =
-    column &&
-    sheet.structure.groups.find((item) => item.keys.includes(column.key));
+  const groupIndex = column
+    ? sheet.structure.groups.findIndex((item) => item.keys.includes(column.key))
+    : -1;
   return {
     name: column?.name ?? "",
     kind: column
@@ -110,7 +143,26 @@ function draftOf(column: Column | null, sheet: WorksheetDetail): Draft {
     linkModule: column?.type === "link" ? column.link.moduleId : "",
     lookupFrom: column?.type === "lookup" ? column.lookup.linkKey : "",
     lookupField: column?.type === "lookup" ? column.lookup.fieldId : "",
-    group: group?.name ?? "",
+    expression: null,
+    expressionOk: column?.type === "computed",
+    computedPlaces:
+      column?.type === "computed"
+        ? column.computed.places === null ||
+          column.computed.places === undefined
+          ? ""
+          : String(column.computed.places)
+        : "2",
+    from:
+      column?.type === "sheet_lookup"
+        ? {
+            sourceSheet: column.sheet_lookup.sourceWorksheetId,
+            match: `${column.sheet_lookup.linkKey}|${column.sheet_lookup.sourceLinkKey}`,
+            sourceColumn: column.sheet_lookup.sourceColumnKey,
+          }
+        : { sourceSheet: "", match: "", sourceColumn: "" },
+    group: groupIndex >= 0 ? `g${groupIndex}` : "",
+    groupName: groupIndex >= 0 ? sheet.structure.groups[groupIndex].name : "",
+    removedGroup: null,
     total: column ? (sheet.structure.totals[column.key] ?? "") : "",
   };
 }
@@ -173,26 +225,243 @@ function columnOf(
       lookup: { linkKey: draft.lookupFrom, fieldId: draft.lookupField },
     };
   }
+  if (draft.kind === "computed") {
+    // An untouched expression goes back exactly as stored, so the server
+    // reads it in its stored form (D7.1).
+    const expression =
+      draft.expression ??
+      (previous?.type === "computed" ? previous.computed.expression : "");
+    if (!expression.trim()) return "Enter an expression.";
+    const places =
+      draft.computedPlaces.trim() === ""
+        ? null
+        : Math.min(18, Math.max(0, Number(draft.computedPlaces) || 0));
+    return { key, name, type: "computed", computed: { expression, places } };
+  }
+  if (draft.kind === "sheet_lookup") {
+    const [linkKey, sourceLinkKey] = draft.from.match.split("|");
+    if (!draft.from.sourceSheet || !linkKey || !sourceLinkKey)
+      return "Choose a sheet and how its rows match.";
+    if (!draft.from.sourceColumn) return "Choose the column to show.";
+    return {
+      key,
+      name,
+      type: "sheet_lookup",
+      sheet_lookup: {
+        sourceWorksheetId: draft.from.sourceSheet,
+        sourceColumnKey: draft.from.sourceColumn,
+        linkKey,
+        sourceLinkKey,
+      },
+    };
+  }
   return { key, name, type: draft.kind };
+}
+
+function sameName(a: string, b: string) {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
 export default function ColumnForm({
   sheet,
   column,
+  locale,
+  preview,
+  onDone,
+  onDeleted,
+}: {
+  sheet: WorksheetDetail;
+  column: Stored | null;
+  locale: string;
+  preview: SheetPreviewRow | null;
+  onDone: () => void;
+  /** After a column is deleted, before the popover closes. */
+  onDeleted: (key: string) => void;
+}) {
+  const client = useQueryClient();
+  const hidden = column && "state" in column ? column : null;
+  const editable = column && !("state" in column) ? column : null;
+  const [confirming, setConfirming] = useState(false);
+  const [failure, setFailure] = useState<unknown>(null);
+  const [saving, setSaving] = useState(false);
+  const names = Object.fromEntries(
+    sheet.structure.columns.map((item) => [item.key, item.name]),
+  );
+
+  const save = async (
+    structure: Parameters<typeof saveWorksheetStructure>[2],
+  ): Promise<boolean> => {
+    setFailure(null);
+    setSaving(true);
+    try {
+      const saved = await saveWorksheetStructure(
+        sheet.id,
+        sheet.etag,
+        structure,
+      );
+      client.setQueryData(worksheetKeys.detail(sheet.id), saved);
+      return true;
+    } catch (error) {
+      setFailure(error);
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!column || saving) return;
+    const kept = sheet.structure.columns.map(editableColumn);
+    const next = withoutColumn(
+      {
+        columns: kept,
+        groups: sheet.structure.groups,
+        totals: sheet.structure.totals,
+      },
+      column.key,
+    );
+    if (
+      await save({
+        columns: next.columns.map(editableColumn),
+        groups: next.groups,
+        totals: next.totals,
+      })
+    ) {
+      onDeleted(column.key);
+      onDone();
+    }
+  };
+
+  if (confirming && column)
+    return (
+      <div className="flex flex-col gap-3">
+        <PopoverTitle className="text-sm font-semibold">
+          Delete {column.name}?
+        </PopoverTitle>
+        <p className="text-sm">
+          It disappears for everyone who can see this sheet. You cannot undo
+          this.
+        </p>
+        {failure ? (
+          <Alert variant="destructive" reference={apiErrorReference(failure)}>
+            <p>
+              {columnRefusal(failure, {
+                editedKey: column.key,
+                names,
+                removedName: column.name,
+              })}
+            </p>
+          </Alert>
+        ) : null}
+        <div className="flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            autoFocus
+            className="min-h-11 xl:h-8 xl:min-h-8"
+            onClick={() => {
+              setFailure(null);
+              setConfirming(false);
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            className="min-h-11 xl:h-8 xl:min-h-8"
+            pending={saving}
+            pendingLabel="Deleting…"
+            onClick={() => void remove()}
+          >
+            Delete column
+          </Button>
+        </div>
+      </div>
+    );
+
+  if (hidden)
+    return (
+      <div className="flex flex-col gap-3">
+        <PopoverTitle className="text-sm font-semibold">
+          Column settings
+        </PopoverTitle>
+        <p className="text-sm font-medium">{hidden.name}</p>
+        <p className="text-muted-foreground text-sm">
+          From another sheet that you cannot see. Its settings stay as the owner
+          of this sheet set them.
+        </p>
+        <div className="flex justify-between gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            className="text-danger-text min-h-11 xl:h-8 xl:min-h-8"
+            onClick={() => setConfirming(true)}
+          >
+            Delete column
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            className="min-h-11 xl:h-8 xl:min-h-8"
+            onClick={onDone}
+          >
+            Close
+          </Button>
+        </div>
+      </div>
+    );
+
+  return (
+    <ColumnSettings
+      sheet={sheet}
+      column={editable}
+      locale={locale}
+      preview={preview}
+      saving={saving}
+      failure={failure}
+      names={names}
+      onSave={save}
+      onDelete={() => {
+        setFailure(null);
+        setConfirming(true);
+      }}
+      onDone={onDone}
+    />
+  );
+}
+
+function ColumnSettings({
+  sheet,
+  column,
+  locale,
+  preview,
+  saving,
+  failure,
+  names,
+  onSave,
+  onDelete,
   onDone,
 }: {
   sheet: WorksheetDetail;
   column: Column | null;
+  locale: string;
+  preview: SheetPreviewRow | null;
+  saving: boolean;
+  failure: unknown;
+  names: Record<string, string>;
+  onSave: (
+    structure: Parameters<typeof saveWorksheetStructure>[2],
+  ) => Promise<boolean>;
+  onDelete: () => void;
   onDone: () => void;
 }) {
   const id = useId();
-  const client = useQueryClient();
   // The draft is this form's own: a refetched sheet does not reset it.
   const [draft, setDraft] = useState(() => draftOf(column, sheet));
   const [problem, setProblem] = useState<string | null>(null);
-  const [failure, setFailure] = useState<unknown>(null);
-  const [saving, setSaving] = useState(false);
   const modules = useQuery(catalogFirstPageOptions());
+  const key = column?.key ?? `c${sheet.structure.nextColumnSeq}`;
   const linkColumns = sheet.structure.columns.filter(
     (item) => item.type === "link" && item.key !== column?.key,
   );
@@ -211,51 +480,102 @@ export default function ColumnForm({
     () => modules.data?.items ?? [],
     [modules.data],
   );
+  // A refusal about this column's expression shows under the expression.
+  const details =
+    failure instanceof ApiError && typeof failure.details === "object"
+      ? (failure.details as { code?: unknown; key?: unknown; reason?: unknown })
+      : null;
+  const expressionRefusal =
+    draft.kind === "computed" &&
+    details?.code === "expression_invalid" &&
+    details.key === key
+      ? {
+          words: columnRefusal(failure, { editedKey: key, names }),
+          reason: String(details.reason ?? ""),
+        }
+      : null;
 
-  const save = async () => {
+  const groupChoice = (): GroupChoice | string => {
+    if (draft.group === "new") {
+      const name = draft.groupName.trim();
+      if (!name) return "Enter a name for the new group.";
+      if (groups.some((group) => sameName(group.name, name)))
+        return "Another group has this name.";
+      return { newGroup: name };
+    }
+    if (draft.group.startsWith("g"))
+      return { group: Number(draft.group.slice(1)) };
+    return { group: null };
+  };
+
+  const submit = async () => {
     if (saving) return;
-    const key = column?.key ?? `c${sheet.structure.nextColumnSeq}`;
     const built = columnOf(key, draft, column);
     if (typeof built === "string") {
       setProblem(built);
       return;
     }
+    if (
+      draft.kind === "computed" &&
+      !draft.expressionOk &&
+      draft.expression !== null
+    ) {
+      setProblem("Fix the expression first.");
+      return;
+    }
+    const choice = groupChoice();
+    if (typeof choice === "string") {
+      setProblem(choice);
+      return;
+    }
+    let nextGroups = groups;
+    if (draft.removedGroup !== null)
+      nextGroups = removeGroup(nextGroups, draft.removedGroup);
+    else if ("group" in choice && choice.group !== null) {
+      const current = groups[choice.group];
+      const name = draft.groupName.trim();
+      if (!name) {
+        setProblem("Enter the group's name.");
+        return;
+      }
+      if (
+        current &&
+        name !== current.name &&
+        groups.some(
+          (group, index) =>
+            index !== choice.group && sameName(group.name, name),
+        )
+      ) {
+        setProblem("Another group has this name.");
+        return;
+      }
+      if (current && name !== current.name)
+        nextGroups = renameGroup(nextGroups, choice.group, name);
+    }
     setProblem(null);
-    setFailure(null);
-    const stored = sheet.structure.columns as Column[];
+    const stored = sheet.structure.columns.map(editableColumn);
     const columns = column
       ? stored.map((item) => (item.key === key ? built : item))
-      : [...stored, built];
-    const groupsOut = groups
-      .map((group) => ({
-        ...group,
-        keys: group.keys.filter((item) => item !== key),
-      }))
-      .map((group) =>
-        group.name === draft.group
-          ? { ...group, keys: [...group.keys, key] }
-          : group,
-      )
-      .filter((group) => group.keys.length > 0);
+      : stored;
     const totals = { ...sheet.structure.totals };
     delete totals[key];
     if (draft.total && (draft.total === "count" || numeric))
       totals[key] =
         draft.total as WorksheetDetail["structure"]["totals"][string];
-    setSaving(true);
-    try {
-      const saved = await saveWorksheetStructure(sheet.id, sheet.etag, {
-        columns,
-        groups: groupsOut,
-        totals,
-      });
-      client.setQueryData(worksheetKeys.detail(sheet.id), saved);
+    const placed = placeColumn(
+      // A removed group's columns stay, without a group.
+      { columns, groups: nextGroups, totals },
+      column ? key : built,
+      draft.removedGroup !== null ? { group: null } : choice,
+    );
+    if (
+      await onSave({
+        columns: placed.columns.map(editableColumn),
+        groups: placed.groups,
+        totals: placed.totals,
+      })
+    )
       onDone();
-    } catch (error) {
-      setFailure(error);
-    } finally {
-      setSaving(false);
-    }
   };
 
   const field = (label: string, control: ReactElement, hint?: string) => (
@@ -271,12 +591,21 @@ export default function ColumnForm({
   );
   const select =
     "border-input bg-background h-11 rounded-md border px-2 text-sm xl:h-8";
+  const loading = (
+    <p className="text-muted-foreground text-xs" role="status">
+      Loading…
+    </p>
+  );
+  const computedSaveBlocked =
+    draft.kind === "computed" &&
+    draft.expression !== null &&
+    !draft.expressionOk;
   return (
     <form
       className="flex flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault();
-        void save();
+        void submit();
       }}
     >
       <PopoverTitle className="text-sm font-semibold">
@@ -298,7 +627,16 @@ export default function ColumnForm({
           className={select}
           value={draft.kind}
           disabled={draft.kind === "other"}
-          onChange={(event) => update({ kind: event.target.value as Kind })}
+          onChange={(event) =>
+            update({
+              kind: event.target.value as Kind,
+              // A new expression starts empty and must be checked.
+              expressionOk:
+                event.target.value === "computed" &&
+                column?.type === "computed",
+              expression: null,
+            })
+          }
         >
           {draft.kind === "other" ? (
             <option value="other">{column?.type}</option>
@@ -410,23 +748,118 @@ export default function ColumnForm({
           )}
         </>
       ) : null}
-      {groups.length > 0
-        ? field(
-            "Column group",
-            <select
-              className={select}
-              value={draft.group}
-              onChange={(event) => update({ group: event.target.value })}
+      {draft.kind === "sheet_lookup" ? (
+        <Suspense fallback={loading}>
+          <SheetFromSheetField
+            sheet={sheet}
+            value={draft.from}
+            onChange={(patch) =>
+              setDraft((current) => ({
+                ...current,
+                from: { ...current.from, ...patch },
+              }))
+            }
+            field={field}
+            selectClass={select}
+          />
+        </Suspense>
+      ) : null}
+      {draft.kind === "computed" ? (
+        <>
+          <Suspense fallback={loading}>
+            <SheetComputedField
+              sheet={sheet}
+              self={key}
+              stored={
+                column?.type === "computed" ? column.computed.expression : null
+              }
+              value={draft.expression}
+              onChange={(text, ok) =>
+                update({ expression: text, expressionOk: ok })
+              }
+              places={
+                draft.computedPlaces.trim() === ""
+                  ? null
+                  : Number(draft.computedPlaces)
+              }
+              locale={locale}
+              preview={preview}
+              refusal={expressionRefusal}
+            />
+          </Suspense>
+          {field(
+            "Decimal places",
+            <Input
+              type="number"
+              min={0}
+              max={18}
+              className="min-h-11 xl:h-8 xl:min-h-8"
+              value={draft.computedPlaces}
+              onChange={(event) =>
+                update({ computedPlaces: event.target.value })
+              }
+            />,
+          )}
+        </>
+      ) : null}
+      {field(
+        "Column group",
+        <select
+          className={select}
+          value={draft.group}
+          onChange={(event) => {
+            const value = event.target.value;
+            const index = value.startsWith("g") ? Number(value.slice(1)) : -1;
+            update({
+              group: value,
+              groupName: index >= 0 ? (groups[index]?.name ?? "") : "",
+              removedGroup: null,
+            });
+          }}
+        >
+          <option value="">No group</option>
+          {groups.map((group, index) => (
+            <option key={`${group.name}-${index}`} value={`g${index}`}>
+              {group.name}
+            </option>
+          ))}
+          <option value="new">New group…</option>
+        </select>,
+        draft.removedGroup !== null
+          ? `${groups[draft.removedGroup]?.name ?? "The group"} is removed when you save. Its columns stay, without a group.`
+          : undefined,
+      )}
+      {draft.group ? (
+        <div className="flex items-end gap-2">
+          <div className="min-w-0 flex-1">
+            {field(
+              draft.group === "new" ? "New group's name" : "Group name",
+              <Input
+                maxLength={150}
+                className="min-h-11 xl:h-8 xl:min-h-8"
+                value={draft.groupName}
+                onChange={(event) => update({ groupName: event.target.value })}
+              />,
+            )}
+          </div>
+          {draft.group.startsWith("g") ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-11 xl:h-8 xl:min-h-8"
+              onClick={() =>
+                update({
+                  removedGroup: Number(draft.group.slice(1)),
+                  group: "",
+                  groupName: "",
+                })
+              }
             >
-              <option value="">None</option>
-              {groups.map((group) => (
-                <option key={group.name} value={group.name}>
-                  {group.name}
-                </option>
-              ))}
-            </select>,
-          )
-        : null}
+              Remove group
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {field(
         "Total",
         <select
@@ -449,16 +882,26 @@ export default function ColumnForm({
           {problem}
         </p>
       ) : null}
-      {failure ? (
+      {failure && !expressionRefusal ? (
         <Alert variant="destructive" reference={apiErrorReference(failure)}>
-          <p>{refusal(failure)}</p>
+          <p>{columnRefusal(failure, { editedKey: key, names })}</p>
         </Alert>
       ) : null}
-      <div className="flex justify-end gap-2">
+      <div className="flex items-center gap-2">
+        {column ? (
+          <Button
+            type="button"
+            variant="ghost"
+            className="text-danger-text mr-auto min-h-11 xl:h-8 xl:min-h-8"
+            onClick={onDelete}
+          >
+            Delete column
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="ghost"
-          className="min-h-11 xl:h-8 xl:min-h-8"
+          className="ml-auto min-h-11 xl:h-8 xl:min-h-8"
           onClick={onDone}
         >
           Cancel
@@ -468,6 +911,7 @@ export default function ColumnForm({
           className="min-h-11 xl:h-8 xl:min-h-8"
           pending={saving}
           pendingLabel="Saving…"
+          aria-disabled={computedSaveBlocked || undefined}
         >
           {column ? "Save column" : "Add column"}
         </Button>

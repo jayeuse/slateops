@@ -55,11 +55,12 @@ import { personCardOptions } from "@/components/profile/adapters/profile-queries
 import { cn } from "@/lib/utils";
 
 import { authMeOptions } from "../adapters/openview-queries";
-import type {
-  WorksheetCell,
-  WorksheetDetail,
-  WorksheetRow,
-  WorksheetTotal,
+import {
+  editableColumn,
+  type WorksheetCell,
+  type WorksheetDetail,
+  type WorksheetRow,
+  type WorksheetTotal,
 } from "../adapters/worksheets-api";
 import {
   cellView,
@@ -76,6 +77,7 @@ import {
   type SheetColumnType,
 } from "../domain/sheet-grid";
 import { SheetColumnPopover } from "./sheet-column-popover";
+import type { SheetPreviewRow } from "./sheet-computed-field";
 // The pickers load on first use, apart from the grid.
 const SheetLinkPicker = lazy(() =>
   import("./sheet-link-picker").then((module) => ({
@@ -181,7 +183,13 @@ function CellContent({
     );
   if (view.kind === "state")
     return (
-      <span className="text-muted-foreground inline-flex min-w-0 items-center gap-1.5 italic">
+      <span
+        className={cn(
+          // A block flex fills the cell, so long words truncate inside it.
+          "text-muted-foreground flex max-w-full min-w-0 items-center gap-1.5 pr-px italic",
+          column.numeric && "justify-end",
+        )}
+      >
         {view.state === "no_access" ? (
           <Lock aria-hidden="true" className="size-3.5 shrink-0" />
         ) : view.state === "deleted" ? (
@@ -192,7 +200,12 @@ function CellContent({
     );
   if (view.kind === "error")
     return (
-      <span className="text-warn-text inline-flex min-w-0 items-center gap-1.5">
+      <span
+        className={cn(
+          "text-warn-text flex max-w-full min-w-0 items-center gap-1.5",
+          column.numeric && "justify-end",
+        )}
+      >
         <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0" />
         <span className="truncate">{view.words}</span>
       </span>
@@ -220,7 +233,7 @@ export type SheetGridViewProps = {
   phone: boolean;
   /** Owners and Edit recipients of a sheet that is not open. */
   canEdit: boolean;
-  /** Route 6 needs every column; a masked one makes it impossible. */
+  /** Owners and Edit recipients change columns (route 6). */
   canChangeColumns: boolean;
   conflict: SheetConflict | null;
   onRange: (start: number, end: number) => void;
@@ -307,6 +320,32 @@ export function SheetGridView({
   useEffect(() => {
     onRange(first, last);
   }, [first, last, count, onRange]);
+
+  // Row 1 as the grid shows it, for a computed column's preview.
+  const previewRow = (): SheetPreviewRow | null => {
+    const row = rowAt(store, 0);
+    const first = columns[0];
+    if (!row || !first) return null;
+    const view = cellView(first, row.cells[first.key], format);
+    const label =
+      view.kind === "value" || view.kind === "unlinked"
+        ? view.text
+        : view.kind === "link"
+          ? view.label
+          : view.kind === "blank"
+            ? "blank"
+            : view.words;
+    return { label, cells: row.cells };
+  };
+  // A deleted column's header leaves: focus moves to the header after it,
+  // or to the last one, so it never lands on nothing.
+  const afterColumnDeleted = (index: number) => {
+    setActive({
+      row: -1,
+      col: Math.max(0, Math.min(index, columns.length - 1)),
+    });
+    setFocusTick((tick) => tick + 1);
+  };
 
   // Moving focus: scroll the row into view, then focus its cell. Row -1 is
   // the header row: its column settings, then Add column.
@@ -823,10 +862,13 @@ export function SheetGridView({
                   )}
                   style={index === 0 ? { left: numberWidth } : undefined}
                 >
-                  {canChangeColumns && stored && !("state" in stored) ? (
+                  {canChangeColumns && stored ? (
                     <SheetColumnPopover
                       sheet={sheet}
-                      column={stored}
+                      column={editableColumn(stored)}
+                      locale={format.locale}
+                      preview={previewRow}
+                      onDeleted={() => afterColumnDeleted(index)}
                       trigger={
                         <button
                           type="button"
@@ -851,6 +893,9 @@ export function SheetGridView({
                 <SheetColumnPopover
                   sheet={sheet}
                   column={null}
+                  locale={format.locale}
+                  preview={previewRow}
+                  onDeleted={() => undefined}
                   trigger={
                     <Button
                       variant="ghost"
