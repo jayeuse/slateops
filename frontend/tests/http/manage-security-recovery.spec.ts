@@ -55,12 +55,13 @@ test("Back up now queues real history and cancels without writes", async ({
   await expect(inspector).toContainText("Not verified");
   // Who restores is the Backup meta line's one fact; the detail does not repeat it.
   await expect(inspector).not.toContainText("The person who runs your server");
+  // Owner item 5 (rc.35 round): the owner restores from the settings program.
+  await expect(inspector).toContainText(
+    "Slate Operations settings on the server PC: Restore the latest backup",
+  );
   await expect(
     inspector.getByRole("link", { name: "Restore procedure" }),
-  ).toHaveAttribute(
-    "href",
-    "https://github.com/jayeuse/slateops/blob/main/infra/supabase/RESTORE.md",
-  );
+  ).toHaveCount(0);
   await expect(
     page.getByRole("button", {
       name: /Restore snapshot|Compare with current|Snapshot actions|Simulate scheduled backup/,

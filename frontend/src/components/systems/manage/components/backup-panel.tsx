@@ -43,6 +43,7 @@ import { BackupHistoryList, type BackupListBody } from "./backup-history-list";
 import { BackupScheduleDialog } from "./backup-schedule-dialog";
 import { BackupStatusPanel } from "./backup-status-panel";
 import { apiErrorReference } from "@/lib/api-errors";
+import { markBackupQueued } from "@/lib/backup-pause";
 
 // Backup (MD8, docs/specs/manage-relayout.md): the status panel first, then
 // History as a list and one backup's detail, after Sandbox History. This
@@ -208,6 +209,7 @@ export function BackupPanel({
     setNameError(invalid);
     if (invalid || maintenance.pending) return;
     if (await maintenance.queueBackup(createName)) {
+      markBackupQueued();
       setCreateOpen(false);
       setSelectedId(null);
       setCreateName("Manual backup");
@@ -423,8 +425,9 @@ export function BackupPanel({
             title={<DialogTitle>Back up now</DialogTitle>}
             description={
               <DialogDescription>
-                Add a named backup request to the queue. The installation goes
-                offline while this backup runs.
+                Add a named backup request to the queue. Slate Operations stops
+                for about a minute while the backup runs, and changes people
+                make in that minute may not save. It starts again by itself.
               </DialogDescription>
             }
             closeLabel="Close without backing up"

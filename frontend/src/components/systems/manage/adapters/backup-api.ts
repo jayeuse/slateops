@@ -385,7 +385,5 @@ const failureLabels: Record<string, string> = {
 export function failureLabel(code: string): string {
   return failureLabels[code] ?? code.replaceAll("_", " ");
 }
-export const restoreProcedureUrl =
-  "https://github.com/jayeuse/slateops/blob/main/infra/supabase/RESTORE.md";
 export const updateProcedureUrl =
   "https://github.com/jayeuse/slateops/blob/main/infra/supabase/README.md#operator-updates";

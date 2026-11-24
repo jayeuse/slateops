@@ -224,7 +224,7 @@ test("export permits a verified reconciled retention-failed recovery point and q
     exact: true,
   });
   await expect(backupDialog).toContainText(
-    "The installation goes offline while this backup runs.",
+    "Slate Operations stops for about a minute while the backup runs",
   );
   await backupDialog
     .getByRole("button", { name: "Close without backing up", exact: true })
