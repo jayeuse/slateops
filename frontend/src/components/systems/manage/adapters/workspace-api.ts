@@ -170,7 +170,11 @@ export function workspaceHasContacts(
 
 const workspaceCalendarSchema = workspaceCommonProfileSchema
   .pick({ week_start: true, locale: true, timezone: true })
-  .extend({ today: z.iso.date() });
+  .extend({
+    today: z.iso.date(),
+    // Sheets show currency columns in it (K2); without it they stay plain.
+    currency: workspaceCommonProfileSchema.shape.currency.optional(),
+  });
 export type WorkspaceCalendarSettings = z.output<
   typeof workspaceCalendarSchema
 >;

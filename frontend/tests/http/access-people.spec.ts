@@ -534,11 +534,19 @@ test("the disable and delete confirmations count the private sheets that will op
   );
   await disable.getByRole("button", { name: "Cancel" }).click();
 
+  // The removal confirmation counts them too (L5, SH-15).
+  answer = { status: 200, json: { opening_count: 1 } };
+  await sheet.getByRole("button", { name: "Delete" }).click();
+  const remove = page.getByRole("alertdialog", { name: "Delete Ben Cruz?" });
+  await expect(remove).toContainText(
+    "1 private sheet will open read-only to everyone who can read its record or module.",
+  );
+  await remove.getByRole("button", { name: "Cancel" }).click();
+
   // Zero sheets: the line does not show.
   answer = { status: 200, json: { opening_count: 0 } };
   const zero = page.waitForResponse(/worksheet-impact/);
   await sheet.getByRole("button", { name: "Delete" }).click();
-  const remove = page.getByRole("alertdialog", { name: "Delete Ben Cruz?" });
   await zero;
   await expect(remove).toContainText("signed out everywhere");
   await expect(remove.getByText(/private sheet/)).toHaveCount(0);
@@ -555,7 +563,7 @@ test("the disable and delete confirmations count the private sheets that will op
   expect(api.sent("PATCH", `/api/users/${ids.ben}`)[0]?.body).toEqual({
     status: "disabled",
   });
-  expect(impactReads).toHaveLength(3);
+  expect(impactReads).toHaveLength(4);
 });
 
 test("the signed-in administrator cannot disable or delete themselves", async ({

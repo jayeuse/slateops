@@ -20,8 +20,13 @@ const ANSWERED = [
 ];
 
 export function fakeRealtimeSockets(
-  address = "http://127.0.0.1:3104/openview",
+  options: {
+    address?: string;
+    /** Called as each frame goes out, before it is answered. */
+    onSend?: (frame: Frame) => void;
+  } = {},
 ) {
+  const address = options.address ?? "http://127.0.0.1:3104/openview";
   const sockets: FakeSocket[] = [];
   class FakeSocket extends EventTarget {
     static CONNECTING = 0;
@@ -57,6 +62,7 @@ export function fakeRealtimeSockets(
     send(value: string) {
       const frame = JSON.parse(value) as Frame;
       this.frames.push(frame);
+      options.onSend?.(frame);
       if (ANSWERED.includes(frame.event))
         queueMicrotask(() =>
           this.emit({
@@ -65,6 +71,20 @@ export function fakeRealtimeSockets(
             payload: { status: "ok", response: {} },
           }),
         );
+    }
+    /** A frame the service sends on the joined channel (its join ref). */
+    serverFrame(event: string, payload: Record<string, unknown> = {}) {
+      const join = [...this.frames]
+        .reverse()
+        .find((frame) => frame.event === "phx_join");
+      if (!join) throw new Error("No channel joined");
+      this.emit({
+        topic: join.topic,
+        event,
+        payload,
+        ref: null,
+        join_ref: join.join_ref ?? join.ref,
+      });
     }
     emit(frame: Frame) {
       if (this.readyState !== 1) return;

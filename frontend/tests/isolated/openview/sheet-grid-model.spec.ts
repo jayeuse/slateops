@@ -322,3 +322,57 @@ test("an older answer for another page leaves the newer row count and totals", (
   // Its page itself is still the only copy of rows 200 on.
   expect(rowAt(late, 200)?.id).toBe(row(201).id);
 });
+
+test("a Number column with the currency option shows the organization's currency, in its locale", () => {
+  const [fee, plain] = gridColumns({
+    structureVersion: 1,
+    nextColumnSeq: 3,
+    columns: [
+      {
+        key: "c1",
+        name: "Fee",
+        type: "decimal",
+        decimal: { places: 2, currency: true },
+      },
+      {
+        key: "c2",
+        name: "Weight",
+        type: "decimal",
+        decimal: { places: 2, currency: false },
+      },
+    ],
+    groups: [],
+    totals: {},
+  } as unknown as WorksheetStructure);
+  const ph = { locale: "en-PH", timezone: "Asia/Manila", currency: "PHP" };
+  const de = { locale: "de-DE", timezone: "Europe/Berlin", currency: "EUR" };
+  // SH-20, K2, O3: the symbol and the places in the organization's locale.
+  expect(cellView(fee, { value: 7 }, ph)).toEqual({
+    kind: "value",
+    text: "₱7.00",
+  });
+  expect(cellView(fee, { value: "1234.5" }, de)).toEqual({
+    kind: "value",
+    text: "1.234,50 €",
+  });
+  // Without the option, or before the organization's currency is known,
+  // the number stays plain.
+  expect(cellView(plain, { value: 7 }, ph)).toEqual({
+    kind: "value",
+    text: "7.00",
+  });
+  expect(
+    cellView(fee, { value: 7 }, { locale: "en-PH", timezone: "UTC" }),
+  ).toEqual({
+    kind: "value",
+    text: "7.00",
+  });
+  // Sum, average, min and max carry the currency; a count does not.
+  const place = { first: false, searching: false, allRows: 3 };
+  expect(
+    totalView(fee, { fn: "sum", value: "21", hidden_count: 0 }, place, ph).text,
+  ).toBe("₱21.00");
+  expect(
+    totalView(fee, { fn: "count", value: 3, hidden_count: 0 }, place, ph).text,
+  ).toBe("3");
+});

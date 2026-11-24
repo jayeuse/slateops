@@ -78,6 +78,7 @@ import {
   type RowStore,
   type SheetColumnType,
 } from "../domain/sheet-grid";
+import type { PresenceMark } from "../domain/sheet-presence";
 import { SheetColumnPopover } from "./sheet-column-popover";
 import type { SheetPreviewRow } from "./sheet-computed-field";
 // The pickers load on first use, apart from the grid.
@@ -282,8 +283,8 @@ export type SheetGridViewProps = {
   highlight?: { index: number } | null;
   /** A cell took focus: the person's place, for presence (PR2). */
   onCellFocus?: (index: number, columnKey: string) => void;
-  /** Cells other people are on, `<row index>:<column key>` to a colour. */
-  outlines?: ReadonlyMap<string, string>;
+  /** Cells other people are on, `<row index>:<column key>` to them. */
+  outlines?: ReadonlyMap<string, PresenceMark[]>;
 };
 
 export function SheetGridView({
@@ -639,14 +640,14 @@ export function SheetGridView({
             editing?.row.id === row.id &&
             editing.key === column.key;
           const fixed = !canEdit || !editable(column);
-          // Another person's place: an inset ring in their colour, under a
-          // conflict's own ring and apart from the focus outline. A phone
-          // shows avatars only (PR1).
+          // Other people's place: an inset ring in the first one's colour,
+          // under a conflict's own ring and apart from the focus outline,
+          // and a flag with each one's initials (F9-B1), on a phone too.
           const conflicted = note && conflict.key === column.key;
-          const peer =
-            phone || conflicted
-              ? undefined
-              : outlines?.get(`${item.index}:${column.key}`);
+          const marks = conflicted
+            ? undefined
+            : outlines?.get(`${item.index}:${column.key}`);
+          const peer = marks?.[0]?.color;
           return (
             <td
               key={column.key}
@@ -772,6 +773,25 @@ export function SheetGridView({
               ) : (
                 <Skeleton className="h-3 w-3/4" />
               )}
+              {marks ? (
+                <span className="absolute -top-px right-0 flex">
+                  {marks.map((mark, at) => (
+                    <span
+                      key={`${at}:${mark.color}`}
+                      data-presence-flag=""
+                      aria-hidden="true"
+                      title={mark.name}
+                      className="rounded-bl-sm px-1 text-[10px] leading-4 font-semibold"
+                      style={{
+                        color: "var(--ink)",
+                        background: `color-mix(in oklab, ${mark.color} 25%, var(--card))`,
+                      }}
+                    >
+                      {mark.initials}
+                    </span>
+                  ))}
+                </span>
+              ) : null}
             </td>
           );
         })}

@@ -141,8 +141,9 @@ export default function SheetHistoryPanel({
     () => ({
       locale: region?.locale ?? "en-US",
       timezone: region?.timezone ?? "UTC",
+      currency: region?.currency,
     }),
-    [region?.locale, region?.timezone],
+    [region?.locale, region?.timezone, region?.currency],
   );
   const columns = useMemo(() => gridColumns(sheet.structure), [sheet]);
   const [entries, setEntries] = useState<WorksheetRevision[] | null>(null);

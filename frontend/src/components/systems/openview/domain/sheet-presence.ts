@@ -1,3 +1,5 @@
+import { personInitials } from "@/components/person-avatar";
+
 // Sheet presence (docs/specs/sheets.md PR1-PR6, D13, D14): who has a sheet
 // open now, and which cell each person is on. A person's state on the
 // channel is a cell position and nothing else: no value, title or column
@@ -8,7 +10,7 @@
 export const PRESENCE_REFRESH_MS = 45_000;
 /**
  * Someone not on the token's viewer list renews it early, at most this
- * often: with the 45-second renewals, under the 12 a minute budget.
+ * often (and twice a minute; see the adapter).
  */
 export const PRESENCE_EARLY_RENEW_MS = 10_000;
 /** A hidden tab keeps its place this long before it leaves the sheet. */
@@ -75,10 +77,10 @@ export function acceptedPeers(
   return peers;
 }
 
-// The five chart colours. `--chart-2` alone is under 3:1 on light cards, so
-// its line takes some ink, as the Boards gantt bars do.
+// Four chart colours: not `--chart-1`, whose blue reads as the focus outline
+// (Product Designer, F9-B1). `--chart-2` alone is under 3:1 on light cards,
+// so its line takes some ink, as the Boards gantt bars do.
 const COLOURS = [
-  "var(--chart-1)",
   "color-mix(in oklab, var(--chart-2) 80%, var(--ink))",
   "var(--chart-3)",
   "var(--chart-4)",
@@ -93,23 +95,45 @@ export function presenceColor(userId: string): string {
   return COLOURS[hash % COLOURS.length];
 }
 
+/** One person's ring on a cell: their colour, and who it is. */
+export type PresenceMark = { color: string; initials: string; name: string };
+
 /**
- * The grid cells to outline (PR2), `<row index>:<column key>` to a colour:
- * a person on a loaded row, in a column of this sheet. The colour comes from
- * the fixed set; nothing from the channel is written as text.
+ * The grid cells to ring (PR2), `<row index>:<column key>` to the people on
+ * it, in the channel's order: a person on a loaded row, in a column of this
+ * sheet. Names come from the person cards the viewer reads (`nameOf`), never
+ * from the channel; a name not read yet shows as "?".
  */
 export function presenceOutlines(
   peers: PresencePeer[],
   rowIndexOf: (rowId: string) => number,
   columnKeys: ReadonlySet<string>,
-): Map<string, string> {
-  const outlines = new Map<string, string>();
+  nameOf: (userId: string) => string | undefined,
+): Map<string, PresenceMark[]> {
+  const outlines = new Map<string, PresenceMark[]>();
   for (const peer of peers) {
     if (!peer.rowId || !peer.columnKey || !columnKeys.has(peer.columnKey))
       continue;
     const index = rowIndexOf(peer.rowId);
     if (!Number.isSafeInteger(index) || index < 0) continue;
-    outlines.set(`${index}:${peer.columnKey}`, presenceColor(peer.userId));
+    const name = nameOf(peer.userId);
+    const key = `${index}:${peer.columnKey}`;
+    outlines.set(key, [
+      ...(outlines.get(key) ?? []),
+      {
+        color: presenceColor(peer.userId),
+        initials: name ? personInitials(name) : "?",
+        name: name ?? "Someone on this sheet",
+      },
+    ]);
   }
   return outlines;
+}
+
+/** People not admitted by a newer token, kept so they ask no more. */
+const REFUSED_KEPT = 50;
+
+/** Remembers a person not admitted; once 50 are kept, no more are added. */
+export function rememberRefused(refused: Set<string>, userId: string) {
+  if (refused.size < REFUSED_KEPT) refused.add(userId);
 }

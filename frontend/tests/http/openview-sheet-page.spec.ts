@@ -404,19 +404,66 @@ test("a cell reached by the keyboard is never under the fixed header, column or 
   expect(landsOnCell).toBe(true);
 });
 
-test("the page stays still at 1280×720", async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 720 });
+for (const [width, height] of [
+  [1280, 720],
+  [1440, 900],
+] as const) {
+  test(`the page stays still at ${width}×${height}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await signedInAs(page, reader);
+    await installSheetPageApi(page, sheet({}));
+    await page.goto(address);
+    await expect(
+      grid(page).getByRole("link", { name: "Student 1", exact: true }),
+    ).toBeVisible();
+    await expectNoPageScroll(page);
+  });
+}
+
+test("a Number column with the currency option shows the organization's currency", async ({
+  page,
+}) => {
+  // The shell's workspace is en-PH with PHP (helpers/test.ts); SH-20, K2.
   await signedInAs(page, reader);
-  await installSheetPageApi(page, sheet({}));
+  const data = sheet({ count: 3 });
+  data.detail.structure.columns[2] = {
+    key: "c3",
+    name: "Fee",
+    type: "decimal",
+    decimal: { places: 2, currency: true },
+  } as unknown as (typeof data.detail.structure.columns)[number];
+  await installSheetPageApi(page, data);
   await page.goto(address);
-  await expect(
-    grid(page).getByRole("link", { name: "Student 1", exact: true }),
-  ).toBeVisible();
-  await expectNoPageScroll(page);
+  // Row 2 holds 7 (rows(): index * 7 % 20). The symbol or the code may show.
+  await expect(grid(page).locator('[data-cell="1:c3"]')).toHaveText(
+    /^(₱|PHP)\s?7\.00$/,
+  );
 });
 
 test.describe("on a phone", () => {
   test.use({ viewport: { width: 390, height: 844 } });
+
+  test("the header fits the width: Import moves into More, Share stretches", async ({
+    page,
+  }) => {
+    await signedInAs(page, reader);
+    await installSheetPageApi(page, sheet({}));
+    await page.goto(address);
+    const header = page.locator("main header").first();
+    const more = page.getByRole("button", { name: "More sheet actions" });
+    await expect(more).toBeVisible();
+    expect(
+      await header.evaluate(
+        (element) => element.scrollWidth - element.clientWidth,
+      ),
+    ).toBe(0);
+    const box = await more.boundingBox();
+    if (!box) throw new Error("More has no box");
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+    await expect(page.getByRole("button", { name: "Import" })).toBeHidden();
+    await more.click();
+    await expect(page.getByRole("menuitem").first()).toHaveText("Import");
+  });
 
   test("the header wraps over a grid pane that scrolls on its own", async ({
     page,

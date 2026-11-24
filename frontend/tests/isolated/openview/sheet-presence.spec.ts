@@ -6,6 +6,7 @@ import {
   presenceColor,
   presenceOutlines,
   presencePayload,
+  rememberRefused,
   type PresencePeer,
 } from "../../../src/components/systems/openview/domain/sheet-presence";
 import { installFetch } from "../helpers/fake-fetch";
@@ -82,25 +83,28 @@ test("only current viewers are shown, and a cell is read from row_id and column_
   ]);
 });
 
-test("a person's colour is one of the five chart colours, the same each time", () => {
+test("a person's colour is one of four chart colours, never the focus blue, the same each time", () => {
   const colours = new Set([
-    "var(--chart-1)",
     // Under 3:1 on light cards alone, so its line takes some ink (Boards).
     "color-mix(in oklab, var(--chart-2) 80%, var(--ink))",
     "var(--chart-3)",
     "var(--chart-4)",
     "var(--chart-5)",
   ]);
-  for (const person of [ana, ben, cy, dee, eli, fay, gus]) {
+  for (const person of [ana, ben, cy, dee, eli, fay, gus, hal]) {
     expect(colours).toContain(presenceColor(person));
     expect(presenceColor(person)).toBe(presenceColor(person));
   }
 });
 
-test("an outline goes on a loaded row's cell of this sheet, in the person's colour", () => {
+test("a ring goes on a loaded row's cell of this sheet, with the person's colour, initials and name; two on one cell both show", () => {
   const loaded = new Map([
     [row1, 0],
     [row2, 7],
+  ]);
+  const names = new Map([
+    [ana, "Ana Reyes"],
+    [eli, "Eli Tan"],
   ]);
   const outlines = presenceOutlines(
     [
@@ -113,11 +117,34 @@ test("an outline goes on a loaded row's cell of this sheet, in the person's colo
         columnKey: "c1",
       },
       { userId: dee, rowId: row1, columnKey: "c9" },
+      // Same cell as Ana.
+      { userId: eli, rowId: row2, columnKey: "c3" },
+      // A name not read yet: a question mark, never anything from the channel.
+      { userId: fay, rowId: row1, columnKey: "c1" },
     ],
     (rowId) => loaded.get(rowId) ?? -1,
     new Set(["c1", "c2", "c3"]),
+    (userId) => names.get(userId),
   );
-  expect([...outlines]).toEqual([["7:c3", presenceColor(ana)]]);
+  expect([...outlines]).toEqual([
+    [
+      "7:c3",
+      [
+        { color: presenceColor(ana), initials: "AR", name: "Ana Reyes" },
+        { color: presenceColor(eli), initials: "ET", name: "Eli Tan" },
+      ],
+    ],
+    [
+      "0:c1",
+      [
+        {
+          color: presenceColor(fay),
+          initials: "?",
+          name: "Someone on this sheet",
+        },
+      ],
+    ],
+  ]);
 });
 
 function tokenBody(token: string, viewers: string[], at = topic) {
@@ -198,7 +225,8 @@ test("a person joins the sheet's own private topic under their id and tracks onl
     answer(tokenBody("presence-a", [self, ana])),
   );
   const schedule = clock();
-  const { joined, seen } = session(schedule);
+  let time = 0;
+  const { joined, seen } = session(schedule, () => time);
   try {
     await settle(() => harness.sockets[0]?.frames.length > 1);
     const socket = harness.sockets[0];
@@ -229,6 +257,13 @@ test("a person joins the sheet's own private topic under their id and tracks onl
     ]);
 
     joined.move({ rowId: row1, columnKey: "c3" });
+    // At most one position in 100 ms: this one waits out the first.
+    expect(tracks(socket.frames)).toHaveLength(1);
+    time = 100;
+    schedule
+      .live()
+      .find((timer) => timer.delay <= 100)
+      ?.callback();
     await settle(() => tracks(socket.frames).length === 2);
     expect(tracks(socket.frames)[1]).toEqual({
       type: "presence",
@@ -506,6 +541,213 @@ test("a token for another topic, or a hidden sheet at the start, opens no socket
       fetch.restore();
       harness.restore();
     }
+  }
+});
+
+test("a renewal refused until after the token's expiry drops the closed channel and its people, then joins anew", async () => {
+  let time = Date.now();
+  const harness = fakeRealtimeSockets();
+  let issued = 0;
+  const fetch = installFetch(() => {
+    issued += 1;
+    if (issued === 2)
+      return answer(
+        {
+          detail: {
+            code: "presence_rate_limited",
+            message: "Wait before joining again",
+          },
+        },
+        429,
+        { "Retry-After": "30" },
+      );
+    return answer({
+      ...tokenBody(`presence-${issued}`, [self, ana]),
+      expires_at: new Date(time + 60_000).toISOString(),
+    });
+  });
+  const schedule = clock();
+  const { joined, seen } = session(schedule, () => time);
+  try {
+    await settle(() => tracks(harness.sockets[0]?.frames ?? []).length === 1);
+    const first = harness.sockets[0];
+    presenceState(first, {
+      [ana]: { metas: [{ phx_ref: "1", row_id: null, column_key: null }] },
+    });
+    expect(seen.peers.at(-1)).toHaveLength(1);
+    // 45 s in, the renewal must wait 30 s: the token ends at 60 s.
+    time += 45_000;
+    schedule.live()[0].callback();
+    await settle(() => schedule.live().length === 1 && issued === 2);
+    expect(schedule.live().map((timer) => timer.delay)).toEqual([30_000]);
+    expect(seen.peers.at(-1)).toEqual([]);
+    await settle(() => first.readyState === first.CLOSED);
+    time += 30_000;
+    schedule.live()[0].callback();
+    await settle(() => harness.sockets.length === 2);
+    const second = harness.sockets[1];
+    await settle(() =>
+      second.frames.some((frame) => frame.event === "phx_join"),
+    );
+    expect(
+      second.frames.find((frame) => frame.event === "phx_join")?.payload,
+    ).toMatchObject({ access_token: "presence-3" });
+  } finally {
+    await joined.leave();
+    fetch.restore();
+    harness.restore();
+  }
+});
+
+test("a channel the service closes clears the people and joins again with a new token", async () => {
+  for (const ending of [[["phx_close", {}]]] as [
+    string,
+    Record<string, unknown>,
+  ][][]) {
+    const harness = fakeRealtimeSockets();
+    let issued = 0;
+    const fetch = installFetch(() =>
+      answer(tokenBody(`presence-${++issued}`, [self, ana])),
+    );
+    const schedule = clock();
+    const { joined, seen } = session(schedule);
+    try {
+      await settle(() => tracks(harness.sockets[0]?.frames ?? []).length === 1);
+      const first = harness.sockets[0];
+      presenceState(first, {
+        [ana]: { metas: [{ phx_ref: "1", row_id: null, column_key: null }] },
+      });
+      expect(seen.peers.at(-1)).toHaveLength(1);
+      for (const [event, payload] of ending) first.serverFrame(event, payload);
+      expect(seen.peers.at(-1)).toEqual([]);
+      await settle(() => harness.sockets.length === 2);
+      const second = harness.sockets[1];
+      await settle(() => tracks(second.frames).length === 1);
+      expect(
+        second.frames.find((frame) => frame.event === "phx_join")?.payload,
+      ).toMatchObject({ access_token: "presence-2" });
+      expect(first.readyState).toBe(first.CLOSED);
+    } finally {
+      await joined.leave();
+      fetch.restore();
+      harness.restore();
+    }
+  }
+});
+
+test("early renewals stop at two a minute", async () => {
+  const harness = fakeRealtimeSockets();
+  const fetch = installFetch(() =>
+    answer(tokenBody("presence-a", [self, ana])),
+  );
+  const schedule = clock();
+  let time = 1_000;
+  const { joined } = session(schedule, () => time);
+  const outsider = (n: number) =>
+    `00000000-0000-4000-8000-${String(970000 + n).padStart(12, "0")}`;
+  const arrive = (socket: (typeof harness.sockets)[number], n: number) =>
+    socket.emit({
+      topic: `realtime:${topic}`,
+      event: "presence_diff",
+      payload: {
+        joins: {
+          [outsider(n)]: {
+            metas: [{ phx_ref: `o${n}`, row_id: null, column_key: null }],
+          },
+        },
+        leaves: {},
+      },
+      ref: null,
+    });
+  try {
+    await settle(() => tracks(harness.sockets[0]?.frames ?? []).length === 1);
+    const socket = harness.sockets[0];
+    // The service sends the state first; changes follow it.
+    presenceState(socket, {});
+    // Newcomers the token does not list, 10 seconds apart: two early
+    // renewals, then none until a minute has passed.
+    arrive(socket, 1);
+    await settle(() => fetch.requests.length === 2);
+    await settle(() => schedule.live().length === 1);
+    time = 11_000;
+    arrive(socket, 2);
+    await settle(() => fetch.requests.length === 3);
+    await settle(() => schedule.live().length === 1);
+    time = 21_000;
+    arrive(socket, 3);
+    await new Promise((done) => setTimeout(done, 0));
+    expect(fetch.requests).toHaveLength(3);
+    expect(schedule.live().map((timer) => timer.delay)).toEqual([45_000]);
+    time = 71_000;
+    arrive(socket, 4);
+    await settle(() => fetch.requests.length === 4);
+  } finally {
+    await joined.leave();
+    fetch.restore();
+    harness.restore();
+  }
+});
+
+test("at most 50 people are remembered as not admitted", () => {
+  const refused = new Set<string>();
+  for (let n = 0; n < 60; n += 1) rememberRefused(refused, `person-${n}`);
+  expect(refused.size).toBe(50);
+  expect(refused.has("person-0")).toBe(true);
+  expect(refused.has("person-50")).toBe(false);
+});
+
+test("leaving while a renewal hands the channel its new token starts nothing more", async () => {
+  const hold: { leave?: () => Promise<void> } = {};
+  const harness = fakeRealtimeSockets({
+    onSend: (frame) => {
+      if (frame.event === "access_token") void hold.leave?.();
+    },
+  });
+  let issued = 0;
+  const fetch = installFetch(() =>
+    answer(tokenBody(`presence-${++issued}`, [self, ana])),
+  );
+  const schedule = clock();
+  const { joined, seen } = session(schedule);
+  hold.leave = joined.leave;
+  try {
+    await settle(() => tracks(harness.sockets[0]?.frames ?? []).length === 1);
+    schedule.live()[0].callback();
+    await settle(() =>
+      harness.sockets[0].frames.some((frame) => frame.event === "access_token"),
+    );
+    await new Promise((done) => setTimeout(done, 0));
+    expect(schedule.live()).toEqual([]);
+    expect(seen.peers.at(-1)).toEqual([]);
+  } finally {
+    await joined.leave();
+    fetch.restore();
+    harness.restore();
+  }
+});
+
+test("the same people sent again are not passed on again", async () => {
+  const harness = fakeRealtimeSockets();
+  const fetch = installFetch(() =>
+    answer(tokenBody("presence-a", [self, ana])),
+  );
+  const schedule = clock();
+  const { joined, seen } = session(schedule);
+  try {
+    await settle(() => tracks(harness.sockets[0]?.frames ?? []).length === 1);
+    const socket = harness.sockets[0];
+    presenceState(socket, {
+      [ana]: { metas: [{ phx_ref: "1", row_id: row1, column_key: "c1" }] },
+    });
+    const count = seen.peers.length;
+    presenceState(socket, {
+      [ana]: { metas: [{ phx_ref: "2", row_id: row1, column_key: "c1" }] },
+    });
+    expect(seen.peers).toHaveLength(count);
+  } finally {
+    await joined.leave();
+    fetch.restore();
+    harness.restore();
   }
 });
 

@@ -1,6 +1,6 @@
 """Reading rows per viewer: routes 9 and 11 (D7.3; N2, N4, N6-N8, K6, K7, F7).
 
-SH-24, SH-26, SH-27, SH-30.
+SH-24, SH-26, SH-27, SH-29, SH-30 (a real publish, close and reopen).
 """
 
 from collections.abc import Iterator
@@ -10,6 +10,7 @@ from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -17,11 +18,20 @@ from app.core.base_model import utc_now
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
 from app.systems.openview.worksheets.models import WorksheetRow, WorksheetRowLink
+from app.systems.openview.worksheets.query import read_row
 from app.systems.sandbox.fields.models import Field
+from app.systems.sandbox.lifecycle.schemas import LifecycleTargetType
+from app.systems.sandbox.lifecycle.service import close_lifecycle, reopen_lifecycle
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from tests.rbac.support import _client, add_module, make_group_access
-from tests.worksheets.support import STRUCTURE, SheetWorld, sheet_world
+from tests.sandbox_publications.support import (
+    bound_field,
+    bound_module,
+    publish_revision,
+    publish_structure,
+)
+from tests.worksheets.support import STRUCTURE, SheetWorld, add_sheet, sheet_world
 
 pytestmark = pytest.mark.integration
 NOT_FOUND = {"detail": {"code": "worksheet_not_found", "message": "Sheet not found"}}
@@ -248,6 +258,105 @@ def test_totals_cover_every_row_and_count_the_cells_hidden_from_the_viewer(
         "c4": {"fn": "count", "value": 3, "hidden_count": 0},
         "c5": {"fn": "sum", "value": "22", "hidden_count": 0},
     }
+
+
+def test_min_and_max_totals_cover_every_row(
+    application: FastAPI, integration_db: Session, graded: Graded,
+) -> None:
+    """SH-24: Points are 10, 5, 7; Bonus ({Points} + 1) is 11, 6, 8; blanks are skipped."""
+
+    graded.world.sheet.structure = {**graded.world.sheet.structure,
+                                    "totals": {"c5": "min", "c6": "max"}}
+    integration_db.flush()
+    body = _query(application, integration_db, graded.world.owner, graded, search="alpha")
+    assert body["totals"] == {
+        "c5": {"fn": "min", "value": "5", "hidden_count": 0},
+        "c6": {"fn": "max", "value": "11", "hidden_count": 0},
+    }
+
+
+def test_a_lookup_follows_its_record_and_links_return_on_restore_and_reopen(
+    application: FastAPI, integration_db: Session, graded: Graded,
+) -> None:
+    """SH-26: the lookup reads the record's current value. SH-29: a restored record's link
+    shows again. SH-30: links of a closed target module come back when it reopens."""
+
+    db = integration_db
+    owner = graded.world.owner
+    score = str(graded.world.sheet.structure["columns"][2]["lookup"]["fieldId"])
+    graded.alice.data = {**graded.alice.data, score: 95}
+    bob = db.scalars(select(WorksheetRowLink.target_record_id).where(
+        WorksheetRowLink.row_id == graded.rows[1])).one()
+    restored = db.get(Record, bob)
+    assert restored is not None
+    restored.is_deleted, restored.deleted_at = False, None
+    db.flush()
+    cells = [item["cells"] for item in _query(application, db, owner, graded)["items"]]
+    assert cells[0]["c3"] == {"value": 95}
+    assert (cells[1]["c1"], cells[1]["c3"]) == (
+        {"link": {"record_id": str(bob), "label": "Bob"}}, {"value": 70},
+    )
+    graded.students.is_deleted, graded.students.deleted_at = True, utc_now()
+    db.flush()
+    closed = _query(application, db, owner, graded)["items"][0]["cells"]["c1"]
+    assert closed == {"state": "unavailable"}
+    graded.students.is_deleted, graded.students.deleted_at = False, None
+    db.flush()
+    reopened = _query(application, db, owner, graded)["items"][0]["cells"]
+    assert (reopened["c1"], reopened["c3"]) == (
+        {"link": {"record_id": str(graded.alice.id), "label": "Alice"}}, {"value": 95},
+    )
+
+
+def test_a_published_field_removal_and_a_module_close_show_in_the_cells(
+    integration_owner_db: Session,
+) -> None:
+    """SH-30 through a real Sandbox publish (the lookup's field goes: "Field removed") and a
+    real lifecycle close and reopen of the link column's target module."""
+
+    db = integration_owner_db
+    publisher, document = publish_structure(db)
+    requests = bound_module(db, "sample-requests")
+    priority = bound_field(db, "field", "sample-requests:sample-field-requests-priority")
+    target = Record(org_id=requests.org_id, module_id=requests.id,
+                    data={str(priority.id): "Urgent"})
+    db.add(target)
+    db.flush()
+    sheet = add_sheet(db, publisher, module=bound_module(db, "sample-customers"))
+    sheet.structure = {
+        **STRUCTURE, "nextColumnSeq": 3,
+        "columns": [
+            {"key": "c1", "name": "Request", "type": "link",
+             "link": {"moduleId": str(requests.id)}},
+            {"key": "c2", "name": "Priority", "type": "lookup",
+             "lookup": {"linkKey": "c1", "fieldId": str(priority.id)}},
+        ],
+    }
+    row = WorksheetRow(org_id=sheet.org_id, worksheet_id=sheet.id, position=1024,
+                       data={}, data_bytes=2)
+    db.add(row)
+    db.flush()
+    db.add(WorksheetRowLink(org_id=row.org_id, worksheet_id=sheet.id, row_id=row.id,
+                            column_key="c1", target_record_id=target.id))
+    db.flush()
+
+    def cells() -> dict[str, Any]:
+        found = read_row(db, publisher, sheet, row.id)
+        assert found is not None
+        return {key: cell.model_dump() for key, cell in found.cells.items()}
+
+    assert cells()["c2"] == {"value": "Urgent"}
+    updated = document.model_copy(deep=True)
+    module = next(item for item in updated.design.modules if item.id == "sample-requests")
+    module.fields = [field for field in module.fields
+                     if field.id != "sample-field-requests-priority"]
+    publish_revision(db, publisher, updated, "remove-priority")
+    assert cells()["c2"] == {"state": "field_removed"}
+    db.commit()
+    close_lifecycle(db, LifecycleTargetType.MODULE, requests.id, None)
+    assert cells()["c1"] == {"state": "unavailable"}
+    reopen_lifecycle(db, LifecycleTargetType.MODULE, requests.id, None)
+    assert cells()["c1"]["link"]["record_id"] == str(target.id)
 
 
 def test_rows_page_in_their_saved_order_with_an_exact_total(

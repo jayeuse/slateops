@@ -67,15 +67,16 @@ def test_a_text_cell_holds_four_thousand_characters(
     assert _create(application, integration_db, world, {"c1": "x" * 4000}).status_code == 201
     refused = _create(application, integration_db, world, {"c1": "x" * 4001})
     assert _limit(refused) == (422, "worksheet_limit", "cell", 4000)
+    assert refused.json()["detail"]["message"] == "A text cell holds at most 4,000 characters"
 
 
 def test_a_row_holds_thirty_two_kibibytes(
     application: FastAPI, integration_db: Session, world: SheetWorld,
 ) -> None:
     cells = {f"c{index}": "x" * 4000 for index in range(1, 10)}  # about 36,000 bytes
-    assert _limit(_create(application, integration_db, world, cells)) == (
-        422, "worksheet_limit", "row_size", 32768,
-    )
+    refused = _create(application, integration_db, world, cells)
+    assert _limit(refused) == (422, "worksheet_limit", "row_size", 32768)
+    assert refused.json()["detail"]["message"] == "A row holds at most 32 KiB of data"
 
 
 def test_a_sheet_holds_ten_thousand_rows_and_eight_mebibytes(
@@ -86,11 +87,11 @@ def test_a_sheet_holds_ten_thousand_rows_and_eight_mebibytes(
     assert sheet is not None
     sheet.live_row_count = 10000
     db.flush()
-    assert _limit(_create(application, db, world, {"c1": "x"})) == (
-        422, "worksheet_limit", "rows", 10000,
-    )
+    rows = _create(application, db, world, {"c1": "x"})
+    assert _limit(rows) == (422, "worksheet_limit", "rows", 10000)
+    assert rows.json()["detail"]["message"] == "A sheet holds at most 10,000 rows"
     sheet.live_row_count, sheet.data_bytes = 1, 8388608 - 10
     db.flush()
-    assert _limit(_create(application, db, world, {"c1": "x" * 100})) == (
-        422, "worksheet_limit", "sheet_size", 8388608,
-    )
+    size = _create(application, db, world, {"c1": "x" * 100})
+    assert _limit(size) == (422, "worksheet_limit", "sheet_size", 8388608)
+    assert size.json()["detail"]["message"] == "A sheet holds at most 8 MiB"

@@ -35,6 +35,8 @@ export type GridColumn = {
   /** The link column a lookup reads through. */
   lookupLinkKey?: string;
   places?: number;
+  /** A Number column with the currency option (K2). */
+  currency?: boolean;
   options?: Record<string, string>;
 };
 
@@ -65,7 +67,10 @@ export function gridColumns(structure: WorksheetStructure): GridColumn[] {
     };
     if (column.type === "link") view.linkModuleId = column.link.moduleId;
     if (column.type === "lookup") view.lookupLinkKey = column.lookup.linkKey;
-    if (column.type === "decimal") view.places = column.decimal.places;
+    if (column.type === "decimal") {
+      view.places = column.decimal.places;
+      if (column.decimal.currency) view.currency = true;
+    }
     if (
       column.type === "computed" &&
       typeof column.computed.places === "number"
@@ -92,7 +97,12 @@ export function gridBands(columns: readonly GridColumn[]): GridBand[] {
   return bands;
 }
 
-export type GridFormat = { locale: string; timezone: string };
+export type GridFormat = {
+  locale: string;
+  timezone: string;
+  /** The organization's currency (ISO 4217), when its profile is read. */
+  currency?: string;
+};
 
 const STATE_WORDS: Record<WorksheetCellState, string> = {
   no_access: "No access",
@@ -116,6 +126,7 @@ function numberText(
   value: unknown,
   format: GridFormat,
   places?: number,
+  currency?: string,
 ): string | null {
   const number =
     typeof value === "number"
@@ -124,11 +135,25 @@ function numberText(
         ? Number(value)
         : NaN;
   if (!Number.isFinite(number)) return null;
+  // A currency column shows the organization's currency in its locale
+  // (K2, O3); its places are the column's. Editing and exports keep the
+  // plain number (X4).
+  if (currency)
+    return new Intl.NumberFormat(format.locale, {
+      style: "currency",
+      currency,
+      minimumFractionDigits: places ?? 2,
+      maximumFractionDigits: places ?? 2,
+    }).format(number);
   return new Intl.NumberFormat(format.locale, {
     minimumFractionDigits: places ?? 0,
     maximumFractionDigits: places ?? 2,
   }).format(number);
 }
+
+/** The currency a column's numbers show in, if any. */
+const columnCurrency = (column: GridColumn, format: GridFormat) =>
+  column.currency ? format.currency : undefined;
 
 function valueText(
   column: GridColumn,
@@ -139,7 +164,12 @@ function valueText(
     return column.options?.[value] ?? value;
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (column.numeric) {
-    const text = numberText(value, format, column.places);
+    const text = numberText(
+      value,
+      format,
+      column.places,
+      columnCurrency(column, format),
+    );
     if (text !== null) return text;
   }
   if (typeof value === "number")
@@ -240,6 +270,7 @@ export function totalView(
           total.value,
           format,
           total.fn === "count" ? 0 : column.places,
+          total.fn === "count" ? undefined : columnCurrency(column, format),
         ) ?? String(total.value));
   return { label, text };
 }

@@ -110,6 +110,10 @@ const cell = (page: Page, index: number, key: string) =>
     .getByRole("grid", { name: "Class roster" })
     .locator(`[data-cell="${index}:${key}"]`);
 
+/** The initials flags on a cell's ring. */
+const flags = (page: Page, index: number, key: string) =>
+  cell(page, index, key).locator("[data-presence-flag]");
+
 /** Whether a cell carries a person's outline (an inset ring). */
 const outline = (page: Page, index: number, key: string) =>
   cell(page, index, key).evaluate((element) =>
@@ -124,9 +128,11 @@ test("people on the sheet show in the header, each cell they are on is outlined,
   const presence = await openSheet(page);
   presence.present = {
     [people[0].id]: { row_id: wireSheetRow(1, {}).id, column_key: "c2" },
+    // Carmela is on the same cell as Bernard.
+    [people[1].id]: { row_id: wireSheetRow(1, {}).id, column_key: "c2" },
     ...Object.fromEntries(
       people
-        .slice(1)
+        .slice(2)
         .map((entry) => [entry.id, { row_id: null, column_key: null }]),
     ),
     // Not one of the token's viewers: never shown.
@@ -149,6 +155,17 @@ test("people on the sheet show in the header, each cell they are on is outlined,
   );
 
   await expect.poll(() => outline(page, 1, "c2")).toBe("outlined");
+  // Each ring names its person: initials in a flag, the full name on hover.
+  // Two people on one cell show two flags.
+  await expect(flags(page, 1, "c2")).toHaveText(["BO", "CR"]);
+  await expect(flags(page, 1, "c2").first()).toHaveAttribute(
+    "title",
+    "Bernard Ocampo",
+  );
+  await expect(flags(page, 1, "c2").first()).toHaveAttribute(
+    "aria-hidden",
+    "true",
+  );
   expect(await outline(page, 0, "c1")).toBe("plain");
 
   // This person's own cell goes out as its row id and column key.
@@ -163,14 +180,15 @@ test("people on the sheet show in the header, each cell they are on is outlined,
       "row_id",
     ]);
 
-  // Bernard moves on; his outline follows.
+  // Bernard moves on; his ring and flag follow, and Carmela's stay.
   presence.present[people[0].id] = {
     row_id: wireSheetRow(3, {}).id,
     column_key: "c1",
   };
   presence.sync();
   await expect.poll(() => outline(page, 3, "c1")).toBe("outlined");
-  expect(await outline(page, 1, "c2")).toBe("plain");
+  await expect(flags(page, 3, "c1")).toHaveText(["BO"]);
+  await expect(flags(page, 1, "c2")).toHaveText(["CR"]);
 });
 
 test("leaving the sheet leaves its channel, and a tab hidden past the grace period leaves until it is shown", async ({
@@ -281,7 +299,7 @@ test("a sheet the token route refuses opens no channel and shows no one", async 
 test.describe("on a phone", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test("the header shows who is here, and no cell is outlined", async ({
+  test("the header shows who is here, and their cell is ringed and flagged", async ({
     page,
   }) => {
     const presence = await openSheet(page);
@@ -290,10 +308,13 @@ test.describe("on a phone", () => {
     };
     await page.goto(`/openview?sheet=${sheetId}`);
     const here = page.getByRole("group", { name: "On this sheet now" });
-    await expect(
-      here.getByRole("button", { name: "Bernard Ocampo" }),
-    ).toBeVisible();
-    await expect(cell(page, 0, "c1")).toBeVisible();
-    expect(await outline(page, 0, "c1")).toBe("plain");
+    const avatar = here.getByRole("button", { name: "Bernard Ocampo" });
+    await expect(avatar).toBeVisible();
+    // A 44px target (F9-N5).
+    const box = await avatar.boundingBox();
+    expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+    await expect.poll(() => outline(page, 0, "c1")).toBe("outlined");
+    await expect(flags(page, 0, "c1")).toHaveText(["BO"]);
   });
 });

@@ -452,6 +452,31 @@ def test_a_link_target_that_was_not_locked_is_refused(
     assert rows.order(world.owner) == []
 
 
+def test_a_conflict_shows_no_record_or_module_the_saver_cannot_read(
+    world: SheetWorld, students: Students, rows: Rows,
+) -> None:
+    """SH-70: the 412 body of an Edit recipient without Student List carries no linked
+    record ID, no record title, no field ID and no module name; the link and lookup are hidden."""
+
+    row_id = rows.create(world.owner, {
+        "c1": {"record_id": str(students.alice.id)}, "c3": "x",
+    }).json()["id"]
+    assert rows.patch(world.owner, row_id, {
+        "c3": {"value": "y", "expected": {"value": "x"}},
+    }).status_code == 200
+    stale = rows.patch(world.group_member, row_id, {
+        "c3": {"value": "z", "expected": {"value": "x"}},
+    })
+    assert _code(stale) == (412, "cell_changed")
+    current = stale.json()["detail"]["current"]["cells"]
+    assert (current["c1"], current["c2"], current["c3"]) == (
+        {"state": "no_access"}, {"state": "no_access"}, {"value": "y"},
+    )
+    for hidden in (str(students.alice.id), str(students.module.id), "Alice", "Student List",
+                   str(students.name.id)):
+        assert hidden not in stale.text, hidden
+
+
 @pytest.mark.parametrize("author_left", [False, True])
 def test_a_conflict_names_who_changed_the_cell_when_the_saver_can_see_them(
     integration_db: Session, world: SheetWorld, rows: Rows, author_left: bool,

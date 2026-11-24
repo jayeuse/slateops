@@ -17,6 +17,7 @@ from app.systems.access.users import service
 from app.systems.access.users.models import Membership, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
 from app.systems.openview.worksheets.access import worksheet_level
+from app.systems.openview.worksheets.models import WorksheetShare
 from tests.conftest import make_operator
 from tests.worksheets.leave_support import LeaveWorld
 from tests.worksheets.leave_support import leave_world as leave_world
@@ -77,18 +78,34 @@ def test_each_leave_path_opens_the_private_sheets_and_reports_their_count(
     }]
 
 
+def _share_rows(world: LeaveWorld) -> list[tuple[Any, ...]]:
+    world.db.expire_all()
+    return sorted(
+        (share.id, share.subject, share.user_id, share.group_id, share.level,
+         share.is_deleted, share.updated_at)
+        for share in world.db.scalars(select(WorksheetShare).where(
+            WorksheetShare.worksheet_id == world.sheets.sheet.id))
+    )
+
+
 def test_a_re_enabled_owner_gets_the_sheets_back_with_their_shares(
     leave_world: LeaveWorld,
 ) -> None:
+    """SH-16: the earlier levels come back, Edit included, and no share row changed."""
+
     world = leave_world
     owner = world.sheets.owner
+    shares = _share_rows(world)
+    assert len(shares) >= 2
     assert _leave(world, "account_disabled").status_code == 200
+    assert _share_rows(world) == shares
     enabled = world.client(world.sheets.admin).patch(
         f"/api/users/{owner.id}", json={"status": "active"},
     )
     assert enabled.status_code == 200, enabled.text
     world.db.expire_all()
     assert _levels(world) == PRIVATE
+    assert _share_rows(world) == shares
 
 
 def test_a_restored_member_gets_the_sheets_back_private(leave_world: LeaveWorld) -> None:

@@ -13,7 +13,7 @@ import {
 import type { Route } from "next";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowUpDown,
@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { personCardOptions } from "@/components/profile/adapters/profile-queries";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { subscribeWorkspaceInvalidations } from "@/components/systems/shared/adapters/invalidation-events";
@@ -60,9 +61,13 @@ import {
   type WorksheetRow,
   type WorksheetRowSort,
 } from "../adapters/worksheets-api";
+import { authMeOptions } from "../adapters/openview-queries";
 import { sheetHref } from "./sheet-display";
 import { SheetGridView, type SheetConflict } from "./sheet-grid-view";
-import { SheetPresenceAvatars } from "./sheet-presence-avatars";
+import {
+  SheetPresenceAvatars,
+  type PresencePerson,
+} from "./sheet-presence-avatars";
 import { useSheetPresence } from "./use-sheet-presence";
 import { presenceOutlines } from "../domain/sheet-presence";
 import type { SaveResult } from "./sheet-row-form";
@@ -314,8 +319,9 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
     () => ({
       locale: region?.locale ?? "en-US",
       timezone: region?.timezone ?? "UTC",
+      currency: region?.currency,
     }),
-    [region?.locale, region?.timezone],
+    [region?.locale, region?.timezone, region?.currency],
   );
   // Keyed on the structure: a rename or a new row count is no new columns,
   // so it neither resubscribes the events nor rereads the rows.
@@ -636,17 +642,53 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
   });
   const [highlight, setHighlight] = useState<{ index: number } | null>(null);
 
-  // Who else has the sheet open, and where (PR1, PR2); a phone shows the
-  // avatars only.
+  // Who else has the sheet open, and where (PR1, PR2). Names and photos
+  // come from the person cards the viewer reads here, so nothing from the
+  // channel becomes text.
   const presence = useSheetPresence(sheet.id);
+  const identity = useQuery(authMeOptions());
+  const viewer = identity.data
+    ? { id: identity.data.id, role: identity.data.role ?? "guest" }
+    : null;
+  const cards = useQueries({
+    queries: presence.peers.map((peer) => ({
+      ...personCardOptions(viewer ?? { id: "", role: "member" }, peer.userId),
+      enabled: Boolean(viewer),
+    })),
+    combine: cardData,
+  });
+  const people = useMemo(() => {
+    const known = new Map<string, PresencePerson>();
+    presence.peers.forEach((peer, index) => {
+      const card = cards[index];
+      if (card)
+        known.set(peer.userId, {
+          name: card.display_name,
+          avatarUrl: card.avatar_url,
+        });
+    });
+    return known;
+  }, [presence.peers, cards]);
   const columnKeys = useMemo(
     () => new Set(columns.map((column) => column.key)),
     [columns],
   );
-  const outlines = presenceOutlines(
-    presence.peers,
-    (rowId) => rowIndex(store, rowId),
-    columnKeys,
+  // Each loaded row's place, once per load, for the rings.
+  const rowPlaces = useMemo(() => {
+    const places = new Map<string, number>();
+    for (const [offset, rows] of Object.entries(store.pages))
+      rows.forEach((row, at) => places.set(row.id, Number(offset) + at));
+    return places;
+  }, [store.pages]);
+  const outlines = useMemo(
+    () =>
+      presenceOutlines(
+        presence.peers,
+        (rowId) => rowPlaces.get(rowId) ?? -1,
+        columnKeys,
+        (userId) => people.get(userId)?.name,
+      ),
+    [presence.peers, rowPlaces, columnKeys, people],
   );
   useEffect(() => {
     if (!target) return;
@@ -772,7 +814,7 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
           {role === "open" ? <OpenLine sheet={sheet} /> : null}
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
-          <SheetPresenceAvatars peers={presence.peers} />
+          <SheetPresenceAvatars peers={presence.peers} people={people} />
           <SheetHeaderActions
             sheet={sheet}
             role={role}
@@ -939,6 +981,15 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
       ) : null}
     </div>
   );
+}
+
+/** The person cards' data, kept the same while the cards are unchanged. */
+function cardData(
+  results: {
+    data?: { data: { display_name: string; avatar_url: string | null } };
+  }[],
+) {
+  return results.map((result) => result.data?.data);
 }
 
 /** `/openview?sheet=<id>`: the same not-found page for a missing or hidden sheet (P6). */

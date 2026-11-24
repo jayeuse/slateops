@@ -64,6 +64,14 @@ test("a reader lists the record's sheets in its last tab and creates a blank she
   // A reader has no Edit on the record and can still create a sheet (C1).
   await expect(panel.getByRole("button", { name: "Edit" })).toHaveCount(0);
   const tabs = panel.getByRole("tab");
+  // The record's own tabs keep their order; Sheets comes last (SH-48).
+  await expect(tabs).toHaveText([
+    "Details",
+    "Linked records",
+    "Files",
+    "History",
+    /^Sheets\s*2$/,
+  ]);
   await expect(tabs.last()).toHaveAccessibleName("Sheets 2");
   await tabs.last().click();
 

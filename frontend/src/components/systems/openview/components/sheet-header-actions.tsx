@@ -176,10 +176,11 @@ export function SheetHeaderActions({
   const close = () => setOpen(null);
   return (
     <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
+      {/* Below sm, Import is More's first item so the row fits (SH-50). */}
       {canImport ? (
         <Button
           variant="ghost"
-          className={actionButton}
+          className={`${actionButton} max-sm:hidden`}
           onClick={() => setOpen("import")}
         >
           <Upload aria-hidden="true" />
@@ -259,6 +260,15 @@ export function SheetHeaderActions({
           <MoreHorizontal aria-hidden="true" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
+          {canImport ? (
+            <DropdownMenuItem
+              className="sm:hidden"
+              onClick={() => setOpen("import")}
+            >
+              <Upload aria-hidden="true" />
+              Import
+            </DropdownMenuItem>
+          ) : null}
           {actions.rename ? (
             <DropdownMenuItem onClick={() => setOpen("rename")}>
               <Pencil aria-hidden="true" />

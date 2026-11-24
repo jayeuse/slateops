@@ -11,6 +11,7 @@ import {
   PRESENCE_REFRESH_MS,
   acceptedPeers,
   presencePayload,
+  rememberRefused,
   type PresenceCell,
   type PresencePeer,
 } from "../domain/sheet-presence";
@@ -20,9 +21,10 @@ import {
 // joins it on a client of its own (no OpenComms channel rides on it), tracks
 // only a cell position under the person's id, and renews the token every 45
 // seconds on the same channel. A refused renewal for a hidden or missing
-// sheet ends presence for good; any other is tried once more, then presence
-// stops. Loaded on first use only, so the Realtime client is in no page's
-// first load.
+// sheet ends presence for good; any other, and a channel the service closes
+// or fails, is tried once more (on a new client when the token has ended),
+// then presence stops. Loaded on first use only, so the Realtime client is
+// in no page's first load.
 
 export type SheetPresenceSession = {
   move(cell: PresenceCell | null): void;
@@ -37,6 +39,11 @@ const later: Schedule = (callback, milliseconds) => {
 };
 
 const uuid = z.string().uuid();
+
+/** A token this close to its end is not renewed on its channel. */
+const EXPIRY_MARGIN_MS = 5_000;
+const EARLY_RENEWALS_A_MINUTE = 2;
+const TRACK_GAP_MS = 100;
 
 function tokenSchema(sheetId: string) {
   return z
@@ -77,24 +84,38 @@ export function joinSheetPresence(input: {
   const schedule = input.schedule ?? later;
   const now = input.now ?? (() => Date.now());
   let ended = false;
+  // Failed token requests and lost channels since the last good join or
+  // renewal: one more try each, then presence stops (no loop).
   let failures = 0;
   let viewers = new Set<string>();
+  let expiresAt = 0;
   let cell: PresenceCell | null = null;
   let client: RealtimeClient | undefined;
   let channel: RealtimeChannel | undefined;
   let joined = false;
   let tracking = false;
   let sentCell: string | undefined;
+  let lastTrackAt = Number.NEGATIVE_INFINITY;
+  let cancelThrottle: (() => void) | undefined;
   let cancelTimer: (() => void) | undefined;
   let issuing: AbortController | undefined;
   let renewing = false;
   let earlyQueued = false;
-  let lastEarly = Number.NEGATIVE_INFINITY;
+  let shown: string | undefined;
+  const earlyAt: number[] = [];
   // People on the channel but not on this token's list: a renewal not yet
   // started may list them. Once a newer token leaves them out, they ask for
-  // no more early renewals (they still come in at a 45-second renewal).
+  // no more early renewals (each 45-second renewal still checks them). At
+  // most 50 are remembered; more still ask, within the two a minute.
   const waiting = new Set<string>();
   const refused = new Set<string>();
+
+  const emit = (peers: PresencePeer[]) => {
+    const key = JSON.stringify(peers);
+    if (key === shown) return;
+    shown = key;
+    input.onPeers(peers);
+  };
 
   const show = () => {
     if (ended) return;
@@ -103,37 +124,53 @@ export function joinSheetPresence(input: {
       if (key !== input.selfId && !viewers.has(key) && !refused.has(key))
         waiting.add(key);
     if (waiting.size > 0) renewEarly();
-    input.onPeers(acceptedPeers(state, viewers, input.selfId));
+    emit(acceptedPeers(state, viewers, input.selfId));
   };
 
   // Someone joined after this token was issued: renew now, at most once in
-  // 10 seconds, so they show without waiting for the 45-second renewal.
+  // 10 seconds and twice a minute. With the 45-second renewals that is at
+  // most about 3.3 requests a minute, under the budget of 12.
   function renewEarly() {
     if (renewing || earlyQueued || !client || failures > 0 || ended) return;
-    const wait = lastEarly + PRESENCE_EARLY_RENEW_MS - now();
+    const at = now();
+    while (earlyAt.length > 0 && at - earlyAt[0] >= 60_000) earlyAt.shift();
+    if (earlyAt.length >= EARLY_RENEWALS_A_MINUTE) return;
+    const wait =
+      (earlyAt.at(-1) ?? Number.NEGATIVE_INFINITY) +
+      PRESENCE_EARLY_RENEW_MS -
+      at;
     cancelTimer?.();
     cancelTimer = undefined;
     if (wait <= 0) {
-      lastEarly = now();
+      earlyAt.push(at);
       void renew();
       return;
     }
     earlyQueued = true;
     cancelTimer = schedule(() => {
       earlyQueued = false;
-      lastEarly = now();
+      earlyAt.push(now());
       void renew();
     }, wait);
   }
 
-  // One position in flight at a time; the latest one wins.
+  // One position in flight, at most one every 100 ms; the latest one wins.
   const track = async () => {
-    if (!channel || !joined || tracking || ended) return;
+    if (!channel || !joined || tracking || ended || cancelThrottle) return;
     const payload = presencePayload(cell);
     const wanted = JSON.stringify(payload);
     if (wanted === sentCell) return;
+    const wait = lastTrackAt + TRACK_GAP_MS - now();
+    if (wait > 0) {
+      cancelThrottle = schedule(() => {
+        cancelThrottle = undefined;
+        void track();
+      }, wait);
+      return;
+    }
     tracking = true;
     sentCell = wanted;
+    lastTrackAt = now();
     try {
       await channel.track(payload);
     } finally {
@@ -142,20 +179,28 @@ export function joinSheetPresence(input: {
     void track();
   };
 
-  const stop = async () => {
-    if (ended) return;
-    ended = true;
-    cancelTimer?.();
-    cancelTimer = undefined;
-    issuing?.abort();
-    input.onPeers([]);
+  /** Drops the client and its channel; the session may open a new one. */
+  const retire = async () => {
     const leaving = client;
     client = undefined;
     channel = undefined;
+    joined = false;
     if (leaving) {
       await leaving.removeAllChannels().catch(() => {});
       await leaving.disconnect();
     }
+  };
+
+  const stop = async () => {
+    if (ended) return;
+    emit([]);
+    ended = true;
+    cancelTimer?.();
+    cancelTimer = undefined;
+    cancelThrottle?.();
+    cancelThrottle = undefined;
+    issuing?.abort();
+    await retire();
   };
 
   const failed = (error: unknown) => {
@@ -174,15 +219,37 @@ export function joinSheetPresence(input: {
       error instanceof ApiError && error.retryAfter !== undefined
         ? error.retryAfter * 1_000
         : 10_000;
+    // The service closes the channel when its token ends: a retry that
+    // comes after that opens a new client, and nobody shows meanwhile.
+    if (client && now() + wait >= expiresAt - EXPIRY_MARGIN_MS) {
+      emit([]);
+      void retire();
+    }
     cancelTimer = schedule(() => void renew(), wait);
+  };
+
+  // The channel was closed or failed (the service closed it, its token
+  // ended, or the join was refused): nobody shows, and the next token opens
+  // a new client, once.
+  const lost = () => {
+    emit([]);
+    cancelTimer?.();
+    cancelTimer = undefined;
+    void retire();
+    failures += 1;
+    if (failures > 1) {
+      void stop();
+      return;
+    }
+    void renew();
   };
 
   const issue = async () => {
     issuing = new AbortController();
     const token = await requestPresenceToken(input.sheetId, issuing.signal);
     if (ended) throw new DOMException("Presence ended", "AbortError");
-    failures = 0;
     viewers = new Set(token.viewers);
+    expiresAt = Date.parse(token.expires_at);
     return token;
   };
 
@@ -194,14 +261,19 @@ export function joinSheetPresence(input: {
     waiting.clear();
     try {
       const token = await issue();
-      if (!client) {
+      const current = client;
+      if (!current) {
+        for (const key of asked) waiting.add(key);
         await open(token);
         return;
       }
       // The same channel takes the new token (`access_token`), and Realtime
       // checks it again.
-      await client.setAuth(token.token);
-      for (const key of asked) if (!viewers.has(key)) refused.add(key);
+      await current.setAuth(token.token);
+      if (ended || client !== current) return;
+      failures = 0;
+      for (const key of asked)
+        if (!viewers.has(key)) rememberRefused(refused, key);
       renewing = false;
       cancelTimer = schedule(() => void renew(), PRESENCE_REFRESH_MS);
       show();
@@ -218,25 +290,35 @@ export function joinSheetPresence(input: {
     const socket = createGatewayRealtime();
     client = socket;
     await socket.setAuth(token.token);
-    if (ended) return;
-    channel = socket
-      .channel(token.topic, {
-        config: {
-          private: true,
-          presence: { key: input.selfId, enabled: true },
-          broadcast: { ack: false, self: false },
-        },
-      })
-      .on("presence", { event: "sync" }, show)
-      .subscribe((status) => {
-        if (ended) return;
-        joined = status === "SUBSCRIBED";
-        if (joined) {
-          // A rejoin starts with nothing tracked on the server.
-          sentCell = undefined;
-          void track();
-        }
-      });
+    if (ended || client !== socket) return;
+    const opened = socket.channel(token.topic, {
+      config: {
+        private: true,
+        presence: { key: input.selfId, enabled: true },
+        broadcast: { ack: false, self: false },
+      },
+    });
+    channel = opened;
+    opened.on("presence", { event: "sync" }, show).subscribe((status) => {
+      if (ended || channel !== opened) return;
+      if (status === "SUBSCRIBED") {
+        joined = true;
+        failures = 0;
+        // A new join starts with nothing tracked on the server.
+        sentCell = undefined;
+        lastTrackAt = Number.NEGATIVE_INFINITY;
+        void track();
+        return;
+      }
+      joined = false;
+      emit([]);
+      if (
+        status === "CLOSED" ||
+        status === "CHANNEL_ERROR" ||
+        status === "TIMED_OUT"
+      )
+        lost();
+    });
     cancelTimer = schedule(() => void renew(), PRESENCE_REFRESH_MS);
   }
 

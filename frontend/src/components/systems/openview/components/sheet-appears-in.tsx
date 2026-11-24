@@ -292,8 +292,9 @@ export default function RecordAppearsIn({ recordId }: { recordId: string }) {
     () => ({
       locale: region?.locale ?? "en-US",
       timezone: region?.timezone ?? "UTC",
+      currency: region?.currency,
     }),
-    [region?.locale, region?.timezone],
+    [region?.locale, region?.timezone, region?.currency],
   );
   const identity = useQuery(authMeOptions());
   const first = useQuery(recordAppearancesOptions(recordId));

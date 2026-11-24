@@ -164,7 +164,7 @@ These facts were checked in code at `8c8d2b02`.
 | ID | Rule | Label |
 | --- | --- | --- |
 | K1 | Columns use the existing field types. The structure stores the field-type names (D1.7). The Add column list shows the Sandbox's names (Screens): Text, Long text, Number, Whole number, Checkbox, Date, Date and time, Choice list, User, Email and Web link, then Link to records, Lookup and Computed. `relationship` is not a column type, because it needs a Sandbox field. The link column (N1) takes its place (422 when sent). Which stored type "Number" uses, and whether `number` is offered, is settled in Decisions. See Decisions, item 16. | Decided (DEC-0043 3); list Proposed (Screens); mapping settled (DEC-0045) |
-| K2 | Currency is a display option of a `decimal` column (`decimal.currency` in D1.7). It uses the organization's currency. It is not a new type. It depends on Decisions, item 16. | Proposed (PM) |
+| K2 | Currency is a display option of a `decimal` column (`decimal.currency` in D1.7). It uses the organization's currency. It is not a new type. Every screen that shows the column's numbers shows the currency (cells, totals, Appears in, history); editing uses the plain number, and exports write plain numbers (X4). It depends on Decisions, item 16. | Proposed (PM) |
 | K3 | A computed column uses same-row arithmetic with column names in braces, for example `{Quiz 1} + {Quiz 2}`. It also supports `ROUND`, `MIN`, `MAX`, `AVERAGE` and `SUM` over listed columns of the same row. There are no cell references such as `B2` and no references to other rows or sheets. | Proposed (parent) |
 | K4 | A computed column reads numeric columns (`number`, `decimal`, `int`, numeric lookups, and other computed columns). A reference loop is refused when the column is saved, and the reason names the columns in it. Expressions store column keys, so a renamed column keeps working in every expression that uses it. The grammar and its limits are in D7.1. | Proposed (PM); detail Proposed (D7.1, D7.4) |
 | K5 | `SUM`, `AVERAGE`, `MIN` and `MAX` skip blank cells. Arithmetic with a blank operand gives a blank result. Division by zero gives an error mark in that cell, and in each computed cell of the same row that reads it. | Proposed (PM); propagation Proposed (D7.2) |
@@ -219,7 +219,7 @@ These facts were checked in code at `8c8d2b02`.
 
 | ID | Rule | Label |
 | --- | --- | --- |
-| PR1 | The sheet header shows an avatar for each person who has the sheet open now. Hovering or focusing an avatar shows the name. More than four avatars collapse into "+N". | Proposed (parent) |
+| PR1 | The sheet header shows an avatar for each other person who has the sheet open now. Hovering or focusing an avatar shows the name. More than four avatars collapse into "+N". | Proposed (parent) |
 | PR2 | Each person's current cell has an outline in the colour of their avatar. Presence carries the cell position only, never a value or a typed character. | Proposed (parent) |
 | PR3 | Only people who can see the sheet (V1–V7, L0–L2) can join its presence channel. FastAPI checks this when it issues the presence token (D13). A hidden sheet is refused like a missing sheet. Module managers and admins join only when they can see the sheet. | Proposed (parent) |
 | PR4 | Everyone who can see a sheet reads the same module, so the people directory already lets them see each other (`visible_person_ids` includes module readers). Presence shows no one else. | Proposed (parent) |
