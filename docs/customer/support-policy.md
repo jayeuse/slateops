@@ -26,7 +26,7 @@ A request is **urgent** when nobody can sign in, or when the app or a backup fai
 1. Answers to questions about the app and its use.
 2. Help with problems in the installation that the Provider set up.
 3. Installation of published updates by hand. Early builds get no update prompt in the app.
-4. Help with backups, and a restore when the Customer asks for one. The Provider does the restore through a remote session ([plan 8.4](../plans/windows-installer.md#84-restore-in-v1)).
+4. Help with backups, and a restore when the Customer asks for one. The Provider does the restore through a remote session ([plan 8.4](../plans/windows-installer.md#84-restore-in-v1)). Unverified: no restore has been tested on Windows yet ([Deployment architecture](../architecture/12-deployment-architecture.md#deployment-state-map)).
 5. Up to [visits per year] visits on site each support year.
 
 The [setup and support agreement](service-agreement.md), section 8, lists what support does not cover.

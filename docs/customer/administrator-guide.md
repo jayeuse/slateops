@@ -275,6 +275,8 @@ In this table, "%1" is the letter of your backup drive.
 
 Your support provider does each restore. The restore uses a remote session and command-line tools ([infra/supabase/RESTORE.md](../../infra/supabase/RESTORE.md); [plan section 8.4](../plans/windows-installer.md#84-restore-in-v1)).
 
+**Unverified:** no restore has been tested on a Windows installation yet. The deployment map marks Windows server operation and restore acceptance as pending ([Deployment architecture](../architecture/12-deployment-architecture.md#deployment-state-map); [plan section 8.4](../plans/windows-installer.md#84-restore-in-v1)). Keep the backup drive and the recovery key safe until a Windows restore is proven.
+
 1. Write to [support contact].
 2. Tell the support provider which date to go back to.
 3. Allow the remote session when the support provider asks.
