@@ -247,7 +247,7 @@ begin
   MaintPhase := 'restore';
   MaintAt := GetTickCount;
   MaintLine := '';
-  StartJob('restore', '{"run_id":"' + RunId + '"}', 'restore', False, False, UPDATE_SLOW_MINUTES);
+  StartJob('restore', '{"run_id":"' + RunId + '"}', 'restore', False, False, RESTORE_JOB_MINUTES);
   RenderPage(P_MAINT);
 end;
 

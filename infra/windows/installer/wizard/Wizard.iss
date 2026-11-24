@@ -114,6 +114,9 @@ const
   { AC-F5: the receive step waits for a busy engine at most this many times (5 minutes). }
   RECEIVE_BUSY_TRIES = 10;
   UPDATE_SLOW_MINUTES = 60;
+  { The restore job's wait: the engine's restore limit (update.py RESTORE_SECONDS, 4 hours)
+    plus the stop, the snapshot list and the start (PR 121 review). }
+  RESTORE_JOB_MINUTES = 300;
   JOB_IDLE = 0; JOB_SUBMIT = 1; JOB_WAIT = 2; JOB_DONE = 3;
   { DEC-0041 (AC-W7): WM_UPDATEUISTATE with MAKEWPARAM(UIS_SET, UISF_HIDEFOCUS). }
   WM_UPDATEUISTATE = $0128;

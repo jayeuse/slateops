@@ -728,6 +728,9 @@ class W9ReviewCorrectionTest(unittest.TestCase):
         self.assertIn("if I = 4 then AddMaintAction(9, 0, CM('m01_restore')", render)
         start = routine(self.raw, "procedure StartRestore;")
         self.assertIn("StartJob('restore', '{\"run_id\":\"' + RunId + '\"}', 'restore'", start)
+        # The wait covers the engine's 4-hour restore limit (PR 121 review).
+        self.assertIn("'restore', False, False, RESTORE_JOB_MINUTES);", start)
+        self.assertIn("RESTORE_JOB_MINUTES = 300;", self.raw)
         poll = routine(self.raw, "procedure PollMaint;\nvar")
         self.assertIn("MaintLine := RestoreResultLine(JobCode);", poll)
 
