@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +41,10 @@ def test_restore_puts_the_newest_backup_back_in_a_new_project(machine: Installed
     code, result = _restore(machine)
 
     new = f"{old}-r1"
-    assert (code, result) == (0, {"code": "restored", "project": new})
+    assert (code, result["code"], result["project"]) == (0, "restored", new)
+    # The settings program shows the backup's time (first snapshot: 12:00 at +08:00).
+    when = datetime(2026, 11, 17, 4, 0, 0, 500000, tzinfo=UTC).astimezone()
+    assert result["backup_time"] == when.strftime("%d %b %Y, %H:%M")
     assert fake.data[f"{new}_supabase-db-data"] == "install-data"
     assert fake.data[f"{old}_supabase-db-data"] == "damaged"  # kept for support
     assert fake.containers.get(old, {}) == {}

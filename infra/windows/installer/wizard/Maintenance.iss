@@ -168,6 +168,15 @@ begin
     Result := CM('m01_running');
 end;
 
+{ Owner item 9: the weight of the status sentence. }
+function MaintSeverity: String;
+begin
+  if MaintStatus = 'checking' then Result := 'info'
+  else if (MaintStatus <> 'ok') or (MaintState = 'needs_support') then Result := 'error'
+  else if MaintNetwork or (MaintBackup = 'backup_target_missing') then Result := 'warn'
+  else Result := 'ok';
+end;
+
 procedure GoToMaintPage(Action: String);
 begin
   MaintAction := Action;
@@ -179,6 +188,7 @@ end;
 procedure BackToMaint(Line: String);
 begin
   MaintLine := Line;
+  MaintLineSev := '';
   MaintAction := '';
   MaintPhase := '';
   WizardForm.BackButton.OnClick(WizardForm.BackButton);
@@ -242,21 +252,79 @@ end;
 
 { Owner decision 2026-11-24 (plan 8.4): "Restore the latest backup". The engine job restore
   puts the newest backup back into a new project; it takes as long as an update rollback. }
-procedure StartRestore;
+procedure SubmitRestore;
 begin
   MaintPhase := 'restore';
+  StartJob('restore', '{"run_id":"' + RunId + '"}', 'restore', False, False, RESTORE_JOB_MINUTES);
+end;
+
+{ Owner items 1 and 7 (rc.35 round): while the restore runs, or waits for a busy engine, its
+  progress takes the place of the actions and the window does not close. }
+procedure StartRestore;
+begin
   MaintAt := GetTickCount;
   MaintLine := '';
-  StartJob('restore', '{"run_id":"' + RunId + '"}', 'restore', False, False, RESTORE_JOB_MINUTES);
+  RestoreTries := 0;
+  RestoreResult := '';
+  SubmitRestore;
   RenderPage(P_MAINT);
 end;
 
-function RestoreResultLine(Code: String): String;
+function RestoreRunning: Boolean;
 begin
-  if Code = 'restored' then Result := CM('m01_restore_done')
-  else if Code = 'backup_target_missing' then Result := CM('m01_restore_no_drive')
-  else if Code = 'no_backup' then Result := CM('m01_restore_no_backup')
-  else Result := CM('m01_restore_failed');
+  Result := (MaintPhase = 'restore') or (MaintPhase = 'restore-wait');
+end;
+
+{ Owner item 3: what the failure means for the data. The engine says restore failed when the
+  old installation runs again, and needs_support when it could not start it. }
+function RestoreFailText: String;
+begin
+  if (RestoreCode = 'engine_busy') or (RestoreCode = 'runner_busy') then Result := CM('m01_restore_busy_failed')
+  else if RestoreCode = 'backup_target_missing' then Result := CM('m01_restore_no_drive')
+  else if RestoreCode = 'no_backup' then Result := CM('m01_restore_no_backup')
+  else if RestoreState = 'needs_support' then Result := CM('m01_restore_stopped')
+  else Result := CM('m01_restore_old_runs');
+end;
+
+procedure RestoreOpenClick(Sender: TObject);
+begin
+  OpenAsUser(AddressUrl, '');
+end;
+
+procedure RestoreBackClick(Sender: TObject);
+begin
+  RestoreResult := '';
+  RenderPage(P_MAINT);
+end;
+
+{ Owner item 3: the result takes the place of the actions until "Back to settings". }
+procedure AddRestoreResult;
+var
+  Button: TNewButton;
+begin
+  if RestoreResult = 'done' then
+  begin
+    AddTextAs(CM('m01_restore_done'), 'ok', True);
+    if RestoreBackupAt <> '' then
+      AddText(FM1('m01_restore_done_when', RestoreBackupAt), False);
+    AddText(CM('m01_restore_done_next'), False);
+    ItemGap;
+    Button := AddRowButton(CM('m01_open'), 0);
+    Button.OnClick := @RestoreOpenClick;
+  end
+  else
+  begin
+    AddTextAs(CM('m01_restore_failed'), 'error', True);
+    AddText(RestoreFailText, False);
+    if RestoreCode <> '' then
+      AddText(FM1('m05_detail_code', RestoreCode), False);
+    ItemGap;
+    AddReportButton;
+  end;
+  Button := AddRowButton(CM('m01_restore_back'), 0);
+  Button.OnClick := @RestoreBackClick;
+  EndRow;
+  AddReportLine;
 end;
 
 { AC-F4 (DEC-0042): "Reset the admin password". New password, Type it again and Show, with the
@@ -462,6 +530,13 @@ var
 begin
   if JobRunning or StepRunning or (MaintPhase <> '') then
     Exit;
+  { Owner item 6: a new action starts with no line of an older one. }
+  MaintLine := '';
+  if ReportPhase = '' then
+  begin
+    ReportLine := '';
+    ReportPath := '';
+  end;
   case TNewButton(Sender).Tag of
     0: OpenAsUser(AddressUrl, '');
     2: begin
@@ -531,12 +606,13 @@ begin
   WizardForm.BackButton.Visible := False;
   SetCancelCaption(CM('btn_close'));
   Sentence := MaintSentence(Line);
-  Verdict := AddVerdict(Sentence);
+  Verdict := AddVerdictAs(Sentence, MaintSeverity);
   if Line <> '' then
     AddText(Line, False);
   { AC-W6 (DEC-0041): email is set up after install, in M02. }
   if (MaintStatus = 'ok') and MaintEmailMissing then
-    AddText(CM('m01_email_not_set'), False);
+    AddTextAs(CM('m01_email_not_set'), 'warn', False);
+  WizardForm.CancelButton.Enabled := not RestoreRunning;
   { W14-D5 (7.6 "M01 status"): full form, one stage; the sentence above names the action. }
   if MaintStatus = 'checking' then
     AddProgress('maint', '', 1, '', MaintStatusAt);
@@ -545,6 +621,10 @@ begin
     with the result. The other M01 waits: one line under the actions. }
   if StepFor = 'repair' then
     AddProgress('repair', CM('repair_stages'), WaitStage('repair'), WaitActionText('repair'), StepAt)
+  else if RestoreRunning then
+    AddProgress('restore', CM('restore_stages'), WaitStage('restore'), WaitActionText('restore'), MaintAt)
+  else if RestoreResult <> '' then
+    AddRestoreResult
   else
   begin
     CurY := CurY + ScaleY(4);
@@ -565,12 +645,10 @@ begin
     AddStepLine;
   end;
   if MaintLine <> '' then
-    AddText(MaintLine, False);
-  if (ReportLine <> '') or (ReportPhase <> '') then
-  begin
-    ReportLabel := AddText(ReportLine, False);
-    ShowReportLine;
-  end;
+    AddTextAs(MaintLine, MaintLineSev, False);
+  { Owner item 6: the report's result with "Show in folder" (the result view draws its own). }
+  if RestoreResult = '' then
+    AddReportLine;
   AddText(CM('m01_footer'), False);
   if MaintStatus <> 'checking' then
     FocusVerdict(Verdict);
@@ -652,6 +730,13 @@ begin
       RenderPage(P_MAINT);
     end;
   end;
+  { Owner item 7: the restore waits UPDATE_WAIT_MS for a busy engine, then asks again. }
+  if (MaintPhase = 'restore-wait') and (Elapsed(RestoreWaitAt) >= UPDATE_WAIT_MS) and not JobRunning then
+  begin
+    SubmitRestore;
+    RenderPage(P_MAINT);
+    Exit;
+  end;
   if (MaintPhase = '') or (JobState <> JOB_DONE) then
     Exit;
   { W14-D9: only this phase's job (Save report can run a job too). }
@@ -683,10 +768,26 @@ begin
   end
   else if MaintPhase = 'restore' then
   begin
+    if ((JobCode = 'engine_busy') or (JobCode = 'runner_busy')) and (RestoreTries < RECEIVE_BUSY_TRIES) then
+    begin
+      RestoreTries := RestoreTries + 1;
+      Log('Restore the latest backup: the engine is busy; it waits and tries again (' + IntToStr(RestoreTries) + ' of ' + IntToStr(RECEIVE_BUSY_TRIES) + ').');
+      MaintPhase := 'restore-wait';
+      RestoreWaitAt := GetTickCount;
+      RenderPage(P_MAINT);
+      Exit;
+    end;
     MaintPhase := '';
-    if JobCode <> 'restored' then
-      Log('Restore the latest backup: the job answered ' + JobCode + '.');
-    MaintLine := RestoreResultLine(JobCode);
+    RestoreCode := JobCode;
+    RestoreState := JsonValue(JobRaw, 'restore');
+    RestoreBackupAt := JsonValue(JobRaw, 'backup_time');
+    if JobCode = 'restored' then
+      RestoreResult := 'done'
+    else
+    begin
+      RestoreResult := 'failed';
+      Log('Restore the latest backup: the job answered ' + JobCode + ' (' + RestoreState + ').');
+    end;
     StartMaintStatus;
     RenderPage(P_MAINT);
   end
@@ -696,6 +797,7 @@ begin
     if JobCode <> 'reset' then
       Log('Reset the admin password: the job answered ' + JobCode + '.');
     MaintLine := AdminPwResultLine(JobCode);
+    if JobCode = 'reset' then MaintLineSev := 'ok' else MaintLineSev := 'error';
     RenderPage(P_MAINT);
   end
   else if MaintPhase = 'setemail' then
@@ -1762,6 +1864,11 @@ begin
     HelperStep(StepOut, Job, Key, Number, Total);
     if Number > 0 then Result := Number;
   end
+  else if Kind = 'restore' then
+  begin
+    if (MaintPhase = 'restore') and (JobPurpose = 'restore') and (JobStepJob = 'restore') and (JobStepNumber > 0) then
+      Result := JobStepNumber;
+  end
   else if Kind = 'update' then
   begin
     if UpdPhase = 'done' then Result := 5
@@ -1882,6 +1989,16 @@ begin
     if Result = '' then
       Result := CM('m01_repairing');
   end
+  else if Kind = 'restore' then
+  begin
+    { Owner item 7: the wait for a busy engine says so. }
+    if MaintPhase = 'restore-wait' then
+      Result := CM('m01_restore_busy')
+    else if (JobPurpose = 'restore') and (JobStepJob = 'restore') then
+      Result := StepText(JobStepJob, JobStepKey, '', '', '');
+    if Result = '' then
+      Result := CM('m01_restore_running');
+  end
   else if Kind = 'update' then
   begin
     if (UpdPhase = 'idle') or (UpdPhase = 'pause') then Result := StepText('upd', 'idle', '', '', '')
@@ -1931,6 +2048,7 @@ begin
   else if Kind = 'prep' then Result := '45|75|5|0|0'
   else if Kind = 'remove' then Result := '5|15|60|60|40'
   else if Kind = 'repair' then Result := '5|10|10|10|5|60|10'
+  else if Kind = 'restore' then Result := '10|20|60|2|15|60|10'
   else if Kind = 'update' then Result := '600|300|300|120'
   else if Kind = 'rollback' then Result := '210'
   else if Kind = 'report' then Result := '10|90|15|5'
@@ -2101,15 +2219,6 @@ begin
   end
   else if MaintPhase = 'adminpw-selftest' then
     Result := OneLine(0, 0, CM('s09_channel'), MaintAt)
-  else if MaintPhase = 'restore' then
-  begin
-    Action := '';
-    if JobPurpose = 'restore' then
-      Action := StepText(JobStepJob, JobStepKey, '', '', '');
-    if Action = '' then
-      Action := CM('m01_restore_running');
-    Result := OneLine(0, 0, Action, MaintAt);
-  end
   else if MaintPhase = 'adminpw' then
   begin
     Action := '';

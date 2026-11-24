@@ -726,13 +726,42 @@ class W9ReviewCorrectionTest(unittest.TestCase):
         )
         render = routine(self.raw, "procedure RenderMaint;\nvar")
         self.assertIn("if I = 4 then AddMaintAction(9, 0, CM('m01_restore')", render)
-        start = routine(self.raw, "procedure StartRestore;")
+        start = routine(self.raw, "procedure SubmitRestore;")
         self.assertIn("StartJob('restore', '{\"run_id\":\"' + RunId + '\"}', 'restore'", start)
         # The wait covers the engine's 4-hour restore limit (PR 121 review).
         self.assertIn("'restore', False, False, RESTORE_JOB_MINUTES);", start)
         self.assertIn("RESTORE_JOB_MINUTES = 300;", self.raw)
         poll = routine(self.raw, "procedure PollMaint;\nvar")
-        self.assertIn("MaintLine := RestoreResultLine(JobCode);", poll)
+        # Owner item 7: a busy engine is asked again every 30 s, at most 10 times.
+        self.assertRegex(
+            poll,
+            r"\(JobCode = 'engine_busy'\) or \(JobCode = 'runner_busy'\)\) and "
+            r"\(RestoreTries < RECEIVE_BUSY_TRIES\)[\s\S]*MaintPhase := 'restore-wait';",
+        )
+        wait = "(MaintPhase = 'restore-wait') and (Elapsed(RestoreWaitAt) >= UPDATE_WAIT_MS)"
+        self.assertIn(wait, poll)
+        # Owner item 3: the result view, with the backup's time and the engine's state.
+        self.assertIn("RestoreBackupAt := JsonValue(JobRaw, 'backup_time');", poll)
+        self.assertIn("RestoreState := JsonValue(JobRaw, 'restore');", poll)
+        result = routine(self.raw, "procedure AddRestoreResult;")
+        self.assertIn("AddTextAs(CM('m01_restore_done'), 'ok', True);", result)
+        self.assertIn("AddTextAs(CM('m01_restore_failed'), 'error', True);", result)
+        self.assertIn("Button.OnClick := @RestoreBackClick;", result)
+        # Owner item 1: no close while the restore runs.
+        cancel = routine(
+            self.raw,
+            "procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);",
+        )
+        self.assertIn(
+            "(EntryScreen = 'M01') and ((MaintPhase = 'restore') or (MaintPhase = 'restore-wait'))",
+            cancel,
+        )
+        # Owner item 8: the settings program's report takes the Linux part.
+        allowed = routine(self.raw, "function ReportJobAllowed: Boolean;")
+        self.assertIn("not ((EntryScreen <> 'M01') and DataPrepared and not BgDone", allowed)
+        # Owner item 2: a server part with no internet says so.
+        fail = routine(self.raw, "function PrepFailText(Code: String): String;")
+        self.assertIn("'manifest_check_unreachable' then Result := CM('s12_no_internet')", fail)
 
     def test_item_13_s06_before_s14_has_no_cancel_answer(self) -> None:
         cancel = routine(
@@ -1294,7 +1323,9 @@ class W14Part3Test(unittest.TestCase):
         self.assertIn(
             "AddLinkLine(FM1('s07_folder', DataRoot), CM('s07_change_folder'), 0);", self.raw
         )
-        self.assertIn("AddLinkLine(ReportLine, CM('btn_show_in_folder'), 0);", self.raw)
+        self.assertIn(
+            "AddLinkLine(SeverityText(ReportLine, 'info'), CM('btn_show_in_folder'), 0);", self.raw
+        )
         build = routine(self.raw, "procedure BuildMailPage;")
         self.assertNotIn("SurfaceHeight", build)
         self.assertIn("MailError := AddTextTo(Surface, 0, '', False);", build)
@@ -1492,7 +1523,9 @@ class W14RecheckTest(unittest.TestCase):
         render = self.part("procedure RenderMaint;\nvar")
         self.assertRegex(
             render,
-            r"if StepFor = 'repair' then\s+AddProgress\('repair'[^\n]*\n\s+else\s+begin\s+"
+            r"if StepFor = 'repair' then\s+AddProgress\('repair'[^\n]*\n"
+            r"\s+else if RestoreRunning[^\n]*\n[^\n]*\n"
+            r"\s+else if RestoreResult <> '' then\s+AddRestoreResult\s+else\s+begin\s+"
             r"CurY := CurY \+ ScaleY\(4\);\s+for I := 0 to 4 do",
         )
         self.assertIn("SelfDraw('AC-5 M01 Repair running', P_MAINT);", self.selftest)
@@ -1859,7 +1892,7 @@ class Dec0041Test(unittest.TestCase):
         self.assertRegex(
             render,
             r"if \(MaintStatus = 'ok'\) and MaintEmailMissing then\s+"
-            r"AddText\(CM\('m01_email_not_set'\), False\);",
+            r"AddTextAs\(CM\('m01_email_not_set'\), 'warn', False\);",
         )
         self.assertIn(
             "MaintEmailMissing := JsonLiteral(Text, 'email_configured') = 'false';", self.raw
@@ -2285,7 +2318,7 @@ class ReviewFixTest(unittest.TestCase):
         self.assertIn(
             "else if MailSaved then MailStatus.Caption := CM('m02_test_sent_admin')", self.raw
         )
-        self.assertIn("AddText(CM('s07_av_blocked'), False)", self.raw)
+        self.assertIn("AddTextAs(CM('s07_av_blocked'), 'error', False)", self.raw)
         for record in (
             "'R-3 S15 Open under step 1, then step 2'",
             "'R-3 M02 with no sent_to names the administrator'",

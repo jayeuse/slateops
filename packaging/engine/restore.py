@@ -35,7 +35,7 @@ ENV_FILES = ("provider.env", "app.env", "provision.env")
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
 
 
-def newest_snapshot(ctx: Context, step: str) -> str:
+def newest_snapshot(ctx: Context, step: str) -> tuple[str, datetime]:
     paths = ctx.paths
     target = drive.load_target(paths)
     if target is None or not drive.mount(ctx, step, target):
@@ -60,7 +60,7 @@ def newest_snapshot(ctx: Context, step: str) -> str:
         raise failed("no_backup")
     when, snapshot = max(found)
     ctx.log.line(step, "INFO", f"newest of {len(found)} snapshots: {snapshot} ({when.isoformat()})")
-    return snapshot
+    return snapshot, when
 
 
 def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
@@ -82,7 +82,7 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
         try:
             step = ctx.step(2, "snapshot")
             progress.report(ctx, "snapshot")
-            record["snapshot_id"] = newest_snapshot(ctx, step)
+            record["snapshot_id"], when = newest_snapshot(ctx, step)
             # The restore tool reads the source installation from this config (update step 5).
             config = update.backup_config(paths, record)
             private_dir(config.parent)
@@ -100,7 +100,9 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
                 other["state"], other["resolved_by"] = "resolved", ctx.run_id
                 update._save(paths, other)
         ctx.log.line(ctx.step(9, "close"), "INFO", f"restored {record['snapshot_id']}")
-    return {"code": "restored", "project": record["restored_project"]}
+    # The settings program shows when the restored backup was made, in this PC's time zone.
+    shown = when.astimezone().strftime("%d %b %Y, %H:%M")
+    return {"code": "restored", "project": record["restored_project"], "backup_time": shown}
 
 
 def _undo(

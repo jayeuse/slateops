@@ -336,6 +336,11 @@ var
 
   { M01 }
   MaintLine: String;
+  { Owner items, rc.35 round: the severity of MaintLine (item 9) and the restore's wait, busy
+    retries and result view (items 1, 3, 7). }
+  MaintLineSev, RestoreResult, RestoreCode, RestoreState, RestoreBackupAt: String;
+  RestoreTries: Integer;
+  RestoreWaitAt: Cardinal;
 
   { The Exec job runner (one job at a time; spec 12 item 1) }
   JobName, JobRequestId, JobOut, JobResultOut, JobText, JobCode, JobPurpose: String;
@@ -1002,6 +1007,39 @@ begin
   KeepCaretHidden(Result);
   LastVerdict := Result;
   CurY := CurY + Result.Height + ScaleY(4);
+end;
+
+{ Owner item 9 (rc.35 round): a status line shows its weight by color and by a symbol in front,
+  so color is never the only signal: ok green, warn dark amber, info blue, error red. The tints
+  keep at least 4.5:1 on the white page. '' is plain text. }
+function SeverityColor(Sev: String): TColor;
+begin
+  if Sev = 'ok' then Result := $00347B1E
+  else if Sev = 'warn' then Result := $0000538A
+  else if Sev = 'info' then Result := $00AD5C0B
+  else if Sev = 'error' then Result := $001E26B3
+  else Result := clWindowText;
+end;
+
+function SeverityText(S, Sev: String): String;
+begin
+  if Sev = 'ok' then Result := #$2713 + ' ' + S
+  else if Sev = 'warn' then Result := #$26A0 + ' ' + S
+  else if Sev = 'info' then Result := #$2139 + ' ' + S
+  else if Sev = 'error' then Result := #$2715 + ' ' + S
+  else Result := S;
+end;
+
+function AddVerdictAs(S, Sev: String): TNewMemo;
+begin
+  Result := AddVerdict(SeverityText(S, Sev));
+  Result.Font.Color := SeverityColor(Sev);
+end;
+
+function AddTextAs(S, Sev: String; Bold: Boolean): TNewStaticText;
+begin
+  Result := AddText(SeverityText(S, Sev), Bold);
+  Result.Font.Color := SeverityColor(Sev);
 end;
 
 function AddButtonAt(Caption: String; Left, Tag: Integer): TNewButton;
@@ -2558,7 +2596,9 @@ end;
 function ReportJobAllowed: Boolean;
 begin
   Result := (StepFor = '') and (MaintPhase = '') and (MailPhase = '') and not CloseFlowRunning
-    and not (DataPrepared and not BgDone and not BgFailed)
+    { Owner item 8 (rc.35 round): M01 sets DataPrepared from install.json but has no
+      background stage; its report left the Linux part out every time. }
+    and not ((EntryScreen <> 'M01') and DataPrepared and not BgDone and not BgFailed)
     and not (InstallStarted and not InstallDone and not InstallFailed)
     and not ((EntryScreen = 'M05') and (UpdPhase <> '') and not UpdFailed);
 end;
@@ -2680,10 +2720,12 @@ var
 begin
   if (ReportPhase = '') and (ReportPath <> '') and (ReportLine <> '') then
   begin
-    Link := AddLinkLine(ReportLine, CM('btn_show_in_folder'), 0);
+    Link := AddLinkLine(SeverityText(ReportLine, 'info'), CM('btn_show_in_folder'), 0);
     Link.OnLinkClick := @ShowReportClick;
   end
-  else if (ReportLine <> '') or (ReportPhase <> '') then
+  else if (ReportPhase = '') and (ReportLine <> '') then
+    ReportLabel := AddTextAs(ReportLine, 'error', False)
+  else if ReportPhase <> '' then
   begin
     ReportLabel := AddText(ReportLine, False);
     ShowReportLine;
@@ -2708,7 +2750,7 @@ var
 begin
   WizardForm.PageNameLabel.Caption := CM('s13_title');
   WizardForm.PageDescriptionLabel.Caption := Stage;
-  Verdict := AddVerdict(WhatHappened);
+  Verdict := AddVerdictAs(WhatHappened, 'error');
   if TryAgain then
     AddText(CM('s13_what'), False);
   { W14-D3 (6.1 L4, L5): the actions 12 px under the text, in one row: Save report. }
@@ -3287,7 +3329,7 @@ begin
   if StateUnsafe then
   begin
     { Spec 4.1: setup reads nothing from an unsafe state folder; Next stays off. }
-    AddVerdict(StateUnsafeText);
+    AddVerdictAs(StateUnsafeText, 'error');
     AddReportControls;
     WizardForm.NextButton.Enabled := False;
     Exit;
@@ -3335,16 +3377,16 @@ begin
   else if CheckVerdict = 'needs_fixes' then
   begin
     if CountClass('fix') = 1 then
-      Verdict := AddVerdict(CM('s02_needs_one'))
+      Verdict := AddVerdictAs(CM('s02_needs_one'), 'warn')
     else
-      Verdict := AddVerdict(FM1('s02_needs', IntToStr(CountClass('fix'))));
+      Verdict := AddVerdictAs(FM1('s02_needs', IntToStr(CountClass('fix'))), 'warn');
     BlockGap;
     AddCheckItems(False);
     WizardForm.NextButton.Enabled := False;
   end
   else
   begin
-    Verdict := AddVerdict(CM('s02_ready'));
+    Verdict := AddVerdictAs(CM('s02_ready'), 'ok');
     if PrepLine <> '' then
       AddText(PrepLine, False);
     BlockGap;
@@ -3370,7 +3412,7 @@ begin
     BeginBody(P_CHECK);
     WizardForm.PageNameLabel.Caption := CM('s13_title');
     WizardForm.PageDescriptionLabel.Caption := CM('s02_title');
-    AddVerdict(CM('s02_draw_failed'));
+    AddVerdictAs(CM('s02_draw_failed'), 'error');
     AddText(CM('s13_what'), False);
     try
       ItemGap;
@@ -3548,7 +3590,7 @@ begin
     WizardForm.PageDescriptionLabel.Caption := CM('s05_subtitle_ready');
     AddProgress('prep', S05NoRestartStages, 3, '', 0);
     BlockGap;
-    AddVerdict(CM('s05_done_no_restart'));
+    AddVerdictAs(CM('s05_done_no_restart'), 'ok');
     WizardForm.NextButton.Enabled := True;
   end;
 end;
@@ -3583,7 +3625,7 @@ begin
   end;
   if CountClass('fix') = 0 then
   begin
-    AddVerdict(CM('s06_still_ready'));
+    AddVerdictAs(CM('s06_still_ready'), 'ok');
     WizardForm.NextButton.Enabled := True;
   end
   else
@@ -3869,7 +3911,7 @@ begin
   else if (DataError = 'start_failed') or (DataError = 'helper_timeout') then
   begin
     { In place, never from the timer as a dialog (spec 12 item 1). }
-    if DataError = 'helper_timeout' then AddText(CM('s07_av_blocked'), False) else AddText(CM('s07_start_failed'), False);
+    if DataError = 'helper_timeout' then AddTextAs(CM('s07_av_blocked'), 'error', False) else AddTextAs(CM('s07_start_failed'), 'error', False);
     AddReportControls;
   end;
   RefreshKept;
@@ -5499,6 +5541,8 @@ function PrepFailText(Code: String): String;
 begin
   if Code = 'helper_timeout' then Result := CM('s12_av_blocked')
   else if Code = 'job_timeout' then Result := CM('s12_step_limit')
+  { Owner item 2 (rc.35 round): the signature check needs the internet from the server part. }
+  else if Code = 'manifest_check_unreachable' then Result := CM('s12_no_internet')
   else if Code = 'service_logon_failed' then Result := CM('s12_logon_failed')
   else if Code = 'kept_mismatch' then Result := CM('s07_kept_unreadable')
   else if Code = 'not_empty' then Result := CM('s07_not_empty')
@@ -6389,6 +6433,12 @@ begin
   end;
   { The removal form is modal; nothing else closes setup while it runs. }
   if CloseFlowRunning then
+  begin
+    Cancel := False;
+    Exit;
+  end;
+  { Owner item 1 (rc.35 round): the settings program stays open while a restore runs. }
+  if (EntryScreen = 'M01') and ((MaintPhase = 'restore') or (MaintPhase = 'restore-wait')) then
   begin
     Cancel := False;
     Exit;
