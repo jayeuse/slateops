@@ -93,6 +93,11 @@ const SheetPersonPicker = lazy(() => import("./sheet-person-picker"));
 // outline on the focused cell. Rows are virtualized; the focused row stays
 // rendered while it scrolls away.
 
+// The selected tint laid over each cell of a lit row, so the pinned cells'
+// card fill and a read-only column's muted fill keep showing under it.
+const LIT_ROW =
+  "bg-[image:linear-gradient(color-mix(in_oklab,var(--ink)_var(--tint-selected),transparent),color-mix(in_oklab,var(--ink)_var(--tint-selected),transparent))]";
+
 const ROW_NUMBER_WIDTH = 56;
 const PHONE_ROW_NUMBER_WIDTH = 40;
 const ADD_COLUMN_WIDTH = 48;
@@ -273,6 +278,8 @@ export type SheetGridViewProps = {
   onDeleteRow: (row: WorksheetRow, index: number) => void;
   onOpenRow: (index: number) => void;
   onPaste: (index: number, column: number, grid: string[][]) => void;
+  /** A row an address named (Appears in): shown, focused and lit once. */
+  highlight?: { index: number } | null;
 };
 
 export function SheetGridView({
@@ -293,6 +300,7 @@ export function SheetGridView({
   onDeleteRow,
   onOpenRow,
   onPaste,
+  highlight = null,
 }: SheetGridViewProps) {
   "use no memo"; // TanStack's mutable virtualizer must be read on every range update.
   const pane = useRef<HTMLDivElement | null>(null);
@@ -314,6 +322,9 @@ export function SheetGridView({
   const requestNavigation = useWorkspaceNavigationRequest();
   const [focusTick, setFocusTick] = useState(0);
   const cancelled = useRef(false);
+  // The row an address named: lit for about two seconds; only it changes.
+  const [lit, setLit] = useState<number | null>(null);
+  const reveal = useRef<number | null>(null);
   const saving = useRef(false);
   const rowHeight = phone ? 44 : 40;
   const numberWidth = phone ? PHONE_ROW_NUMBER_WIDTH : ROW_NUMBER_WIDTH;
@@ -397,6 +408,28 @@ export function SheetGridView({
     return () => window.cancelAnimationFrame(frame);
     // Only a new focus request moves focus.
   }, [focusTick]);
+
+  // A named row comes to the middle of the pane; its first cell takes focus
+  // once the virtualizer has drawn it (a far row is not drawn yet).
+  useEffect(() => {
+    if (!highlight) return;
+    reveal.current = highlight.index;
+    setActive({ row: highlight.index, col: 0 });
+    virtual.scrollToIndex(highlight.index, { align: "center" });
+    setLit(highlight.index);
+    const timer = window.setTimeout(() => setLit(null), 2_000);
+    return () => window.clearTimeout(timer);
+    // Only a new request lights a row.
+  }, [highlight]);
+  useEffect(() => {
+    if (reveal.current === null) return;
+    const cell = pane.current?.querySelector<HTMLElement>(
+      `[data-cell="${reveal.current}:${columns[0]?.key ?? ""}"]`,
+    );
+    if (!cell) return;
+    reveal.current = null;
+    cell.focus({ preventScroll: true });
+  });
 
   const focusCell = (row: number, col: number) => {
     const nextRow = Math.max(
@@ -532,11 +565,13 @@ export function SheetGridView({
     edge = item.end;
     const row = rowAt(store, item.index);
     const note = conflict && row && conflict.rowId === row.id;
+    const shine = lit === item.index;
     rows.push(
       <tr
         key={row?.id ?? `pending-${item.index}`}
         role="row"
         aria-rowindex={headerRows + item.index + 1}
+        data-highlighted={shine || undefined}
         style={{ height: rowHeight }}
         className={cn(
           "hover:bg-tint-hover group",
@@ -550,6 +585,7 @@ export function SheetGridView({
             "text-muted-foreground left-0 border-b px-1 text-right text-xs tabular-nums",
             // A conflict row keeps its warn tint, as its other cells do.
             note ? "bg-warn-tint" : "group-hover:over-tint-hover",
+            shine && LIT_ROW,
           )}
         >
           <span className="inline-flex items-center gap-0.5">
@@ -632,6 +668,7 @@ export function SheetGridView({
                   "shadow-[inset_0_0_0_2px_var(--warn)]",
                 column.numeric && "text-right tabular-nums",
                 isActive && "outline-action-text",
+                shine && LIT_ROW,
               )}
               style={index === 0 ? { left: numberWidth } : undefined}
             >

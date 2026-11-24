@@ -2,6 +2,8 @@
 import { useDisplayRegion } from "@/components/use-display-region";
 
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -224,6 +226,9 @@ const GROUP_PAGE_SIZE = 12;
 /** The module page's search, where focus returns when nothing else fits. */
 const SEARCH_ID = "openview-search";
 const DEFAULT_RECORD_PAGE_SIZE = 25;
+
+// The record panel's Appears in, apart from OpenView's first load (F8).
+const RecordAppearsIn = lazy(() => import("./sheet-appears-in"));
 // The running view action, also the meta line's status. A button that
 // starts one compares against it to show its own busy state (TASK-0061).
 const UPDATING_VIEW = "Updating saved view…";
@@ -4222,24 +4227,33 @@ export default function ServerBackedViewsWorkspace({
                                   />
                                 ),
                                 content: (
-                                  <RecordSheetsPanel
-                                    key={linkedRecord.id}
-                                    anchor={{
-                                      kind: "record",
-                                      recordId: linkedRecord.id,
-                                      recordTitle: recordTitle(
-                                        linkedRecord,
-                                        queriedFields,
-                                        draft.presentation.primaryFieldId,
-                                      ),
-                                      moduleName,
-                                    }}
-                                    canCreate={
-                                      identity.data
-                                        ? identity.data.role !== "guest"
-                                        : false
-                                    }
-                                  />
+                                  <div className="flex min-w-0 flex-col gap-4">
+                                    <RecordSheetsPanel
+                                      key={linkedRecord.id}
+                                      anchor={{
+                                        kind: "record",
+                                        recordId: linkedRecord.id,
+                                        recordTitle: recordTitle(
+                                          linkedRecord,
+                                          queriedFields,
+                                          draft.presentation.primaryFieldId,
+                                        ),
+                                        moduleName,
+                                      }}
+                                      canCreate={
+                                        identity.data
+                                          ? identity.data.role !== "guest"
+                                          : false
+                                      }
+                                    />
+                                    {/* Appears in loads on first use of the tab (F8). */}
+                                    <Suspense fallback={null}>
+                                      <RecordAppearsIn
+                                        key={linkedRecord.id}
+                                        recordId={linkedRecord.id}
+                                      />
+                                    </Suspense>
+                                  </div>
                                 ),
                               }
                             : undefined

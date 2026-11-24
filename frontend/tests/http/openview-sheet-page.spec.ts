@@ -331,6 +331,43 @@ test("a sheet that becomes hidden while open leaves no rows and no title", async
   await expect(page.getByText("Class roster")).toHaveCount(0);
 });
 
+test("an address with a row opens the sheet at that row, lit for a moment, then drops the row from the address", async ({
+  page,
+}) => {
+  await signedInAs(page, reader);
+  const api = await installSheetPageApi(page, sheet({}));
+  // Appears in links row 300 by its id and its number (Screens 6).
+  await page.goto(`${address}&row=${wireSheetRow(299, {}).id}&n=300`);
+  // The tint lasts about two seconds: it is checked first.
+  const row = grid(page)
+    .getByRole("row")
+    .filter({ has: page.locator('[data-cell="299:c1"]') });
+  await expect(row).toHaveAttribute("data-highlighted", "true");
+  const cell = grid(page).locator('[data-cell="299:c1"]');
+  await expect(cell).toBeFocused();
+  await expect(cell).toBeInViewport();
+  expect(api.queries.map((query) => query.offset)).toContain(200);
+  await expect(page).toHaveURL(new RegExp(`\\?sheet=${sheetId}$`));
+  // About two seconds later the row is plain again; focus stays.
+  await expect(row).not.toHaveAttribute("data-highlighted");
+  await expect(cell).toBeFocused();
+});
+
+test("an address whose row is no longer at that number opens the sheet as usual", async ({
+  page,
+}) => {
+  await signedInAs(page, reader);
+  const api = await installSheetPageApi(page, sheet({}));
+  // The sheet changed: row 300 is another row now.
+  await page.goto(`${address}&row=${wireSheetRow(301, {}).id}&n=300`);
+  await expect(page).toHaveURL(new RegExp(`\\?sheet=${sheetId}$`));
+  expect(api.queries.map((query) => query.offset)).toContain(200);
+  await expect(grid(page).locator("[data-highlighted]")).toHaveCount(0);
+  await expect(
+    grid(page).getByRole("link", { name: "Student 1", exact: true }),
+  ).toBeInViewport();
+});
+
 test("a cell reached by the keyboard is never under the fixed header, column or totals", async ({
   page,
 }) => {

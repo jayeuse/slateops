@@ -12,6 +12,7 @@ import {
 } from "react";
 import type { Route } from "next";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -59,6 +60,7 @@ import {
   type WorksheetRow,
   type WorksheetRowSort,
 } from "../adapters/worksheets-api";
+import { sheetHref } from "./sheet-display";
 import { SheetGridView, type SheetConflict } from "./sheet-grid-view";
 import type { SaveResult } from "./sheet-row-form";
 import { SheetHeaderActions } from "./sheet-header-actions";
@@ -615,6 +617,44 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
     load(0, generation);
   }, [load, generation]);
 
+  // An address with a row (Appears in, Screens 6): in the sheet's own order
+  // the page holding row n is read; when row n is still that row, the grid
+  // shows it lit, with focus on its first cell. Either way the row then
+  // leaves the address.
+  const params = useSearchParams();
+  const router = useRouter();
+  const [target, setTarget] = useState(() => {
+    if (!params.has("row") && !params.has("n")) return null;
+    const rowId = params.get("row") ?? "";
+    const n = Number(params.get("n"));
+    return UUID.test(rowId) && Number.isSafeInteger(n) && n >= 1
+      ? { rowId, index: n - 1 }
+      : { rowId, index: -1 };
+  });
+  const [highlight, setHighlight] = useState<{ index: number } | null>(null);
+  useEffect(() => {
+    if (!target) return;
+    const settled = () => {
+      setTarget(null);
+      router.replace(sheetHref(sheet.id) as Route, { scroll: false });
+    };
+    if (target.index < 0 || sort || search) return settled();
+    if (store.total === null) return;
+    if (target.index >= store.total) return settled();
+    const row = rowAt(store, target.index);
+    if (!row) {
+      for (const offset of pagesForRange(
+        target.index,
+        target.index,
+        store.total,
+      ))
+        load(offset, generation);
+      return;
+    }
+    if (row.id === target.rowId) setHighlight({ index: target.index });
+    settled();
+  }, [target, sort, search, store, load, generation, router, sheet.id]);
+
   // Live refresh: this sheet's events and the records of its link columns'
   // modules refetch the pages on screen; a resync refetches everything.
   const linkModules = useMemo(
@@ -837,6 +877,7 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
         onDeleteRow={(row, index) => setDeleting({ row, index })}
         onOpenRow={(index) => setFormRowId(rowAt(store, index)?.id ?? null)}
         onPaste={(index, column, grid) => void paste(index, column, grid)}
+        highlight={highlight}
       />
       {formRow ? (
         <Suspense fallback={null}>

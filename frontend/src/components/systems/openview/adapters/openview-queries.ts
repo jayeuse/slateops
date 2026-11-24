@@ -367,13 +367,15 @@ export function invalidatesRecords(entity: string): boolean {
 export function openViewKeysForEntity(entity: string): QueryKey[] {
   if (entity === "charts") return [openViewKeys.chartLists];
   // The sheet lists (worksheet-queries.ts keys, named here so no sheet code
-  // rides in the shell): My sheets, a record's Sheets tab and its count, and
-  // a module's Sheets view. An open sheet's page refreshes itself.
+  // rides in the shell): My sheets, a record's Sheets tab and its count, a
+  // module's Sheets view and a record's Appears in. An open sheet's page
+  // refreshes itself.
   if (entity === "worksheets")
     return [
       ["openview", "worksheets", "mine"],
       ["openview", "worksheets", "record"],
       ["openview", "worksheets", "module"],
+      ["openview", "worksheets", "appears"],
     ];
   const fileKeys =
     entity === "files" ||

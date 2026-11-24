@@ -34,6 +34,9 @@ export const worksheetKeys = {
   shares: (id: string) => ["openview", "worksheets", "shares", id] as const,
   /** Where a sheet sits; the header's breadcrumb reads it (no fetch). */
   place: (id: string) => ["openview", "worksheets", "place", id] as const,
+  /** A record's Appears in, first page (route 23). */
+  appears: (recordId: string) =>
+    ["openview", "worksheets", "appears", recordId] as const,
 };
 
 export const myWorksheetsOptions = (deleted: MyWorksheetsList) =>

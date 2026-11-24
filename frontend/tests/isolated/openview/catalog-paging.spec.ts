@@ -105,5 +105,6 @@ test("a sheets event refreshes My sheets and the record and module sheet lists",
     ["openview", "worksheets", "mine"],
     ["openview", "worksheets", "record"],
     ["openview", "worksheets", "module"],
+    ["openview", "worksheets", "appears"],
   ]);
 });

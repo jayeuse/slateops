@@ -2484,6 +2484,12 @@
     "path": "/api/worksheets/{param}/rows/batch"
   },
   {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheet-appears-api.ts",
+    "function": "listRecordAppearances",
+    "method": "GET",
+    "path": "/api/records/{param}/worksheet-rows"
+  },
+  {
     "adapter": "frontend/src/components/systems/platform/adapters/account-api.ts",
     "function": "changeAccountPassword",
     "method": "POST",
