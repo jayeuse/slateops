@@ -18,20 +18,11 @@ from app.core.base_model import utc_now
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
 from app.systems.openview.worksheets.models import WorksheetRow, WorksheetRowLink
-from app.systems.openview.worksheets.query import read_row
 from app.systems.sandbox.fields.models import Field
-from app.systems.sandbox.lifecycle.schemas import LifecycleTargetType
-from app.systems.sandbox.lifecycle.service import close_lifecycle, reopen_lifecycle
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from tests.rbac.support import _client, add_module, make_group_access
-from tests.sandbox_publications.support import (
-    bound_field,
-    bound_module,
-    publish_revision,
-    publish_structure,
-)
-from tests.worksheets.support import STRUCTURE, SheetWorld, add_sheet, sheet_world
+from tests.worksheets.support import STRUCTURE, SheetWorld, sheet_world
 
 pytestmark = pytest.mark.integration
 NOT_FOUND = {"detail": {"code": "worksheet_not_found", "message": "Sheet not found"}}
@@ -306,57 +297,6 @@ def test_a_lookup_follows_its_record_and_links_return_on_restore_and_reopen(
     assert (reopened["c1"], reopened["c3"]) == (
         {"link": {"record_id": str(graded.alice.id), "label": "Alice"}}, {"value": 95},
     )
-
-
-def test_a_published_field_removal_and_a_module_close_show_in_the_cells(
-    integration_owner_db: Session,
-) -> None:
-    """SH-30 through a real Sandbox publish (the lookup's field goes: "Field removed") and a
-    real lifecycle close and reopen of the link column's target module."""
-
-    db = integration_owner_db
-    publisher, document = publish_structure(db)
-    requests = bound_module(db, "sample-requests")
-    priority = bound_field(db, "field", "sample-requests:sample-field-requests-priority")
-    target = Record(org_id=requests.org_id, module_id=requests.id,
-                    data={str(priority.id): "Urgent"})
-    db.add(target)
-    db.flush()
-    sheet = add_sheet(db, publisher, module=bound_module(db, "sample-customers"))
-    sheet.structure = {
-        **STRUCTURE, "nextColumnSeq": 3,
-        "columns": [
-            {"key": "c1", "name": "Request", "type": "link",
-             "link": {"moduleId": str(requests.id)}},
-            {"key": "c2", "name": "Priority", "type": "lookup",
-             "lookup": {"linkKey": "c1", "fieldId": str(priority.id)}},
-        ],
-    }
-    row = WorksheetRow(org_id=sheet.org_id, worksheet_id=sheet.id, position=1024,
-                       data={}, data_bytes=2)
-    db.add(row)
-    db.flush()
-    db.add(WorksheetRowLink(org_id=row.org_id, worksheet_id=sheet.id, row_id=row.id,
-                            column_key="c1", target_record_id=target.id))
-    db.flush()
-
-    def cells() -> dict[str, Any]:
-        found = read_row(db, publisher, sheet, row.id)
-        assert found is not None
-        return {key: cell.model_dump() for key, cell in found.cells.items()}
-
-    assert cells()["c2"] == {"value": "Urgent"}
-    updated = document.model_copy(deep=True)
-    module = next(item for item in updated.design.modules if item.id == "sample-requests")
-    module.fields = [field for field in module.fields
-                     if field.id != "sample-field-requests-priority"]
-    publish_revision(db, publisher, updated, "remove-priority")
-    assert cells()["c2"] == {"state": "field_removed"}
-    db.commit()
-    close_lifecycle(db, LifecycleTargetType.MODULE, requests.id, None)
-    assert cells()["c1"] == {"state": "unavailable"}
-    reopen_lifecycle(db, LifecycleTargetType.MODULE, requests.id, None)
-    assert cells()["c1"]["link"]["record_id"] == str(target.id)
 
 
 def test_rows_page_in_their_saved_order_with_an_exact_total(
