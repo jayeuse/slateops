@@ -170,4 +170,10 @@ def convert_cell(
         if person not in visible_person_ids(db, actor, [person]):
             raise cell_error("cell_invalid", key, "Choose a person")
         return str(person)
+    if column.type == "boolean" and isinstance(value, str):
+        # The CSV export writes true and false; an import reads them back (B13).
+        text = value.strip().casefold()
+        if text not in {"true", "false"}:
+            raise cell_error("cell_invalid", key, f"Not a valid {column.name} value")
+        return text == "true"
     return _field_rules(key, column, value)  # boolean, date, datetime

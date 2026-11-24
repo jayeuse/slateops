@@ -1,6 +1,8 @@
 """CSV and Excel files of a sheet, cell by cell as the exporter sees it (spec X4, D9.1).
 
-The record export rules apply: CSV text goes through ``safe_text``; Excel writes text as
+The record export rules apply: CSV text goes through ``csv_text`` (``safe_text``, plus one
+mark before apostrophes that lead to formula-like text) and header names through
+``safe_text``; Excel writes text as
 strings (``strings_to_formulas`` is off), so nothing in a cell is ever evaluated. Both
 writers stop at the record export caps (10,000 rows, 8 MiB) with ``export_limit_exceeded``.
 A link cell exports as the record's name; a cell the exporter cannot read as "No access".
@@ -8,6 +10,7 @@ A link cell exports as the record's name; a cell the exporter cannot read as "No
 
 import csv
 import io
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -15,7 +18,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
+from babel import Locale
+from babel.numbers import get_decimal_symbol
 from fastapi import HTTPException
 from xlsxwriter import Workbook
 from xlsxwriter.exceptions import FileCreateError
@@ -29,6 +35,7 @@ from app.systems.openview.worksheets.schemas import (
     SheetUnlinkedCell,
     SheetValueCell,
 )
+from app.systems.sandbox.designs.date_values import parse_datetime
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.records import export as record_export
 from app.systems.sandbox.records.display import UNAVAILABLE_USER
@@ -97,15 +104,53 @@ def _value(cell: Cell) -> Any:
     return cell.value if isinstance(cell, SheetValueCell) else None
 
 
+_NUMBERS = frozenset({FieldType.INTEGER, FieldType.NUMBER, FieldType.DECIMAL})
+# ``escapable(t)``: exactly what ``records/export.py: safe_text`` treats as formula-like. A
+# tab, carriage return or line feed first, or a formula character after any whitespace that
+# ``str.lstrip`` removes (listed, so the browser can use the same class).
+FORMULA_LIKE = (
+    r"(?:[\t\r\n]|[\t\n\x0b\x0c\r\x1c-\x1f \x85\xa0\u1680\u2000-\u200a\u2028\u2029"
+    r"\u202f\u205f\u3000]*[=+\-@])"
+)
+# ``needs_mark(t) = escapable(t) or (t starts with "'" and needs_mark(t[1:]))``.
+NEEDS_MARK = re.compile(r"'*" + FORMULA_LIKE)
+
+
+def csv_text(text: str) -> str:
+    """One leading apostrophe exactly when the text needs the mark (X12). The import takes
+    one apostrophe away when the rest still needs it, so every text comes back as it was."""
+
+    return "'" + text if NEEDS_MARK.match(text) else text
+
+
+def _option_label(column: ExportColumn, value: Any) -> str | None:
+    options = column.field().config.get("options", [])
+    return next((item["label"] for item in options if item.get("id") == value), None)
+
+
 def csv_cell(cell: Cell, column: ExportColumn, rules: CellFormat) -> str:
+    """A cell as the organization's own import reads it back (B13): numbers with the
+    locale's decimal mark and no grouping, dates and times in ISO 8601."""
+
     words = _words(cell)
     if words is not None:
-        return record_export.safe_text(words)
+        return csv_text(words)
     value = _value(cell)
     if value is None:
         return ""
     if column.kind is FieldType.USER:
-        return record_export.safe_text(rules.people.get(str(value), UNAVAILABLE_USER))
+        return csv_text(rules.people.get(str(value), UNAVAILABLE_USER))
+    if column.kind in _NUMBERS:
+        return str(value).replace(".", get_decimal_symbol(Locale.parse(rules.locale, sep="-")))
+    if column.kind is FieldType.DATE:
+        return str(value)
+    if column.kind is FieldType.DATETIME:
+        parsed = parse_datetime(str(value))
+        return "" if parsed is None else parsed.astimezone(ZoneInfo(rules.timezone)).isoformat()
+    if column.kind is FieldType.SELECT and (label := _option_label(column, value)) is not None:
+        return csv_text(label)
+    if isinstance(value, str) and column.kind is not FieldType.SELECT:
+        return csv_text(value)
     return record_export.format_cell(value, column.field(), rules.timezone, rules.locale)
 
 

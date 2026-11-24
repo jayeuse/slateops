@@ -201,7 +201,7 @@ These facts were checked in code at `8c8d2b02`.
 | X9 | Data import adds rows to a sheet that the importer can edit (owner or Edit), or creates a new sheet from the file. The file's header row maps to the columns. How a new sheet from a data file gets its column types is settled in Decisions, item 14. Whether an import into an existing sheet also updates matched rows is settled in Decisions, item 15. | Proposed (PM) |
 | X10 | Excel import is new and has these rules: <br>• a size limit and a zip-expansion limit; <br>• values only, so a formula cell imports its saved result, and a formula without a saved result imports as empty and counts in the preview; <br>• macro-enabled files are refused; <br>• one tab per import; <br>• the person chooses the header row. <br>Values (D8, D9.3): `.xlsx` only, at most 10 MiB, each part at most 10 MiB uncompressed, the existing OOXML bounds, at most 10,000 rows and 100 columns. CSV is read in the browser and is the path for large sheets. | Proposed (REQ-0025 item 10); formula cells Proposed (PM); values Proposed (D8, D9) |
 | X11 | Imported or pasted text that starts like a formula (`=`, `+`, `-`, `@`) is stored as text and is never evaluated. | Proposed (PM) |
-| X12 | Import removes the one leading apostrophe that export adds to formula-like text, so the text imports back as it was. A person column cannot be filled from a file: on an import into a sheet it is "Not added", and a new sheet from a file gets a text column for it. | Proposed (parent, B13) |
+| X12 | Export adds one leading apostrophe to text that starts like a formula or with an apostrophe before a formula character, and import removes exactly one, so the text imports back as it was. A person column cannot be filled from a file: on an import into a sheet it is "Not added", and a new sheet from a file gets a text column for it. | Proposed (parent, B13) |
 
 ### Lifecycle
 
@@ -418,7 +418,7 @@ From TASK-0099 (Product Designer). Its decisions are in Decisions, items 4, 10, 
 **5. Open sheet after the owner left** (SH-13, SH-17, SH-18, SH-31; UI side only)
 - The viewer is a reader of the record. Chip: **Read-only**.
 - Directly under the title: "Andrea Villamor no longer has access to Larkspur College. Everyone who can read Andrea Villamor's record can read this sheet. Nobody can change it." (no date; Decision 10)
-- Actions: **Export ▾**, **More** (Sheet history only) and **Make a copy** (primary). There is no Share, Import, Add row or "+".
+- Actions: **Export ▾**, **More** (Sheet history, and New sheet from this structure for non-guests, X7) and **Make a copy** (primary). There is no Share, Import, Add row or "+".
 - **Make a copy** opens a dialog:
   - Name: "Class 1A (copy)", with "On Andrea Villamor · Faculty Members, the same record."
   - Line: "You get the same columns, rows and links. Only you can see the copy until you share it."
@@ -445,7 +445,7 @@ From TASK-0099 (Product Designer). Its decisions are in Decisions, items 4, 10, 
      - Count filters: Matched 12 · Not matched 2 · Matched more than once 1.
      - A row preview with each row's result.
      - "The 3 rows without one match": **Keep them, with the name as unlinked text** or **Skip them**.
-     - Warning: "1 cell in Prelim has a formula with no saved result. It is added empty."
+     - Warning: "1 cell has a formula with no saved result. It is added empty." (route 21 gives one count per file, so the line names no column)
 - Footer: "Nothing is added until you confirm." Buttons: Cancel, and **Create Class 4D with 15 rows** or **Add 15 rows to Class 1A**.
 
 **9. Phone, 390×844** (SH-50)
@@ -753,7 +753,7 @@ All of them use `append_security_event` or `append_committed_security_event` (`m
 | Event | When | `subject_id` | Metadata |
 | --- | --- | --- | --- |
 | `worksheets.export.authorized` | each data or template export (X3) | sheet ID | `format` (`csv`, `xlsx`, `template`), `row_count`, `column_count`. Pattern: `records.export.authorized` (`records/export.py:325-354`). |
-| `worksheets.import.file_parsed` | each Excel parse, success or failure | none | `outcome`, `reason` (`too_large`, `archive_bounds`, `macro`, `unreadable`, `limit`), `bytes`, `row_count` |
+| `worksheets.import.file_parsed` | each Excel parse, success or failure | none | `outcome`, `reason` (`archive_bounds`, `macro`, `unreadable`, `limit`, `tab`, `timeout`, `busy`; an upload over 10 MiB is answered 413 by the middleware before the route runs and writes no event), `bytes`, `row_count` |
 | `worksheets.opened_on_leave` | each leave that opens at least one sheet (H5) | the person who left | `opened_count`, `path` (`membership_disabled`, `account_disabled`, `membership_removed`, `account_deleted`) |
 
 A CSV import is parsed in the browser (D9.3), so the server receives no file and writes no file event.
@@ -969,7 +969,7 @@ Conventions for every route (`backend/AGENTS.md`, "API conventions"; `fastapi-ap
 | 20 | `POST /worksheets/{id}/export` | `visible` | `{format: "csv" \| "xlsx" \| "template"}` | 200 attachment | 404, 422 `export_limit_exceeded`, 503 | `POST /records/export` (`query_router.py:195-245`) |
 | 21 | `POST /worksheet-import-files?tab=<n>` | non-guest | `.xlsx` bytes, ≤ 10 MiB | 200 parse result (D9.3) | 413, 422 `import_file_invalid` or `worksheet_limit`, 503 `files_busy` | file upload routes in `file_transfer_policy` (`file_transfers.py:37-60`); `validate_bounded` (`validation_worker.py:17-43`) |
 | 22 | `POST /worksheet-import-matches` | module reader | `{module_id, field_id, keys}` | 200 matches and counts | 404, 422 | record import preview mode (`import_router.py:119-150`); the key match is new |
-| 23 | `GET /records/{record_id}/worksheet-rows` (Appears in) | record reader | list params | 200 list of `{worksheet_id, worksheet_title, row_id, column_key, column_name, cells}`, exact total | 404 | `require_readable_link` both-ends rule (`relationships/access.py:24-41`); route is new |
+| 23 | `GET /records/{record_id}/worksheet-rows` (Appears in) | record reader | list params | 200 list of `{worksheet_id, worksheet_title, owner {id, display_name}, row_id, row_number, column_key, column_name, columns [{key, name, type}], cells}` (cells masked per viewer), ordered by sheet title then row position, exact total; one read budget per request | 404 | `require_readable_link` both-ends rule (`relationships/access.py:24-41`); route is new |
 | 25 | `GET /worksheets/{id}/share-candidates?q=` | owner | `q` (search text) | 200 people the owner can see (`visible_person_ids`, active members of the bound organization) and the groups the owner belongs to; paged until 20 visible people are found | 403, 404, 409 `worksheet_open` | `visible_person_ids` (`access/users/person_visibility.py`); route is new |
 | 24 | `GET /users/{user_id}/worksheet-impact` | admin | | 200 `{opening_count}` | 403, 404 | `require_admin` routes in `account_operations.py` (`:53-54`); route is new |
 | 26 | Lifecycle impact (existing) | admin | | adds `worksheet_count: int` | | `LifecycleImpactResponse` (`lifecycle/planning_scope.py:70-83`); additive field |

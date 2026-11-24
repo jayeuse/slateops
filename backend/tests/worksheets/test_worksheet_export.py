@@ -86,7 +86,7 @@ def test_csv_holds_every_row_and_column_with_names_values_and_inert_text(
     assert _csv(exported) == [
         HEADER,
         ["Alice", "Alice", "'=1+1", "7", "12.5", "Pass", "Vera Viewer", "true",
-         "Nov 24, 2026"],
+         "2026-11-24"],  # ISO, so the organization re-imports it (B13)
         ["'@SUM(A1)", "", "'-2", "", "", "Fail", "", "", ""],
     ]
     assert (exported.row_count, exported.column_count) == (2, 9)

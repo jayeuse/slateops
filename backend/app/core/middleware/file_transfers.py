@@ -35,6 +35,10 @@ _BOARD_CONTENT_ROUTE = re.compile(
 
 
 def file_transfer_policy(path: str, method: str) -> FileTransferPolicy | None:
+    if method == "POST" and path == "/api/worksheet-import-files":
+        # Sheets Excel import (spec D9.3, D14 E5): the 10 MiB upload cap and a deadline
+        # that covers the 60 s parser child; it shares the file slots.
+        return FileTransferPolicy(10 * 1024 * 1024, 120)
     if method == "GET" and _COMMS_EXPORT_ROUTE.fullmatch(path):
         return FileTransferPolicy(1024 * 1024, 120)
     if method == "POST" and _COMMS_PURGE_ROUTE.fullmatch(path):

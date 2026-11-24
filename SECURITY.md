@@ -226,7 +226,7 @@ last-reviewed: 2026-10-17
 | CSRF token plus exact `Origin` on cookie-authenticated changes | `backend/app/common/dependencies/auth.py` |
 | Cookie and bearer credentials never mixed | `backend/app/common/dependencies/auth.py` |
 | Relaxed-development predicate stays narrow | `backend/app/core/config/development.py` |
-| File allowlist, archive bounds, parser subprocess limits | `backend/app/systems/platform/files/` |
+| File allowlist, archive bounds, parser subprocess limits | `backend/app/systems/platform/files/`, `backend/app/systems/openview/worksheets/import_child.py`, `backend/app/systems/openview/worksheets/import_worker.py` |
 | Private bucket; downloads as attachments with `nosniff` | `docs/architecture/14-security-architecture.md` |
 | `AuditSession` for every application mutation; no bulk or raw ORM changes | `docs/architecture/10-audit-and-history.md` |
 | The runtime holds `SELECT, INSERT` on `audit_logs` and no right on a partition; `ensure_audit_partitions()` stays a no-argument `SECURITY DEFINER` function with a fixed `search_path`; `create_audit_partition` has no grant | `backend/migrations/versions/f43c7d0ee160_audit_logs_monthly_partitions.py` |

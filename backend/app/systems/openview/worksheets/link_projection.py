@@ -29,7 +29,7 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 
 # Title fields whose stored value is its own label (a choice-list title falls back).
-_TITLE_TYPES = ("text", "long_text", "email", "url", "int", "number", "decimal", "select")
+TITLE_TYPES = ("text", "long_text", "email", "url", "int", "number", "decimal", "select")
 
 
 @dataclass(frozen=True)
@@ -68,7 +68,7 @@ def _title_option_label(title: Any, raw: Expression) -> Expression:
     )
 
 
-def _record_label(target: Any, title: Any) -> Expression:
+def record_label(target: Any, title: Any) -> Expression:
     raw = target.data.op("->>")(func.cast(title.id, String))
     label = case((title.type == "select", _title_option_label(title, raw)), else_=raw)
     named = func.nullif(func.btrim(label), "")
@@ -104,7 +104,7 @@ def join_link(
             linked_state.label("state"),
             target.id.label("target_id"),
             target.data.label("data"),
-            _record_label(target, title).label("title"),
+            record_label(target, title).label("title"),
         )
         .select_from(link)
         .outerjoin(target, and_(target.org_id == link.org_id, target.id == link.target_record_id))
@@ -115,7 +115,7 @@ def join_link(
                 title.id == module.title_field_id,
                 title.module_id == module.id,
                 title.is_deleted.is_(False),
-                title.type.in_(_TITLE_TYPES),
+                title.type.in_(TITLE_TYPES),
             ),
         )
         .where(
