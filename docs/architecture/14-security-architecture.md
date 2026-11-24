@@ -101,6 +101,25 @@ Storage write. Downloads are served as attachments with `nosniff`. Slate Operati
 runs no antivirus scan; type validation is not malware detection. A private
 bucket or privileged Storage key does not replace application authorization.
 
+Sheet Excel import (`POST /api/worksheet-import-files`) parses the file in its own
+child process ([`import_worker.py`](../../backend/app/systems/openview/worksheets/import_worker.py),
+[`import_child.py`](../../backend/app/systems/openview/worksheets/import_child.py)).
+The route admits at most 10 MiB and shares the file-processing slots
+(`file_transfer_policy` in [`file_transfers.py`](../../backend/app/core/middleware/file_transfers.py)).
+Guests cannot import. The parent sends the checked bytes on stdin, gives the child a
+minimal environment, discards its stderr, reads a bounded answer, and stops the child
+on overflow or after 60 seconds. The child limits CPU time and core files, and on Linux
+also its address space. Before python-calamine reads the file, the child applies the
+file validator's archive bounds, refuses other formats inside the zip, and pre-scans
+the chosen tab with `defusedxml` for the row, column and cell-length limits. Each parse
+writes one `worksheets.import.file_parsed` security event with no file content.
+Sheet export (CSV, Excel or template) builds the file from the exporter's own masked
+view in a separate snapshot transaction. It then checks the exporter's module access,
+session and sheet visibility again and commits `worksheets.export.authorized` before it
+releases the bytes ([`export.py`](../../backend/app/systems/openview/worksheets/export.py)).
+A leave that opens sheets writes `worksheets.opened_on_leave` with a count only
+([Authentication and authorization](08-authentication-authorization.md#sheets)).
+
 Conversation attachments use the same inventory and private bucket with a
 `comms_attachment` purpose and an organization-bound conversation parent.
 [Comms file admission](../../backend/app/systems/comms/files/access.py) requires
@@ -177,7 +196,15 @@ is capped at 1024 events. Full queues report safe reason codes and may lose
 invalidations; clients must recover through authorized reads. Work hints
 (`work_scheduled`, `work_triggers`) carry an organization only and travel on the
 same channel to wake background workers; the hub refuses them for every subscriber,
-administrators included, before any other rule. The
+administrators included, before any other rule. Every audited sheet table publishes as the
+`worksheets` entity with the sheet ID only, and any other `worksheet*` entity publishes
+nothing ([`events/models.py`](../../backend/app/systems/platform/events/models.py),
+[`audit/listeners.py`](../../backend/app/systems/manage/audit/listeners.py)). After the
+organization checks, the hub delivers a `worksheets` event only when its ID is in the
+subscriber's `worksheet_ids`, which the sheet access rule (`visible_worksheet_ids`)
+fills when the stream opens and again at each fresh identity check
+(`refresh_subscription`). There is no administrator pass, and the access signature
+carries the sheet IDs, so a change to the visible set is detected. The
 [Compose tenant ceilings](../../infra/supabase/compose.yaml) are 500 concurrent
 Realtime users and 1000 events/second, not a guarantee of application throughput.
 
