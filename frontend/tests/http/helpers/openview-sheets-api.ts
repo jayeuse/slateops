@@ -740,8 +740,8 @@ export async function installSheetEditApi(
 export type WireSheetShare = {
   id: string;
   subject: "user" | "group";
-  user: { id: string; display_name: string } | null;
-  group: { id: string; name: string } | null;
+  user: { id: string; display_name: string; is_guest: boolean } | null;
+  group: { id: string; name: string; member_count: number } | null;
   level: "view" | "edit";
   created_at: string;
 };
@@ -770,8 +770,8 @@ export async function installSheetActionsApi(
   options: {
     shares?: WireSheetShare[];
     candidates?: {
-      people: { id: string; display_name: string }[];
-      groups: { id: string; name: string }[];
+      people: { id: string; display_name: string; is_guest: boolean }[];
+      groups: { id: string; name: string; member_count: number }[];
     };
     history?: WireSheetRevision[];
   } = {},

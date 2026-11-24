@@ -75,3 +75,12 @@ export function openLine(
 ): string {
   return `${sheet.owner.displayName} no longer has access to ${organization}. Everyone who can read ${readable(sheet)} can read this sheet. Nobody can change it.`;
 }
+
+/** The line under a share target (Screens 4): a group's size, or a guest. */
+export function shareTargetWords(
+  target: { memberCount: number } | { isGuest: boolean },
+): string | null {
+  if ("memberCount" in target)
+    return `Group · ${target.memberCount} ${target.memberCount === 1 ? "person" : "people"}`;
+  return target.isGuest ? "Guest · View only" : null;
+}

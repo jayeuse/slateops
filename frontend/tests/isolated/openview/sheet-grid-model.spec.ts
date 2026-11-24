@@ -143,6 +143,14 @@ test("a cell reads as the viewer may see it", () => {
   expect(
     cellView(column("c2"), { state: "multiple_matches", count: 3 }, format),
   ).toEqual({ kind: "state", state: "multiple_matches", words: "3 matches" });
+  // 101 stands for more than 100 matching rows.
+  expect(
+    cellView(column("c2"), { state: "multiple_matches", count: 101 }, format),
+  ).toEqual({
+    kind: "state",
+    state: "multiple_matches",
+    words: "100+ matches",
+  });
   expect(cellView(column("c3"), { value: 1234 }, format)).toEqual({
     kind: "value",
     text: "1,234",

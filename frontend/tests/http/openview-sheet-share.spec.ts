@@ -21,14 +21,24 @@ const recordId = "00000000-0000-4000-8000-0000000008a2";
 const diego = {
   id: "00000000-0000-4000-8000-0000000008b1",
   display_name: "Diego Navarro",
+  is_guest: false,
 };
+// Listed as a member, but a guest by the time the share is sent: the
+// server's refusal is the last word.
 const carmela = {
   id: "00000000-0000-4000-8000-0000000008b2",
   display_name: "Carmela Reyes",
+  is_guest: false,
+};
+const gil = {
+  id: "00000000-0000-4000-8000-0000000008b3",
+  display_name: "Gil Tan",
+  is_guest: true,
 };
 const faculty = {
   id: "00000000-0000-4000-8000-0000000008c1",
   name: "CCS Faculty",
+  member_count: 12,
 };
 const diegoShare: WireSheetShare = {
   id: "00000000-0000-4000-8000-0000000008d1",
@@ -91,7 +101,7 @@ test("the owner shares with a group, changes a person's level and removes them",
   const sheetState = await installSheetPageApi(page, sheet());
   const api = await installSheetActionsApi(page, sheetState, {
     shares: [diegoShare],
-    candidates: { people: [diego, carmela], groups: [faculty] },
+    candidates: { people: [diego, carmela, gil], groups: [faculty] },
   });
   await page.goto(address);
 
@@ -129,16 +139,30 @@ test("the owner shares with a group, changes a person's level and removes them",
   await page.keyboard.press("Enter");
   expect(api.shareWrites).toEqual([]);
 
+  // A guest is offered View only before anything is sent.
+  const level = dialog.getByRole("combobox", { name: "Level", exact: true });
+  await dialog.getByRole("combobox", { name: "Add people or groups" }).click();
+  await expect(page.getByRole("option", { name: /Gil Tan/ })).toContainText(
+    "Guest · View only",
+  );
+  await page.getByRole("option", { name: /Gil Tan/ }).click();
+  await expect(level).toHaveValue("view");
+  await expect(level.getByRole("option", { name: "Edit" })).toBeDisabled();
+
   await dialog.getByRole("combobox", { name: "Add people or groups" }).click();
   await page
     .getByRole("combobox", { name: "Search add people or groups" })
     .fill("ccs");
-  await page.getByRole("option", { name: "CCS Faculty" }).click();
+  await expect(page.getByRole("option", { name: /CCS Faculty/ })).toContainText(
+    "Group · 12 people",
+  );
+  await page.getByRole("option", { name: /CCS Faculty/ }).click();
+  await expect(level.getByRole("option", { name: "Edit" })).toBeEnabled();
   await expect(send).not.toHaveAttribute("aria-disabled", "true");
   await send.click();
   await expect(
     people.getByRole("listitem").filter({ hasText: "CCS Faculty" }),
-  ).toContainText("Group");
+  ).toContainText("Group · 12 people");
 
   await people
     .getByRole("combobox", { name: "Level for Diego Navarro" })

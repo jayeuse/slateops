@@ -572,7 +572,24 @@ const personRefSchema = z
   .object({ id: uuid, display_name: z.string() })
   .strict()
   .transform((wire) => ({ id: wire.id, displayName: wire.display_name }));
-const groupRefSchema = z.object({ id: uuid, name: z.string() }).strict();
+// A person and a group as the Share dialog shows them: a guest can get View
+// only (V2), and a group says how many live members it has.
+const sharePersonSchema = z
+  .object({ id: uuid, display_name: z.string(), is_guest: z.boolean() })
+  .strict()
+  .transform((wire) => ({
+    id: wire.id,
+    displayName: wire.display_name,
+    isGuest: wire.is_guest,
+  }));
+const shareGroupSchema = z
+  .object({ id: uuid, name: z.string(), member_count: z.number().int().min(0) })
+  .strict()
+  .transform((wire) => ({
+    id: wire.id,
+    name: wire.name,
+    memberCount: wire.member_count,
+  }));
 
 const listPagination = z
   .object({
@@ -640,8 +657,8 @@ const shareSchema = z
   .object({
     id: uuid,
     subject: z.enum(["user", "group"]),
-    user: personRefSchema.nullable(),
-    group: groupRefSchema.nullable(),
+    user: sharePersonSchema.nullable(),
+    group: shareGroupSchema.nullable(),
     level: z.enum(["view", "edit"]),
     created_at: timestamp,
   })
@@ -749,8 +766,8 @@ function searchText(query: string) {
 
 const candidatesSchema = z
   .object({
-    people: z.array(personRefSchema),
-    groups: z.array(groupRefSchema),
+    people: z.array(sharePersonSchema),
+    groups: z.array(shareGroupSchema),
   })
   .strict();
 

@@ -181,7 +181,10 @@ export function cellView(
       state: cell.state,
       words:
         cell.state === "multiple_matches" && cell.count
-          ? `${cell.count} matches`
+          ? // 101 stands for more than 100 matching rows.
+            cell.count > 100
+            ? "100+ matches"
+            : `${cell.count} matches`
           : STATE_WORDS[cell.state],
     };
   // A computed cell that cannot be worked out (D7.2); F6 refines its mark.

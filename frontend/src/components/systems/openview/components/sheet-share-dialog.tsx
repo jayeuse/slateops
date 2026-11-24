@@ -34,7 +34,7 @@ import {
   type WorksheetShare,
   type WorksheetShareTarget,
 } from "../adapters/worksheets-api";
-import { shareLines } from "../domain/sheet-share";
+import { shareLines, shareTargetWords } from "../domain/sheet-share";
 import { useSheetOrganizationName } from "./use-sheet-organization";
 
 // Screen 4, Share (docs/specs/sheets.md V2, V5, V6, V8, V9; SH-8 to SH-12):
@@ -45,7 +45,8 @@ import { useSheetOrganizationName } from "./use-sheet-organization";
 
 const SEARCH_DELAY_MS = 250;
 type Level = "view" | "edit";
-type Chosen = WorksheetShareTarget & { label: string };
+// A guest can get View only (V9), so the level offers only View for one.
+type Chosen = WorksheetShareTarget & { label: string; guest: boolean };
 
 function shareName(share: WorksheetShare) {
   return share.subject === "user"
@@ -132,12 +133,15 @@ export default function SheetShareDialog({
       .map((person) => ({
         value: `user:${person.id}`,
         label: person.displayName,
+        description: shareTargetWords(person) ?? undefined,
+        guest: person.isGuest,
         group: "People",
       })),
     ...(candidates.data?.groups ?? []).map((group) => ({
       value: `group:${group.id}`,
       label: group.name,
-      description: "Group",
+      description: shareTargetWords(group) ?? undefined,
+      guest: false,
       group: "Groups",
     })),
   ].filter((option) => !taken.has(option.value));
@@ -246,7 +250,13 @@ export default function SheetShareDialog({
                 )
                   return;
                 setError(null);
-                setChosen({ subject, id, label: option.label });
+                setChosen({
+                  subject,
+                  id,
+                  label: option.label,
+                  guest: option.guest,
+                });
+                if (option.guest) setLevel("view");
               }}
               popupClassName="slim-ui"
             />
@@ -259,7 +269,9 @@ export default function SheetShareDialog({
               className="min-w-24 flex-1 [&_select]:h-11"
             >
               <NativeSelectOption value="view">View</NativeSelectOption>
-              <NativeSelectOption value="edit">Edit</NativeSelectOption>
+              <NativeSelectOption value="edit" disabled={chosen?.guest}>
+                Edit
+              </NativeSelectOption>
             </NativeSelect>
             <Button
               variant="outline"
@@ -289,6 +301,13 @@ export default function SheetShareDialog({
           </li>
           {list.map((item) => {
             const name = shareName(item);
+            const detail =
+              item.subject === "group"
+                ? shareTargetWords(item.group)
+                : item.person
+                  ? shareTargetWords(item.person)
+                  : null;
+            const guest = item.subject === "user" && item.person?.isGuest;
             return (
               <li
                 key={item.id}
@@ -297,8 +316,10 @@ export default function SheetShareDialog({
                 <Avatar group={item.subject === "group"} name={name} />
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate text-sm font-medium">{name}</span>
-                  {item.subject === "group" ? (
-                    <span className="text-muted-foreground text-xs">Group</span>
+                  {detail ? (
+                    <span className="text-muted-foreground text-xs">
+                      {detail}
+                    </span>
                   ) : null}
                 </span>
                 <NativeSelect
@@ -317,7 +338,9 @@ export default function SheetShareDialog({
                   className="w-24 [&_select]:h-11 xl:[&_select]:h-8"
                 >
                   <NativeSelectOption value="view">View</NativeSelectOption>
-                  <NativeSelectOption value="edit">Edit</NativeSelectOption>
+                  <NativeSelectOption value="edit" disabled={guest}>
+                    Edit
+                  </NativeSelectOption>
                 </NativeSelect>
                 <Button
                   variant="ghost"

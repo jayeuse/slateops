@@ -7,6 +7,7 @@ import {
   shareLines,
   sheetActions,
   sheetRole,
+  shareTargetWords,
 } from "../../../src/components/systems/openview/domain/sheet-share";
 
 // docs/specs/sheets.md V5, V8, L7, L10 and Screens 3 to 5: who may do what
@@ -65,13 +66,13 @@ test("the owner's chip counts people and groups apart", () => {
     id,
     level: "view",
     subject: "user",
-    person: { id, displayName: id },
+    person: { id, displayName: id, isGuest: false },
   });
   const group = (id: string): WorksheetShare => ({
     id,
     level: "view",
     subject: "group",
-    group: { id, name: id },
+    group: { id, name: id, memberCount: 3 },
   });
   expect(
     [
@@ -89,6 +90,24 @@ test("the owner's chip counts people and groups apart", () => {
     "Shared with 1 group",
     "Shared with 2 people and 1 group",
     "Shared with 1 person and 2 groups",
+  ]);
+});
+
+test("a group says how many people it has; a guest says it gets View only", () => {
+  expect(
+    [
+      { memberCount: 12 },
+      { memberCount: 1 },
+      { memberCount: 0 },
+      { isGuest: true },
+      { isGuest: false },
+    ].map(shareTargetWords),
+  ).toEqual([
+    "Group · 12 people",
+    "Group · 1 person",
+    "Group · 0 people",
+    "Guest · View only",
+    null,
   ]);
 });
 

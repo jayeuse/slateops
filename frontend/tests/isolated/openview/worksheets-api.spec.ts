@@ -522,7 +522,11 @@ test("shares are read in full and keep a person who is no longer listed", async 
             share(shareOne, {
               subject: "user",
               level: "edit",
-              user: { id: personId, display_name: "Diego Navarro" },
+              user: {
+                id: personId,
+                display_name: "Diego Navarro",
+                is_guest: false,
+              },
             }),
           ],
           pagination: wirePagination({
@@ -536,7 +540,7 @@ test("shares are read in full and keep a person who is no longer listed", async 
           items: [
             share(shareTwo, {
               subject: "group",
-              group: { id: groupId, name: "CCS Faculty" },
+              group: { id: groupId, name: "CCS Faculty", member_count: 12 },
             }),
             share(sheetId(77), { subject: "user" }),
           ],
@@ -559,13 +563,13 @@ test("shares are read in full and keep a person who is no longer listed", async 
         id: shareOne,
         level: "edit",
         subject: "user",
-        person: { id: personId, displayName: "Diego Navarro" },
+        person: { id: personId, displayName: "Diego Navarro", isGuest: false },
       },
       {
         id: shareTwo,
         level: "view",
         subject: "group",
-        group: { id: groupId, name: "CCS Faculty" },
+        group: { id: groupId, name: "CCS Faculty", memberCount: 12 },
       },
       { id: sheetId(77), level: "view", subject: "user", person: null },
     ]);
@@ -583,7 +587,7 @@ test("a share names one person or one group, and a level change or removal names
             id: shareOne,
             subject: "group",
             user: null,
-            group: { id: groupId, name: "CCS Faculty" },
+            group: { id: groupId, name: "CCS Faculty", member_count: 12 },
             level: "view",
             created_at: "2026-11-20T08:00:00Z",
           },
@@ -623,7 +627,7 @@ test("a share names one person or one group, and a level change or removal names
       id: shareOne,
       level: "view",
       subject: "group",
-      group: { id: groupId, name: "CCS Faculty" },
+      group: { id: groupId, name: "CCS Faculty", memberCount: 12 },
     });
   } finally {
     mock.restore();
@@ -635,8 +639,10 @@ test("share candidates and the people list search by trimmed text", async () => 
     String(input).includes("/people")
       ? json({ people: [{ id: personId, display_name: "Diego Navarro" }] })
       : json({
-          people: [{ id: personId, display_name: "Diego Navarro" }],
-          groups: [{ id: groupId, name: "CCS Faculty" }],
+          people: [
+            { id: personId, display_name: "Diego Navarro", is_guest: true },
+          ],
+          groups: [{ id: groupId, name: "CCS Faculty", member_count: 1 }],
         }),
   );
   try {
@@ -650,8 +656,8 @@ test("share candidates and the people list search by trimmed text", async () => 
       `/api/worksheets/${sheetId(9)}/people?q=`,
     ]);
     expect(candidates).toEqual({
-      people: [{ id: personId, displayName: "Diego Navarro" }],
-      groups: [{ id: groupId, name: "CCS Faculty" }],
+      people: [{ id: personId, displayName: "Diego Navarro", isGuest: true }],
+      groups: [{ id: groupId, name: "CCS Faculty", memberCount: 1 }],
     });
     expect(people).toEqual([{ id: personId, displayName: "Diego Navarro" }]);
   } finally {
