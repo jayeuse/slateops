@@ -24,8 +24,8 @@ def test_a_materialized_input_keeps_a_name_that_no_later_cte_takes() -> None:
         name = str(kept.name)
         gc.collect()
 
+        assert str(kept.name) not in _later_names(1000)
         assert str(kept.name) == name
-        assert name not in _later_names(1000)
         later = select(literal(2).label("two")).cte()
         compiled = str(select(kept.c.one, later.c.two).compile())
         assert compiled.startswith("WITH anon_1 AS MATERIALIZED"), compiled
