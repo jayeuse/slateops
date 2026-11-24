@@ -21882,25 +21882,6 @@
         "title": "SheetFromSheetOptions",
         "type": "object"
       },
-      "SheetGroupRef": {
-        "properties": {
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "name"
-        ],
-        "title": "SheetGroupRef",
-        "type": "object"
-      },
       "SheetHiddenSourceColumn": {
         "additionalProperties": false,
         "description": "A From another sheet column whose source sheet the viewer cannot see (D14 S1).\n\nRoute 6 takes it back as \"keep this column as it is\" (B11 review, option a).",
@@ -22648,7 +22629,7 @@
           "group": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/SheetGroupRef"
+                "$ref": "#/components/schemas/SheetShareGroup"
               },
               {
                 "type": "null"
@@ -22679,7 +22660,7 @@
           "user": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/SheetPersonRef"
+                "$ref": "#/components/schemas/SheetSharePerson"
               },
               {
                 "type": "null"
@@ -22702,14 +22683,14 @@
         "properties": {
           "groups": {
             "items": {
-              "$ref": "#/components/schemas/SheetGroupRef"
+              "$ref": "#/components/schemas/SheetShareGroup"
             },
             "title": "Groups",
             "type": "array"
           },
           "people": {
             "items": {
-              "$ref": "#/components/schemas/SheetPersonRef"
+              "$ref": "#/components/schemas/SheetSharePerson"
             },
             "title": "People",
             "type": "array"
@@ -22772,6 +22753,56 @@
           "level"
         ],
         "title": "SheetShareCreate",
+        "type": "object"
+      },
+      "SheetShareGroup": {
+        "description": "A group in the Share dialog, with its live members (\"Group · 12 people\").",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "member_count": {
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "member_count"
+        ],
+        "title": "SheetShareGroup",
+        "type": "object"
+      },
+      "SheetSharePerson": {
+        "description": "A person in the Share dialog; a guest can get View only (V2).",
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_guest": {
+            "title": "Is Guest",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "is_guest"
+        ],
+        "title": "SheetSharePerson",
         "type": "object"
       },
       "SheetShareSort": {

@@ -26,13 +26,15 @@ from app.systems.access.users.membership import bound_membership_join
 from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.access.users.person_visibility import visible_person_ids
 from app.systems.openview.worksheets.access import load_visible_worksheet, worksheet_states
+from app.systems.openview.worksheets.candidates import guest_ids, member_counts
 from app.systems.openview.worksheets.locking import lock_for_write
 from app.systems.openview.worksheets.models import Worksheet, WorksheetShare
 from app.systems.openview.worksheets.schemas import (
-    SheetGroupRef,
     SheetShare,
     SheetShareCreate,
+    SheetShareGroup,
     SheetShareListRequest,
+    SheetSharePerson,
     SheetShareSort,
 )
 from app.systems.openview.worksheets.serializers import person_refs
@@ -114,16 +116,26 @@ def _live_share(db: Session, sheet: Worksheet, share_id: UUID) -> WorksheetShare
 
 def share_views(db: Session, shares: Sequence[WorksheetShare]) -> list[SheetShare]:
     people = person_refs(db, (share.user_id for share in shares if share.user_id))
+    guests = guest_ids(db, people)
     group_ids = {share.group_id for share in shares if share.group_id}
     groups = {
         group.id: group.name
         for group in db.scalars(select(Group).where(Group.id.in_(group_ids)))
     } if group_ids else {}
+    counts = member_counts(db, group_ids)
+
+    def person(user_id: UUID) -> SheetSharePerson | None:
+        found = people.get(user_id)
+        return None if found is None else SheetSharePerson(
+            **found.model_dump(), is_guest=user_id in guests,
+        )
+
     return [
         SheetShare(
             id=share.id, subject="user" if share.user_id else "group",
-            user=people.get(share.user_id) if share.user_id else None,
-            group=SheetGroupRef(id=share.group_id, name=groups.get(share.group_id, ""))
+            user=person(share.user_id) if share.user_id else None,
+            group=SheetShareGroup(id=share.group_id, name=groups.get(share.group_id, ""),
+                                  member_count=counts.get(share.group_id, 0))
             if share.group_id else None,
             level="edit" if share.level == "edit" else "view",
             created_at=share.created_at,

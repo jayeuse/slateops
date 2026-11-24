@@ -75,7 +75,8 @@ def test_the_owner_shares_changes_and_removes_a_persons_access(
     assert created.status_code == 201, created.text
     share = created.json()
     assert {key: share[key] for key in ("subject", "user", "group", "level")} == {
-        "subject": "user", "user": {"id": str(friend.id), "display_name": friend.username},
+        "subject": "user",
+        "user": {"id": str(friend.id), "display_name": friend.username, "is_guest": False},
         "group": None, "level": "view",
     }
     assert _level(application, db, world, friend) == "view"
@@ -109,7 +110,7 @@ def test_a_group_share_follows_membership_and_the_higher_level_wins(
     created = _share(application, db, world,
                      {"subject": "group", "group_id": str(team.id), "level": "view"})
     assert created.status_code == 201, created.text
-    assert created.json()["group"] == {"id": str(team.id), "name": team.name}
+    assert created.json()["group"] == {"id": str(team.id), "name": team.name, "member_count": 2}
     assert _level(application, db, world, friend) == "view"
     member.is_deleted, member.deleted_at = True, utc_now()
     db.flush()
@@ -253,3 +254,28 @@ def test_a_share_to_a_person_who_left_cannot_change_but_can_be_removed(
     raised = _as(application, db, world.owner).patch(path, json={"level": "edit"})
     assert (raised.status_code, _body(raised)) == (404, TARGET_NOT_FOUND)
     assert _as(application, db, world.owner).delete(path).status_code == 204
+
+
+def test_shares_and_candidates_tell_guests_and_group_sizes(
+    application: FastAPI, integration_db: Session, world: SheetWorld,
+) -> None:
+    """The Share dialog offers a guest View only and shows "Group · n people"."""
+
+    db = integration_db
+    owner = _as(application, db, world.owner)
+    shares = {(item["user"] or item["group"])["id"]: item
+              for item in owner.get(f"/api/worksheets/{world.sheet.id}/shares").json()["items"]}
+    assert shares[str(world.guest.id)]["user"]["is_guest"] is True
+    assert shares[str(world.viewer.id)]["user"]["is_guest"] is False
+    assert shares[str(world.share_group.id)]["group"]["member_count"] == 1
+    candidates = owner.get(f"/api/worksheets/{world.sheet.id}/share-candidates").json()
+    people = {person["id"]: person["is_guest"] for person in candidates["people"]}
+    assert (people[str(world.guest.id)], people[str(world.viewer.id)]) == (True, False)
+    assert candidates["groups"] == [{"id": str(world.reader_access.group_id),
+                                     "name": candidates["groups"][0]["name"],
+                                     "member_count": 6}]
+    created = _share(application, db, world, {
+        "subject": "group", "group_id": str(world.reader_access.group_id), "level": "view",
+    })
+    assert created.status_code == 201, created.text
+    assert created.json()["group"]["member_count"] == 6

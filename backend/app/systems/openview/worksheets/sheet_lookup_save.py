@@ -50,8 +50,20 @@ def kept_columns(db: Session, user: User, sheet: Worksheet, old: Mapping[str, Co
                  columns: list[Any]) -> list[Column]:
     """The request's columns with each masked From another sheet column kept as stored.
 
-    A person who cannot see a column's source cannot remove it; the owner can.
+    A person who cannot see a column's source can neither change nor remove it; the owner
+    can.
     """
+
+    hidden = {
+        key: stored for key, stored in old.items()
+        if isinstance(stored, SheetFromSheetColumn) and user.id != sheet.owner_id
+        and load_visible_worksheet(db, user, stored.sheet_lookup.sourceWorksheetId) is None
+    }
+
+    def not_visible(stored: Column) -> Any:
+        return error(status.HTTP_422_UNPROCESSABLE_CONTENT, "column_not_visible",
+                     f"{stored.name}: only the owner can change or remove a column whose "
+                     "source you cannot see", key=stored.key)
 
     kept: list[Column] = []
     for column in columns:
@@ -61,17 +73,14 @@ def kept_columns(db: Session, user: User, sheet: Worksheet, old: Mapping[str, Co
                 raise error(status.HTTP_422_UNPROCESSABLE_CONTENT, "structure_invalid",
                             f"{column.name}: the sheet has no such column")
             kept.append(stored)
+        elif column.key in hidden and column != hidden[column.key]:
+            raise not_visible(hidden[column.key])  # security review R-1
         else:
             kept.append(column)
     present = {column.key for column in kept}
-    for stored in old.values():
-        if (isinstance(stored, SheetFromSheetColumn) and stored.key not in present
-                and user.id != sheet.owner_id
-                and load_visible_worksheet(db, user, stored.sheet_lookup.sourceWorksheetId)
-                is None):
-            raise error(status.HTTP_422_UNPROCESSABLE_CONTENT, "column_not_visible",
-                        f"{stored.name}: only the owner can remove a column whose source "
-                        "you cannot see", key=stored.key)
+    for key, stored in hidden.items():
+        if key not in present:
+            raise not_visible(stored)
     return kept
 
 

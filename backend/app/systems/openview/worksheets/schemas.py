@@ -175,9 +175,21 @@ class SheetPeople(BaseModel):
     people: list[SheetPersonRef]
 
 
+class SheetSharePerson(SheetPersonRef):
+    """A person in the Share dialog; a guest can get View only (V2)."""
+
+    is_guest: bool
+
+
+class SheetShareGroup(SheetGroupRef):
+    """A group in the Share dialog, with its live members ("Group · 12 people")."""
+
+    member_count: int
+
+
 class SheetShareCandidates(BaseModel):
-    people: list[SheetPersonRef]
-    groups: list[SheetGroupRef]
+    people: list[SheetSharePerson]
+    groups: list[SheetShareGroup]
 
 
 class SheetRowSort(BaseModel):
@@ -396,8 +408,8 @@ class SheetShareUpdate(BaseModel):
 class SheetShare(BaseModel):
     id: UUID
     subject: Literal["user", "group"]
-    user: SheetPersonRef | None
-    group: SheetGroupRef | None
+    user: SheetSharePerson | None
+    group: SheetShareGroup | None
     level: Literal["view", "edit"]
     created_at: datetime
 

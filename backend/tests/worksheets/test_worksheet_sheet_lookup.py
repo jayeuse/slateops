@@ -304,3 +304,39 @@ def test_an_editor_without_the_source_keeps_its_columns_and_cannot_remove_them(
     ).json()["structure"]["columns"]
     removed = summary.save([column for column in owner_view if column["key"] != "c5"])
     assert removed.status_code == 200, removed.text
+
+
+def test_a_hidden_column_cannot_be_replaced_by_a_person_without_its_source(
+    integration_db: Session, summary: Summary,
+) -> None:
+    """Security review R-1: anything but the placeholder or the stored column is refused."""
+
+    editor = summary.world.editor
+    columns = _client(summary.application, editor, summary.db).get(
+        f"/api/worksheets/{summary.world.sheet.id}",
+    ).json()["structure"]["columns"]
+    columns[1] = {"key": "c2", "name": "Final", "type": "text"}
+    refused = summary.save(columns, person=editor)
+    assert refused.status_code == 422, refused.text
+    assert (refused.json()["detail"]["code"], refused.json()["detail"]["key"]) == (
+        "column_not_visible", "c2",
+    )
+    integration_db.refresh(summary.world.sheet)
+    assert summary.world.sheet.structure["columns"][1]["type"] == "sheet_lookup"
+
+
+def test_more_matches_than_are_counted_read_as_one_more_than_the_cap(
+    integration_db: Session, summary: Summary, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B12 review N-1: a count above the cap is the cap plus one, read as "<cap>+"."""
+
+    from app.systems.openview.worksheets import from_sheet
+
+    monkeypatch.setattr(from_sheet, "MAX_COUNTED", 1)
+    _row(integration_db, summary.source, {"c2": "72", "c3": 3}, summary.students.bob, 4)
+    page = summary.query(summary.world.owner)
+    assert _cells(page, "c2")[:2] == [{"value": "88.5"},
+                                      {"state": "multiple_matches", "count": 2}]
+    exported = build_export(summary.db, reader_id=summary.world.owner.id,
+                            worksheet_id=summary.world.sheet.id, format="csv")
+    assert list(csv.reader(io.StringIO(exported.content.decode())))[2][1] == "1+ matches"

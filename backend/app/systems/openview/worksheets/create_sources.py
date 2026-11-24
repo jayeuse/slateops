@@ -40,6 +40,7 @@ from app.systems.openview.worksheets.models import (
 )
 from app.systems.openview.worksheets.row_writes import GAP, error
 from app.systems.openview.worksheets.schemas import SheetTemplateSource, WorksheetCreate
+from app.systems.openview.worksheets.sheet_lookup_save import check_sheet_graph
 from app.systems.openview.worksheets.structure import (
     Column,
     SheetColumnGroup,
@@ -59,6 +60,9 @@ from app.systems.openview.worksheets.template_schema import (
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 
+# Rows one copy request takes: 10,000 rows with two link columns took 11.7 s as the runtime
+# role (load 6), past the ~10 s a request may hold (Decision 5); 5,000 leave room.
+MAX_COPY_ROWS = 5_000
 # The columns whose values a row stores; the others are read per request.
 _STORED = frozenset({"link", "text", "long_text", "email", "url", "number", "int", "boolean",
                      "date", "datetime", "user", "decimal", "select"})
@@ -80,7 +84,8 @@ def module_not_found() -> Any:
 
 
 def check_copy(db: Session, user: User, payload: WorksheetCreate, sheet: Worksheet) -> None:
-    """The owner, or any reader of an open sheet, on the same record or module (L6)."""
+    """The owner, or any reader of an open sheet, on the same record or module (L6), and
+    no more rows than one request copies in time (Decision 5)."""
 
     if (payload.record_id, payload.module_id) != (sheet.record_id, sheet.module_id):
         raise error(status.HTTP_422_UNPROCESSABLE_CONTENT, "copy_anchor_mismatch",
@@ -89,6 +94,10 @@ def check_copy(db: Session, user: User, payload: WorksheetCreate, sheet: Workshe
     if present and level != "owner":
         raise error(status.HTTP_403_FORBIDDEN, "worksheet_copy_forbidden",
                     "Only the owner can copy a private sheet")
+    if sheet.live_row_count > MAX_COPY_ROWS:
+        raise error(status.HTTP_422_UNPROCESSABLE_CONTENT, "copy_too_large",
+                    f"A copy holds at most {MAX_COPY_ROWS:,} rows; export and import instead",
+                    limit=MAX_COPY_ROWS)
 
 
 def check_mapping(db: Session, user: User, source: SheetTemplateSource) -> None:
@@ -239,6 +248,7 @@ def finish(db: Session, draft: Draft) -> WorksheetStructure:
     try:
         check_expressions(list(structure.columns), numeric_lookups=numeric,
                           unchanged=computed, decimal_mark=".")
+        check_sheet_graph(db, uuid7(), list(structure.columns))  # security review R-2
     except ExpressionError as refused:
         raise error(status.HTTP_422_UNPROCESSABLE_CONTENT, "expression_invalid",
                     refused.message, key=refused.key, reason=refused.reason) from refused

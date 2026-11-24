@@ -80,7 +80,10 @@ def _words(cell: Cell) -> str | None:
     if isinstance(cell, SheetErrorCell):
         return ERROR_WORDS[cell.error]
     if isinstance(cell, SheetMatchesCell):
-        return f"{cell.count} matches"
+        from app.systems.openview.worksheets import from_sheet
+
+        cap = from_sheet.MAX_COUNTED
+        return f"{cap}+ matches" if cell.count > cap else f"{cell.count} matches"
     if isinstance(cell, SheetStateCell):
         return STATE_WORDS.get(cell.state, "No access")
     if isinstance(cell, SheetLinkCell):

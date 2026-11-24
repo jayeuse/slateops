@@ -21,10 +21,10 @@ from sqlalchemy.orm import Session, aliased
 from app.systems.access.users.models import User
 from app.systems.openview.worksheets.access import load_visible_worksheet
 from app.systems.openview.worksheets.expression import MAX_CHAIN
+from app.systems.openview.worksheets.link_projection import Link
 from app.systems.openview.worksheets.models import WorksheetRow, WorksheetRowLink
 from app.systems.openview.worksheets.projection import (
     ColumnProjection,
-    Link,
     RowProjection,
     blank_column,
     hidden_column,
@@ -53,8 +53,8 @@ def _no_number() -> Any:
 
 
 READ_BUDGET = _BUDGET  # read at each top-level projection; tests may lower it
-# Matches counted per row; a record with more source rows than this shows this count, so
-# a row never pays for every duplicate in a large source sheet (S-11).
+# Matches counted per row: more than this reads as this plus one, shown as "<cap>+", so a
+# row never pays for every duplicate in a large source sheet (S-11, B12 review N-1).
 MAX_COUNTED = 100
 
 
@@ -117,7 +117,7 @@ def project_sheet_lookup(
     count_link, count_row, counting = matching("count")
     capped = (
         select(literal(1).label("one")).select_from(count_link).join(count_row, true())
-        .where(*counting).limit(MAX_COUNTED)
+        .where(*counting).limit(MAX_COUNTED + 1)
         .correlate_except(count_link, count_row)  # this row's link, two levels out
         .lateral(f"found_{here}")
     )

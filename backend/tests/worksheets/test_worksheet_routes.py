@@ -356,4 +356,6 @@ def test_a_share_candidate_with_a_blank_display_name_shows_their_username(
     found = _as(application, db, world.owner).get(
         f"/api/worksheets/{world.sheet.id}/share-candidates", params={"q": "blank-name"},
     ).json()
-    assert found["people"] == [{"id": str(blank.id), "display_name": blank.username}]
+    assert found["people"] == [
+        {"id": str(blank.id), "display_name": blank.username, "is_guest": False},
+    ]

@@ -5,6 +5,7 @@ gives an owner or Edit recipient the people they can put in a person cell, thems
 included.
 """
 
+from collections.abc import Iterable
 from uuid import UUID
 
 from sqlalchemy import func, literal, or_, select, tuple_
@@ -14,12 +15,13 @@ from app.core.database.organization_scope import bound_organization_column
 from app.systems.access.policy.models import Group, GroupMember
 from app.systems.access.policy.readers import active_account_clause
 from app.systems.access.users.membership import bound_membership_join
-from app.systems.access.users.models import Membership, User
+from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.access.users.person_visibility import visible_person_ids
 from app.systems.openview.worksheets.schemas import (
-    SheetGroupRef,
     SheetPersonRef,
     SheetShareCandidates,
+    SheetShareGroup,
+    SheetSharePerson,
 )
 
 # One page of each list; the search narrows it.
@@ -75,6 +77,33 @@ def visible_people(db: Session, actor: User, pattern: str, *,
     return people[:CANDIDATE_LIMIT]
 
 
+def guest_ids(db: Session, user_ids: Iterable[UUID]) -> set[UUID]:
+    """The people among ``user_ids`` who are guests of the bound organization."""
+
+    ids = set(user_ids)
+    if not ids:
+        return set()
+    return set(db.scalars(select(Membership.user_id).where(
+        Membership.user_id.in_(ids), Membership.org_id == bound_organization_column(),
+        Membership.role == UserRole.GUEST.value, Membership.is_deleted.is_(False),
+    )))
+
+
+def member_counts(db: Session, group_ids: Iterable[UUID]) -> dict[UUID, int]:
+    """The live members of each group of the bound organization."""
+
+    ids = set(group_ids)
+    if not ids:
+        return {}
+    counted = db.execute(
+        select(GroupMember.group_id, func.count()).where(
+            GroupMember.group_id.in_(ids), GroupMember.org_id == bound_organization_column(),
+            GroupMember.is_deleted.is_(False),
+        ).group_by(GroupMember.group_id)
+    ).tuples()
+    return {**dict.fromkeys(ids, 0), **{group_id: int(count) for group_id, count in counted}}
+
+
 def share_candidates(db: Session, owner: User, text: str) -> SheetShareCandidates:
     pattern = like(text)
     people = visible_people(db, owner, pattern)
@@ -91,8 +120,13 @@ def share_candidates(db: Session, owner: User, text: str) -> SheetShareCandidate
         .order_by(Group.name, Group.id)
         .limit(CANDIDATE_LIMIT)
     ).tuples().all()
+    guests = guest_ids(db, (person.id for person in people))
+    counts = member_counts(db, (group_id for group_id, _name in groups))
     return SheetShareCandidates(
-        people=people, groups=[SheetGroupRef(id=group_id, name=name) for group_id, name in groups]
+        people=[SheetSharePerson(**person.model_dump(), is_guest=person.id in guests)
+                for person in people],
+        groups=[SheetShareGroup(id=group_id, name=name, member_count=counts[group_id])
+                for group_id, name in groups],
     )
 
 

@@ -5,7 +5,6 @@ gets new column keys, never the source's shares; a template creates nothing when
 refused.
 """
 
-import time
 from collections.abc import Iterator
 from datetime import timedelta
 from typing import Any
@@ -27,7 +26,13 @@ from app.systems.openview.worksheets.models import (
 )
 from tests.conftest import membership_of
 from tests.rbac.support import _client, add_module
-from tests.worksheets.support import SheetWorld, Students, add_students, sheet_world
+from tests.worksheets.support import (
+    SheetWorld,
+    Students,
+    add_sheet,
+    add_students,
+    sheet_world,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -277,19 +282,54 @@ def test_a_template_that_is_refused_creates_nothing(
     assert world.sheets() == before
 
 
-def test_a_full_sheet_copies_in_one_request(world: World) -> None:
-    """D8: a sheet at its 10,000-row limit copies in one request (time reported in TASK-0103)."""
+def test_a_copy_above_the_row_limit_is_refused_and_one_at_it_copies(
+    world: World, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Decision 5: a copy runs in one request only up to its row limit (5,000 measured
+    to stay under about 10 s); above it, 422 `copy_too_large` names the limit."""
 
-    world.db.connection().execute(WorksheetRow.__table__.insert(), [
-        {"id": uuid7(), "org_id": world.world.sheet.org_id,
-         "worksheet_id": world.world.sheet.id, "position": (index + 3) * 1024,
-         "data": {"c5": index}, "data_bytes": 9} for index in range(9_998)
-    ])
-    world.world.sheet.live_row_count = 10_000
+    from app.systems.openview.worksheets import create_sources
+
+    monkeypatch.setattr(create_sources, "MAX_COPY_ROWS", 2)
+    source = {"kind": "copy", "worksheet_id": str(world.world.sheet.id)}
+    assert world.create(world.world.owner, source).status_code == 201
+    world.db.add(WorksheetRow(org_id=world.world.sheet.org_id,
+                              worksheet_id=world.world.sheet.id, position=9 * 1024,
+                              data={"c5": 1}, data_bytes=8))
+    world.world.sheet.live_row_count = 3
     world.db.flush()
-    started = time.perf_counter()
-    created = world.create(world.world.owner,
-                           {"kind": "copy", "worksheet_id": str(world.world.sheet.id)})
-    elapsed = time.perf_counter() - started
-    assert created.status_code == 201, created.text
-    assert created.json()["live_row_count"] == 10_000, elapsed
+    before = world.sheets()
+    refused = world.create(world.world.owner, source)
+    assert refused.status_code == 422, refused.text
+    assert {key: refused.json()["detail"][key] for key in ("code", "limit")} == {
+        "code": "copy_too_large", "limit": 2,
+    }
+    assert world.sheets() == before
+
+
+def test_a_structure_whose_reads_grew_past_the_budget_is_refused(
+    world: World, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Security review R-2: route 3 checks the copied columns as route 6 would."""
+
+    from app.systems.openview.worksheets import sheet_lookup_cost
+
+    other = add_sheet(world.db, world.world.owner, record=world.world.record)
+    other.structure = {"structureVersion": 1, "nextColumnSeq": 3, "groups": [], "totals": {},
+                       "columns": [dict(world.world.sheet.structure["columns"][0]),
+                                   {"key": "c2", "name": "Mark", "type": "int"}]}
+    structure = dict(world.world.sheet.structure)
+    structure["columns"] = [*structure["columns"], {
+        "key": "c9", "name": "Elsewhere", "type": "sheet_lookup",
+        "sheet_lookup": {"sourceWorksheetId": str(other.id), "sourceColumnKey": "c2",
+                         "linkKey": "c1", "sourceLinkKey": "c1"}}]
+    structure["nextColumnSeq"] = 10
+    world.world.sheet.structure = structure
+    world.db.flush()
+    monkeypatch.setattr(sheet_lookup_cost, "READ_BUDGET", 1)
+    refused = world.create(world.world.owner,
+                           {"kind": "structure", "worksheet_id": str(world.world.sheet.id)})
+    assert refused.status_code == 422, refused.text
+    assert (refused.json()["detail"]["code"], refused.json()["detail"]["reason"]) == (
+        "expression_invalid", "too_complex",
+    )

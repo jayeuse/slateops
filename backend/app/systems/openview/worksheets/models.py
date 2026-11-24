@@ -199,6 +199,12 @@ class WorksheetRowLink(BaseModel):
         # The record foreign-key check covers deleted links too: no filter.
         Index("ix_worksheet_row_links_target_fk", "org_id", "target_record_id"),
         Index("ix_worksheet_row_links_sheet", "org_id", "worksheet_id"),
+        # From another sheet: a source sheet's live links in one column to one record, so
+        # the first match and the match count never scan other sheets' links (S-11).
+        Index(
+            "ix_worksheet_row_links_match", "worksheet_id", "column_key", "target_record_id",
+            postgresql_where=text("is_deleted IS FALSE"),
+        ),
     )
 
     org_id: Mapped[UUID] = mapped_column(
