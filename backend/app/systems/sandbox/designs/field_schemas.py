@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 from uuid import UUID
@@ -10,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.systems.sandbox.designs.date_values import date_in_range, valid_date, valid_datetime
+from app.systems.sandbox.fields.validation import valid_email
 from app.systems.sandbox.numeric import numeric_matches_step
 
 ID = Annotated[str, Field(min_length=1, max_length=1_000)]
@@ -142,7 +142,7 @@ def _field_default_is_valid(config: FieldConfig) -> bool:
         ):
             return False
         if config.kind == "email":
-            return not value or re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value) is not None
+            return not value or valid_email(value)
         if config.kind == "url":
             parsed = urlparse(value)
             return not value or (parsed.scheme in {"http", "https"} and bool(parsed.netloc))

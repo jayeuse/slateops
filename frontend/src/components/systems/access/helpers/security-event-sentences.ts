@@ -337,7 +337,9 @@ export function securityEventSentence(
       return result(
         opened === null
           ? `${subject}'s private sheets opened read-only${path}.`
-          : `${subject}'s ${opened} private ${opened === 1 ? "sheet" : "sheets"} opened read-only${path}.`,
+          : opened === 1
+            ? `${subject}'s private sheet opened read-only${path}.`
+            : `${subject}'s ${opened} private sheets opened read-only${path}.`,
         `Opening ${subject}'s sheets`,
       );
     }

@@ -45,7 +45,9 @@ import SheetPersonPicker from "./sheet-person-picker";
 export type SaveResult =
   | { outcome: "saved" }
   | { outcome: "conflict"; current: WorksheetRow; line: string }
-  | { outcome: "refused"; message: string };
+  | { outcome: "refused"; message: string }
+  /** The row was deleted by someone else: the page says so. */
+  | { outcome: "gone" };
 
 type Picked = { id: string; label: string } | null;
 
@@ -231,7 +233,7 @@ export function SheetRowForm({
     setNotice(null);
     const result = await onSave(changes, texts);
     setSaving(false);
-    if (result.outcome === "saved") onClose();
+    if (result.outcome === "saved" || result.outcome === "gone") onClose();
     else if (result.outcome === "conflict") {
       // The newer row replaces what the form showed.
       setSeen(result.current);

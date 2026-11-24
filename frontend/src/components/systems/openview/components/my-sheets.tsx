@@ -24,6 +24,7 @@ import {
   worksheetKeys,
 } from "../adapters/worksheet-queries";
 import {
+  cappedListWords,
   SheetAccess,
   SheetName,
   SheetTableRow,
@@ -163,6 +164,13 @@ export function MySheets() {
               ? "Sheets you own and sheets shared with you"
               : `Sheets you own and sheets shared with you · ${total} ${total === 1 ? "sheet" : "sheets"}`}
         </p>
+        {/* A list past one read's bound shows its newest sheets (N5). */}
+        {live.data &&
+        cappedListWords(live.data.items.length, live.data.total) ? (
+          <p className="text-muted-foreground mt-1 text-sm tabular-nums">
+            {cappedListWords(live.data.items.length, live.data.total)}
+          </p>
+        ) : null}
       </header>
 
       <div

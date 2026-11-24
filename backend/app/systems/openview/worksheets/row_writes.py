@@ -109,6 +109,10 @@ class Context:
     links: dict[UUID, dict[str, WorksheetRowLink]] = field(default_factory=dict)
     # The records this write holds FOR SHARE; a link to any other record is refused (N-1).
     locked: frozenset[UUID] = frozenset()
+    # Import (route 14 `invalid_cells: "empty"`): a create cell that fails its column's
+    # rule is stored empty and counted, instead of refusing the batch.
+    empty_invalid: bool = False
+    emptied: int = 0
 
     @classmethod
     def read(cls, db: Session, user: User, sheet: Worksheet) -> "Context":
@@ -300,10 +304,38 @@ def _placement(model: SheetRowCreate | Any) -> tuple[Literal["end", "top", "afte
     return ("top", None) if model.after_row_id is None else ("after", model.after_row_id)
 
 
+def _cell_problem(detail: dict[str, Any]) -> bool:
+    """A problem of the cell alone (D9.3): its column's rule, or its own length limit. The
+    row size, sheet size and row count limits are not cell problems."""
+
+    code = detail.get("code")
+    return code == "cell_invalid" or (code == "worksheet_limit" and detail.get("limit") == "cell")
+
+
+def _create_cell(db: Session, user: User, context: Context, key: str, value: Any) -> Any:
+    """The converted cell, or ``_EMPTIED`` when import mode empties a value with a cell
+    problem. Links, unknown and hidden columns and the other limits still refuse."""
+
+    try:
+        return _convert(db, user, context, key, value)
+    except HTTPException as refused:
+        detail: dict[str, Any] = refused.detail if isinstance(refused.detail, dict) else {}
+        column = context.columns.get(key)
+        if (not context.empty_invalid or not _cell_problem(detail)
+                or column is None or isinstance(column, SheetLinkColumn)):
+            raise
+        context.emptied += 1
+        return _EMPTIED
+
+
+_EMPTIED = object()
+
+
 def create_row(db: Session, user: User, context: Context, create: SheetRowCreate) -> UUID:
-    changes = {
-        key: _convert(db, user, context, key, value) for key, value in create.cells.items()
+    converted = {
+        key: _create_cell(db, user, context, key, value) for key, value in create.cells.items()
     }
+    changes = {key: value for key, value in converted.items() if value is not _EMPTIED}
     place, after_id = _placement(create)
     row = WorksheetRow(
         org_id=context.sheet.org_id, worksheet_id=context.sheet.id,
@@ -386,8 +418,10 @@ def write_rows(
     db: Session, user: User, worksheet_id: UUID, creates: list[SheetRowCreate],
     updates: list[SheetRowBatchUpdate], *, structure_revision: int | None = None,
     conflict: Conflict = "row_changed", move: Any = None,
-) -> list[UUID]:
-    """Creates and updates in one transaction; the caller commits."""
+    invalid_cells: Literal["refuse", "empty"] = "refuse",
+) -> tuple[list[UUID], int]:
+    """Creates and updates in one transaction, and the number of emptied create cells; the
+    caller commits."""
 
     sheet = authorize_edit(db, user, worksheet_id)
     row_ids = [update.row_id for update in updates]
@@ -405,6 +439,7 @@ def write_rows(
                     "The columns changed; reload the sheet")
     context = Context.read(db, user, sheet)
     context.locked = frozenset(targets)
+    context.empty_invalid = invalid_cells == "empty"
     rows = locked_rows(db, context, row_ids, seen)
     written = []
     shown = read_rows(db, user, sheet, row_ids)  # one statement for every updated row
@@ -416,7 +451,7 @@ def write_rows(
         written.append(update.row_id)
     created = [create_row(db, user, context, create) for create in creates]
     db.flush()
-    return [*created, *written]
+    return [*created, *written], context.emptied
 
 
 def move_row(db: Session, context: Context, row: WorksheetRow, model: Any) -> None:

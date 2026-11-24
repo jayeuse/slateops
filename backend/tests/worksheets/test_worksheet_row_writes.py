@@ -4,12 +4,15 @@ Every saved cell names the value the person saw (`expected`); the server compare
 what that person sees now, masked. A cell the person sees as No access cannot be changed.
 """
 
+import json
+import time
 from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -479,3 +482,155 @@ def test_a_conflict_names_who_changed_the_cell_when_the_saver_can_see_them(
     assert stale.json()["detail"]["changed_by"] == (
         None if author_left else {"id": str(world.group_member.id), "display_name": "Gina Group"}
     )
+
+
+def _import_structure(students: Students) -> dict[str, Any]:
+    structure = editable_structure(students)
+    existing: list[Any] = [*structure["columns"]]
+    columns = [*existing,
+               {"key": "c10", "name": "Amount", "type": "number"},
+               {"key": "c11", "name": "Email", "type": "email"},
+               {"key": "c12", "name": "Remark", "type": "text"},
+               {"key": "c13", "name": "Detail", "type": "text"}]
+    return {**structure, "columns": columns, "nextColumnSeq": 14}
+
+
+@pytest.mark.parametrize(("locale", "key", "text"), [
+    ("en-US", "c10", "0,123"),
+    ("de-DE", "c10", "0.123"),
+    ("en-IN", "c10", "123,456"),
+    ("de-CH", "c10", "1'234"),
+    ("en-US", "c11", "not an email"),
+    ("en-US", "c9", "2026-02-30"),
+])
+def test_an_import_batch_stores_a_cell_that_fails_its_rule_empty_and_counts_it(
+    integration_db: Session, world: SheetWorld, students: Students, rows: Rows,
+    locale: str, key: str, text: str,
+) -> None:
+    """D9.3 step 3, D10 route 14: with `invalid_cells: "empty"` the cell is stored empty and
+    counted; the default refuses the batch; history records only the stored cells."""
+
+    db = integration_db
+    db.get(WorkspaceProfile, world.sheet.org_id).locale = locale
+    world.sheet.structure = _import_structure(students)
+    db.flush()
+    client = _client(rows.application, world.owner, db)
+    path = f"{rows.base}/batch"
+    creates = [{"cells": {"c3": "kept", key: text}}, {"cells": {"c3": "second"}}]
+    refused = client.post(path, json={"structure_revision": 1, "creates": creates})
+    assert (_code(refused), refused.json()["detail"]["key"]) == ((422, "cell_invalid"), key)
+    assert text not in refused.text  # the message is fixed text; it never repeats the value
+    assert rows.order(world.owner) == []
+    done = client.post(path, json={"structure_revision": 1, "creates": creates,
+                                   "invalid_cells": "empty"})
+    assert done.status_code == 200, done.text
+    assert done.json()["emptied"] == 1
+    first = done.json()["rows"][0]
+    assert (first["cells"]["c3"], first["cells"][key]) == ({"value": "kept"}, {"value": None})
+    stored = db.scalars(select(WorksheetRow).where(
+        WorksheetRow.id == UUID(first["id"])).execution_options(populate_existing=True)).one()
+    assert stored.data == {"c3": "kept"}  # the emptied cell is not stored, as null or text
+    history = db.scalars(select(WorksheetRowRevision).where(
+        WorksheetRowRevision.row_id == stored.id)).one()
+    assert (history.data, history.changed_keys) == ({"c3": "kept"}, ["c3"])
+    assert text not in json.dumps(done.json())
+
+
+def test_empty_mode_still_refuses_links_updates_and_a_changed_structure(
+    integration_db: Session, world: SheetWorld, students: Students, rows: Rows,
+) -> None:
+    """Only a create cell that fails its column's rule is emptied (D10 route 14)."""
+
+    db = integration_db
+    client = _client(rows.application, world.owner, db)
+    path = f"{rows.base}/batch"
+    row_id = rows.create(world.owner, {"c3": "x"}).json()["id"]
+    hidden = add_students(db, world, [world.editor], "Hidden list")
+    plain = {"structure_revision": 1, "invalid_cells": "empty"}
+    link = client.post(path, json={**plain, "creates": [
+        {"cells": {"c1": {"record_id": str(hidden.alice.id)}}}]})
+    assert _code(link) == (422, "link_target_invalid")
+    update = client.post(path, json={**plain, "updates": [
+        {"row_id": row_id, "cells": {"c4": {"value": "many", "expected": {"value": None}}}}]})
+    assert _code(update) == (422, "cell_invalid")
+    stale = client.post(path, json={**plain, "structure_revision": 99,
+                                    "creates": [{"cells": {"c4": "many"}}]})
+    assert _code(stale) == (409, "structure_changed")
+    unknown = client.post(path, json={**plain, "creates": [{"cells": {"c99": "x"}}]})
+    assert _code(unknown) == (422, "cell_invalid")
+    too_long = "x" * 4_001
+    unlinked = client.post(path, json={**plain, "creates": [
+        {"cells": {"c1": {"unlinked": too_long}}}]})
+    assert (_code(unlinked), unlinked.json()["detail"]["limit"]) == (
+        (422, "worksheet_limit"), "cell")
+    long_update = client.post(path, json={**plain, "updates": [
+        {"row_id": row_id, "cells": {"c3": {"value": too_long, "expected": {"value": "x"}}}}]})
+    assert (_code(long_update), long_update.json()["detail"]["limit"]) == (
+        (422, "worksheet_limit"), "cell")
+    structure = _import_structure(students)
+    world.sheet.structure = {**structure, "nextColumnSeq": 15, "columns": [
+        *structure["columns"],
+        {"key": "c14", "name": "Mentor", "type": "link",
+         "link": {"moduleId": str(hidden.module.id)}}]}
+    db.flush()
+    hidden_link = client.post(path, json={**plain, "creates": [{"cells": {"c14": "x"}}]})
+    assert _code(hidden_link) == (403, "cell_no_access")
+    wide = "\U0001f600" * 4_000  # 16 KB in each of three text cells: over the 32 KiB row
+    request = db.begin_nested()  # the refusal comes after the row is flushed; a request
+    size = client.post(path, json={**plain, "creates": [  # session closes unfinished, so
+        {"cells": {"c3": wide, "c12": wide, "c13": wide, "c10": "x"}}]})
+    request.rollback()  # roll back here as `get_db` discards it
+    assert (_code(size), size.json()["detail"]["limit"]) == ((422, "worksheet_limit"),
+                                                             "row_size")
+    assert len(rows.order(world.owner)) == 1
+    # A text over the 4,000-character cell limit is the cell's own problem (D9.3): the
+    # default refuses the batch, and import mode stores that cell empty.
+    long = {"creates": [{"cells": {"c3": too_long, "c12": "kept"}}]}
+    refused = client.post(path, json={"structure_revision": 1, **long})
+    assert (_code(refused), refused.json()["detail"]["limit"]) == (
+        (422, "worksheet_limit"), "cell")
+    assert len(rows.order(world.owner)) == 1
+    emptied = client.post(path, json={**plain, **long})
+    assert (emptied.status_code, emptied.json()["emptied"]) == (200, 1)
+    cells = emptied.json()["rows"][0]["cells"]
+    assert (cells["c3"], cells["c12"]) == ({"value": None}, {"value": "kept"})
+    assert too_long not in emptied.text
+    stored = db.scalars(select(WorksheetRow).where(
+        WorksheetRow.id == UUID(emptied.json()["rows"][0]["id"]),
+    ).execution_options(populate_existing=True)).one()
+    history = db.scalars(select(WorksheetRowRevision).where(
+        WorksheetRowRevision.row_id == stored.id)).one()
+    assert (stored.data, history.data) == ({"c12": "kept"}, {"c12": "kept"})
+    # The length check runs before the email rule, so a long value costs only its length.
+    hostile = "a@" + "." * (512 * 1024) + "@"  # under the JSON body cap
+    started = time.perf_counter()
+    email = client.post(path, json={**plain, "creates": [{"cells": {"c11": hostile}}]})
+    assert time.perf_counter() - started < 5
+    assert (email.status_code, email.json()["emptied"]) == (200, 1)
+    clean = client.post(path, json={"structure_revision": 1,
+                                    "creates": [{"cells": {"c4": 3}}]})
+    assert (clean.status_code, clean.json()["emptied"]) == (200, 0)
+
+
+@pytest.mark.parametrize("limit", ["row_size", "sheet_size", "rows", "cell"])
+def test_import_mode_empties_only_the_cell_length_limit(
+    monkeypatch: pytest.MonkeyPatch, limit: str,
+) -> None:
+    """Of the sheet limits, only a cell's own length is a cell problem (D9.3)."""
+
+    from app.systems.openview.worksheets import row_writes
+    from app.systems.openview.worksheets.cells import worksheet_limit
+
+    def refuse(*_args: Any) -> Any:
+        raise worksheet_limit(limit, 1, "A limit")
+
+    monkeypatch.setattr(row_writes, "_convert", refuse)
+    context = SimpleNamespace(empty_invalid=True, emptied=0,
+                              columns={"c3": SimpleNamespace(type="text")})
+    if limit == "cell":
+        assert row_writes._create_cell(None, None, context, "c3", "x") is row_writes._EMPTIED
+        assert context.emptied == 1
+    else:
+        with pytest.raises(HTTPException):
+            row_writes._create_cell(None, None, context, "c3", "x")
+        assert context.emptied == 0

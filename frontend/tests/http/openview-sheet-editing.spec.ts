@@ -561,3 +561,37 @@ test("an edit whose row someone deleted ends, and saves nothing", async ({
   await expect(page.locator(":focus")).toHaveAttribute("data-cell", "1:c3");
   expect(writes.patches).toEqual([]);
 });
+
+test("a row someone else deleted says so, ends the edit and reloads the rows; the sheet stays", async ({
+  page,
+}) => {
+  const { api, grid } = await openSheet(page);
+  const heading = page.getByRole("heading", { level: 1, name: "Class roster" });
+
+  // A save into a row deleted meanwhile, with no event yet.
+  await grid.locator('td[data-cell="1:c5"]').dblclick();
+  await grid.getByRole("textbox", { name: "Notes, row 2" }).fill("Late");
+  api.rows.splice(1, 1);
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByText("This row was deleted by someone else."),
+  ).toBeVisible();
+  await expect(grid.getByRole("textbox")).toHaveCount(0);
+  await expect(grid.locator("tbody tr").nth(1)).toContainText("Carlo Reyes");
+  await expect(heading).toBeVisible();
+
+  // A delete of a row deleted meanwhile reads the same.
+  await page.getByRole("button", { name: "Dismiss" }).click();
+  api.rows.splice(0, 1);
+  await grid.getByRole("button", { name: "Row 1 actions" }).click();
+  await page.getByRole("menuitem", { name: "Delete row" }).click();
+  await page
+    .getByRole("alertdialog", { name: "Delete row 1?" })
+    .getByRole("button", { name: "Delete row" })
+    .click();
+  await expect(
+    page.getByText("This row was deleted by someone else."),
+  ).toBeVisible();
+  await expect(grid.locator("tbody tr").first()).toContainText("Carlo Reyes");
+  await expect(heading).toBeVisible();
+});

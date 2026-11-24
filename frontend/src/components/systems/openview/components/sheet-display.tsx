@@ -109,6 +109,16 @@ export function sheetRowsWords(count: number) {
 }
 
 /** Where a sheet opens (P6); the sheet page arrives with it. */
+/**
+ * The line under My sheets when the list is longer than one read: the
+ * newest sheets are shown (parent decision on N5); null when all are shown.
+ */
+export function cappedListWords(shown: number, total: number): string | null {
+  return shown < total
+    ? `Showing ${shown.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} sheets.`
+    : null;
+}
+
 export function sheetHref(id: string) {
   return `/openview?sheet=${encodeURIComponent(id)}`;
 }

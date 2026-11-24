@@ -250,11 +250,11 @@ async function readEveryPage(
     );
     items.push(...result.items);
     total = result.pagination.total;
-    if (!result.pagination.has_more || result.items.length === 0)
-      return { items, total };
+    if (!result.pagination.has_more || result.items.length === 0) break;
   }
-  // A complete list or none (CompleteCollection): never part of one.
-  throw new Error("The sheet list is longer than one read allows");
+  // Past the bound the list is its newest 5,000 sheets, and `total` says how
+  // many there are; the screen says so (parent decision, N5).
+  return { items, total };
 }
 
 /**
@@ -313,12 +313,36 @@ const createSchema = z
   })
   .refine((input) => Boolean(input.recordId) !== Boolean(input.moduleId));
 
+/** Where a new sheet's columns (and a copy's rows) come from (D9.5, X6). */
+export type WorksheetSource =
+  | { kind: "blank" }
+  | { kind: "copy" | "structure"; worksheetId: string }
+  | {
+      kind: "template";
+      /** The template file as read; the server validates it again. */
+      template: Record<string, unknown>;
+      /** Each link column's module, or null to make it a text column. */
+      moduleMapping: Record<string, string | null>;
+    };
+
+function sourceWire(source: WorksheetSource) {
+  if (source.kind === "blank") return { kind: "blank" };
+  if (source.kind === "template")
+    return {
+      kind: "template",
+      template: source.template,
+      module_mapping: source.moduleMapping,
+    };
+  return { kind: source.kind, worksheet_id: uuid.parse(source.worksheetId) };
+}
+
 /**
- * A new blank sheet on exactly one record or one module (route 3); the
- * person who creates it owns it (C5). Templates and data files come later.
+ * A new sheet on exactly one record or one module (route 3); the person who
+ * creates it owns it (C5). Blank by default; a copy, a structure or a
+ * template names its source.
  */
 export function createWorksheet(
-  raw: { title: string } & (
+  raw: { title: string; source?: WorksheetSource } & (
     | { recordId: string; moduleId?: never }
     | { moduleId: string; recordId?: never }
   ),
@@ -331,7 +355,7 @@ export function createWorksheet(
         ? { record_id: input.recordId }
         : { module_id: input.moduleId }),
       title: input.title,
-      source: { kind: "blank" },
+      source: sourceWire(raw.source ?? { kind: "blank" }),
     }),
   });
 }
@@ -945,4 +969,179 @@ export async function exportWorksheet(
   const blob = await response.blob();
   if (blob.size > EXPORT_MAX_BYTES) throw apiContractError(response);
   return { blob, filename };
+}
+
+// ------------------------------------------------------------ import (F7)
+
+const batchSchema = z
+  .object({
+    rows: z.array(worksheetRowSchema).max(100),
+    // Cells stored empty because they failed their column's rule.
+    emptied: z.number().int().min(0),
+  })
+  .strict();
+
+/**
+ * Adds up to 100 rows in one transaction at the sheet's version (route 14):
+ * a changed column list answers 409 `structure_changed` and adds nothing.
+ * Not idempotent: a batch is never sent twice. The server is the one judge
+ * of cells (R5): with `invalid_cells: "empty"` a cell that fails its
+ * column's rule is stored empty and counted in `emptied`. Import uses it;
+ * paste does not.
+ */
+export async function writeWorksheetRows(
+  sheetId: string,
+  structureRevision: number,
+  creates: Record<string, unknown>[],
+): Promise<{ added: number; emptied: number }> {
+  const result = await apiFetch(
+    `${sheetPath(sheetId)}/rows/batch`,
+    batchSchema,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        structure_revision: structureRevision,
+        creates: creates.map((cells) => ({ cells })),
+        invalid_cells: "empty",
+      }),
+    },
+  );
+  return { added: result.rows.length, emptied: result.emptied };
+}
+
+const importCell = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+
+const importFileSchema = z
+  .object({
+    tabs: z.array(
+      z.object({ index: z.number().int().min(0), name: z.string() }).strict(),
+    ),
+    tab_index: z.number().int().min(0),
+    rows: z.array(z.array(importCell)).max(10_001),
+    formula_without_value_count: z.number().int().min(0),
+    row_count: z.number().int().min(0),
+    column_count: z.number().int().min(0),
+  })
+  .strict()
+  .transform((wire) => ({
+    tabs: wire.tabs,
+    tabIndex: wire.tab_index,
+    rows: wire.rows,
+    formulaWithoutValue: wire.formula_without_value_count,
+  }));
+
+export type WorksheetImportFile = z.output<typeof importFileSchema>;
+
+const importRefusalSchema = z.object({
+  detail: z.union([
+    z.string(),
+    z.record(z.string(), z.unknown()),
+    z.array(z.unknown()),
+  ]),
+});
+
+/**
+ * One tab of an `.xlsx` file, read by the server (route 21): the bytes go as
+ * they are, and the answer holds cell values only (X10). A refusal keeps its
+ * status, code and details (reason, limit), never the server's words.
+ */
+export async function readImportFile(
+  file: Blob,
+  tab: number,
+  signal?: AbortSignal,
+): Promise<WorksheetImportFile> {
+  const response = await apiRequest(`/worksheet-import-files?tab=${tab}`, {
+    method: "POST",
+    signal,
+    cache: "no-store",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: file,
+  });
+  const body: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const parsed = importRefusalSchema.safeParse(body);
+    const detail = parsed.success ? parsed.data.detail : undefined;
+    const details =
+      detail && typeof detail === "object" && !Array.isArray(detail)
+        ? detail
+        : undefined;
+    throw keepRequestId(
+      new ApiError(
+        response.status,
+        "The file could not be read.",
+        details,
+        typeof details?.code === "string" ? details.code : undefined,
+      ),
+      response,
+    );
+  }
+  const parsed = importFileSchema.safeParse(body);
+  if (!parsed.success) throw apiContractError(response);
+  return parsed.data;
+}
+
+export type WorksheetKeyMatch =
+  | { state: "matched"; recordId: string; label: string }
+  | { state: "unmatched" }
+  | { state: "ambiguous" };
+
+const matchesSchema = z
+  .object({
+    results: z.array(
+      z
+        .object({
+          key: z.string(),
+          state: z.enum(["matched", "unmatched", "ambiguous"]),
+          record: z
+            .object({ record_id: uuid, label: z.string() })
+            .strict()
+            .nullable(),
+        })
+        .strict(),
+    ),
+    counts: z
+      .object({
+        matched: z.number().int().min(0),
+        unmatched: z.number().int().min(0),
+        ambiguous: z.number().int().min(0),
+      })
+      .strict(),
+  })
+  .strict();
+
+/**
+ * Matches up to 2,000 keys against one field of a module the person can
+ * read (route 22): only live records they can read count (X8). Answers per
+ * key; the screen counts rows itself.
+ */
+export async function matchImportKeys(query: {
+  moduleId: string;
+  fieldId: string;
+  keys: string[];
+  signal?: AbortSignal;
+}): Promise<Map<string, WorksheetKeyMatch>> {
+  const result = await apiFetch("/worksheet-import-matches", matchesSchema, {
+    method: "POST",
+    signal: query.signal,
+    body: JSON.stringify({
+      module_id: uuid.parse(query.moduleId),
+      field_id: uuid.parse(query.fieldId),
+      keys: query.keys,
+    }),
+  });
+  const found = new Map<string, WorksheetKeyMatch>();
+  for (const item of result.results) {
+    if (item.state === "matched" && item.record)
+      found.set(item.key, {
+        state: "matched",
+        recordId: item.record.record_id,
+        label: item.record.label,
+      });
+    // A match with no record cannot be linked: it counts as not matched.
+    else
+      found.set(item.key, {
+        state: item.state === "ambiguous" ? "ambiguous" : "unmatched",
+      });
+  }
+  return found;
 }

@@ -1,14 +1,18 @@
 "use client";
 
 import { Fragment, lazy, Suspense, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   ChevronDown,
+  Copy,
   Download,
   FileJson,
   History,
   MoreHorizontal,
   Pencil,
+  Sheet as SheetIcon,
   Trash2,
+  Upload,
   Users,
 } from "lucide-react";
 
@@ -22,6 +26,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ApiError } from "@/lib/api";
 
+import { authMeOptions } from "../adapters/openview-queries";
+
 import {
   exportWorksheet,
   type WorksheetDetail,
@@ -32,8 +38,10 @@ import { sheetActions, type SheetRole } from "../domain/sheet-share";
 // The sheet header's actions (docs/specs/sheets.md Screens 3 to 5): Export
 // for everyone who can see the sheet, Share for its owner, and More (Rename
 // and Delete for the owner, Sheet history for everyone). An open sheet keeps
-// Export and history only (L7). Import and Make a copy arrive in F7. The
-// dialogs load on first use, apart from the page.
+// Export and history only (L7). F7: Import for the owner and Edit (X9), Make
+// a copy for readers of an open sheet and for the owner (L6, Decision 3),
+// New sheet from this structure for anyone who can create (X7); guests do
+// neither. The dialogs load on first use, apart from the page.
 
 const SheetShareDialog = lazy(() => import("./sheet-share-dialog"));
 const SheetHistoryPanel = lazy(() => import("./sheet-history-panel"));
@@ -48,7 +56,27 @@ const SheetDeleteDialog = lazy(() =>
   })),
 );
 
-type Open = "share" | "history" | "rename" | "delete" | null;
+const SheetImportDialog = lazy(() => import("./sheet-import-dialog"));
+const SheetCopyDialog = lazy(() =>
+  import("./sheet-copy-dialogs").then((module) => ({
+    default: module.SheetCopyDialog,
+  })),
+);
+const SheetFromStructureDialog = lazy(() =>
+  import("./sheet-copy-dialogs").then((module) => ({
+    default: module.SheetFromStructureDialog,
+  })),
+);
+
+type Open =
+  | "share"
+  | "history"
+  | "rename"
+  | "delete"
+  | "import"
+  | "copy"
+  | "structure"
+  | null;
 
 const EXPORTS: {
   format: WorksheetExportFormat;
@@ -103,6 +131,7 @@ export function SheetHeaderActions({
   role,
   onFailure,
   onGone,
+  onRowsChanged,
 }: {
   sheet: WorksheetDetail;
   role: SheetRole;
@@ -110,8 +139,18 @@ export function SheetHeaderActions({
   onFailure: (message: string | null) => void;
   /** The sheet is hidden or gone (404). */
   onGone: () => void;
+  /** Rows were imported: the page reads its rows again. */
+  onRowsChanged: () => void;
 }) {
   const actions = sheetActions(role);
+  // Guests create no sheets (C3) and copy none (Decision 3); unknown until
+  // the identity is read, so the actions wait for it.
+  const identity = useQuery(authMeOptions());
+  const canCreate = identity.data ? identity.data.role !== "guest" : false;
+  // A guest never imports, even into a sheet they still own (F7-S4).
+  const canImport = (role === "owner" || role === "edit") && canCreate;
+  const copyFirst = role === "open" && canCreate;
+  const copyInMore = role === "owner" && canCreate;
   const [open, setOpen] = useState<Open>(null);
   const [exporting, setExporting] = useState(false);
   const exportLock = useRef(false);
@@ -137,6 +176,16 @@ export function SheetHeaderActions({
   const close = () => setOpen(null);
   return (
     <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
+      {canImport ? (
+        <Button
+          variant="ghost"
+          className={actionButton}
+          onClick={() => setOpen("import")}
+        >
+          <Upload aria-hidden="true" />
+          Import
+        </Button>
+      ) : null}
       {actions.export ? (
         <DropdownMenu>
           <DropdownMenuTrigger
@@ -177,6 +226,15 @@ export function SheetHeaderActions({
           </DropdownMenuContent>
         </DropdownMenu>
       ) : null}
+      {copyFirst ? (
+        <Button
+          className={`${actionButton} max-sm:flex-1`}
+          onClick={() => setOpen("copy")}
+        >
+          <Copy aria-hidden="true" />
+          Make a copy
+        </Button>
+      ) : null}
       {actions.share ? (
         <Button
           className={`${actionButton} max-sm:flex-1`}
@@ -207,10 +265,30 @@ export function SheetHeaderActions({
               Rename
             </DropdownMenuItem>
           ) : null}
+          {copyInMore ? (
+            <DropdownMenuItem onClick={() => setOpen("copy")}>
+              <Copy aria-hidden="true" />
+              Make a copy
+            </DropdownMenuItem>
+          ) : null}
           {actions.history ? (
             <DropdownMenuItem onClick={() => setOpen("history")}>
               <History aria-hidden="true" />
               Sheet history
+            </DropdownMenuItem>
+          ) : null}
+          {canCreate ? (
+            <DropdownMenuItem
+              className="items-start py-2"
+              onClick={() => setOpen("structure")}
+            >
+              <SheetIcon aria-hidden="true" className="mt-0.5" />
+              <span className="flex min-w-0 flex-col">
+                <span>New sheet from this structure</span>
+                <span className="text-muted-foreground text-xs">
+                  Same columns, on a record you choose. No rows.
+                </span>
+              </span>
             </DropdownMenuItem>
           ) : null}
           {actions.remove ? (
@@ -246,6 +324,20 @@ export function SheetHeaderActions({
         ) : null}
         {open === "delete" ? (
           <SheetDeleteDialog sheet={sheet} onClose={close} onGone={onGone} />
+        ) : null}
+        {open === "import" ? (
+          <SheetImportDialog
+            target={{ kind: "existing", sheet }}
+            initialFile={null}
+            onClose={close}
+            onImported={onRowsChanged}
+          />
+        ) : null}
+        {open === "copy" ? (
+          <SheetCopyDialog sheet={sheet} onClose={close} />
+        ) : null}
+        {open === "structure" ? (
+          <SheetFromStructureDialog sheet={sheet} onClose={close} />
         ) : null}
       </Suspense>
     </div>

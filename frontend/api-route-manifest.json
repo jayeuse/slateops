@@ -2466,6 +2466,24 @@
     "path": "/api/worksheets/{param}/export"
   },
   {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "matchImportKeys",
+    "method": "POST",
+    "path": "/api/worksheet-import-matches"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "readImportFile",
+    "method": "POST",
+    "path": "/api/worksheet-import-files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/worksheets-api.ts",
+    "function": "writeWorksheetRows",
+    "method": "POST",
+    "path": "/api/worksheets/{param}/rows/batch"
+  },
+  {
     "adapter": "frontend/src/components/systems/platform/adapters/account-api.ts",
     "function": "changeAccountPassword",
     "method": "POST",

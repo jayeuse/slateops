@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, Sequence
 from math import isfinite
 from typing import cast
@@ -10,6 +9,7 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 from app.systems.sandbox.designs.schemas import SandboxDocument
+from app.systems.sandbox.fields.validation import valid_email
 from app.systems.sandbox.test_runs.relationships import relationship_routes
 from app.systems.sandbox.test_runs.results import (
     SandboxTestIssue,
@@ -204,7 +204,7 @@ def _value_is_valid(value: TestValue, field: Mapping[str, object]) -> bool:
         return (
             isinstance(value, str)
             and _within_length(value, config)
-            and (not value or re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value) is not None)
+            and (not value or valid_email(value))
         )
     if kind == "url":
         if not isinstance(value, str) or not _within_length(value, config):

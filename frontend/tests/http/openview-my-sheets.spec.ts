@@ -254,6 +254,34 @@ test("a failed read offers Retry, which loads the list", async ({ page }) => {
   await expect(failure).toHaveCount(0);
 });
 
+test("a list the server answers in part shows how many of how many", async ({
+  page,
+}) => {
+  await signedInAs(page, noAccessMember);
+  await installSheetsApi(page, threeSheets());
+  await page.route(
+    (url) =>
+      url.pathname === "/api/worksheets" &&
+      url.searchParams.get("deleted") === "exclude",
+    (route) =>
+      route.fulfill({
+        json: {
+          items: threeSheets().live,
+          pagination: {
+            limit: 100,
+            offset: 0,
+            count: 3,
+            total: 5_100,
+            has_more: false,
+            total_is_capped: false,
+          },
+        },
+      }),
+  );
+  await page.goto("/openview?section=sheets");
+  await expect(page.getByText("Showing 3 of 5,100 sheets.")).toBeVisible();
+});
+
 test.describe("on a phone", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 

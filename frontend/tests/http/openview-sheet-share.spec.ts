@@ -279,7 +279,10 @@ for (const [level, chip] of [
       .getByRole("button", { name: "More sheet actions" })
       .click();
     const menu = page.getByRole("menu");
-    await expect(menu.getByRole("menuitem")).toHaveText(["Sheet history"]);
+    await expect(menu.getByRole("menuitem")).toHaveText([
+      "Sheet history",
+      /^New sheet from this structure/,
+    ]);
     // A recipient never reads the owner's shares.
     expect(api.shareReads).toBe(0);
   });
@@ -308,7 +311,9 @@ test("the owner renames and deletes a sheet with its version, and My sheets offe
     .click();
   await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
     "Rename",
+    "Make a copy",
     "Sheet history",
+    /^New sheet from this structure/,
     "Delete sheet",
   ]);
   await page.getByRole("menuitem", { name: "Rename" }).click();

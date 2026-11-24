@@ -22559,6 +22559,15 @@
             "title": "Creates",
             "type": "array"
           },
+          "invalid_cells": {
+            "default": "refuse",
+            "enum": [
+              "refuse",
+              "empty"
+            ],
+            "title": "Invalid Cells",
+            "type": "string"
+          },
           "structure_revision": {
             "minimum": 1.0,
             "title": "Structure Revision",
@@ -22580,6 +22589,12 @@
       },
       "SheetRowBatchResult": {
         "properties": {
+          "emptied": {
+            "description": "Create cells stored empty under \"empty\"",
+            "minimum": 0.0,
+            "title": "Emptied",
+            "type": "integer"
+          },
           "rows": {
             "items": {
               "$ref": "#/components/schemas/SheetRow"
@@ -22589,7 +22604,8 @@
           }
         },
         "required": [
-          "rows"
+          "rows",
+          "emptied"
         ],
         "title": "SheetRowBatchResult",
         "type": "object"

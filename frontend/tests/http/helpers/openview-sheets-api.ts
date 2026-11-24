@@ -102,8 +102,39 @@ type CreateBody = {
   record_id?: string;
   module_id?: string;
   title: string;
-  source: { kind: string };
+  source: {
+    kind: string;
+    worksheet_id?: string;
+    template?: { columns: Record<string, unknown>[] };
+    module_mapping?: Record<string, string | null>;
+  };
 };
+
+/**
+ * The structure route 3 makes from a template: a mapped link column links
+ * to its module, an unmapped one and every lookup become text (X6).
+ */
+function templateStructure(source: CreateBody["source"]) {
+  const columns = (source.template?.columns ?? []).map((column) => {
+    const key = String(column.key);
+    const name = String(column.name);
+    if (column.type === "link") {
+      const moduleId = source.module_mapping?.[key];
+      return moduleId
+        ? { key, name, type: "link", link: { moduleId } }
+        : { key, name, type: "text" };
+    }
+    if (column.type === "lookup") return { key, name, type: "text" };
+    return column;
+  });
+  return {
+    structureVersion: 1,
+    nextColumnSeq: columns.length + 1,
+    columns,
+    groups: [],
+    totals: {},
+  };
+}
 
 /** A refusal the next create answers with instead of 201. */
 export type CreateRefusal = { status: number; code: string; message: string };
@@ -120,6 +151,8 @@ export async function installSheetsApi(
     creates: [] as CreateBody[],
     refuseNextCreate: null as CreateRefusal | null,
     createdId: "00000000-0000-4000-8000-0000000006d1",
+    /** Structures of sheets made from a template, by id. */
+    structures: {} as Record<string, unknown>,
   };
   let failMyRead = options.failFirstMyRead ?? false;
   await page.route(
@@ -147,13 +180,19 @@ export async function installSheetsApi(
           updatedAt: "2026-11-22T08:30:00Z",
         });
         state.live = [created, ...state.live];
+        const detail = wireSheetDetail(created);
+        if (body.source.kind === "template")
+          state.structures[created.id] = templateStructure(body.source);
         return route.fulfill({
           status: 201,
           headers: {
             Location: `/api/worksheets/${created.id}`,
             ETag: `"${created.id}:1"`,
           },
-          json: wireSheetDetail(created),
+          json: {
+            ...detail,
+            structure: state.structures[created.id] ?? detail.structure,
+          },
         });
       }
       if (request.method() !== "GET") return route.fallback();
@@ -204,8 +243,15 @@ export async function installSheetsApi(
             detail: { code: "worksheet_not_found", message: "Sheet not found" },
           },
         });
-      if (!rows && route.request().method() === "GET")
-        return route.fulfill({ json: wireSheetDetail(sheet) });
+      if (!rows && route.request().method() === "GET") {
+        const detail = wireSheetDetail(sheet);
+        return route.fulfill({
+          json: {
+            ...detail,
+            structure: state.structures[sheet.id] ?? detail.structure,
+          },
+        });
+      }
       return route.fulfill({
         json: {
           items: [],
@@ -558,7 +604,12 @@ export async function installSheetEditApi(
       if (!row)
         return route.fulfill({
           status: 404,
-          json: { detail: { code: "row_not_found", message: "Row not found" } },
+          json: {
+            detail: {
+              code: "worksheet_row_not_found",
+              message: "Row not found",
+            },
+          },
         });
       if (method === "DELETE") {
         const ifMatch = request.headers()["if-match"] ?? null;
@@ -1030,6 +1081,201 @@ export async function installSheetActionsApi(
         },
         body: content,
       });
+    },
+  );
+  return state;
+}
+
+// ------------------------------------------------------------------ import
+
+/** Route 21's answer for one tab (D9.3). */
+export type WireImportFile = {
+  tabs: { index: number; name: string }[];
+  tab_index: number;
+  rows: (string | number | boolean | null)[][];
+  formula_without_value_count: number;
+  row_count: number;
+  column_count: number;
+};
+
+/**
+ * Data import: the Excel reader (route 21), key matching (route 22) and row
+ * batches (route 14) of any sheet. Keys match `matches` exactly; a key it
+ * maps to "ambiguous" matched more than once; others match nothing.
+ */
+export async function installSheetImportApi(
+  page: Page,
+  options: {
+    file?: (
+      tab: number,
+    ) => WireImportFile | { status: number; detail: unknown };
+    matches?: Record<
+      string,
+      { record_id: string; label: string } | "ambiguous"
+    >;
+    /** The batch (counted from 1) that is refused, and how. */
+    refuseBatch?: {
+      at: number;
+      status: number;
+      detail: Record<string, unknown>;
+    };
+    /** The sheet page's rows, which accepted batches extend. */
+    sheetRows?: WireSheetRow[];
+    /** Column types the batch checks as the server does (int, date). */
+    types?: Record<string, "int" | "date">;
+  } = {},
+) {
+  const state = {
+    files: [] as { tab: number; type: string | null; size: number }[],
+    matches: [] as { module_id: string; field_id: string; keys: string[] }[],
+    batches: [] as {
+      sheetId: string;
+      body: {
+        structure_revision: number;
+        creates: { cells: Record<string, unknown> }[];
+        invalid_cells?: "refuse" | "empty";
+      };
+    }[],
+  };
+  await page.route(
+    (url) => url.pathname === "/api/worksheet-import-files",
+    (route) => {
+      const request = route.request();
+      const tab = Number(new URL(request.url()).searchParams.get("tab") ?? 0);
+      state.files.push({
+        tab,
+        type: request.headers()["content-type"] ?? null,
+        size: request.postDataBuffer()?.length ?? 0,
+      });
+      const answer = options.file?.(tab);
+      if (!answer)
+        return route.fulfill({
+          status: 503,
+          json: { detail: { code: "files_busy" } },
+        });
+      if ("status" in answer)
+        return route.fulfill({
+          status: answer.status,
+          json: { detail: answer.detail },
+        });
+      return route.fulfill({ headers: answeredHeaders, json: answer });
+    },
+  );
+  await page.route(
+    (url) => url.pathname === "/api/worksheet-import-matches",
+    (route) => {
+      const body = route.request().postDataJSON() as {
+        module_id: string;
+        field_id: string;
+        keys: string[];
+      };
+      state.matches.push(body);
+      const results = body.keys.map((key) => {
+        const found = options.matches?.[key];
+        if (!found) return { key, state: "unmatched", record: null };
+        if (found === "ambiguous")
+          return { key, state: "ambiguous", record: null };
+        return { key, state: "matched", record: found };
+      });
+      const count = (state: string) =>
+        results.filter((result) => result.state === state).length;
+      return route.fulfill({
+        json: {
+          results,
+          counts: {
+            matched: count("matched"),
+            unmatched: count("unmatched"),
+            ambiguous: count("ambiguous"),
+          },
+        },
+      });
+    },
+  );
+  await page.route(
+    (url) => /^\/api\/worksheets\/[^/]+\/rows\/batch$/.test(url.pathname),
+    (route) => {
+      const request = route.request();
+      const sheetId = new URL(request.url()).pathname.split("/")[3];
+      // The request cap (1 MiB) and the server's cell rules for the types
+      // the test names; a refusal names the cell's column, as route 14 does.
+      if ((request.postDataBuffer()?.length ?? 0) > 1024 * 1024)
+        return route.fulfill({ status: 413, json: { detail: "Too large" } });
+      const body =
+        request.postDataJSON() as (typeof state.batches)[number]["body"];
+      state.batches.push({ sheetId, body });
+      const refusal = options.refuseBatch;
+      if (refusal && refusal.at === state.batches.length)
+        return route.fulfill({
+          status: refusal.status,
+          json: { detail: refusal.detail },
+        });
+      // With invalid_cells "empty" a failing cell is stored empty and
+      // counted (D9.3 step 3); by default it refuses the batch.
+      let emptied = 0;
+      // The stored cells, apart from the request the test reads back.
+      const stored = body.creates.map((create) => ({ ...create.cells }));
+      for (const cells of stored)
+        for (const [key, value] of Object.entries(cells)) {
+          const type = options.types?.[key];
+          // A text cell holds at most 4,000 characters (D8).
+          const tooLong =
+            typeof value === "string" && Array.from(value).length > 4_000;
+          const valid =
+            !tooLong &&
+            (value === null ||
+              type === undefined ||
+              (type === "int" &&
+                (typeof value === "number"
+                  ? Number.isSafeInteger(value)
+                  : /^-?\d+$/.test(String(value)))) ||
+              (type === "date" &&
+                /^\d{4}-\d{2}-\d{2}$/.test(String(value)) &&
+                !Number.isNaN(Date.parse(String(value)))));
+          if (!valid && body.invalid_cells === "empty") {
+            cells[key] = null;
+            emptied += 1;
+          } else if (!valid)
+            return route.fulfill({
+              status: 422,
+              json: {
+                detail: {
+                  code: "cell_invalid",
+                  message: "Enter a number",
+                  key,
+                },
+              },
+            });
+        }
+      const start =
+        (options.sheetRows?.length ?? 0) + state.batches.length * 1000;
+      // Rows as route 14 answers them: a link cell carries its record and
+      // label, unlinked text stays, other values are values.
+      const rows = stored.map((cells, index) =>
+        wireSheetRow(
+          start + index,
+          Object.fromEntries(
+            Object.entries(cells).map(
+              ([key, value]): [string, WireSheetCell] => {
+                if (
+                  value &&
+                  typeof value === "object" &&
+                  "record_id" in value
+                ) {
+                  const id = String(
+                    (value as { record_id: unknown }).record_id,
+                  );
+                  return [key, { link: { record_id: id, label: id } }];
+                }
+                if (value && typeof value === "object" && "unlinked" in value)
+                  return [key, value as WireSheetCell];
+                return [key, { value }];
+              },
+            ),
+          ),
+        ),
+      );
+      options.sheetRows?.push(...rows);
+      return route.fulfill({ json: { rows, emptied } });
     },
   );
   return state;

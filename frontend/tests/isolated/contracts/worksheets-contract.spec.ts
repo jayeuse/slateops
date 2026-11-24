@@ -20,6 +20,9 @@ import {
   searchWorksheetShareCandidates,
   searchWorksheetPeople,
   exportWorksheet,
+  writeWorksheetRows,
+  readImportFile,
+  matchImportKeys,
 } from "../../../src/components/systems/openview/adapters/worksheets-api";
 import { describeContracts } from "./openapi-contract";
 
@@ -60,8 +63,71 @@ describeContracts("OpenView sheets", [
     run: () => createWorksheet({ moduleId, title: "Visit plan" }),
   },
   {
+    name: "createWorksheet as a copy",
+    run: () =>
+      createWorksheet({
+        recordId,
+        title: "Class 4D (copy)",
+        source: { kind: "copy", worksheetId },
+      }),
+  },
+  {
+    name: "createWorksheet from a structure",
+    run: () =>
+      createWorksheet({
+        moduleId,
+        title: "Class 4E",
+        source: { kind: "structure", worksheetId },
+      }),
+  },
+  {
+    name: "createWorksheet from a template",
+    run: () =>
+      createWorksheet({
+        recordId,
+        title: "Class 4F",
+        source: {
+          kind: "template",
+          template: {
+            kind: "slateops-worksheet-template",
+            schemaVersion: 1,
+            title: "Class sheet",
+            columns: [
+              {
+                key: "c1",
+                name: "Student",
+                type: "link",
+                link: { moduleName: "Students", departmentName: "Registrar" },
+              },
+              { key: "c2", name: "Quiz", type: "int" },
+            ],
+            groups: [],
+            totals: {},
+          },
+          moduleMapping: { c1: moduleId },
+        },
+      }),
+  },
+  {
     name: "getWorksheet",
     run: () => getWorksheet(worksheetId),
+  },
+  {
+    name: "writeWorksheetRows",
+    run: () =>
+      writeWorksheetRows(worksheetId, 3, [
+        { c1: { record_id: rowId }, c2: "18" },
+        { c1: { unlinked: "Ben" }, c2: null },
+      ]),
+  },
+  {
+    name: "readImportFile",
+    run: () => readImportFile(new Blob([new Uint8Array([80, 75])]), 1),
+  },
+  {
+    name: "matchImportKeys",
+    run: () =>
+      matchImportKeys({ moduleId, fieldId: personId, keys: ["Ana", "Ben"] }),
   },
   {
     name: "queryWorksheetRows",

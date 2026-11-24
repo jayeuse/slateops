@@ -6,7 +6,8 @@ from datetime import date, timedelta
 
 import pytest
 
-from app.systems.sandbox.designs.field_validation import _valid_email, _valid_http_url
+from app.systems.sandbox.designs.field_validation import _valid_http_url
+from app.systems.sandbox.fields.validation import valid_email
 from operations.sample.realism import (
     FILLER_NOTES,
     AmountShape,
@@ -113,7 +114,7 @@ def test_dirty_emails_and_urls_still_pass_the_server_checks() -> None:
     emails = {email_variant(rng, "ana.cruz@harbor-ops.example") for _ in range(200)}
     urls = {url_variant(rng, "https://portal.harbor-ops.example/orders") for _ in range(200)}
 
-    assert len(emails) > 3 and all(map(_valid_email, emails))
+    assert len(emails) > 3 and all(map(valid_email, emails))
     assert all(email.endswith("@harbor-ops.example") for email in emails)
     assert urls == {"https://portal.harbor-ops.example/orders/"} and all(map(_valid_http_url, urls))
 

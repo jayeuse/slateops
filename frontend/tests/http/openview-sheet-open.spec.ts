@@ -144,6 +144,7 @@ test("a reader of an open sheet sees why it is read-only, downloads it and reads
     .click();
   await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
     "Sheet history",
+    /^New sheet from this structure/,
   ]);
   await page.getByRole("menuitem", { name: "Sheet history" }).click();
   const panel = page.getByRole("dialog", { name: "Sheet history" });
@@ -224,6 +225,7 @@ test("the owner of an open sheet cannot share, rename or delete it, on a phone t
     .click();
   await expect(page.getByRole("menu").getByRole("menuitem")).toHaveText([
     "Sheet history",
+    /^New sheet from this structure/,
   ]);
   // The owner's shares are not read while the sheet is open (409).
   expect(api.shareReads).toBe(0);

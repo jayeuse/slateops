@@ -358,6 +358,8 @@ class SheetRowBatch(BaseModel):
     structure_revision: int = Field(ge=1)
     creates: list[SheetRowCreate] = Field(default_factory=list)
     updates: list[SheetRowBatchUpdate] = Field(default_factory=list)
+    # "empty" (import): a create cell that fails its column's rule is stored empty.
+    invalid_cells: Literal["refuse", "empty"] = "refuse"
 
     @model_validator(mode="after")
     def _bounded(self) -> "SheetRowBatch":
@@ -370,6 +372,7 @@ class SheetRowBatch(BaseModel):
 
 class SheetRowBatchResult(BaseModel):
     rows: list[SheetRow]
+    emptied: int = Field(ge=0, description="Create cells stored empty under \"empty\"")
 
 
 class SheetShareSort(StrEnum):

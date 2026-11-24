@@ -651,7 +651,7 @@ const factRows: {
       metadata: { opened_count: 1, path: "membership_removed" },
     },
     sentence:
-      "Jay's 1 private sheet opened read-only when they were removed from the organization.",
+      "Jay's private sheet opened read-only when they were removed from the organization.",
   },
   {
     name: "sheets opened with malformed facts",

@@ -45,8 +45,15 @@ def _finite_numeric(value: Any) -> bool:
     return not isinstance(value, float) or isfinite(value)
 
 
-def _valid_email(value: str) -> bool:
-    return re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value) is not None
+def valid_email(value: str) -> bool:
+    """No whitespace, exactly one ``@`` with text before it, and a ``.`` after it that has
+    text on both sides, checked in one pass over the text (the rule every email value of a
+    record, sheet, design or Sandbox test run uses)."""
+
+    if any(character.isspace() for character in value):
+        return False
+    local, at, domain = value.partition("@")
+    return bool(at) and bool(local) and "@" not in domain and "." in domain[1:-1]
 
 
 def _valid_url(value: str) -> bool:
@@ -180,7 +187,7 @@ def field_config(field_type: FieldType, config: dict[str, Any]) -> dict[str, Any
                 raise ValueError("Text field defaultValue is shorter than minLength")
             if config.get("maxLength") is not None and len(default) > config["maxLength"]:
                 raise ValueError("Text field defaultValue exceeds maxLength")
-            if field_type is FieldType.EMAIL and default and not _valid_email(default):
+            if field_type is FieldType.EMAIL and default and not valid_email(default):
                 raise ValueError("Email field defaultValue must be an email address")
             if field_type is FieldType.URL and default and not _valid_url(default):
                 raise ValueError("URL field defaultValue must be an http or https URL")
@@ -294,7 +301,7 @@ def _validate_text(value: Any, field: Field) -> str:
 
 def _validate_email(value: Any, field: Field) -> str:
     value = _validate_text(value, field)
-    if value and not _valid_email(value):
+    if value and not valid_email(value):
         raise ValueError(f"Field {field.id} must be an email address")
     return cast(str, value)
 

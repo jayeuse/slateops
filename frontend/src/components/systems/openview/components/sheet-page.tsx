@@ -104,6 +104,22 @@ function isNotFound(error: unknown) {
   return error instanceof ApiError && error.status === 404;
 }
 
+/** A row write's 404: the row, not the sheet, is gone (parent decision). */
+function isRowGone(error: unknown) {
+  return (
+    isNotFound(error) && (error as ApiError).code === "worksheet_row_not_found"
+  );
+}
+
+/** Only `worksheet_not_found` from a write means the sheet is gone. */
+function isSheetGone(error: unknown) {
+  return (
+    isNotFound(error) && (error as ApiError).code === "worksheet_not_found"
+  );
+}
+
+const ROW_GONE = "This row was deleted by someone else.";
+
 /** Phones read 44px rows (Screens 9); wider screens 40px. */
 function usePhoneRows() {
   return useSyncExternalStore(
@@ -390,7 +406,13 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
           line: `${conflictWords(found.changedBy)} It now shows the newer values. Your ${named.columnName} (${named.draft}) was not saved.`,
         };
       }
-      if (isNotFound(error)) {
+      if (isRowGone(error)) {
+        // The edit or the form ends, and the rows on screen are read again.
+        setSaveError(ROW_GONE);
+        setGeneration((value) => value + 1);
+        return { outcome: "gone" };
+      }
+      if (isSheetGone(error)) {
         markGone();
         return { outcome: "refused", message: "" };
       }
@@ -468,8 +490,12 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
     try {
       await deleteWorksheetRow(sheet.id, row);
       setGeneration((value) => value + 1);
-    } catch {
-      setSaveError("The row could not be deleted. Try again.");
+    } catch (error) {
+      if (isRowGone(error)) {
+        setSaveError(ROW_GONE);
+        setGeneration((value) => value + 1);
+      } else if (isSheetGone(error)) markGone();
+      else setSaveError("The row could not be deleted. Try again.");
     }
   };
 
@@ -694,6 +720,12 @@ function SheetView({ sheet }: { sheet: WorksheetDetail }) {
           role={role}
           onFailure={setSaveError}
           onGone={markGone}
+          onRowsChanged={() => {
+            void client.invalidateQueries({
+              queryKey: worksheetKeys.detail(sheet.id),
+            });
+            setGeneration((value) => value + 1);
+          }}
         />
       </header>
       <div

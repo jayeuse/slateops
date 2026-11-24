@@ -20,6 +20,9 @@ import {
   exportWorksheet,
   saveWorksheetStructure,
   editableColumn,
+  writeWorksheetRows,
+  readImportFile,
+  matchImportKeys,
 } from "../../../src/components/systems/openview/adapters/worksheets-api";
 import { wirePagination } from "../../helpers/pagination";
 import { installSyncFetch as installFetch } from "../helpers/fake-fetch";
@@ -818,10 +821,9 @@ test("a long stored expression reads, and a save sends a hidden-source column ba
   }
 });
 
-test("a sheet list longer than the read's bound fails instead of showing part of it", async () => {
-  let offset = 0;
+test("a sheet list longer than the read's bound shows its first 5,000 sheets and the real total", async () => {
   const mock = installFetch((input) => {
-    offset = Number(
+    const offset = Number(
       new URL(String(input), "http://localhost").searchParams.get("offset"),
     );
     return json({
@@ -838,10 +840,10 @@ test("a sheet list longer than the read's bound fails instead of showing part of
     });
   });
   try {
-    await expect(listMyWorksheets({ deleted: "exclude" })).rejects.toThrow(
-      "The sheet list is longer than one read allows",
-    );
+    const result = await listMyWorksheets({ deleted: "exclude" });
     expect(mock.requests).toHaveLength(50);
+    expect(result.items).toHaveLength(5_000);
+    expect(result.total).toBe(5_100);
   } finally {
     mock.restore();
   }
@@ -886,5 +888,222 @@ test("a From another sheet column carries its options or the no-access mark, nev
     } finally {
       mock.restore();
     }
+  }
+});
+
+test("a copy, a structure and a template each name their source", async () => {
+  const mock = installFetch(() =>
+    json(
+      {
+        ...wireSummary(1),
+        structure: {
+          structureVersion: 1,
+          nextColumnSeq: 1,
+          columns: [],
+          groups: [],
+          totals: {},
+        },
+        etag: '"s:1"',
+        created_at: "2026-11-01T08:30:00Z",
+      },
+      201,
+    ),
+  );
+  try {
+    await createWorksheet({
+      recordId,
+      title: " Class 1A (copy) ",
+      source: { kind: "copy", worksheetId: sheetId(4) },
+    });
+    await createWorksheet({
+      moduleId,
+      title: "Class 4D",
+      source: { kind: "structure", worksheetId: sheetId(4) },
+    });
+    const template = {
+      kind: "slateops-worksheet-template",
+      schemaVersion: 1,
+      title: "x",
+      columns: [],
+      groups: [],
+      totals: {},
+    };
+    await createWorksheet({
+      recordId,
+      title: "Class 4D",
+      source: {
+        kind: "template",
+        template,
+        moduleMapping: { c1: moduleId, c4: null },
+      },
+    });
+    expect(
+      mock.requests.map(({ init }) => JSON.parse(String(init?.body))),
+    ).toEqual([
+      {
+        record_id: recordId,
+        title: "Class 1A (copy)",
+        source: { kind: "copy", worksheet_id: sheetId(4) },
+      },
+      {
+        module_id: moduleId,
+        title: "Class 4D",
+        source: { kind: "structure", worksheet_id: sheetId(4) },
+      },
+      {
+        record_id: recordId,
+        title: "Class 4D",
+        source: {
+          kind: "template",
+          template,
+          module_mapping: { c1: moduleId, c4: null },
+        },
+      },
+    ]);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("rows are added in one batch at the sheet's version, and the answer counts them", async () => {
+  const row = (n: number) => ({
+    id: sheetId(100 + n),
+    revision: 1,
+    etag: `"r${n}:1"`,
+    position: n,
+    cells: {},
+  });
+  const mock = installFetch(() => json({ rows: [row(1), row(2)], emptied: 1 }));
+  try {
+    const added = await writeWorksheetRows(sheetId(1), 3, [
+      { c1: "Ana" },
+      { c1: { unlinked: "Ben" } },
+    ]);
+    // The server is the one judge of cells: one that fails its column's
+    // rule is stored empty and counted (D9.3 step 3).
+    expect(added).toEqual({ added: 2, emptied: 1 });
+    const [request] = mock.requests;
+    expect(String(request.input)).toBe(
+      `/api/worksheets/${sheetId(1)}/rows/batch`,
+    );
+    expect(request.init?.method).toBe("POST");
+    expect(JSON.parse(String(request.init?.body))).toEqual({
+      structure_revision: 3,
+      creates: [
+        { cells: { c1: "Ana" } },
+        { cells: { c1: { unlinked: "Ben" } } },
+      ],
+      invalid_cells: "empty",
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("a batch answer without its emptied count is refused as a contract error", async () => {
+  const mock = installFetch(() => json({ rows: [] }));
+  try {
+    await expect(
+      writeWorksheetRows(sheetId(1), 3, [{ c1: "Ana" }]),
+    ).rejects.toThrow(ApiContractError);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("an Excel file goes as its bytes to one tab, and a refusal keeps its code and reason", async () => {
+  const parsed = {
+    tabs: [
+      { index: 0, name: "Roster" },
+      { index: 1, name: "Grades" },
+    ],
+    tab_index: 1,
+    rows: [["Name", 1.5, true, null, "2026-11-24"]],
+    formula_without_value_count: 2,
+    row_count: 1,
+    column_count: 5,
+  };
+  const mock = installFetch((input) =>
+    String(input).includes("tab=1")
+      ? json(parsed)
+      : json(
+          {
+            detail: {
+              code: "import_file_invalid",
+              reason: "macro",
+              message: "Macro files are refused",
+            },
+          },
+          422,
+        ),
+  );
+  try {
+    const file = new Blob([new Uint8Array([80, 75, 3, 4])]);
+    const result = await readImportFile(file, 1);
+    expect(result).toEqual({
+      tabs: [
+        { index: 0, name: "Roster" },
+        { index: 1, name: "Grades" },
+      ],
+      tabIndex: 1,
+      rows: [["Name", 1.5, true, null, "2026-11-24"]],
+      formulaWithoutValue: 2,
+    });
+    const [request] = mock.requests;
+    expect(String(request.input)).toBe("/api/worksheet-import-files?tab=1");
+    expect(new Headers(request.init?.headers).get("Content-Type")).toBe(
+      "application/octet-stream",
+    );
+    expect(request.init?.body).toBe(file);
+    const refused = await readImportFile(file, 0).catch(
+      (error: unknown) => error,
+    );
+    expect(refused).toBeInstanceOf(ApiError);
+    expect(refused).toMatchObject({
+      status: 422,
+      code: "import_file_invalid",
+      details: { reason: "macro" },
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("keys are matched against one field of one module, each answer in request order", async () => {
+  const mock = installFetch(() =>
+    json({
+      results: [
+        {
+          key: "Ana",
+          state: "matched",
+          record: { record_id: sheetId(7), label: "Ana Cruz" },
+        },
+        { key: "Ben", state: "ambiguous", record: null },
+        { key: "Cid", state: "unmatched", record: null },
+      ],
+      counts: { matched: 1, unmatched: 1, ambiguous: 1 },
+    }),
+  );
+  try {
+    const found = await matchImportKeys({
+      moduleId,
+      fieldId: sheetId(8),
+      keys: ["Ana", "Ben", "Cid"],
+    });
+    expect([...found]).toEqual([
+      ["Ana", { state: "matched", recordId: sheetId(7), label: "Ana Cruz" }],
+      ["Ben", { state: "ambiguous" }],
+      ["Cid", { state: "unmatched" }],
+    ]);
+    expect(JSON.parse(String(mock.requests[0].init?.body))).toEqual({
+      module_id: moduleId,
+      field_id: sheetId(8),
+      keys: ["Ana", "Ben", "Cid"],
+    });
+    expect(String(mock.requests[0].input)).toBe(
+      "/api/worksheet-import-matches",
+    );
+  } finally {
+    mock.restore();
   }
 });

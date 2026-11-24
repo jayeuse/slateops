@@ -49,7 +49,7 @@ def _rows(db: Session, user: User, worksheet_id: UUID, row_ids: list[UUID]) -> l
 def create_worksheet_row(
     worksheet_id: UUID, payload: SheetRowCreate, user: Actor, db: Database, response: Response,
 ) -> SheetRow:
-    [row_id] = write_rows(db, user, worksheet_id, [payload], [])
+    [row_id], _emptied = write_rows(db, user, worksheet_id, [payload], [])
     db.commit()
     [row] = _rows(db, user, worksheet_id, [row_id])
     response.headers["Location"] = f"/api/worksheets/{worksheet_id}/rows/{row_id}"
@@ -91,9 +91,9 @@ def write_worksheet_rows(
 ) -> SheetRowBatchResult:
     """Route 14: paste and import; one transaction; 409 when the columns changed."""
 
-    written = write_rows(
+    written, emptied = write_rows(
         db, user, worksheet_id, payload.creates, payload.updates,
-        structure_revision=payload.structure_revision,
+        structure_revision=payload.structure_revision, invalid_cells=payload.invalid_cells,
     )
     db.commit()
-    return SheetRowBatchResult(rows=_rows(db, user, worksheet_id, written))
+    return SheetRowBatchResult(rows=_rows(db, user, worksheet_id, written), emptied=emptied)

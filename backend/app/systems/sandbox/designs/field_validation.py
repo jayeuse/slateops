@@ -1,12 +1,12 @@
 """Portable field-value and relationship-mapping validation."""
 
-import re
 from dataclasses import dataclass
 from math import isfinite
 from urllib.parse import urlparse
 from uuid import UUID
 
 from app.systems.sandbox.designs.date_values import date_in_range, valid_date, valid_datetime
+from app.systems.sandbox.fields.validation import valid_email
 from app.systems.sandbox.numeric import numeric_matches_step
 
 type Scalar = str | int | float | bool | None
@@ -63,7 +63,7 @@ def validate_value(value: Scalar, field: FieldMetadata) -> None:
     elif field.config_kind == "datetime":
         valid = isinstance(value, str) and valid_datetime(value) and _date_in_range(value, field)
     elif field.config_kind == "email":
-        valid = isinstance(value, str) and (not value or _valid_email(value))
+        valid = isinstance(value, str) and (not value or valid_email(value))
     elif field.config_kind == "url":
         valid = isinstance(value, str) and (not value or _valid_http_url(value))
     else:
@@ -202,10 +202,6 @@ def _date_in_range(value: str, field: FieldMetadata) -> bool:
         field.latest,
         datetime_values=field.config_kind == "datetime",
     )
-
-
-def _valid_email(value: str) -> bool:
-    return re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value) is not None
 
 
 def _valid_http_url(value: str) -> bool:

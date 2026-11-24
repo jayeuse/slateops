@@ -116,7 +116,7 @@ const TYPE_ICONS: Record<SheetColumnType, LucideIcon> = {
   sheet_lookup: SheetIcon,
 };
 
-export type SaveOutcome = "saved" | "conflict" | "refused";
+export type SaveOutcome = "saved" | "conflict" | "refused" | "gone";
 
 export type SheetConflict = {
   rowId: string;

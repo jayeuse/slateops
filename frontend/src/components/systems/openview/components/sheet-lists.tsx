@@ -1,10 +1,10 @@
 "use client";
 
-import { useId, useState, type ReactNode } from "react";
+import { lazy, Suspense, useId, useState, type ReactNode } from "react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Sheet as SheetIcon } from "lucide-react";
+import { FileText, Plus, Sheet as SheetIcon, Upload } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -52,7 +52,39 @@ import {
 } from "./sheet-display";
 
 // The sheets of one record (its Sheets tab) or one module (its Sheets view),
-// with New sheet: docs/specs/sheets.md P2, C1, C3 and Screens 1 and 2.
+// with New sheet: docs/specs/sheets.md P2, C1, C3 and Screens 1 and 2. A
+// template file or a data file loads its part on first use (F7).
+
+const SheetNewFromFile = lazy(() => import("./sheet-new-from-file"));
+const SheetImportDialog = lazy(() => import("./sheet-import-dialog"));
+
+type Start = "blank" | "template" | "data";
+
+const STARTS: {
+  value: Start;
+  title: string;
+  line: string;
+  Icon: typeof SheetIcon;
+}[] = [
+  {
+    value: "blank",
+    title: "Blank sheet",
+    line: "You add the columns.",
+    Icon: SheetIcon,
+  },
+  {
+    value: "template",
+    title: "Template file",
+    line: "A .json file with columns and settings, from another sheet.",
+    Icon: FileText,
+  },
+  {
+    value: "data",
+    title: "Data file",
+    line: "A CSV or Excel file with rows. You check the rows before anything is added.",
+    Icon: Upload,
+  },
+];
 
 export type SheetAnchor =
   | {
@@ -96,6 +128,8 @@ export function NewSheetDialog({
   const requestNavigation = useWorkspaceNavigationRequest();
   const [name, setName] = useState("");
   const [missing, setMissing] = useState(false);
+  const [start, setStart] = useState<Start>("blank");
+  const [importing, setImporting] = useState<File | null>(null);
   const create = useMutation({
     mutationFn: (title: string) =>
       createWorksheet(
@@ -127,6 +161,22 @@ export function NewSheetDialog({
     if (!pending) onClose();
   };
   const errorId = `${id}-name-error`;
+  /** The typed name, or null after showing "Enter a name." */
+  const checkedTitle = () => {
+    const title = name.trim();
+    setMissing(!title);
+    return title || null;
+  };
+  if (importing)
+    return (
+      <Suspense fallback={null}>
+        <SheetImportDialog
+          target={{ kind: "new", title: name.trim(), anchor }}
+          initialFile={importing}
+          onClose={onClose}
+        />
+      </Suspense>
+    );
   return (
     <Dialog
       open
@@ -134,12 +184,12 @@ export function NewSheetDialog({
         if (!open) close();
       }}
     >
-      <DialogContent className={cn(dialogFrameContentClass, "sm:max-w-md")}>
+      <DialogContent className={cn(dialogFrameContentClass, "sm:max-w-lg")}>
         <form
           className="flex flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault();
-            submit();
+            if (start === "blank") submit();
           }}
         >
           <DialogFrameHeader
@@ -176,7 +226,55 @@ export function NewSheetDialog({
               </p>
             ) : null}
           </Field>
-          {create.isError ? (
+          <div
+            role="radiogroup"
+            aria-labelledby={`${id}-start`}
+            className="flex flex-col gap-2"
+          >
+            <span id={`${id}-start`} className="text-sm font-medium">
+              Start with
+            </span>
+            {STARTS.map(({ value, title, line, Icon }) => (
+              <label
+                key={value}
+                className={cn(
+                  "has-focus-visible:outline-ring flex min-h-11 cursor-pointer items-start gap-3 rounded-md border p-3 has-focus-visible:outline-2",
+                  start === value && "border-action-text bg-tint-hover",
+                )}
+              >
+                <input
+                  type="radio"
+                  name={`${id}-start`}
+                  value={value}
+                  checked={start === value}
+                  disabled={pending}
+                  onChange={() => setStart(value)}
+                  className="mt-0.5 size-4 shrink-0 accent-[var(--action)]"
+                />
+                <Icon
+                  aria-hidden="true"
+                  className="text-muted-foreground mt-0.5 size-4 shrink-0"
+                />
+                <span className="flex min-w-0 flex-col">
+                  <span className="text-sm font-medium">{title}</span>
+                  <span className="text-muted-foreground text-xs">{line}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          {start !== "blank" ? (
+            <Suspense fallback={null}>
+              <SheetNewFromFile
+                key={start}
+                kind={start}
+                anchor={anchor}
+                title={checkedTitle}
+                onClose={onClose}
+                onCheckRows={setImporting}
+              />
+            </Suspense>
+          ) : null}
+          {start === "blank" && create.isError ? (
             <Alert
               variant="destructive"
               reference={apiErrorReference(create.error)}
@@ -184,30 +282,32 @@ export function NewSheetDialog({
               <p>{createRefusal(create.error, anchor)}</p>
             </Alert>
           ) : null}
-          <DialogFrameFooter>
-            <p className="text-muted-foreground text-sm">
-              Only you can see it until you share it.
-            </p>
-            <DialogFooter className="mt-0">
-              <Button
-                type="button"
-                variant="ghost"
-                className="min-h-11"
-                disabled={pending}
-                onClick={close}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                className="min-h-11"
-                pending={pending}
-                pendingLabel="Creating…"
-              >
-                Create sheet
-              </Button>
-            </DialogFooter>
-          </DialogFrameFooter>
+          {start !== "blank" ? null : (
+            <DialogFrameFooter>
+              <p className="text-muted-foreground text-sm">
+                Only you can see it until you share it.
+              </p>
+              <DialogFooter className="mt-0">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="min-h-11"
+                  disabled={pending}
+                  onClick={close}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  className="min-h-11"
+                  pending={pending}
+                  pendingLabel="Creating…"
+                >
+                  Create sheet
+                </Button>
+              </DialogFooter>
+            </DialogFrameFooter>
+          )}
         </form>
       </DialogContent>
     </Dialog>
