@@ -235,6 +235,9 @@ export function joinSheetPresence(input: {
     emit([]);
     cancelTimer?.();
     cancelTimer = undefined;
+    // The cancelled timer may have been a queued early renewal; let later
+    // newcomers ask for one again.
+    earlyQueued = false;
     void retire();
     failures += 1;
     if (failures > 1) {
