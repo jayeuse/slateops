@@ -193,6 +193,12 @@ def test_a_boolean_filter_reads_the_partial_index_and_filters_nothing_again(
 ) -> None:
     connection = integration_owner_db.connection()
     connection.execute(text("SET LOCAL enable_seqscan = off"))
+    # Plan against an empty, never measured table, whatever earlier tests committed or
+    # measured (the CI shard order changes). TRUNCATE gives the table a new, unmeasured
+    # file inside this transaction; the fixture's rollback restores it. It fails if a
+    # foreign key refers to the table.
+    [table] = statement().get_final_froms()
+    connection.execute(text(f"TRUNCATE public.{table.name}"))
     if equal_cost_rival is not None:
         # An empty table gives both partial indexes one cost, and a tie proves nothing.
         # The fixture's rollback restores the index.
