@@ -110,6 +110,7 @@ APPLICATION_TABLES = (
     "system_health_signals",
     "update_statuses",
     "users",
+    "worksheet_realtime_grants",
     "worksheet_row_links",
     "worksheet_row_revisions",
     "worksheet_rows",
@@ -173,6 +174,7 @@ DELETE_ORDER = (
     # Derived links restrict their department, group, dashboard, category and channel.
     "sandbox_derived_objects",
     # Sheet children first; shares restrict their group, sheets their record and module.
+    "worksheet_realtime_grants",
     "worksheet_row_revisions",
     "worksheet_row_links",
     "worksheet_shares",
@@ -327,8 +329,9 @@ LOCK TABLE public.alembic_version, public.audit_logs, public.audit_seals,
  public.saved_views, public.scheduled_work,
   public.security_events, public.server_errors, public.system_health_samples,
   public.system_health_signals, public.users,
-  public.worksheet_row_links, public.worksheet_row_revisions, public.worksheet_rows,
-  public.worksheet_shares, public.worksheets
+  public.worksheet_realtime_grants, public.worksheet_row_links,
+  public.worksheet_row_revisions, public.worksheet_rows, public.worksheet_shares,
+  public.worksheets
  IN ACCESS EXCLUSIVE MODE NOWAIT
 """
 

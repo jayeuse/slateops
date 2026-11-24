@@ -148,7 +148,10 @@ PostgreSQL `LISTEN`/`NOTIFY`. Comms uses private Realtime conversation topics ba
 by FastAPI's expiring current-access projection, own-user topics and organization
 presence. The five-minute purpose-specific token is not an Auth/API/Storage content
 credential. Browser Comms topics are read-only; content and presence/typing commands
-remain authorized HTTP operations. Current content access is refused immediately
+remain authorized HTTP operations. Sheet presence is the one browser-written state:
+on its own `org:<org>:worksheet:<id>` topic, with a 60-second topic-bound token and
+grant issued after a sheet visibility check, a browser tracks only its current cell;
+the write policy admits `presence` and nothing else there. Current content access is refused immediately
 after removal, while already-joined ID-only delivery may continue until token
 expiry. Public channels and row-change subscriptions are not application data paths.
 

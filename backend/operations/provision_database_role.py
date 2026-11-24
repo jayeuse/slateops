@@ -228,9 +228,18 @@ def _provision_session_liveness_policy(cursor: object) -> None:
 REALTIME_JOIN_FUNCTION = "public.can_join_realtime_topic(text)"
 REALTIME_SEND_FUNCTION = "realtime.send(jsonb,text,text,boolean)"
 REALTIME_JOIN_EXPRESSION = "public.can_join_realtime_topic(realtime.topic())"
+# Browsers write only to the retained probe and, as presence only, to the sheet presence
+# topics (spec D13); the join function decides which person may join which topic.
 REALTIME_WRITE_EXPRESSION = (
     "(public.can_join_realtime_topic(realtime.topic()) AND "
-    "(realtime.topic() ~~ 'org:%:probe'::text))"
+    "((realtime.topic() ~~ 'org:%:probe'::text) OR ((extension = 'presence'::text) AND "
+    "(realtime.topic() ~~ 'org:%:worksheet:%'::text))))"
+)
+# Earlier managed write rules, upgraded in place: the join check alone, then probe only.
+REALTIME_LEGACY_WRITE_EXPRESSIONS = (
+    "public.can_join_realtime_topic(realtime.topic())",
+    "(public.can_join_realtime_topic(realtime.topic()) AND "
+    "(realtime.topic() ~~ 'org:%:probe'::text))",
 )
 REALTIME_UNGRANTED = "anon, service_role, postgres"
 # Policy name -> (pg_policy.polcmd, USING expression, WITH CHECK expression).
@@ -299,14 +308,16 @@ def _provision_realtime_channel_policies(cursor: object) -> None:
     # Policies are permissive and combine with OR: any other one would widen access.
     if set(existing) - set(REALTIME_POLICIES):
         raise RuntimeError("realtime.messages has policies that Slate Operations does not manage")
-    legacy_write = ("a", True, True, None, REALTIME_JOIN_EXPRESSION)
+    legacy_writes = {
+        ("a", True, True, None, expression) for expression in REALTIME_LEGACY_WRITE_EXPRESSIONS
+    }
+
+    def legacy(name: str) -> bool:
+        return name == "slateops_realtime_member_write" and existing[name] in legacy_writes
+
     for name, (command, using, check) in REALTIME_POLICIES.items():
         expected = (command, True, True, using, check)
-        if (
-            name in existing
-            and existing[name] != expected
-            and not (name == "slateops_realtime_member_write" and existing[name] == legacy_write)
-        ):
+        if name in existing and existing[name] != expected and not legacy(name):
             raise RuntimeError("Existing Slate Operations Realtime channel policy is unsafe")
     for name, (command, using, check) in REALTIME_POLICIES.items():
         if name not in existing:
@@ -315,7 +326,7 @@ def _provision_realtime_channel_policies(cursor: object) -> None:
             cursor.execute(  # type: ignore[attr-defined]
                 f"CREATE POLICY {name} ON realtime.messages FOR {verb} TO authenticated {clause}"
             )
-        elif name == "slateops_realtime_member_write" and existing[name] == legacy_write:
+        elif legacy(name):
             cursor.execute(  # type: ignore[attr-defined]
                 f"ALTER POLICY {name} ON realtime.messages WITH CHECK ({check})"
             )

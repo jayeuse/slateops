@@ -93,6 +93,10 @@ def revoke_stale(db: Session) -> None:
             by_user[row.user_id] = live_readable_ids(db, actor) if actor else set()
         if row.conversation_id not in by_user[row.user_id]:
             db.delete(row)
+    # Sheet presence grants follow the same cleanup (spec D13).
+    from app.systems.openview.worksheets.presence import revoke_stale_grants
+
+    revoke_stale_grants(db)
     # Operator-only maintenance has no app actor and cannot forge a request event.
     if get_audit_context(db).performed_by is not None:
         organization_event(db, "grants")

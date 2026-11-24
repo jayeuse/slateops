@@ -22459,6 +22459,39 @@
         "title": "SheetPlainColumn",
         "type": "object"
       },
+      "SheetPresenceToken": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          },
+          "viewers": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Viewers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "token",
+          "topic",
+          "expires_at",
+          "viewers"
+        ],
+        "title": "SheetPresenceToken",
+        "type": "object"
+      },
       "SheetRow": {
         "properties": {
           "cells": {
@@ -68425,6 +68458,87 @@
           }
         ],
         "summary": "List Sheet People",
+        "tags": [
+          "worksheets"
+        ]
+      }
+    },
+    "/api/worksheets/{worksheet_id}/presence-token": {
+      "post": {
+        "description": "A 60-second token for the sheet's presence topic, for a person who can see it.",
+        "operationId": "issue_presence_token_api_worksheets__worksheet_id__presence_token_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worksheet_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Worksheet Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SheetPresenceToken"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "The sheet is missing, deleted or not visible"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Twelve presence tokens a minute per person",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Issue Presence Token",
         "tags": [
           "worksheets"
         ]

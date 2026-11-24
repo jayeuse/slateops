@@ -4,12 +4,14 @@ A sheet has no stored state: it is open when its owner is no longer present in t
 organization (spec D0), which the access rule derives from the owner's membership.
 """
 
+from datetime import datetime
 from typing import Any, ClassVar
 from uuid import UUID
 
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
+    DateTime,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -21,8 +23,10 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, mapped_column
+from uuid6 import uuid7
 
 from app.core.base_model import BaseModel
+from app.core.database.base import Base
 
 COLUMN_KEY_CHECK = "column_key ~ '^c[0-9a-z]{1,8}$'"
 
@@ -247,3 +251,32 @@ class WorksheetRowRevision(BaseModel):
     action: Mapped[str] = mapped_column(Text, nullable=False)
     data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     changed_keys: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+
+
+class WorksheetRealtimeGrant(Base):
+    """A 60-second join grant for one person on one sheet's presence topic (spec D13).
+
+    Not audited and not published: presence keeps no history (PR6). A refresh changes only
+    ``expires_at``, which no index holds. Purging the sheet or the person removes the grant.
+    """
+
+    __tablename__ = "worksheet_realtime_grants"
+    __audit_enabled__: ClassVar[bool] = False
+    __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_worksheet_realtime_grants_org_id_id"),
+        UniqueConstraint(
+            "org_id", "user_id", "worksheet_id", name="uq_worksheet_realtime_grants_subject"
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "worksheet_id"], ["worksheets.org_id", "worksheets.id"],
+            name="fk_worksheet_realtime_grants_worksheet", ondelete="CASCADE",
+        ),
+        Index("ix_worksheet_realtime_grants_sheet", "org_id", "worksheet_id"),
+        Index("ix_worksheet_realtime_grants_user", "user_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid7)
+    org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"))
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    worksheet_id: Mapped[UUID]
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

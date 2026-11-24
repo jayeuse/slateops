@@ -43,6 +43,8 @@ def main() -> None:
     # This test fixture reproduces only the exact previously managed write policy.
     alter(provisioner.REALTIME_JOIN_EXPRESSION)
     provision()
+    alter(provisioner.REALTIME_LEGACY_WRITE_EXPRESSIONS[1])  # probe only, before D13
+    provision()
     provision()  # Current pg_get_expr output must also be accepted without replacement.
     try:
         alter("true")

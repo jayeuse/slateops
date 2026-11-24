@@ -105,8 +105,12 @@ with two-step verification first needs the audited two-step reset, and the
 Comms uses private Realtime topics for opaque invalidations and minimal
 presence/typing signals; other application pages retain authenticated SSE.
 Browsers receive Comms events but cannot publish authoritative messages or track
-presence directly through those topics. Application changes still use authorized
-HTTP routes. Server publication is bounded, best effort and post-commit.
+presence directly through those topics. The one exception is sheet presence: on its
+own sheet topic a browser tracks only its current cell (row and column key), with a
+60-second token and grant that FastAPI issues after an access check; presence there
+is a transient hint, never data, and nothing of it is stored. Application changes
+still use authorized HTTP routes. Server publication is bounded, best effort and
+post-commit.
 Request-buffered events wait for response completion. Resource-owned durable
 jobs submit their committed events after closing their own SQL session, without
 waiting for a triggering HTTP response, including manual Send Now. Neither path
@@ -238,6 +242,7 @@ last-reviewed: 2026-10-17
 | Realtime tokens: five-minute ES256 `purpose: realtime`, bound to the local account and organization; not application/Auth/Storage content credentials | `backend/app/systems/platform/realtime/`, `backend/operations/provision_database_role.py` |
 | Private topic joins: current membership plus expiring FastAPI grants projection for `org:<org>:conversation:<id>`; own `org:<org>:user:<id>` and organization `presence`; no arbitrary suffixes. Content revocation is immediate; existing ID-only subscriptions are bounded by token expiry | `backend/app/systems/comms/realtime/grants.py`, `backend/migrations/versions/e46611902f25_slate_operations_fresh_root.py` (`public.can_join_realtime_topic(text)` in `FUNCTIONS`; tables `comms_realtime_grants` and `comms_realtime_admissions` with the `comms_realtime_grants_org_isolation` and `comms_realtime_admissions_org_isolation` policies), `backend/operations/provision_database_role.py` (`_provision_realtime_channel_policies`: the function's EXECUTE grant and the `realtime.messages` policies) |
 | Browser Comms topics are read-only; the retained foundation `probe` write policy is not a Comms send/typing/presence permission | `backend/operations/provision_database_role.py`, `backend/app/systems/comms/realtime/router.py` |
+| Sheet presence: `org:<org>:worksheet:<id>` joins only with a 60-second `purpose: realtime_presence` token whose `topic` claim equals the topic, a live grant from `worksheet_realtime_grants` for the same person and a sheet that is not deleted; the token route checks sheet visibility again on each refresh, refuses a hidden sheet like a missing one and has its own per-person budget; the write policy admits only `extension = 'presence'` on sheet topics (besides the probe). Browsers publish presence there by design (spec D13): the payload is a cell position, and the accepted residual is that a current viewer can move another current viewer's outline | `backend/app/systems/openview/worksheets/presence.py`, `backend/app/systems/platform/realtime/tokens.py`, `backend/migrations/versions/d60adae1ec28_worksheet_realtime_grants.py` (`public.can_join_realtime_topic(text)`), `backend/operations/provision_database_role.py` (`REALTIME_WRITE_EXPRESSION`) |
 | Private publish wrapper validates bound actor/org and opaque envelopes and discards rollbacks. Request-buffered events publish after the response; durable jobs submit after their own commit/session close without waiting for a triggering HTTP response. Neither retains a session/pooled connection through HTTP publication; never send message bodies or credentials | `backend/app/systems/comms/realtime/{envelopes,publication,publisher}.py`, `backend/app/systems/comms/jobs/schedule_worker.py` |
 | Browser ingress is exact-origin `/realtime/v1/websocket` only, with the gateway key injected as a header, never supplied in the URL. Private publisher listener 8001 is separate and unpublished in production; its development loopback mapping still requires the server key | `infra/caddy/Caddyfile.template`, `frontend/tooling/run-next.mjs`, `infra/supabase/upstream/envoy/lds.template.yaml`, `infra/supabase/compose.{dev,production}.yaml` |
 | No secret reaches the browser bundle; provider bootstrap secrets (`DATABASE_BOOTSTRAP_URL`, `POSTGRES_PASSWORD`, the JWT signing keys) stay out of the API env | `docs/architecture/17-configuration.md` |

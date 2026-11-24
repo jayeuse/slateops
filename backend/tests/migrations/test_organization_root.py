@@ -59,6 +59,7 @@ ORGANIZATION_TABLES = (
         "worksheet_shares",
         "worksheet_row_links",
         "worksheet_row_revisions",
+        "worksheet_realtime_grants",
     }
 )
 MIXED_TABLES = frozenset(
