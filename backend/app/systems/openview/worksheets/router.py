@@ -170,7 +170,7 @@ def _owned_under_lock(
 
 
 def _page(
-    db: Session, user: User, statement: Select[tuple[Worksheet]],
+    db: Session, user: User, statement: Select[Worksheet],
     params: WorksheetListRequest, spec: ListQuerySpec[WorksheetSort],
 ) -> StandardListResponse[WorksheetSummary]:
     result = execute_standard_list(db, statement, params, spec)

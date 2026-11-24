@@ -183,7 +183,7 @@ def literal_pattern(value: str) -> str:
 
 def compile_query(
     module_id: UUID, definition: QueryDefinition, fields: dict[UUID, Field]
-) -> Select[tuple[Record]]:
+) -> Select[Record]:
     statement = select(Record).where(Record.module_id == module_id)
     if definition.deleted != "include":
         statement = statement.where(Record.is_deleted.is_(definition.deleted == "only"))
@@ -304,11 +304,11 @@ def _record_data_projection(field_ids: Sequence[UUID]) -> ColumnElement[Any]:
 
 
 def projected_record_query(
-    statement: Select[tuple[Record]],
+    statement: Select[Record],
     definition: QueryDefinition,
     *,
     extra_field_ids: Sequence[UUID] = (),
-) -> Select[tuple[Any, ...]]:
+) -> Select[*tuple[Any, ...]]:
     """Select Record metadata and only the definition's top-level JSON keys."""
 
     field_ids = [reference.field_id for reference in definition.columns]
@@ -326,7 +326,7 @@ def projected_record_query(
     )
 
 
-def projected_record(row: Row[tuple[Any, ...]]) -> RecordProjection:
+def projected_record(row: Row[*tuple[Any, ...]]) -> RecordProjection:
     return RecordProjection(
         id=row.id,
         module_id=row.module_id,
@@ -340,14 +340,14 @@ def projected_record(row: Row[tuple[Any, ...]]) -> RecordProjection:
 
 
 def projected_record_response(
-    row: Row[tuple[Any, ...]], resolver: FieldDisplayResolver
+    row: Row[*tuple[Any, ...]], resolver: FieldDisplayResolver
 ) -> RecordResponse:
     return displayed_record(projected_record(row), resolver)
 
 
 def _filtered_page(
     db: Session, payload: RecordQuery, fields: dict[UUID, Field]
-) -> tuple[int, list[Row[tuple[Any, ...]]]]:
+) -> tuple[int, list[Row[*tuple[Any, ...]]]]:
     # Reuse all matching IDs, not JSON values, for the exact total and page.
     matching = (
         compile_query(payload.module_id, payload.definition, fields)

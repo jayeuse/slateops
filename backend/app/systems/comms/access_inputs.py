@@ -32,18 +32,14 @@ from app.systems.comms.conversations.models import (
 from app.systems.sandbox.departments.models import Department
 
 
-def materialized(statement: Select[Any]) -> CTE:
+def materialized(statement: Select[*tuple[Any, ...]]) -> CTE:
     """``WITH <anonymous> AS MATERIALIZED (...)``: PostgreSQL computes it once.
 
-    ``prefix_with`` returns a copy that keeps the anonymous name of the first CTE, and
-    that name holds the first object's ``id()``. The copy keeps the first object alive,
-    so no later CTE can reuse the address and with it the name.
+    SQLAlchemy 2.1 seeds an anonymous CTE name with 80 random bits, not an object's
+    ``id()``, so no later CTE takes this name after the first object is freed.
     """
 
-    plain = statement.cte()
-    cte = plain.prefix_with("MATERIALIZED")
-    cte._slateops_named_by = plain  # type: ignore[attr-defined]
-    return cte
+    return statement.cte().prefix_with("MATERIALIZED")
 
 
 # Department-row ranks, as `department_level_clause` compares them: read 1, write 2, manage 3.

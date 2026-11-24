@@ -162,7 +162,7 @@ def stage_notifications(
         user_event(db, recipient, "notification", {"id": str(row.id)})
 
 
-def visible_notification_ids(db: Session, user: User) -> Select[tuple[UUID]]:
+def visible_notification_ids(db: Session, user: User) -> Select[UUID]:
     """Both the captured conversation and the current source must still agree and be readable."""
     n, m, c = InAppNotification, CommsMessage, CommsConversation
     org = bound_organization_column()

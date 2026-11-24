@@ -79,13 +79,13 @@ def load_board_record_link_purge_dependencies(
                 conflicting_entity_id=link.board_id,
             )
         )
-    for link, board_id in revisions:
-        state = row_state("board_post_revision_record_links", link)
+    for revision_link, board_id in revisions:
+        state = row_state("board_post_revision_record_links", revision_link)
         state.state_fingerprint = fingerprint(
             {
-                "revision_id": link.revision_id,
-                "record_id": link.record_id,
-                "module_id": link.module_id,
+                "revision_id": revision_link.revision_id,
+                "record_id": revision_link.record_id,
+                "module_id": revision_link.module_id,
             }
         )
         rows.append(state)
@@ -93,7 +93,7 @@ def load_board_record_link_purge_dependencies(
             LifecycleBlocker(
                 code=LifecycleBlockerCode.PURGE_BOARD_DEPENDENCY,
                 entity_type="board_post_revision_record_links",
-                entity_id=link.id,
+                entity_id=revision_link.id,
                 detail=(
                     "Permanently delete this published Post revision before "
                     "purging its source Record"

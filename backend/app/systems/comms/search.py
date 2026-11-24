@@ -110,7 +110,7 @@ def _midnight(day: date) -> datetime:
 
 def _candidates(
     db: Session, actor: User, request: CommsSearchRequest, readable: set[UUID]
-) -> Select[tuple[UUID]]:
+) -> Select[UUID]:
     m, org = CommsMessage, bound_organization_column()
     query = select(m.id).where(
         m.org_id == org,

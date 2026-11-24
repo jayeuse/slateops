@@ -8,6 +8,9 @@ from pydantic import Field, JsonValue
 
 from app.systems.sandbox.designs.schemas import StrictModel
 
+TriggerRunEventKind = Literal["record-created", "field-changed", "schedule"]
+TriggerRunState = Literal["succeeded", "skipped", "suspended", "failed"]
+
 
 class TriggerRunResponse(StrictModel):
     id: UUID
@@ -16,8 +19,8 @@ class TriggerRunResponse(StrictModel):
     trigger_name: Annotated[str, Field(min_length=1, max_length=80)] = Field(
         alias="triggerName"
     )
-    event_kind: Literal["record-created", "field-changed", "schedule"] = Field(alias="eventKind")
-    state: Literal["succeeded", "skipped", "suspended", "failed"]
+    event_kind: TriggerRunEventKind = Field(alias="eventKind")
+    state: TriggerRunState
     details: dict[str, JsonValue]
     attempts: Annotated[int, Field(ge=0, le=5)]
 

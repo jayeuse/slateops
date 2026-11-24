@@ -30,7 +30,7 @@ def groups_with_other_grants(db: Session, group_ids: Iterable[UUID]) -> frozense
     if not ids:
         return frozenset()
     org = bound_organization_column()
-    sources: CompoundSelect[tuple[UUID | None]] = union(
+    sources: CompoundSelect[UUID | None] = union(
         select(BoardGroup.group_id).where(
             BoardGroup.org_id == org,
             BoardGroup.group_id.in_(ids),

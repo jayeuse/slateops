@@ -121,7 +121,7 @@ def _group_changes(
     recorded = func.coalesce(
         _GroupAudit.after["group_id"].astext, _GroupAudit.before["group_id"].astext
     )
-    entity_groups = dict(
+    entity_groups: dict[UUID | None, str | None] = dict(
         db.execute(
             _board_group_snapshots(board)
             .with_only_columns(_GroupAudit.entity_id, func.min(recorded))
@@ -131,8 +131,8 @@ def _group_changes(
     ) if entity_ids else {}
     group_ids: dict[UUID, UUID | None] = {}
     for row in changes:
-        group_id = entity_groups.get(row.entity_id) if row.entity_id else None
-        group_ids[row.id] = UUID(group_id) if group_id else None
+        recorded_id = entity_groups.get(row.entity_id) if row.entity_id else None
+        group_ids[row.id] = UUID(recorded_id) if recorded_id else None
     wanted = {group_id for group_id in group_ids.values() if group_id is not None}
     names = dict(
         db.execute(

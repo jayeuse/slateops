@@ -234,7 +234,7 @@ def list_audit_logs(
 
 def export_audit_log_rows(
     db: Session,
-    statement: Select[tuple[AuditLog]],
+    statement: Select[AuditLog],
     params: StandardListRequest[AuditLogSortField],
 ) -> list[AuditLog]:
     ordered, _ = build_standard_list_statements(statement, params, AUDIT_LOG_LIST_SPEC)

@@ -25,7 +25,7 @@ from app.systems.sandbox.publications.models import SandboxPublication
 from app.systems.sandbox.records.models import Record
 
 
-def additional_notification_ids(db: Session, user: User) -> Select[tuple[UUID]]:
+def additional_notification_ids(db: Session, user: User) -> Select[UUID]:
     role = require_current_membership(db, user).role
     failed_report = (
         select(InAppNotification.id)

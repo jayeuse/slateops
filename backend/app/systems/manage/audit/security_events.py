@@ -34,7 +34,7 @@ class SecurityEventPersistenceError(RuntimeError):
     """A security event could not be committed durably."""
 
 
-def bound_members() -> Select[tuple[UUID]]:
+def bound_members() -> Select[UUID]:
     return select(Membership.user_id).where(Membership.org_id == bound_organization_column())
 
 

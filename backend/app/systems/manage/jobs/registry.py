@@ -300,7 +300,7 @@ REGISTRY = {
 }
 
 
-def jobs_query(instance: str) -> tuple[Select[tuple[Row[Any]]], Any]:
+def jobs_query(instance: str) -> tuple[Select[Row[Any]], Any]:
     source = union_all(*(entry.query(instance) for entry in REGISTRY.values())).subquery("jobs")
     bundle: Bundle[Row[Any]] = Bundle("job", *source.c, single_entity=True)
     return select(bundle), source.c

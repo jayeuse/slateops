@@ -330,7 +330,7 @@ def usage(
         .distinct()
         .subquery()
     )
-    statement: Select[tuple[Any]] = select(
+    statement: Select[Any] = select(
         Bundle("usage", targets.c.kind, targets.c.id, targets.c.name)
     ).where(targets.c.visible.is_(True))
     spec = ListQuerySpec(

@@ -104,11 +104,11 @@ def _search_condition[SortFieldT: StrEnum](
     return or_(*(field.ilike(pattern, escape="\\") for field in spec.search_fields))
 
 
-def build_standard_list_statements[ModelT, SortFieldT: StrEnum](
-    statement: Select[tuple[ModelT]],
+def build_standard_list_statements[*ColumnsT, SortFieldT: StrEnum](
+    statement: Select[*ColumnsT],
     request: StandardListRequest[SortFieldT],
     spec: ListQuerySpec[SortFieldT],
-) -> tuple[Select[tuple[ModelT]], Select[tuple[int]]]:
+) -> tuple[Select[*ColumnsT], Select[int]]:
     filtered = statement.order_by(None).limit(None).offset(None)
     conditions = [
         condition
@@ -182,7 +182,7 @@ def _ordered(
     return direction(column) if never_null else direction(column).nulls_last()
 
 
-def capped_count(statement: Select[Any]) -> Select[tuple[int]]:
+def capped_count(statement: Select[*tuple[Any, ...]]) -> Select[int]:
     """Count the rows of ``statement``, but stop after one row more than ``TOTAL_CAP``."""
 
     return select(func.count()).select_from(statement.limit(TOTAL_CAP + 1).subquery())
@@ -245,7 +245,7 @@ def _row_name(column: ColumnElement[Any]) -> str:
 
 def execute_standard_list[ModelT, SortFieldT: StrEnum](
     db: Session,
-    statement: Select[tuple[ModelT]],
+    statement: Select[ModelT],
     request: StandardListRequest[SortFieldT],
     spec: ListQuerySpec[SortFieldT],
 ) -> ListQueryResult[ModelT]:

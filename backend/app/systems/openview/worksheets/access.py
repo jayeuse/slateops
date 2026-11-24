@@ -140,7 +140,7 @@ def own_deleted_worksheet_clause(db: Session, user: User) -> ColumnElement[bool]
     )
 
 
-def _candidate_ids(user: User, org_id: UUID) -> CompoundSelect[tuple[UUID]]:
+def _candidate_ids(user: User, org_id: UUID) -> CompoundSelect[UUID]:
     """Every sheet the person could see, found through indexes (B2 review N-2).
 
     Owned sheets (``ix_worksheets_owner``), sheets shared with the person or their groups
@@ -180,7 +180,7 @@ def _candidate_ids(user: User, org_id: UUID) -> CompoundSelect[tuple[UUID]]:
     )
 
 
-def visible_worksheet_statement(db: Session, user: User, org_id: UUID) -> Select[tuple[UUID]]:
+def visible_worksheet_statement(db: Session, user: User, org_id: UUID) -> Select[UUID]:
     """The IDs of every sheet of the organization the person can see.
 
     It reads only the person's candidate sheets, so its cost does not grow with the private

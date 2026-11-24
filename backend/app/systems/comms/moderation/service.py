@@ -52,7 +52,7 @@ def queue_conversations(db: Session, actor: User) -> set[UUID] | None:
             if capability_check(db, actor, identity)["capabilities"]["moderate"]["allowed"]}
 
 
-def report_query() -> Select[tuple[CommsReport]]:
+def report_query() -> Select[CommsReport]:
     return (
         select(CommsReport)
         .join(

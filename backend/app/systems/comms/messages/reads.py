@@ -26,7 +26,7 @@ from app.systems.comms.messages.schemas import (
 from app.systems.comms.previews.cache import cached_previews
 
 
-def message_query(conversation_id: UUID) -> Select[tuple[CommsMessage]]:
+def message_query(conversation_id: UUID) -> Select[CommsMessage]:
     return (
         select(CommsMessage)
         .where(

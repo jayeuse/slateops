@@ -53,7 +53,7 @@ def _validate_assignment_source(field: Field, source: Record) -> None:
 
 def _active_edge_statement(
     field_id: UUID, *, for_update: bool = True
-) -> Select[tuple[RelationshipEdge]]:
+) -> Select[RelationshipEdge]:
     statement = (
         select(RelationshipEdge)
         .where(

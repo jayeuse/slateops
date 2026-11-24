@@ -120,7 +120,7 @@ def stage_preview(db: Session, message: CommsMessage) -> None:
     )
 
 
-def discard_preview_work(db: Session, identities: Collection[UUID] | Select[tuple[UUID]]) -> None:
+def discard_preview_work(db: Session, identities: Collection[UUID] | Select[UUID]) -> None:
     from app.systems.comms.moderation.purge import _delete_batches
 
     _delete_batches(
