@@ -235,11 +235,14 @@ def record_export_outcome(
         return row
     if row.claimed_at is None or command.finished_at < row.claimed_at:
         raise service.BackupStateError("export_outcome_conflict")
+    # Read the clock before the row changes: the query autoflushes, and a half-set ready row
+    # breaks ck_backup_exports_artifact.
+    now = cast(datetime, db.scalar(select(func.clock_timestamp())))
     for field in fields:
         setattr(row, field, getattr(command, field))
     if command.state == "ready":
-        row.ready_at = cast(datetime, db.scalar(select(func.clock_timestamp())))
-        row.expires_at = row.ready_at + timedelta(hours=24)
+        row.ready_at = now
+        row.expires_at = now + timedelta(hours=24)
     db.flush()
     return row
 

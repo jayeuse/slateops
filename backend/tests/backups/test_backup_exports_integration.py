@@ -91,10 +91,9 @@ def test_export_database_rejects_incoherent_secret_claim_and_artifact_state(expo
     operation_id = UUID(created.json()["id"])
     with AuditSession(world.runtime) as db:
         row = db.get(BackupExportOperation, operation_id)
+        now = db.scalar(select(func.clock_timestamp()))
         for field, value in changed.items():
-            setattr(
-                row, field, db.scalar(select(func.clock_timestamp())) if value == "now" else value
-            )
+            setattr(row, field, now if value == "now" else value)
         with pytest.raises(IntegrityError):
             db.commit()
         db.rollback()
@@ -193,8 +192,9 @@ def test_database_excludes_second_unresolved_export_even_without_service(export_
         exports.claim_export(db, world.instance, uuid4())
         db.commit()
         row = db.get(BackupExportOperation, UUID(second.json()["id"]))
+        now = db.scalar(select(func.clock_timestamp()))
         row.state, row.claim_id = "preparing", uuid4()
-        row.claimed_at, row.encrypted_passphrase = db.scalar(select(func.clock_timestamp())), None
+        row.claimed_at, row.encrypted_passphrase = now, None
         with pytest.raises(IntegrityError):
             db.commit()
         db.rollback()
@@ -335,8 +335,9 @@ def test_backup_and_export_new_claims_exclude_each_other_but_backup_replay_survi
         assert service.claim_run(db, world.instance, backup_claim).id == backup_id
         db.rollback()
         row = db.get(BackupRun, backup_id)
+        now = db.scalar(select(func.clock_timestamp()))
         row.state, row.failure_code = "failed", "backup_failed"
-        row.finished_at = row.reconciled_at = db.scalar(select(func.clock_timestamp()))
+        row.finished_at = row.reconciled_at = now
         db.commit()
         exports.claim_export(db, world.instance, uuid4())
         db.commit()
