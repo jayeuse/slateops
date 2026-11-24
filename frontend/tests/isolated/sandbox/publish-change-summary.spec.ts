@@ -214,9 +214,9 @@ const salesOpen = reviewDesign([{ id: "sales", name: "Sales", closed: false }]);
 function text(html: string): string {
   return html
     .replace(/<[^>]+>/g, " ")
-    .replaceAll("&amp;", "&")
     .replaceAll("&quot;", '"')
     .replaceAll("&#x27;", "'")
+    .replaceAll("&amp;", "&")
     .replace(/\s+/g, " ")
     .trim();
 }
