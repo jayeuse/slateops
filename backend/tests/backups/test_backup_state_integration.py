@@ -1,7 +1,6 @@
 """Private claim/outcome boundaries need real PostgreSQL, not browser outage actions."""
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -186,16 +185,17 @@ def test_adoption_marks_the_restored_backups_own_run_verified_and_stops_the_othe
     from app.systems.manage.backups import service
     from app.systems.manage.backups.models import BackupPolicy
 
-    def running(installation: str, started: datetime) -> Any:
-        run = _queue(integration_db)
-        run.installation_id = installation
-        run.claim_id, run.started_at, run.state = uuid4(), started, "running"
-        run.claimed_schedule, run.claimed_retention_days = "disabled", 30
-        return run
-
+    restored = _queue(integration_db, "Restored backup")
+    older = _queue(integration_db, "Older backup")
+    # Both requests exist before either starts, so each start follows its request.
     started = _after_database_now(integration_db)
-    restored = running("old-installation", started + timedelta(minutes=5))
-    older = running("older-installation", started)
+    for run, installation, start in (
+        (restored, "old-installation", started + timedelta(minutes=5)),
+        (older, "older-installation", started),
+    ):
+        run.installation_id = installation
+        run.claim_id, run.started_at, run.state = uuid4(), start, "running"
+        run.claimed_schedule, run.claimed_retention_days = "disabled", 30
     finished = started + timedelta(hours=1)
     integration_db.flush()
     instance = _identity(integration_db)
