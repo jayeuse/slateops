@@ -77,18 +77,39 @@ def evaluate(found: LicenseFile | None, today: date, environment: str) -> Licens
 
 
 def stored_license(db: Session) -> InstallationLicense | None:
-    return db.scalar(select(InstallationLicense))
+    return db.execute(select(InstallationLicense)).scalar_one_or_none()
+
+
+# The license row changes only on import, so each process keeps it briefly: a guarded
+# request then runs no extra statement. An import clears this process's copy at once;
+# another process sees it within the TTL.
+_LICENSE_TTL_SECONDS = 30.0
+_license_cache: list[tuple[float, tuple[str, date] | None]] = []
+_license_lock = Lock()
+
+
+def _license_values(db: Session) -> tuple[str, date] | None:
+    now = time.monotonic()
+    with _license_lock:
+        if _license_cache and now - _license_cache[0][0] < _LICENSE_TTL_SECONDS:
+            return _license_cache[0][1]
+    row = stored_license(db)
+    values = None if row is None else (row.license_text, row.seen_through)
+    with _license_lock:
+        _license_cache[:] = [(now, values)]
+    return values
 
 
 def current_state(db: Session) -> LicenseState:
     environment = get_settings().environment
-    row = stored_license(db)
+    values = _license_values(db)
     today = utc_now().date()
     found = None
-    if row is not None:
-        today = max(today, row.seen_through)
+    if values is not None:
+        text, seen_through = values
+        today = max(today, seen_through)
         try:
-            found = verify(row.license_text, accepted_keys(environment))
+            found = verify(text, accepted_keys(environment))
         except LicenseInvalid:
             found = None  # for example a development file after a move to production
     return evaluate(found, today, environment)
@@ -130,3 +151,5 @@ def is_read_only(db: Session) -> bool:
 def forget_cached_state() -> None:
     with _read_only_lock:
         _read_only_cache.clear()
+    with _license_lock:
+        _license_cache.clear()

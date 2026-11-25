@@ -226,10 +226,12 @@ def _no_license_file_without_a_database(request):
     """
     from app.systems.manage.licensing import state
 
+    state.forget_cached_state()  # each test reads its own license row
     with pytest.MonkeyPatch.context() as patch:
         if request.node.get_closest_marker("integration") is None:
             patch.setattr(state, "stored_license", lambda db: None)
         yield
+    state.forget_cached_state()
 
 
 @pytest.fixture(autouse=True)
