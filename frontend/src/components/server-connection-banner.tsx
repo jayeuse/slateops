@@ -1,9 +1,10 @@
 "use client";
 
-import { ServerOff } from "lucide-react";
+import { HardDrive, ServerOff } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { probeServerHealth } from "@/lib/api";
+import { backupPauseExpected } from "@/lib/backup-pause";
 import {
   getServerConnection,
   startServerRetry,
@@ -98,15 +99,38 @@ export function ServerConnectionBanner() {
       window.removeEventListener("online", wake);
     };
   }, [unreachable]);
-  return <ServerConnectionBannerView state={state} />;
+  return (
+    <ServerConnectionBannerView
+      state={state}
+      backup={unreachable && backupPauseExpected()}
+    />
+  );
 }
 
 /** The banner as it shows for one state. The status region is in the DOM,
  * empty, at all times, so its text is announced politely once. */
-export function ServerConnectionBannerView({ state }: { state: BannerState }) {
+export function ServerConnectionBannerView({
+  state,
+  backup = false,
+}: {
+  state: BannerState;
+  // Owner item 4: this tab queued a backup, which stops the server for about a minute.
+  backup?: boolean;
+}) {
   return (
     <div role="status" aria-atomic="true" className="min-w-0">
-      {state === "showing" ? (
+      {state === "showing" && backup ? (
+        <div className="border-border bg-muted text-foreground flex min-h-10 items-center gap-2 border-b px-4 py-2 text-sm sm:px-5">
+          <HardDrive
+            aria-hidden="true"
+            className="text-muted-foreground size-4 shrink-0"
+          />
+          <p className="min-w-0">
+            A backup is running. Slate Operations stops for about a minute while
+            it copies your data, then starts again by itself.
+          </p>
+        </div>
+      ) : state === "showing" ? (
         <div className="border-warn-rule bg-warn-tint text-foreground flex min-h-10 items-center gap-2 border-b px-4 py-2 text-sm sm:px-5">
           <ServerOff
             aria-hidden="true"

@@ -11,6 +11,7 @@ import { backupStatusFacts } from "../domain/backup-rules";
 import type { useManageMaintenance } from "../state/controller";
 import { formatBackupTime, useWorkspaceRegion } from "./backup-time";
 import { apiErrorReference } from "@/lib/api-errors";
+import { useBackupPause } from "./backup-pause-note";
 
 type Maintenance = ReturnType<typeof useManageMaintenance>;
 
@@ -43,6 +44,7 @@ export function BackupStatusPanel({
     : null;
   const reason = maintenance.actionsReason;
   const ready = Boolean(status) && !reason;
+  const pause = useBackupPause();
   return (
     <section
       aria-label="Backup status"
@@ -118,6 +120,10 @@ export function BackupStatusPanel({
             </p>
           ) : null}
         </div>
+      ) : pause && maintenance.status.isError ? (
+        <p className="text-muted-foreground px-4 py-3 text-sm">
+          The backup status comes back when the backup finishes.
+        </p>
       ) : maintenance.status.isError || maintenance.policyRefused ? (
         <div className="p-3">
           <Alert

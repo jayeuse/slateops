@@ -518,7 +518,7 @@ function ManageContent() {
               ? "See who changed what, then inspect the details."
               : tab === "Updates & licensing"
                 ? "The person who runs your server installs updates."
-                : "The person who runs your server restores backups.";
+                : "To put back the latest backup, open Slate Operations settings on the server PC and select Restore the latest backup.";
   // A real owner-only refusal (a stale identity) lands on the same notice.
   const ownerRefused =
     (tab === "Backup" || tab === "Updates & licensing") &&

@@ -1,18 +1,14 @@
 "use client";
 
 import { useEffect, useId, useState, type ReactNode, type Ref } from "react";
-import { ChevronLeft, Copy, Download, ExternalLink } from "lucide-react";
+import { ChevronLeft, Copy, Download } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { cn } from "@/lib/utils";
 
-import {
-  failureLabel,
-  restoreProcedureUrl,
-  type ManageBackupRun,
-} from "../adapters/backup-api";
+import { failureLabel, type ManageBackupRun } from "../adapters/backup-api";
 import {
   backupExportReason,
   backupRestartWords,
@@ -105,16 +101,9 @@ export function BackupDetail({
     facts.push(["Confirmed expiry", formatBackupTime(run.expired_at, region)]);
   facts.push([
     "Restore",
+    // Owner item 5 (rc.35 round): the owner restores from the settings program.
     <span key="restore" className="block">
-      <a
-        href={restoreProcedureUrl}
-        target="_blank"
-        rel="noreferrer"
-        className="text-action-text inline-flex min-h-11 items-center gap-1 underline-offset-4 hover:underline xl:min-h-0"
-      >
-        Restore procedure
-        <ExternalLink aria-hidden="true" className="size-3.5" />
-      </a>
+      Slate Operations settings on the server PC: Restore the latest backup
     </span>,
   ]);
   return (

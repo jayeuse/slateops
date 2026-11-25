@@ -283,9 +283,12 @@ test("a Backup refusal that names the installation owner shows the owner notice,
     page.getByRole("button", { name: "Back up now", exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByText("The person who runs your server restores backups.", {
-      exact: true,
-    }),
+    page.getByText(
+      "To put back the latest backup, open Slate Operations settings on the server PC and select Restore the latest backup.",
+      {
+        exact: true,
+      },
+    ),
   ).toHaveCount(0);
 });
 

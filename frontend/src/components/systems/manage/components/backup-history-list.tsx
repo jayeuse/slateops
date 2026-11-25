@@ -23,6 +23,7 @@ import { backupRunStatus } from "../domain/backup-rules";
 import { tintRowClassName } from "../../access/components/row-open-button";
 import { StatusWord } from "@/components/ui/status-word";
 import { formatBackupTime, useWorkspaceRegion } from "./backup-time";
+import { useBackupPause } from "./backup-pause-note";
 
 // The list pane of Backup history (MD8), after Sandbox History: the total in
 // the head, the search with Filters (Source, Installation) and Sort, the
@@ -103,6 +104,7 @@ export function BackupHistoryList({
   paged: boolean;
   onOpen: (id: string) => void;
 }) {
+  const pause = useBackupPause();
   const id = useId();
   const region = useWorkspaceRegion();
   const order: BackupOrder =
@@ -227,7 +229,11 @@ export function BackupHistoryList({
             Loading backup history…
           </p>
         ) : null}
-        {failure ? (
+        {failure && failure !== "denied" && pause ? (
+          <p className="text-muted-foreground px-4 py-3 text-sm">
+            The backup history comes back when the backup finishes.
+          </p>
+        ) : failure ? (
           <Alert
             role="alert"
             variant="destructive"

@@ -7,6 +7,10 @@ import {
   ServerConnectionAnnouncerView,
   ServerConnectionBannerView,
 } from "../../../src/components/server-connection-banner";
+import {
+  BACKUP_PAUSE_MILLISECONDS,
+  backupPauseCovers,
+} from "../../../src/lib/backup-pause";
 import { apiFetch, refreshBrowserSession } from "../../../src/lib/api";
 import {
   getServerConnection,
@@ -171,6 +175,31 @@ test("the banner says the server cannot be reached, as a polite status with no c
     "Slate Operations cannot reach its server. Changes you make now may not save. It tries again on its own.",
   );
   expect(markup).not.toMatch(/<button|<a |tabindex/);
+});
+
+// Owner item 4 (rc.35 round): a backup this tab queued explains the silent server.
+test("while this tab's backup runs, the banner says so instead of a server failure", () => {
+  const markup = staticMarkup(ServerConnectionBannerView, {
+    state: "showing",
+    backup: true,
+  });
+  expect(markup).toContain(
+    "A backup is running. Slate Operations stops for about a minute while it copies your data, then starts again by itself.",
+  );
+  expect(markup).not.toContain("cannot reach");
+});
+
+test("a queued backup explains a silent server for 15 minutes only", () => {
+  const queued = 1_000_000;
+  expect(backupPauseCovers(queued, queued)).toBe(true);
+  expect(
+    backupPauseCovers(queued, queued + BACKUP_PAUSE_MILLISECONDS - 1),
+  ).toBe(true);
+  expect(backupPauseCovers(queued, queued + BACKUP_PAUSE_MILLISECONDS)).toBe(
+    false,
+  );
+  expect(backupPauseCovers(queued, queued - 1)).toBe(false);
+  expect(backupPauseCovers(null, queued)).toBe(false);
 });
 
 test("the status region stays in the page, empty, until the banner shows", () => {

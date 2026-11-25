@@ -1,5 +1,7 @@
 # Offline installation backup and restore
 
+**Windows installations:** the owner restores the newest backup from the settings program (M01, **Restore the latest backup**), which runs the engine job `restore` ([windows-installer plan 8.4](../../docs/plans/windows-installer.md#84-restore-in-v1)). Use the procedure below only to restore an older snapshot. Run its commands inside the distribution: `wsl.exe -d SlateOps -u root`.
+
 This is a support-operated backup and recovery procedure for a version 3 Supabase installation. Run the commands below from the root of the matching Slate Operations release checkout on a Linux host or WSL2, with the pinned images used by the installation. Windows Docker Desktop acceptance is still pending. A guarded production Compose backup and restore rehearsal passed using Linux containers on macOS Docker Desktop; native Linux host boot/reboot and Windows operation remain unverified. Keep restored public ingress closed until the final admission step; restore markers record operations and do not gate application startup.
 
 The backup is an offline physical set of PostgreSQL, Storage, and other named volumes, plus private configuration and a manifest. Treat the backup and restored private files, and Compose output, as secrets. Use an owner-controlled Restic repository, password file, staging directory, backup config, target parent directory, and target environment files. Never restore into an existing customer project or volume.

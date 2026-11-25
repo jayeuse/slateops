@@ -41,6 +41,7 @@ STEPS: dict[str, tuple[str, ...]] = {
     ),
     "recover": ("recover",),
     "rollback": ("down", "restore", "rebind", "finalize", "start", "adopt"),
+    "restore": ("snapshot", "down", "restore", "rebind", "finalize", "start", "adopt"),
     "smtp-test": ("send", "stage"),
     "set-email": ("write", "auth"),
     "set-backup-target": ("unmount", "mount", "repository"),
