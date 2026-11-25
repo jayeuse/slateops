@@ -19,7 +19,7 @@ Text in square brackets, for example [support contact], is a blank. Your support
 | Administrator | A person with the role "Administrator" in your organization ([people.ts:41](../../frontend/src/components/systems/access/helpers/people.ts#L41)). |
 | Installation owner | The administrator that setup created. This account also manages backups and updates ([08-authentication-authorization.md](../architecture/08-authentication-authorization.md), "Only the organization owner"). |
 | Server PC | The Windows 11 PC that runs Slate Operations for your office ([Copy.iss:38](../../infra/windows/installer/wizard/Copy.iss#L38)). |
-| Slate Operations settings | The program on the server PC for email, backups, repair and reports ([SlateOpsSetup.iss:121](../../infra/windows/installer/SlateOpsSetup.iss#L121)). |
+| Slate Operations settings | The program on the server PC for email, backups, restore, stop and start, repair and reports ([SlateOpsSetup.iss:121](../../infra/windows/installer/SlateOpsSetup.iss#L121)). |
 | Support provider | The person or company that installed Slate Operations for you. Contact: [support contact], [support hours]. |
 
 ### Where to find things
@@ -29,9 +29,9 @@ Text in square brackets, for example [support contact], is a blank. Your support
 | Invite people, make groups, give access | Slate Operations → **Access** ([workspace-navigation.ts:62-73](../../frontend/src/components/workspace-navigation.ts#L62)) |
 | Check backups and updates | Slate Operations → **Manage** → **Backup**, **Updates & licensing** ([workspace-navigation.ts:88-104](../../frontend/src/components/workspace-navigation.ts#L88)) |
 | Check whether Slate Operations works | Slate Operations → **Manage** → **System health** ([workspace-navigation.ts:97](../../frontend/src/components/workspace-navigation.ts#L97)) |
-| Set up email, change the backup drive, repair | Server PC → Start menu → **Slate Operations settings** ([SlateOpsSetup.iss:121](../../infra/windows/installer/SlateOpsSetup.iss#L121)) |
+| Set up email, change the backup drive, restore the latest backup, stop or start, repair | Server PC → Start menu → **Slate Operations settings** ([SlateOpsSetup.iss:121](../../infra/windows/installer/SlateOpsSetup.iss#L121)) |
 | Make a file for support | Server PC → Start menu → **Slate Operations - Save report** ([SlateOpsSetup.iss:122](../../infra/windows/installer/SlateOpsSetup.iss#L122)) |
-| Uninstall | Windows **Settings** → **Apps** ([Copy.iss:392](../../infra/windows/installer/wizard/Copy.iss#L392)) |
+| Uninstall | Windows **Settings** → **Apps** ([Copy.iss:445](../../infra/windows/installer/wizard/Copy.iss#L445)) |
 
 Two related guides exist: the [quick start](quick-start.md) and the [user guide](user-guide.md).
 
@@ -151,12 +151,12 @@ If email works, select **Forgot password?** on the sign-in page ([login/page.tsx
 
 1. On the server PC, open the Start menu.
 2. Open **Slate Operations settings**.
-3. Select **Reset the admin password** ([Copy.iss:340](../../infra/windows/installer/wizard/Copy.iss#L340)).
-4. Type the **New password**, then type it again in **Type it again** ([Copy.iss:342-343](../../infra/windows/installer/wizard/Copy.iss#L342)).
-5. Select **Change password** ([Copy.iss:344](../../infra/windows/installer/wizard/Copy.iss#L344)).
-6. Sign in with the new password ([Copy.iss:347](../../infra/windows/installer/wizard/Copy.iss#L347)).
+3. Select **Reset the admin password** ([Copy.iss:341](../../infra/windows/installer/wizard/Copy.iss#L341)).
+4. Type the **New password**, then type it again in **Type it again** ([Copy.iss:343-344](../../infra/windows/installer/wizard/Copy.iss#L343)).
+5. Select **Change password** ([Copy.iss:345](../../infra/windows/installer/wizard/Copy.iss#L345)).
+6. Sign in with the new password ([Copy.iss:348](../../infra/windows/installer/wizard/Copy.iss#L348)).
 
-The password must have 12 to 72 characters ([Copy.iss:348](../../infra/windows/installer/wizard/Copy.iss#L348)). This action resets only the administrator that setup created ([Copy.iss:350](../../infra/windows/installer/wizard/Copy.iss#L350)).
+The password must have 12 to 72 characters ([Copy.iss:349](../../infra/windows/installer/wizard/Copy.iss#L349)). This action resets only the administrator that setup created ([Copy.iss:351](../../infra/windows/installer/wizard/Copy.iss#L351)).
 
 ## 2. Backups and restore
 
@@ -167,18 +167,18 @@ The password must have 12 to 72 characters ([Copy.iss:348](../../infra/windows/i
 1. Slate Operations makes a backup every night at 2:00 ([Copy.iss:264](../../infra/windows/installer/wizard/Copy.iss#L264)).
 2. It keeps each backup for 30 days ([policy_default.py:14-15](../../backend/app/systems/manage/backups/policy_default.py#L14)).
 3. The backups go to [backup drive].
-4. The backups are locked. A recovery key opens them if the server PC breaks or is lost ([Copy.iss:357](../../infra/windows/installer/wizard/Copy.iss#L357)).
-5. Setup showed the recovery key one time, to print or to save ([Copy.iss:358](../../infra/windows/installer/wizard/Copy.iss#L358)). The key is at [recovery key location].
+4. The backups are locked. A recovery key opens them if the server PC breaks or is lost ([Copy.iss:410](../../infra/windows/installer/wizard/Copy.iss#L410)).
+5. Setup showed the recovery key one time, to print or to save ([Copy.iss:411](../../infra/windows/installer/wizard/Copy.iss#L411)). The key is at [recovery key location].
 
-Keep the recovery key away from the server PC and away from the backup drive ([Copy.iss:358](../../infra/windows/installer/wizard/Copy.iss#L358)).
+Keep the recovery key away from the server PC and away from the backup drive ([Copy.iss:411](../../infra/windows/installer/wizard/Copy.iss#L411)).
 
 If the backups go to a USB drive, keep it plugged in. "A backup fails while the drive is out." ([Copy.iss:271](../../infra/windows/installer/wizard/Copy.iss#L271))
 
-**Outage.** Slate Operations is offline while a backup runs ([backup-panel.tsx:426-427](../../frontend/src/components/systems/manage/components/backup-panel.tsx#L426)). The nightly backup at 2:00 is outside normal office hours.
+**Outage.** Slate Operations stops for about a minute while a backup runs. Changes that people make in that minute may not save. It starts again by itself ([backup-panel.tsx:428-430](../../frontend/src/components/systems/manage/components/backup-panel.tsx#L428)). The nightly backup at 2:00 is outside normal office hours.
 
 ### 2.2 Check the backups
 
-Open **Manage** → **Backup**. The **Status** shows four rows ([backup-status-panel.tsx:90-99](../../frontend/src/components/systems/manage/components/backup-status-panel.tsx#L90)):
+Open **Manage** → **Backup**. The **Status** shows four rows ([backup-status-panel.tsx:92-101](../../frontend/src/components/systems/manage/components/backup-status-panel.tsx#L92)):
 
 | Row | What it shows |
 |---|---|
@@ -194,7 +194,7 @@ Check the **Last good backup** row regularly. If it is older than two days, tell
 ### 2.3 Change the schedule
 
 1. Open **Manage** → **Backup**.
-2. Select **Edit schedule** ([backup-status-panel.tsx:64](../../frontend/src/components/systems/manage/components/backup-status-panel.tsx#L64)).
+2. Select **Edit schedule** ([backup-status-panel.tsx:66](../../frontend/src/components/systems/manage/components/backup-status-panel.tsx#L66)).
 3. In **Schedule**, select "Disabled", "Daily at 02:00" or "Weekly on Sunday at 02:00" ([backup-api.ts:356-360](../../frontend/src/components/systems/manage/adapters/backup-api.ts#L356)).
 4. In **Keep backups for**, select 7, 30 or 90 days ([backup-schedule-dialog.tsx:31-35](../../frontend/src/components/systems/manage/components/backup-schedule-dialog.tsx#L31)).
 5. Select **Save schedule** ([backup-schedule-dialog.tsx:269](../../frontend/src/components/systems/manage/components/backup-schedule-dialog.tsx#L269)).
@@ -207,12 +207,12 @@ Check the **Last good backup** row regularly. If it is older than two days, tell
 
 Make a backup before a large change, for example before an update.
 
-**Caution:** Slate Operations goes offline while this backup runs. Tell your people before you start ([backup-panel.tsx:426-427](../../frontend/src/components/systems/manage/components/backup-panel.tsx#L426)).
+**Caution:** Slate Operations stops for about a minute while this backup runs, and changes made in that minute may not save. Tell your people before you start ([backup-panel.tsx:428-430](../../frontend/src/components/systems/manage/components/backup-panel.tsx#L428)).
 
 1. Open **Manage** → **Backup**.
-2. Select **Back up now** ([backup-status-panel.tsx:81](../../frontend/src/components/systems/manage/components/backup-status-panel.tsx#L81)).
-3. Type a **Backup name** ([backup-panel.tsx:442](../../frontend/src/components/systems/manage/components/backup-panel.tsx#L442)).
-4. Select **Back up now** ([backup-panel.tsx:486](../../frontend/src/components/systems/manage/components/backup-panel.tsx#L486)).
+2. Select **Back up now** ([backup-status-panel.tsx:83](../../frontend/src/components/systems/manage/components/backup-status-panel.tsx#L83)).
+3. Type a **Backup name** ([backup-panel.tsx:445](../../frontend/src/components/systems/manage/components/backup-panel.tsx#L445)).
+4. Select **Back up now** ([backup-panel.tsx:489](../../frontend/src/components/systems/manage/components/backup-panel.tsx#L489)).
 
 The backup goes into the queue. The backup service starts it within about one minute ([infra/supabase/RESTORE.md, "Run the installation backup policy"](../../infra/supabase/RESTORE.md#run-the-installation-backup-policy); [plan section 2](../plans/windows-installer.md#2-current-state), Backup row).
 
@@ -222,7 +222,7 @@ You can download one backup as an encrypted file, for example to keep a copy in 
 
 1. Open **Manage** → **Backup**.
 2. In **History**, select a backup with the status "Verified".
-3. Select **Prepare encrypted backup** ([backup-detail.tsx:170](../../frontend/src/components/systems/manage/components/backup-detail.tsx#L170)).
+3. Select **Prepare encrypted backup** ([backup-detail.tsx:159](../../frontend/src/components/systems/manage/components/backup-detail.tsx#L159)).
 4. Type a **Passphrase** with 16 to 128 printable characters ([backup-export.tsx:364](../../frontend/src/components/systems/manage/components/backup-export.tsx#L364)).
 5. Type it again in **Confirm passphrase** ([backup-export.tsx:372](../../frontend/src/components/systems/manage/components/backup-export.tsx#L372)).
 6. Select **Prepare encrypted backup** ([backup-export.tsx:427](../../frontend/src/components/systems/manage/components/backup-export.tsx#L427)).
@@ -235,24 +235,24 @@ The download stops when the copy expires. The copy expires 24 hours after it is 
 
 ### 2.6 Change the backup drive
 
-**Caution:** a new backup drive has its own lock. The old recovery key does not open it. Have a printer or a USB drive ready to save the new key ([Copy.iss:463](../../infra/windows/installer/wizard/Copy.iss#L463)).
+**Caution:** a new backup drive has its own lock. The old recovery key does not open it. Have a printer or a USB drive ready to save the new key ([Copy.iss:516](../../infra/windows/installer/wizard/Copy.iss#L516)).
 
 1. On the server PC, connect the new drive.
 2. Open the Start menu, then open **Slate Operations settings**.
-3. Select **Change backup drive** ([Copy.iss:445](../../infra/windows/installer/wizard/Copy.iss#L445)).
+3. Select **Change backup drive** ([Copy.iss:498](../../infra/windows/installer/wizard/Copy.iss#L498)).
 4. Select the new drive.
 5. Save the new recovery key when setup shows it.
 
-Backups go to the new drive from the next night at 2:00 ([Copy.iss:464](../../infra/windows/installer/wizard/Copy.iss#L464)).
+Backups go to the new drive from the next night at 2:00 ([Copy.iss:517](../../infra/windows/installer/wizard/Copy.iss#L517)).
 
 ### 2.7 Make a new recovery key
 
 Make a new key when the old key is lost, or when a person who left knows it.
 
-**Caution:** "Your current recovery key stops working." Have a printer or a USB drive ready ([Copy.iss:494](../../infra/windows/installer/wizard/Copy.iss#L494)).
+**Caution:** "Your current recovery key stops working." Have a printer or a USB drive ready ([Copy.iss:547](../../infra/windows/installer/wizard/Copy.iss#L547)).
 
 1. On the server PC, open **Slate Operations settings**.
-2. Select **Make a new recovery key** ([Copy.iss:447](../../infra/windows/installer/wizard/Copy.iss#L447)).
+2. Select **Make a new recovery key** ([Copy.iss:500](../../infra/windows/installer/wizard/Copy.iss#L500)).
 3. Confirm the change.
 4. Print or save the new key.
 5. Destroy the old key.
@@ -265,26 +265,49 @@ These messages need action:
 
 | Where | Message | What to do |
 |---|---|---|
-| **Slate Operations settings** | "Needs attention: plug in the backup drive (%1)." ([Copy.iss:432](../../infra/windows/installer/wizard/Copy.iss#L432)) | Plug in the backup drive. If the message stays, select **Repair**. |
-| **Slate Operations settings** | "Needs support." ([Copy.iss:433](../../infra/windows/installer/wizard/Copy.iss#L433)) | Make a report (chapter 4). Send it to [support contact]. |
+| **Slate Operations settings** | "Needs attention: plug in the backup drive (%1)." ([Copy.iss:485](../../infra/windows/installer/wizard/Copy.iss#L485)) | Plug in the backup drive. If the message stays, select **Repair**. |
+| **Slate Operations settings** | "Needs support." ([Copy.iss:486](../../infra/windows/installer/wizard/Copy.iss#L486)) | Make a report (chapter 4). Send it to [support contact]. |
 | **Manage** → **Backup** | "The person who runs your server must run backup recovery." ([backup-rules.ts:43-44](../../frontend/src/components/systems/manage/domain/backup-rules.ts#L43)) | Tell your support provider. |
 
 In this table, "%1" is the letter of your backup drive.
 
-### 2.9 Restore a backup
+### 2.9 Restore the latest backup
 
-Your support provider does each restore. The restore uses a remote session and command-line tools ([infra/supabase/RESTORE.md](../../infra/supabase/RESTORE.md); [plan section 8.4](../plans/windows-installer.md#84-restore-in-v1)).
+You restore the newest backup on the server PC with one button ([plan section 8.4](../plans/windows-installer.md#84-restore-in-v1)). The app shows the same advice in **Manage** → **Backup** ([backup-rules.ts](../../frontend/src/components/systems/manage/domain/backup-rules.ts); [backup-detail.tsx:106](../../frontend/src/components/systems/manage/components/backup-detail.tsx#L106)).
 
-**Unverified:** no restore has been tested on a Windows installation yet. The deployment map marks Windows server operation and restore acceptance as pending ([Deployment architecture](../architecture/12-deployment-architecture.md#deployment-state-map); [plan section 8.4](../plans/windows-installer.md#84-restore-in-v1)). Keep the backup drive and the recovery key safe until a Windows restore is proven.
+**Caution:** "All changes made after the last backup are lost, and everyone must sign in again." Slate Operations is not available while the restore runs ([Copy.iss:384](../../infra/windows/installer/wizard/Copy.iss#L384)). Tell your people before you start.
 
-1. Write to [support contact].
-2. Tell the support provider which date to go back to.
-3. Allow the remote session when the support provider asks.
-4. Tell your people that each person must sign in again after the restore.
+1. Make sure that the backup drive is connected ([Copy.iss:403](../../infra/windows/installer/wizard/Copy.iss#L403)).
+2. On the server PC, open the Start menu, then open **Slate Operations settings**.
+3. Select **Restore the latest backup** ([Copy.iss:354](../../infra/windows/installer/wizard/Copy.iss#L354)).
+4. In "Restore the latest backup?", select **Restore** ([Copy.iss:383](../../infra/windows/installer/wizard/Copy.iss#L383); [Copy.iss:385](../../infra/windows/installer/wizard/Copy.iss#L385)). To stop, select **Go back** ([Copy.iss:25](../../infra/windows/installer/wizard/Copy.iss#L25)).
+5. Wait. The steps go from "Find the latest backup" to "Finish the restore" ([Copy.iss:402](../../infra/windows/installer/wizard/Copy.iss#L402)).
+6. Read the result. "The latest backup is restored." shows the date of the restored data ([Copy.iss:394](../../infra/windows/installer/wizard/Copy.iss#L394); [Copy.iss:395](../../infra/windows/installer/wizard/Copy.iss#L395)).
+7. Tell your people to sign in again, on PCs and on phones ([Copy.iss:396](../../infra/windows/installer/wizard/Copy.iss#L396)).
+8. Select **Back to settings** ([Copy.iss:397](../../infra/windows/installer/wizard/Copy.iss#L397)).
 
-A restore signs out every person ([infra/supabase/RESTORE.md, "Rebind while ingress is closed"](../../infra/supabase/RESTORE.md#rebind-while-ingress-is-closed)). Changes made after the backup are not in the restored data.
+| Message | What it means | What to do |
+|---|---|---|
+| "Setup cannot find the backup drive, so nothing changed." ([Copy.iss:403](../../infra/windows/installer/wizard/Copy.iss#L403)) | The backup drive is not connected. | Connect the drive, then try again. |
+| "There is no backup to restore yet, so nothing changed." ([Copy.iss:404](../../infra/windows/installer/wizard/Copy.iss#L404)) | No backup exists yet. | Make a backup first (section 2.4). |
+| "Slate Operations was busy with another task for 5 minutes, so nothing changed." ([Copy.iss:399](../../infra/windows/installer/wizard/Copy.iss#L399)) | A backup or an update was running. | Try again later. |
+| "Nothing changed: Slate Operations runs again on the data it had before." ([Copy.iss:400](../../infra/windows/installer/wizard/Copy.iss#L400)) | The restore stopped early and put the old data back. | Save a report (chapter 4). Send it to [support contact]. |
+| "Slate Operations is stopped." ([Copy.iss:401](../../infra/windows/installer/wizard/Copy.iss#L401)) | The restore stopped after it changed the installation. | Save a report (chapter 4). Send it to [support contact]. |
 
-The **Restore procedure** link in a backup's details opens the runbook for your support provider ([backup-detail.tsx:115](../../frontend/src/components/systems/manage/components/backup-detail.tsx#L115)). You do not do these steps.
+**An older backup.** The button restores only the newest backup. To go back to an older backup, write to [support contact]. Your support provider does it through a remote session ([infra/supabase/RESTORE.md](../../infra/supabase/RESTORE.md)).
+
+### 2.10 Stop and start Slate Operations
+
+Stop Slate Operations only when your support provider asks, or before work on the server PC.
+
+**Caution:** "Nobody can use Slate Operations, and backups do not run, until you select Start Slate Operations or this PC restarts." ([Copy.iss:360](../../infra/windows/installer/wizard/Copy.iss#L360))
+
+1. On the server PC, open **Slate Operations settings**.
+2. Select **Stop Slate Operations** ([Copy.iss:355](../../infra/windows/installer/wizard/Copy.iss#L355)).
+3. Select **Stop** to confirm ([Copy.iss:361](../../infra/windows/installer/wizard/Copy.iss#L361)).
+4. To start it again, select **Start Slate Operations** ([Copy.iss:357](../../infra/windows/installer/wizard/Copy.iss#L357)). The start takes about 2 minutes ([Copy.iss:365](../../infra/windows/installer/wizard/Copy.iss#L365)).
+
+Slate Operations starts automatically when the server PC starts ([Copy.iss:371](../../infra/windows/installer/wizard/Copy.iss#L371)). Keep this on. If you turn it off, nobody can use Slate Operations after a restart, also after a Windows Update restart at night ([Copy.iss:376](../../infra/windows/installer/wizard/Copy.iss#L376)).
 
 ## 3. Updates
 
@@ -310,25 +333,25 @@ Select **Refresh release status** to read the latest check again ([updates-panel
 
 The person who runs your server installs updates ([page.tsx:520](../../frontend/src/components/systems/manage/page.tsx#L520)). Usually your support provider does it. You can also do it with the new setup file. You get the file by [how you get a new setup file].
 
-**Caution:** "People cannot use Slate Operations while it updates. This can take up to 1 hour." ([Copy.iss:472](../../infra/windows/installer/wizard/Copy.iss#L472))
+**Caution:** "People cannot use Slate Operations while it updates. This can take up to 1 hour." ([Copy.iss:525](../../infra/windows/installer/wizard/Copy.iss#L525))
 
 1. Tell your people when the update starts.
 2. On the server PC, open the new setup file.
 3. Allow the change when Windows asks for permission ([SlateOpsSetup.iss:31](../../infra/windows/installer/SlateOpsSetup.iss#L31)).
-4. On **Update Slate Operations**, read the two version numbers ([Copy.iss:469-470](../../infra/windows/installer/wizard/Copy.iss#L469)).
-5. Select **Update now** ([Copy.iss:473](../../infra/windows/installer/wizard/Copy.iss#L473)).
+4. On **Update Slate Operations**, read the two version numbers ([Copy.iss:522-523](../../infra/windows/installer/wizard/Copy.iss#L522)).
+5. Select **Update now** ([Copy.iss:526](../../infra/windows/installer/wizard/Copy.iss#L526)).
 6. Keep the server PC on until setup shows the result.
 
-"Setup makes a backup before it changes anything." If the update fails, Slate Operations goes back to the old version by itself ([Copy.iss:471](../../infra/windows/installer/wizard/Copy.iss#L471)).
+"Setup makes a backup before it changes anything." If the update fails, Slate Operations goes back to the old version by itself ([Copy.iss:524](../../infra/windows/installer/wizard/Copy.iss#L524)).
 
 | Result | What to do |
 |---|---|
-| "Slate Operations is updated to version %1." ([Copy.iss:479](../../infra/windows/installer/wizard/Copy.iss#L479)) | Nothing. Tell your people. |
-| "The update did not work. Slate Operations went back to version %1. Everybody must sign in again." ([Copy.iss:480](../../infra/windows/installer/wizard/Copy.iss#L480)) | Tell your people to sign in again. Tell your support provider. |
-| "The update did not work. Slate Operations still runs version %1. Nothing changed." ([Copy.iss:481](../../infra/windows/installer/wizard/Copy.iss#L481)) | Tell your support provider. |
-| Any message that says "Select Save report" ([Copy.iss:482-483](../../infra/windows/installer/wizard/Copy.iss#L482)) | Select **Save report**. Send the file to [support contact]. |
+| "Slate Operations is updated to version %1." ([Copy.iss:532](../../infra/windows/installer/wizard/Copy.iss#L532)) | Nothing. Tell your people. |
+| "The update did not work. Slate Operations went back to version %1. Everybody must sign in again." ([Copy.iss:533](../../infra/windows/installer/wizard/Copy.iss#L533)) | Tell your people to sign in again. Tell your support provider. |
+| "The update did not work. Slate Operations still runs version %1. Nothing changed." ([Copy.iss:534](../../infra/windows/installer/wizard/Copy.iss#L534)) | Tell your support provider. |
+| Any message that says "Select Save report" ([Copy.iss:535-536](../../infra/windows/installer/wizard/Copy.iss#L535)) | Select **Save report**. Send the file to [support contact]. |
 
-If setup says that Slate Operations is busy, wait. Setup tries again by itself ([Copy.iss:478](../../infra/windows/installer/wizard/Copy.iss#L478)).
+If setup says that Slate Operations is busy, wait. Setup tries again by itself ([Copy.iss:531](../../infra/windows/installer/wizard/Copy.iss#L531)).
 
 The **Update procedure for this release** link on the Updates page is for your support provider ([updates-panel.tsx:102](../../frontend/src/components/systems/manage/components/updates-panel.tsx#L102)).
 
@@ -345,13 +368,13 @@ Two files help your support provider find a problem. Neither file is sent automa
 
 1. On the server PC, open the Start menu.
 2. Select **Slate Operations - Save report** ([SlateOpsSetup.iss:122](../../infra/windows/installer/SlateOpsSetup.iss#L122)).
-3. Wait. "This takes up to 3 minutes." ([Copy.iss:491](../../infra/windows/installer/wizard/Copy.iss#L491))
-4. Find the file on your desktop. Its name starts with "SlateOps-report-" ([Copy.iss:625](../../infra/windows/installer/wizard/Copy.iss#L625)).
+3. Wait. "This takes up to 3 minutes." ([Copy.iss:544](../../infra/windows/installer/wizard/Copy.iss#L544))
+4. Find the file on your desktop. Its name starts with "SlateOps-report-" ([Copy.iss:678](../../infra/windows/installer/wizard/Copy.iss#L678)).
 5. Send the file to [support contact].
 
 You can also select **Save report** in **Slate Operations settings**, or on each setup screen that shows an error ([Copy.iss:19](../../infra/windows/installer/wizard/Copy.iss#L19); [plan section 10.6](../plans/windows-installer.md#106-save-report)).
 
-The report holds no passwords, keys or business records. Email addresses and user names in it are replaced ([plan section 10.6](../plans/windows-installer.md#106-save-report); [Copy.iss:624](../../infra/windows/installer/wizard/Copy.iss#L624)).
+The report holds no passwords, keys or business records. Email addresses and user names in it are replaced ([plan section 10.6](../plans/windows-installer.md#106-save-report); [Copy.iss:677](../../infra/windows/installer/wizard/Copy.iss#L677)).
 
 The report works also when the server part does not answer. Then the report says "Linux part not reachable" ([plan section 10.6](../plans/windows-installer.md#106-save-report)) (unverified).
 
@@ -369,7 +392,7 @@ When an action fails, its message can show a reference. Send that reference with
 
 **Manage** → **System health** says whether Slate Operations works now. **Parts of Slate Operations** shows the status of each part. Select **Check again** to see the latest check ([page-guides.ts:60](../../frontend/src/components/help/page-guides.ts#L60)).
 
-On the server PC, **Slate Operations settings** also shows a status, for example "Running." or "Needs support." ([Copy.iss:431-435](../../infra/windows/installer/wizard/Copy.iss#L431)). When it says "Not ready.", select **Repair**. "Repair" sets up the Windows parts again, and your data does not change ([Copy.iss:449-450](../../infra/windows/installer/wizard/Copy.iss#L449)).
+On the server PC, **Slate Operations settings** also shows a status, for example "Running." or "Needs support." ([Copy.iss:484-488](../../infra/windows/installer/wizard/Copy.iss#L484)). When it says "Not ready.", select **Repair**. "Repair" sets up the Windows parts again, and your data does not change ([Copy.iss:502-503](../../infra/windows/installer/wizard/Copy.iss#L502)).
 
 ## 5. License import
 
@@ -377,7 +400,7 @@ License import is **not available in this build**.
 
 This build has every feature, no editions and no limits. Nothing in it checks a license ([updates-rules.ts:9-10](../../frontend/src/components/systems/manage/domain/updates-rules.ts#L9); [plan section 2](../plans/windows-installer.md#2-current-state), Editions row). Editions and license files come in a later version.
 
-The last setup page can name an edition and a license ([Copy.iss:380](../../infra/windows/installer/wizard/Copy.iss#L380)). Ignore that text in this build. **Manage** → **Updates & licensing** shows the correct state.
+The last setup page can name an edition and a license ([Copy.iss:433](../../infra/windows/installer/wizard/Copy.iss#L433)). Ignore that text in this build. **Manage** → **Updates & licensing** shows the correct state.
 
 ## 6. Email settings
 
@@ -402,15 +425,15 @@ For Gmail, first turn on 2-Step Verification for the account. Then make an app p
 
 1. On the server PC, open the Start menu.
 2. Open **Slate Operations settings** ([email-setup-panel.tsx:179-185](../../frontend/src/components/systems/manage/components/email-setup-panel.tsx#L179)).
-3. Select **Set up email** ([Copy.iss:443](../../infra/windows/installer/wizard/Copy.iss#L443)).
+3. Select **Set up email** ([Copy.iss:496](../../infra/windows/installer/wizard/Copy.iss#L496)).
 4. In **Send from**, type the email address ([Copy.iss:230](../../infra/windows/installer/wizard/Copy.iss#L230)).
 5. In **Provider**, select **Gmail** or **Other** ([Copy.iss:231-233](../../infra/windows/installer/wizard/Copy.iss#L231)).
 6. For Gmail, type the **App password** ([Copy.iss:238](../../infra/windows/installer/wizard/Copy.iss#L238)).
 7. For **Other**, fill in **Server**, **Port**, **Security**, **User name** and **Password** ([Copy.iss:239-246](../../infra/windows/installer/wizard/Copy.iss#L239)).
 8. Select **Send test email** ([Copy.iss:248](../../infra/windows/installer/wizard/Copy.iss#L248)).
-9. Check the administrator's inbox and its Spam folder ([Copy.iss:459](../../infra/windows/installer/wizard/Copy.iss#L459)).
+9. Check the administrator's inbox and its Spam folder ([Copy.iss:512](../../infra/windows/installer/wizard/Copy.iss#L512)).
 
-The **Set up email** screen uses the same fields as setup ([Wizard.iss:6861](../../infra/windows/installer/wizard/Wizard.iss#L6861)). When it is done, it says "Slate Operations sends email from %1 now." ([Copy.iss:457](../../infra/windows/installer/wizard/Copy.iss#L457))
+The **Set up email** screen uses the same fields as setup ([Wizard.iss:6920](../../infra/windows/installer/wizard/Wizard.iss#L6920)). When it is done, it says "Slate Operations sends email from %1 now." ([Copy.iss:510](../../infra/windows/installer/wizard/Copy.iss#L510))
 
 For **Security**, the usual choices are "SSL/TLS (usually port 465)" and "STARTTLS (usually port 587)" ([Copy.iss:244-245](../../infra/windows/installer/wizard/Copy.iss#L244)).
 
@@ -420,34 +443,34 @@ When you change the Gmail account password, Google cancels its app passwords. Th
 
 ## 7. Uninstall
 
-Ask your support provider before you uninstall. A reinstall with kept data needs the same or a newer setup file ([Copy.iss:423](../../infra/windows/installer/wizard/Copy.iss#L423)).
+Ask your support provider before you uninstall. A reinstall with kept data needs the same or a newer setup file ([Copy.iss:476](../../infra/windows/installer/wizard/Copy.iss#L476)).
 
 ### 7.1 Uninstall and keep your data
 
-1. On the server PC, open Windows **Settings** → **Apps** ([Copy.iss:392](../../infra/windows/installer/wizard/Copy.iss#L392)).
+1. On the server PC, open Windows **Settings** → **Apps** ([Copy.iss:445](../../infra/windows/installer/wizard/Copy.iss#L445)).
 2. Find **Slate Operations**, then select **Uninstall** ([plan section 9.1](../plans/windows-installer.md#91-uninstall)).
-3. On **Uninstall Slate Operations**, select **Keep my data (recommended)** ([Copy.iss:395-396](../../infra/windows/installer/wizard/Copy.iss#L395)).
-4. Select **Uninstall** ([Copy.iss:401](../../infra/windows/installer/wizard/Copy.iss#L401)).
+3. On **Uninstall Slate Operations**, select **Keep my data (recommended)** ([Copy.iss:448-449](../../infra/windows/installer/wizard/Copy.iss#L448)).
+4. Select **Uninstall** ([Copy.iss:454](../../infra/windows/installer/wizard/Copy.iss#L454)).
 
-"Slate Operations is removed. Your records, files and settings stay in %1 (%2 GB)." ([Copy.iss:397](../../infra/windows/installer/wizard/Copy.iss#L397)) In this message, "%1" is your data folder and "%2" is the size of the data.
+"Slate Operations is removed. Your records, files and settings stay in %1 (%2 GB)." ([Copy.iss:450](../../infra/windows/installer/wizard/Copy.iss#L450)) In this message, "%1" is your data folder and "%2" is the size of the data.
 
-To continue later, run setup again and choose the same data folder. Setup offers **Use the kept data** ([Copy.iss:420-421](../../infra/windows/installer/wizard/Copy.iss#L420)).
+To continue later, run setup again and choose the same data folder. Setup offers **Use the kept data** ([Copy.iss:473-474](../../infra/windows/installer/wizard/Copy.iss#L473)).
 
 ### 7.2 Uninstall and delete everything
 
-**Caution:** this deletes all records, files and settings of Slate Operations on this PC. It cannot be undone ([Copy.iss:404](../../infra/windows/installer/wizard/Copy.iss#L404)). Make an encrypted copy first (section 2.5), if you want to keep the data.
+**Caution:** this deletes all records, files and settings of Slate Operations on this PC. It cannot be undone ([Copy.iss:457](../../infra/windows/installer/wizard/Copy.iss#L457)). Make an encrypted copy first (section 2.5), if you want to keep the data.
 
 1. Do steps 1 and 2 of section 7.1.
-2. Select **Delete everything** ([Copy.iss:398](../../infra/windows/installer/wizard/Copy.iss#L398)).
-3. To delete the backups too, select **Also delete the backups on %1** ([Copy.iss:400](../../infra/windows/installer/wizard/Copy.iss#L400)).
+2. Select **Delete everything** ([Copy.iss:451](../../infra/windows/installer/wizard/Copy.iss#L451)).
+3. To delete the backups too, select **Also delete the backups on %1** ([Copy.iss:453](../../infra/windows/installer/wizard/Copy.iss#L453)).
 4. Select **Uninstall**.
-5. In **Delete all Slate Operations data?**, select **I understand that this cannot be undone** ([Copy.iss:402](../../infra/windows/installer/wizard/Copy.iss#L402), [407](../../infra/windows/installer/wizard/Copy.iss#L407)).
-6. Select **Delete everything** ([Copy.iss:408](../../infra/windows/installer/wizard/Copy.iss#L408)).
+5. In **Delete all Slate Operations data?**, select **I understand that this cannot be undone** ([Copy.iss:455](../../infra/windows/installer/wizard/Copy.iss#L455), [407](../../infra/windows/installer/wizard/Copy.iss#L460)).
+6. Select **Delete everything** ([Copy.iss:461](../../infra/windows/installer/wizard/Copy.iss#L461)).
 
-If you do not select step 3, the backups stay on the backup drive ([Copy.iss:405](../../infra/windows/installer/wizard/Copy.iss#L405)).
+If you do not select step 3, the backups stay on the backup drive ([Copy.iss:458](../../infra/windows/installer/wizard/Copy.iss#L458)).
 
 ### 7.3 What stays on the PC
 
-"Virtual Machine Platform and Windows Subsystem for Linux (WSL) stay on this PC, because other programs can use them." ([Copy.iss:414](../../infra/windows/installer/wizard/Copy.iss#L414))
+"Virtual Machine Platform and Windows Subsystem for Linux (WSL) stay on this PC, because other programs can use them." ([Copy.iss:467](../../infra/windows/installer/wizard/Copy.iss#L467))
 
-If uninstall cannot remove an item, it says so. Setup removes the item the next time it runs ([Copy.iss:415](../../infra/windows/installer/wizard/Copy.iss#L415)).
+If uninstall cannot remove an item, it says so. Setup removes the item the next time it runs ([Copy.iss:468](../../infra/windows/installer/wizard/Copy.iss#L468)).

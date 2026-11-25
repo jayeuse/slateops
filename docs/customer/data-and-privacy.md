@@ -61,10 +61,10 @@ No analytics, tracking or error-reporting service was found:
 ## 5. Backups
 
 1. Slate Operations makes a backup every night at 2:00, to a drive that the Customer chooses. Setup recommends another drive, for example a USB drive. The Customer can also keep backups on the data drive, after a warning (`Copy.iss:263-271`; [plan, section 8.2](../plans/windows-installer.md#82-backup-location)).
-2. Backups are encrypted. A recovery key opens them if the PC's disk is lost. Setup shows the key once. The Customer prints it or saves it to a USB drive (`Copy.iss:355-362`; [plan, section 8.3](../plans/windows-installer.md#83-recovery-key)).
+2. Backups are encrypted. A recovery key opens them if the PC's disk is lost. Setup shows the key once. The Customer prints it or saves it to a USB drive (`Copy.iss:408-415`; [plan, section 8.3](../plans/windows-installer.md#83-recovery-key)).
 3. Slate Operations does not store the recovery key on Windows. A printed key passes through the Windows print queue ([plan, section 8.3](../plans/windows-installer.md#83-recovery-key); [section 3.2](../plans/windows-installer.md#32-rules-of-the-boundary), check 7).
-4. A backup holds all data and the settings of the installation. Keep the backup drive safe (`infra/supabase/RESTORE.md:5,9`).
-5. An administrator can download an encrypted copy of a backup through the browser. The administrator sets its passphrase and confirms with their own password. That copy then leaves the PC ([Security architecture](../architecture/14-security-architecture.md); `infra/supabase/RESTORE.md:58`).
+4. A backup holds all data and the settings of the installation. Keep the backup drive safe (`infra/supabase/RESTORE.md:7,9`).
+5. An administrator can download an encrypted copy of a backup through the browser. The administrator sets its passphrase and confirms with their own password. That copy then leaves the PC ([Security architecture](../architecture/14-security-architecture.md); `infra/supabase/RESTORE.md:60`).
 
 ## 6. Support access
 
@@ -84,9 +84,9 @@ No analytics, tracking or error-reporting service was found:
 
 ## 8. Removal
 
-1. Uninstall starts from Windows Settings → Apps. It offers "Keep my data (recommended)" or "Delete everything" ([plan, section 9.1](../plans/windows-installer.md#91-uninstall); `infra/windows/installer/wizard/Copy.iss:395-399`).
-2. "Delete everything" removes all records, files and settings from the PC. The backups stay, unless the Customer also selects "Also delete the backups" (`Copy.iss:400-406`).
-3. The setup logs in `C:\ProgramData\SlateOps\logs` stay after uninstall (`infra/windows/installer/scripts/lib/Uninstall.ps1:673-691`).
+1. Uninstall starts from Windows Settings → Apps. It offers "Keep my data (recommended)" or "Delete everything" ([plan, section 9.1](../plans/windows-installer.md#91-uninstall); `infra/windows/installer/wizard/Copy.iss:448-452`).
+2. "Delete everything" removes all records, files and settings from the PC. The backups stay, unless the Customer also selects "Also delete the backups" (`Copy.iss:453-459`).
+3. The setup logs in `C:\ProgramData\SlateOps\logs` stay after uninstall (`infra/windows/installer/scripts/lib/Uninstall.ps1:676-694`).
 
 ## 9. Questions
 
