@@ -1,5 +1,6 @@
 "use client";
 
+import { isEditionRefusal } from "@/lib/api-errors";
 import { lazy, Suspense, useId, useState } from "react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
@@ -65,6 +66,7 @@ function refusal(
       return "This sheet has too many rows to copy (over 5,000). Export it and import the file instead.";
     if (error.code === "worksheet_copy_forbidden")
       return "Only the owner can copy a sheet that is not open.";
+    if (isEditionRefusal(error)) return error.message;
     if (error.status === 403) return "Guests cannot create sheets.";
     if (error.status === 409)
       return onModule

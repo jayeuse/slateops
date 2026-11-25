@@ -1,5 +1,6 @@
 "use client";
 
+import { EditionGate } from "../shared/components/edition-preview";
 import { SANDBOX_SHORTCUTS } from "@/lib/shortcuts";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -1990,16 +1991,18 @@ function SandboxWorkspace() {
         ) : null}
         {section === "Triggers" && session ? (
           <div className={sandboxPanelClass}>
-            <TriggerStudio
-              design={session.document.design}
-              triggerDraft={triggerDraft}
-              runs={triggerRuns}
-              activity={triggerActivity}
-              initialSelectedId={search.get("rule") ?? undefined}
-              initialStatus={triggerStatusFromSearch(search.get("status"))}
-              newTriggerModuleId={search.get("new-trigger") ?? undefined}
-              onRefreshActivity={refreshTriggerActivity}
-            />
+            <EditionGate feature="automations">
+              <TriggerStudio
+                design={session.document.design}
+                triggerDraft={triggerDraft}
+                runs={triggerRuns}
+                activity={triggerActivity}
+                initialSelectedId={search.get("rule") ?? undefined}
+                initialStatus={triggerStatusFromSearch(search.get("status"))}
+                newTriggerModuleId={search.get("new-trigger") ?? undefined}
+                onRefreshActivity={refreshTriggerActivity}
+              />
+            </EditionGate>
           </div>
         ) : null}
         {section === "Test" && session ? (

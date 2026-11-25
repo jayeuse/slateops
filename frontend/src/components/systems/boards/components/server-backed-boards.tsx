@@ -1,4 +1,5 @@
 "use client";
+import { EditionGate } from "../../shared/components/edition-preview";
 import { useDisplayRegion } from "@/components/use-display-region";
 
 import { Suspense, useCallback, useEffect, useState } from "react";
@@ -667,17 +668,19 @@ function ServerBackedBoardsContent() {
             )}
 
             {section === "gantt" ? (
-              <ServerBackedBoardGantt
-                key={board.id}
-                board={board}
-                search={search}
-                region={displayRegion ?? { timezone: "UTC", locale: "en-US" }}
-                today={workspaceCalendar.data?.today ?? ""}
-                weekStart={workspaceCalendar.data?.week_start ?? "monday"}
-                kanbanHref={canonicalBoardUrl(board, "kanban")}
-                onParams={updateKanbanParams}
-                onDraftStateChange={onGanttDraftStateChange}
-              />
+              <EditionGate feature="gantt">
+                <ServerBackedBoardGantt
+                  key={board.id}
+                  board={board}
+                  search={search}
+                  region={displayRegion ?? { timezone: "UTC", locale: "en-US" }}
+                  today={workspaceCalendar.data?.today ?? ""}
+                  weekStart={workspaceCalendar.data?.week_start ?? "monday"}
+                  kanbanHref={canonicalBoardUrl(board, "kanban")}
+                  onParams={updateKanbanParams}
+                  onDraftStateChange={onGanttDraftStateChange}
+                />
+              </EditionGate>
             ) : section === "kanban" ? (
               <ServerBackedBoardKanban
                 key={board.id}

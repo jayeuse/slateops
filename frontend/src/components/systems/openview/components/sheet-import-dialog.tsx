@@ -1,5 +1,6 @@
 "use client";
 
+import { isEditionRefusal } from "@/lib/api-errors";
 import {
   useEffect,
   useId,
@@ -135,6 +136,7 @@ function readFailure(error: unknown): string {
         : {};
     if (error.status === 413)
       return "This Excel file is too large to read. Save it as CSV and import that.";
+    if (isEditionRefusal(error)) return error.message;
     if (error.status === 403) return "Guests cannot import files.";
     if (error.code === "import_file_invalid") {
       if (details.reason === "macro")
@@ -170,6 +172,7 @@ function batchFailure(
   if (error instanceof ApiError) {
     if (error.code === "structure_changed")
       return `The columns of ${sheetTitle} changed meanwhile, so the rest were not added.`;
+    if (isEditionRefusal(error)) return error.message;
     if (error.status === 403)
       return "You can no longer change this sheet, so the rest were not added.";
     if (error.status === 404)
@@ -227,6 +230,7 @@ function createFailure(error: ApiError, onModule: boolean): string {
       : "This record was deleted or its module was closed, so it cannot hold a new sheet.";
   if (error.status === 404)
     return "A chosen module, or this record, is no longer available. Nothing was added.";
+  if (isEditionRefusal(error)) return error.message;
   if (error.status === 403) return "Guests cannot create sheets.";
   return "The sheet could not be made. Nothing was added. Try again.";
 }

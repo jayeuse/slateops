@@ -1,5 +1,6 @@
 "use client";
 
+import { isEditionRefusal } from "@/lib/api-errors";
 import { lazy, Suspense, useId, useState, type ReactNode } from "react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
@@ -108,6 +109,7 @@ function createRefusal(error: unknown, anchor: SheetAnchor): string {
       return onModule
         ? "This module is no longer available."
         : "This record is no longer available.";
+    if (isEditionRefusal(error)) return error.message;
     if (error.status === 403) return "Guests cannot create sheets.";
     if (error.status === 422) return "Check the name and try again.";
   }

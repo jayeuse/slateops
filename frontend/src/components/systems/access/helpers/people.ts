@@ -1,4 +1,5 @@
 import { ApiContractError, ApiError } from "@/lib/api";
+import { isEditionRefusal } from "@/lib/api-errors";
 import { apiErrorReference, type ApiErrorText } from "@/lib/api-errors";
 import {
   EMAIL_NOT_CONFIGURED_MESSAGE,
@@ -789,6 +790,7 @@ export function presentAccess(
  */
 export function peopleErrorMessage(error: unknown, fallback: string): string {
   if (isEmailNotConfigured(error)) return EMAIL_NOT_CONFIGURED_MESSAGE;
+  if (isEditionRefusal(error)) return (error as ApiError).message;
   if (error instanceof ApiError) {
     if (error.status === 403)
       return "Only administrators can change people. Reload the page to check your access.";

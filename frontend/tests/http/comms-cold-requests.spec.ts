@@ -63,6 +63,8 @@ test("a cold Comms load sends each shell read once and repeats only by design", 
     // reads them in Sandbox order and reads the module catalog (DA2).
     "GET /api/departments": 2,
     "GET /api/views/data-sources": 1,
+    // The edition, read once for the banner and the OpenComms gate (editions.md).
+    "GET /api/license": 1,
     "GET /api/comms/bootstrap": 2,
     "GET /api/comms/preferences": 2,
     "GET /api/comms/capabilities/channel-creation": 2,
@@ -103,8 +105,8 @@ test("a cold Comms load sends each shell read once and repeats only by design", 
     await expect.poll(counts).toEqual(expected);
     await settleReact(page);
     expect(counts()).toEqual(expected);
-    // 50 Comms and shell reads, and the sidebar's two (DA2).
-    expect(calls).toHaveLength(52);
+    // 51 Comms and shell reads, and the sidebar's two (DA2).
+    expect(calls).toHaveLength(53);
   } finally {
     token.release();
     heartbeat.release();

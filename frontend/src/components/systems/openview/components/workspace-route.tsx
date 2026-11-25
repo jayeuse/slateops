@@ -1,5 +1,6 @@
 "use client";
 
+import { EditionGate } from "../../shared/components/edition-preview";
 import { lazy, Suspense } from "react";
 import Link from "next/link";
 import { Alert } from "@/components/ui/alert";
@@ -45,7 +46,11 @@ function OpenViewRouteContent() {
   // The Charts page is gone (BD10): its links open a department dashboard
   // with the builder's saved-chart list.
   else if (section === "dashboards" || section === "charts")
-    content = <ServerBackedDashboards />;
+    content = (
+      <EditionGate feature="dashboards">
+        <ServerBackedDashboards />
+      </EditionGate>
+    );
   // My sheets reads its own list, with no records.read and no stream (P4).
   else if (section === "sheets") content = <MySheets />;
   // The Reports page is gone (DC8, DC9): its links open a module page's

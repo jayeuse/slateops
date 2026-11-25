@@ -1,13 +1,10 @@
 import { failureLabel, type ManageVersion } from "../adapters/backup-api";
 
 // The words of the Updates & licensing summary (MD10): label-left rows for
-// the version, the release check, the last observed release, the license and
-// the limits. The license and limits are facts of every installation.
+// the version, the release check and the last observed release. The edition
+// and its limits are in license-rules.ts.
 
 const EMPTY = "—";
-
-export const LICENSE_WORDS = "No license required · Self-hosted";
-export const LIMITS_WORDS = "None · capacity depends on your server";
 
 const resultWords: Record<ManageVersion["status"], string> = {
   current: "Up to date",

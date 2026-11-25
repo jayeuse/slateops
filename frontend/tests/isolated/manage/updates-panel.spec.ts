@@ -10,7 +10,7 @@ import {
 // What the Updates & licensing summary says for each recorded version state. The
 // http journeys keep the refresh, the event-driven re-read, the load failure
 // and the administrator-only denial: "Updates and licensing share a real
-// read-only destination and never simulate upgrades or licenses" and
+// read-only destination and never simulate upgrades" and
 // "Recorded version loading, denial, stale and current observations remain
 // honest on refresh". The current, unknown and not-recorded states moved
 // here with the same version records.
@@ -36,9 +36,6 @@ function version(values: Partial<ManageVersion>): ManageVersion {
   };
 }
 
-const license = ">No license required · Self-hosted<";
-const limits = ">None · capacity depends on your server<";
-
 for (const row of [
   {
     name: "an unavailable release source says so and claims nothing",
@@ -48,8 +45,6 @@ for (const row of [
       "<span>The release check is not available</span>",
       ">· The release source was unavailable<",
       ">Last successful check — · Last attempt Oct 7, 2026, 11:00 PM<",
-      license,
-      limits,
     ],
     hidden: ["Up to date", "Release notes", "Latest release", 'role="status"'],
   },
@@ -155,13 +150,13 @@ for (const row of [
   {
     name: "a refused read shows the owner-only message and no version",
     state: { version: null, refused: true },
-    shown: ["Only the installation owner can review version status.", license],
+    shown: ["Only the installation owner can review version status."],
     hidden: [">Version</dt>", "Release check", "Loading version status"],
   },
   {
     name: "a failed read asks to try again and shows no version",
     state: { version: null, failed: true },
-    shown: ["Version status could not be loaded. Try again.", limits],
+    shown: ["Version status could not be loaded. Try again."],
     hidden: [">Version</dt>", "Release check"],
   },
   {

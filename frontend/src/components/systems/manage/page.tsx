@@ -1,4 +1,6 @@
 "use client";
+import { useHasFeature } from "../shared/adapters/license-api";
+import { EditionPreview } from "../shared/components/edition-preview";
 import { referenceViewerFor } from "@/lib/reference-viewer";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -88,6 +90,7 @@ import { BackupPanel } from "./components/backup-panel";
 import { useManageMaintenance } from "./state/controller";
 import { isManageBackupExportId } from "./adapters/backup-api";
 import { UpdatesPanel } from "./components/updates-panel";
+import { LicensePanel } from "./components/license-panel";
 import { SystemHealth } from "./components/system-health";
 import { ManageUnavailable } from "./components/manage-unavailable";
 import { EmailSetupPanel } from "./components/email-setup-panel";
@@ -223,6 +226,8 @@ export default function Manage() {
 
 function ManageContent() {
   const searchParams = useSearchParams();
+  // The audit viewer is an Office feature (spec editions.md ED-11); recording continues.
+  const hasAuditViewer = useHasFeature("audit_viewer");
   const router = useRouter();
   const legacySecurity = searchParams.get("view")?.toLowerCase() === "security";
   const requestedTab = manageTabFromQuery(searchParams.get("view"));
@@ -1540,7 +1545,12 @@ function ManageContent() {
             </div>
           ) : null}
 
-          {sectionShown && tab === "Audit" ? (
+          {sectionShown && tab === "Audit" && !hasAuditViewer ? (
+            <>
+              {renderPageHeader()}
+              <EditionPreview feature="audit_viewer" />
+            </>
+          ) : sectionShown && tab === "Audit" ? (
             <ManageAudit
               renderHeader={renderPageHeader}
               securityEventsAdmitted={verifiedOrganizationRole === "admin"}
@@ -1575,8 +1585,9 @@ function ManageContent() {
           {sectionShown && tab === "Email" ? <EmailSetupPanel /> : null}
 
           {sectionShown && tab === "Updates & licensing" ? (
-            <div className="manage-scroll min-w-0">
+            <div className="manage-scroll flex min-w-0 flex-col gap-4">
               <UpdatesPanel maintenance={maintenance} />
+              <LicensePanel />
             </div>
           ) : null}
         </div>

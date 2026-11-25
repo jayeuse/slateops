@@ -78,3 +78,17 @@ test("only GET requests count as reads in shared report helpers", () => {
   expect(isReadRequest({ method: "POST" })).toBe(false);
   expect(isReadRequest({ method: "PATCH" })).toBe(false);
 });
+
+test("an edition refusal (an Office feature on Desk) does not refuse OpenView access", async () => {
+  const office = () =>
+    Promise.reject(
+      new ApiError(
+        403,
+        "Reports is available in Office and Headquarters.",
+        undefined,
+        "edition_required",
+      ),
+    );
+  await trackOpenViewRead(office).catch(() => undefined);
+  expect(isOpenViewAccessDenied()).toBe(false);
+});

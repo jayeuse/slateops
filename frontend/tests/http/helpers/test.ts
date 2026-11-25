@@ -7,6 +7,7 @@ import {
   type Route,
 } from "@playwright/test";
 import { wireWorkspace } from "../../helpers/wire";
+import { developmentLicense } from "./license";
 
 // The shared `test` for HTTP specs. The auth gate reads `/api/auth/session`
 // and the app navigation reads `/api/auth/me` on every signed-in page, and the
@@ -292,6 +293,14 @@ export const test = base.extend({
         headers: { "Cache-Control": "no-store" },
         json: { theme: "slate" },
       }),
+    );
+    // The shell reads the edition once (spec editions.md); the default is a
+    // development installation with every feature. Edition specs use
+    // `mockLicense(page, ...)`, whose page route wins.
+    await context.route("**/api/license", (route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({ json: developmentLicense() })
+        : route.fallback(),
     );
     // Saved navigation branding uses the existing workspace read. Page-specific
     // routes still own their role-filtered profile and all workspace writes.

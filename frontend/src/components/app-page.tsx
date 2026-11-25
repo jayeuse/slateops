@@ -1,5 +1,6 @@
 "use client";
 
+import { EditionBanner } from "@/components/systems/shared/components/edition-banner";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -1155,6 +1156,7 @@ export function AppPage({ children }: AppPageProps) {
                 onSignOutAccepted={acceptSignOut}
               >
                 <MfaCleanupNotice flow={mfa} />
+                <EditionBanner />
                 {children}
               </AppShell>
             )}

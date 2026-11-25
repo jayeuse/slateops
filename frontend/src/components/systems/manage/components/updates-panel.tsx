@@ -7,8 +7,6 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { updateProcedureUrl } from "../adapters/backup-api";
 import {
-  LICENSE_WORDS,
-  LIMITS_WORDS,
   latestReleaseWords,
   releaseCheckWords,
   versionWords,
@@ -22,7 +20,7 @@ const linkClassName =
 
 /**
  * Updates & licensing (MD10): one summary of label-left rows (Version,
- * Release check, Latest release, License, Limits), with a quiet Refresh
+ * Release check, Latest release); the edition sits in LicensePanel below, with a quiet Refresh
  * release status and the Update procedure link in its header. The header
  * meta line already says who installs updates.
  */
@@ -74,7 +72,6 @@ export function UpdatesPanel({
     ]);
     if (latest) rows.push(["Latest release", latest]);
   }
-  rows.push(["License", LICENSE_WORDS], ["Limits", LIMITS_WORDS]);
   return (
     <section
       aria-labelledby="manage-updates-heading"
