@@ -67,6 +67,8 @@ from app.systems.manage.audit.service import (
     list_audit_log_options,
     list_audit_logs,
 )
+from app.systems.manage.licensing.editions import Feature
+from app.systems.manage.licensing.limits import require_feature
 from app.systems.sandbox.records.access import record_access
 
 router = APIRouter(prefix="/audit-logs", tags=["audit"])
@@ -153,6 +155,8 @@ def get_audit_logs(
         if entity_id is None or department_id is not None:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
         return _record_history(db, user, params, entity_id, filters)
+    if entity_id is None:  # one record's history stays in every edition (spec editions.md)
+        require_feature(db, Feature.AUDIT_VIEWER)
     result = list_audit_logs(
         db, params, reader=user, entity_id=entity_id, department_id=department_id, **filters
     )
@@ -198,6 +202,7 @@ def get_audit_log_options(
     search: Annotated[str | None, Query(max_length=100)] = None,
 ) -> AuditLogOptionsResponse:
     _require_audit_list_visibility(user, db, department_id)
+    require_feature(db, Feature.AUDIT_VIEWER)
     entity_types, actor_options = list_audit_log_options(
         db,
         department_id=department_id,
@@ -243,6 +248,7 @@ def export_audit_logs(
     created_after: datetime | None = None,
     created_before: datetime | None = None,
 ) -> Response:
+    require_feature(db, Feature.AUDIT_VIEWER)
     statement = audit_log_statement(
         action=action,
         entity_type=entity_type,

@@ -45,6 +45,7 @@ from app.systems.manage.audit.security_events import (
     append_committed_security_event,
     append_security_event,
 )
+from app.systems.manage.licensing.limits import require_person
 from app.systems.manage.workspace.models import WorkspaceProfile
 
 
@@ -158,6 +159,7 @@ def invite_user(
             sponsor_user_id=payload.sponsor_user_id,
             expires_at=expires_at,
         )
+        require_person(db, role.value)  # edition limit (spec editions.md ED-3)
         if role is UserRole.ADMIN and payload.group_ids:
             raise ProfileValidationError(
                 "Administrators have access everywhere and are not group members"

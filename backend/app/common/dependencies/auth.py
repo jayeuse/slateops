@@ -42,6 +42,7 @@ from app.systems.access.users.schemas import DefaultOrganizationBlocked
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.security_events import SecurityEventPersistenceError
 from app.systems.manage.audit.security_failures import append_committed_failure
+from app.systems.manage.licensing.limits import refuse_read_only_write
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.security_policy import (
     ip_allowed,
@@ -317,6 +318,7 @@ def resolve_membership(
         )
     require_allowed_source(request, db, org, person_id=identity.user.id)
     scope_session(db, org_id)
+    refuse_read_only_write(request, db, membership)  # license ended (spec editions.md ED-9)
     # A server error of this request belongs to this organization (S6-C1).
     context = getattr(request.state, "request_context", None)
     if isinstance(context, RequestContext):

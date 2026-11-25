@@ -2,7 +2,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.utils import is_body_allowed_for_status_code
@@ -69,6 +69,9 @@ from app.systems.manage.backups.router import router as backups_router
 from app.systems.manage.health.router import router as system_status_router
 from app.systems.manage.health.worker import SystemHealthWorker
 from app.systems.manage.jobs.router import router as jobs_router
+from app.systems.manage.licensing.editions import Feature
+from app.systems.manage.licensing.limits import feature_gate
+from app.systems.manage.licensing.router import router as license_router
 from app.systems.manage.workspace.router import router as workspace_router
 from app.systems.manage.workspace.security_router import router as workspace_security_router
 from app.systems.openview.charts.router import router as charts_router
@@ -266,11 +269,19 @@ def create_app() -> FastAPI:
     app.include_router(board_attachments_router, prefix="/api")
     app.include_router(board_files_router, prefix="/api")
     app.include_router(boards_router, prefix="/api")
-    app.include_router(comms_router, prefix="/api")
+    # Office features answer 403 `edition_required` on Desk (spec editions.md ED-7).
+    app.include_router(
+        comms_router, prefix="/api", dependencies=[Depends(feature_gate(Feature.OPENCOMMS))]
+    )
     app.include_router(charts_router, prefix="/api")
-    app.include_router(dashboards_router, prefix="/api")
-    app.include_router(reports_router, prefix="/api")
-    app.include_router(report_schedule_router, prefix="/api")
+    app.include_router(
+        dashboards_router, prefix="/api",
+        dependencies=[Depends(feature_gate(Feature.DASHBOARDS))],
+    )
+    for router in (reports_router, report_schedule_router):
+        app.include_router(
+            router, prefix="/api", dependencies=[Depends(feature_gate(Feature.REPORTS))]
+        )
     app.include_router(views_router, prefix="/api")
     app.include_router(worksheets_router, prefix="/api")
     app.include_router(worksheet_rows_router, prefix="/api")
@@ -285,6 +296,7 @@ def create_app() -> FastAPI:
     app.include_router(workspace_router, prefix="/api")
     app.include_router(workspace_security_router, prefix="/api")
     app.include_router(backups_router, prefix="/api")
+    app.include_router(license_router, prefix="/api")
     app.include_router(jobs_router, prefix="/api")
     app.include_router(system_status_router, prefix="/api")
     app.include_router(files_router, prefix="/api")

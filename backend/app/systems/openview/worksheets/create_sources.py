@@ -21,6 +21,7 @@ from uuid6 import uuid7
 
 from app.systems.access.policy.checks import module_level
 from app.systems.access.users.models import User
+from app.systems.manage.licensing.limits import require_sheet_rows
 from app.systems.openview.worksheets.access import load_visible_worksheet, worksheet_states
 from app.systems.openview.worksheets.cells import row_bytes
 from app.systems.openview.worksheets.expression import (
@@ -295,5 +296,6 @@ def copy_rows(db: Session, source: Worksheet, target: Worksheet, draft: Draft) -
             changed_keys=sorted({*data, *(kept[link.column_key] for link in
                                           links.get(row.id, []))}),
         ))
+    require_sheet_rows(db, 0, len(rows))  # edition limit (spec editions.md ED-6)
     target.live_row_count = len(rows)
     target.data_bytes = total

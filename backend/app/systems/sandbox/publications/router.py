@@ -196,6 +196,9 @@ def _error(code: str, message: str, status_code: int = 409) -> HTTPException:
 def _run[Result](db: Session, operation: Callable[[], Result]) -> Result:
     try:
         return operation()
+    except HTTPException:  # an edition limit (spec editions.md ED-4)
+        db.rollback()
+        raise
     except SandboxDesignError as error:
         db.rollback()
         raise _error(error.code, error.message, error.status_code) from error

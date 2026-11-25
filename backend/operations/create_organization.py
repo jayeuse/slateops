@@ -27,6 +27,7 @@ from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.access.users.schemas import InvitationCreate
 from app.systems.access.users.service import invite_user, reconcile_invitation
 from app.systems.boards.models import Board
+from app.systems.manage.licensing.limits import require_first_organization
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.designs.models import SandboxDocument
 from app.systems.sandbox.designs.schemas import DesignDocument
@@ -95,6 +96,7 @@ def provision(
         if invitation is None or provider_user_id is not None:
             raise ValueError("Organization already exists")
         return _resume_invitation(db, reserved, invitation)
+    require_first_organization(db)  # one organization in every edition (DEC-0050, ED-8)
     provider = get_supabase_auth_client()
     user = None
     if provider_user_id is not None:

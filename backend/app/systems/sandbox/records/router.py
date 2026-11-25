@@ -21,6 +21,7 @@ from app.systems.access.policy.checks import module_filter, require_module_acces
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import includes
 from app.systems.access.users.models import User
+from app.systems.manage.licensing.limits import require_records
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.fields.validation import parse_field_key, validate_record_data
 from app.systems.sandbox.modules.models import Module
@@ -277,6 +278,7 @@ def create_record(
 ) -> RecordResponse:
     require_module_access(db, user, payload.module_id, AccessLevel.WRITE)
     _lock_active_module(db, payload.module_id)
+    require_records(db, payload.module_id)  # edition limit (spec editions.md ED-5)
     fields = _module_fields(db, payload.module_id)
     if not any(not field.is_deleted for field in fields):
         raise _conflict("Module has no active fields")
