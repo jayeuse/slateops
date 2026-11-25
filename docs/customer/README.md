@@ -4,7 +4,7 @@ These documents are for customers of Slate Operations. They describe the current
 
 | Document | Reader | Status |
 |---|---|---|
-| [Setup and support agreement](service-agreement.md) | Customer and provider | Draft. Not legal advice. A lawyer reviews it before use. |
+| [Setup and support order](service-agreement.md) | Customer and provider | Draft. Not legal advice. Short service order with small promises. |
 | [Support policy](support-policy.md) | Customer | Draft. Not legal advice. A lawyer reviews it before use. |
 | [Data and privacy statement](data-and-privacy.md) | Customer | Draft. Not legal advice. A lawyer reviews it before use. |
 | [Quick start](quick-start.md) | Person at the server PC | Draft |

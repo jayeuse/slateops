@@ -2,7 +2,7 @@
 
 > **Draft: not legal advice. Review before use.**
 >
-> This policy belongs to the [setup and support agreement](service-agreement.md). If the two differ, the agreement applies.
+> This policy belongs to the [setup and support order](service-agreement.md). If the two differ, the order applies.
 >
 > **Blanks to fill:** [support contact], [support hours], [time zone], [response time], [urgent response time], [visits per year], [owner legal name].
 >
@@ -29,7 +29,7 @@ A request is **urgent** when nobody can sign in, or when the app or a backup fai
 4. Help with backups and restores. The Customer restores the latest backup with one button in Slate Operations settings. The Provider restores an older backup through a remote session ([plan 8.4](../plans/windows-installer.md#84-restore-in-v1)).
 5. Up to [visits per year] visits on site each support year.
 
-The [setup and support agreement](service-agreement.md), section 8, lists what support does not cover.
+The [setup and support order](service-agreement.md), section 7, lists what support does not cover.
 
 ## 4. How to ask for help
 
@@ -37,7 +37,7 @@ The [setup and support agreement](service-agreement.md), section 8, lists what s
 2. If the problem is with setup or the server PC, open the Start menu and select **Slate Operations - Save report**. Send the zip file that it saves on your desktop ([plan 10.6](../plans/windows-installer.md#106-save-report)).
 3. The report replaces passwords, keys, email addresses and user names. It is designed to hold no business records (unverified for the logs of third-party parts). Nothing is sent automatically ([plan 10.6](../plans/windows-installer.md#106-save-report)).
 
-**Remote sessions.** The Provider connects to your PC only when you ask for it and agree to the session. You can stop the session at any time. The Provider uses the session only for the support task.
+**Remote sessions.** The Provider connects to your PC only when you ask for it. You watch the session and can stop it at any time. The Provider uses the session only for the support task and does not copy your data.
 
 ## 5. What the Customer does
 
