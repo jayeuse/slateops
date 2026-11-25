@@ -2601,6 +2601,8 @@ begin
     { Owner item 8 (rc.35 round): M01 sets DataPrepared from install.json but has no
       background stage; its report left the Linux part out every time. }
     and not ((EntryScreen <> 'M01') and DataPrepared and not BgDone and not BgFailed)
+    { PR 122 review: a log-bundle job would start Linux that the owner chose not to start. }
+    and not ((EntryScreen = 'M01') and (MaintStatus = 'not_started'))
     and not (InstallStarted and not InstallDone and not InstallFailed)
     and not ((EntryScreen = 'M05') and (UpdPhase <> '') and not UpdFailed);
 end;

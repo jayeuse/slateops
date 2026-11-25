@@ -601,6 +601,17 @@ begin
     ReportLine := '';
     ReportPath := '';
   end;
+  { PR 122 review: not started (automatic start off) means no action that runs Linux, since
+    any engine job starts Linux and Docker; Open, the phone code, Save report (with no Linux
+    part, ReportJobAllowed) and Start stay. }
+  if (MaintStatus = 'not_started') and (TNewButton(Sender).Tag >= 3) and (TNewButton(Sender).Tag <= 9)
+    and (TNewButton(Sender).Tag <> 7) then
+  begin
+    MaintLine := CM('m01_start_first');
+    MaintLineSev := 'warn';
+    RenderPage(P_MAINT);
+    Exit;
+  end;
   case TNewButton(Sender).Tag of
     0: OpenAsUser(AddressUrl, '');
     2: begin

@@ -367,6 +367,7 @@ m01_stop_done=Slate Operations is stopped.
 m01_start_done=Slate Operations is running again.
 m01_power_busy=Slate Operations is busy with another task. Try again in a few minutes.
 m01_power_failed=Setup could not do this. Select Save report and send the file to Slate Operations support.
+m01_start_first=Slate Operations is not started. Select Start Slate Operations first.
 m01_autostart_on=Slate Operations starts automatically when this PC starts.
 m01_autostart_off=Slate Operations does not start automatically when this PC starts.
 m01_autostart_turn_off=Turn off

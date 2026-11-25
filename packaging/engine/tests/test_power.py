@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from engine import power
+from engine.runner import Result
 
 from .test_update import TARGET, Installed
 
@@ -70,3 +71,38 @@ def test_start_starts_docker_and_the_timer_then_waits_for_the_services(
     ]
     assert not power.stopped(machine.paths)
     assert machine.index("caddy") > machine.index(" api")  # caddy last, after the api
+
+
+def test_a_stop_that_cannot_stop_docker_is_not_recorded_as_stopped(machine: Installed) -> None:
+    # PR 122 review: a failed Stop leaves no marker, so Stop can be tried again.
+    real = machine.fake._do
+
+    def docker_will_not_stop(argv, env, stdin):  # type: ignore[no-untyped-def]
+        if argv[:2] == ["systemctl", "stop"] and "docker.service" in argv:
+            return Result(1, b"", b"Job for docker.service failed\n")
+        return real(argv, env, stdin)
+
+    machine.fake._do = docker_will_not_stop  # type: ignore[method-assign]
+
+    code, result = machine.job("stop", {"run_id": RUN})
+
+    assert (code, result["code"]) == (3, "stop_failed")
+    assert not power.stopped(machine.paths)
+
+
+def test_a_start_whose_services_do_not_come_up_stays_stopped(machine: Installed) -> None:
+    # PR 122 review: Start stays on offer until the services are ready.
+    machine.job("stop", {"run_id": RUN})
+    real = machine.fake._do
+
+    def api_never_ready(argv, env, stdin):  # type: ignore[no-untyped-def]
+        if "exec" in argv and "api" in argv:
+            return Result(1, b"", b"service api is not running")
+        return real(argv, env, stdin)
+
+    machine.fake._do = api_never_ready  # type: ignore[method-assign]
+
+    code, _ = machine.job("start", {"run_id": "maintenance-20261125T120300Z-ab12cd"})
+
+    assert code == 3
+    assert power.stopped(machine.paths)

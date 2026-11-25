@@ -57,9 +57,10 @@ def stop(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
         progress.report(ctx, "stop")
         if not ctx.runner.run(step, ["systemctl", "stop", TIMER], timeout=60).ok:
             raise failed("stop_failed")
-        write_private(marker(ctx.paths), b"stopped\n")
+        # PR 122 review: stopped only once Docker is down, so a failed Stop can be retried.
         if not ctx.runner.run(step, ["systemctl", "stop", *DOCKER], timeout=300).ok:
             raise failed("stop_failed")
+        write_private(marker(ctx.paths), b"stopped\n")
     ctx.log.line(step, "INFO", "Slate Operations stopped until Start or the next start of Linux")
     return {"code": "stopped"}
 
@@ -70,10 +71,11 @@ def start(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     progress.report(ctx, "docker")
     if not ctx.runner.run(step, ["systemctl", "start", *DOCKER], timeout=300).ok:
         raise failed("start_failed")
-    marker(ctx.paths).unlink(missing_ok=True)
     if not ctx.runner.run(step, ["systemctl", "start", TIMER], timeout=60).ok:
         raise failed("start_failed")
     step = ctx.step(2, "services")
     progress.report(ctx, "services")
     update.start_all(ctx, step, instance)
+    # PR 122 review: Start stays on offer until the services are ready.
+    marker(ctx.paths).unlink(missing_ok=True)
     return {"code": "started"}

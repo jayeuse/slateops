@@ -790,6 +790,11 @@ class W9ReviewCorrectionTest(unittest.TestCase):
         )  # a skipped minute writes no log
         exec_lib = (SCRIPTS / "lib/Exec.ps1").read_text(encoding="ascii")
         self.assertIn("'admin-password', 'stop', 'start')", exec_lib)
+        # PR 122 review: not started means no action that runs Linux, Save report included.
+        self.assertIn("(MaintStatus = 'not_started') and (TNewButton(Sender).Tag >= 3)", click)
+        self.assertIn("and (TNewButton(Sender).Tag <> 7) then", click)
+        allowed = routine(self.raw, "function ReportJobAllowed: Boolean;")
+        self.assertIn("not ((EntryScreen = 'M01') and (MaintStatus = 'not_started'))", allowed)
 
     def test_item_13_s06_before_s14_has_no_cancel_answer(self) -> None:
         cancel = routine(
