@@ -226,6 +226,8 @@ class BackupWire:
                     checked_at="2026-10-03T00:00:00",
                     failure_code="release_timeout",
                 )
+        elif (method, path) == ("GET", "/api/license"):
+            body = {"edition": "development"}
         else:
             raise AssertionError(f"Unexpected sample backup request: {method} {path}")
         return httpx.Response(200, json=body, headers=headers)
@@ -269,9 +271,9 @@ def test_backup_controls_restore_policy_and_verify_queue_beyond_visible_history(
         assert results[4]["version_observation"] == wire.version
         assert results[4]["version_observation"]["current_version"] == "2.7.1"
         descriptors = [row for result in results for row in result["request_evidence"]]
-        assert len(descriptors) == len(wire.requests) == 11
-        assert len({row["request_id"] for row in descriptors}) == 11
-        assert [result["read_checks"] for result in results] == [1, 3, 1, 2, 1]
+        assert len(descriptors) == len(wire.requests) == 12
+        assert len({row["request_id"] for row in descriptors}) == 12
+        assert [result["read_checks"] for result in results] == [1, 3, 1, 2, 2]
         journal = (tmp_path / "requests.jsonl").read_text()
         assert "Idempotency-Key" not in journal
         assert dataset.organization.identity.workspace_name not in journal
@@ -430,7 +432,7 @@ def test_backup_reconciliation_requires_exact_descriptors_and_current_owned_read
         clean = tamper in {None, "version_changed"}
         assert bool(issues) is not clean
         if clean:
-            assert counts["control_requests_verified"] == 11
+            assert counts["control_requests_verified"] == 12
             assert counts["backup_requests_queued"] == 1
             assert counts["backup_policy_restored"] == 1
             assert counts["backup_version_reviewed"] == 1

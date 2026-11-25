@@ -111,7 +111,8 @@ def import_license(
             raise LicenseInvalid("This license file has ended")
     except LicenseInvalid as error:  # nothing written yet
         raise HTTPException(
-            status_code=422, detail={"code": "license_invalid", "message": str(error)}
+            status_code=422, detail={"code": "license_invalid", "message": str(error)},
+            headers={"Cache-Control": "no-store"},
         ) from error
     try:
         if row is None:
