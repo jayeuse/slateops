@@ -795,6 +795,11 @@ class W9ReviewCorrectionTest(unittest.TestCase):
         self.assertIn("and (TNewButton(Sender).Tag <> 7) then", click)
         allowed = routine(self.raw, "function ReportJobAllowed: Boolean;")
         self.assertIn("not ((EntryScreen = 'M01') and (MaintStatus = 'not_started'))", allowed)
+        # Owner rc.40 test: Stop and Start wait for a busy engine, at most 10 times, 30 s apart.
+        poll = routine(self.raw, "procedure PollMaint;\nvar")
+        self.assertIn("(PowerTries < RECEIVE_BUSY_TRIES)", poll)
+        self.assertIn("MaintPhase := MaintPhase + '-wait';", poll)
+        self.assertIn("(Elapsed(PowerWaitAt) >= UPDATE_WAIT_MS)", poll)
 
     def test_item_13_s06_before_s14_has_no_cancel_answer(self) -> None:
         cancel = routine(

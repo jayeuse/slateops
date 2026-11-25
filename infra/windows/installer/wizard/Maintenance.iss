@@ -276,6 +276,7 @@ procedure StartPower(Job: String);
 begin
   MaintAt := GetTickCount;
   MaintLine := '';
+  PowerTries := 0;
   if Job = 'start' then
   begin
     if RunStep('start-boot', '', 'power-boot', CM('m01_starting'), 0, 0, HELPER_LIMIT_MS) then
@@ -836,6 +837,13 @@ begin
     RenderPage(P_MAINT);
     Exit;
   end;
+  { Owner rc.40 test: Stop and Start wait for a busy engine as the restore does. }
+  if ((MaintPhase = 'stop-wait') or (MaintPhase = 'start-wait')) and (Elapsed(PowerWaitAt) >= UPDATE_WAIT_MS) and not JobRunning then
+  begin
+    SubmitPower(Copy(MaintPhase, 1, Length(MaintPhase) - 5));
+    RenderPage(P_MAINT);
+    Exit;
+  end;
   if (MaintPhase = '') or (JobState <> JOB_DONE) then
     Exit;
   { W14-D9: only this phase's job (Save report can run a job too). }
@@ -892,6 +900,15 @@ begin
   end
   else if (MaintPhase = 'stop') or (MaintPhase = 'start') then
   begin
+    if ((JobCode = 'engine_busy') or (JobCode = 'runner_busy')) and (PowerTries < RECEIVE_BUSY_TRIES) then
+    begin
+      PowerTries := PowerTries + 1;
+      Log('Stop or Start: the engine is busy; it waits and tries again (' + IntToStr(PowerTries) + ' of ' + IntToStr(RECEIVE_BUSY_TRIES) + ').');
+      MaintPhase := MaintPhase + '-wait';
+      PowerWaitAt := GetTickCount;
+      RenderPage(P_MAINT);
+      Exit;
+    end;
     if JobCode <> MaintPhase + 'ed' then
       Log('Stop or Start: the job ' + MaintPhase + ' answered ' + JobCode + '.');
     MaintPhase := '';
@@ -2351,6 +2368,8 @@ begin
   end
   else if MaintPhase = 'adminpw-selftest' then
     Result := OneLine(0, 0, CM('s09_channel'), MaintAt)
+  else if (MaintPhase = 'stop-wait') or (MaintPhase = 'start-wait') then
+    Result := OneLine(0, 0, CM('m01_restore_busy'), MaintAt)
   else if (MaintPhase = 'stop') or (MaintPhase = 'start') then
   begin
     Action := '';

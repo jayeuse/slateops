@@ -341,6 +341,8 @@ var
   MaintLineSev, RestoreResult, RestoreCode, RestoreState, RestoreBackupAt: String;
   { Owner request 2026-11-25: Stop and Start, and Start with Windows. }
   MaintStopped, MaintAutostart: Boolean;
+  PowerTries: Integer;
+  PowerWaitAt: Cardinal;
   RestoreTries: Integer;
   RestoreWaitAt: Cardinal;
 
