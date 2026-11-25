@@ -1,4 +1,5 @@
 import { expect, heldResponse, signedInAs, test } from "./helpers/test";
+import { mockLicense } from "./helpers/license";
 import type { Page } from "./helpers/test";
 import { mockManageBackups } from "./helpers/manage-backups";
 import { sendOpenViewEvent } from "./helpers/openview-event-source";
@@ -639,10 +640,11 @@ test("Manage preserves section drafts without saving on leave or discard, valida
   await expect(name).toHaveValue("Accepted journey workspace");
 });
 
-test("Updates and licensing share a real read-only destination and never simulate upgrades or licenses", async ({
+test("Updates and licensing show the edition, import a license file and never simulate upgrades", async ({
   page,
 }) => {
   const state = await mockManageBackups(page);
+  const editions = await mockLicense(page);
   const writes: string[] = [];
   page.on("request", (request) => {
     if (request.url().includes("/api/") && request.method() !== "GET")
@@ -652,34 +654,57 @@ test("Updates and licensing share a real read-only destination and never simulat
   await expect(
     page.getByRole("heading", { level: 1, name: "Updates & licensing" }),
   ).toBeVisible();
-  // One summary of label-left rows holds the version and the license.
+  // The Installation summary holds the version; the edition has its own section.
   const software = page.getByRole("region", {
     name: "Installation",
     exact: true,
   });
-  const license = software;
+  const license = page.getByRole("region", {
+    name: "Edition and license",
+    exact: true,
+  });
   await expect(software.getByRole("term")).toHaveText([
     "Version",
     "Release check",
-    "License",
-    "Limits",
   ]);
   await expect(software.getByRole("definition")).toHaveText([
     "0.1.0 · Stable channel",
     /^The release check is not available/,
-    "No license required · Self-hosted",
-    "None · capacity depends on your server",
+  ]);
+  await expect(license.getByRole("definition")).toHaveText([
+    "Desk",
+    "No license file · Desk is free",
+  ]);
+  await expect(
+    license
+      .getByRole("row", { name: /People \(administrators and members\)/ })
+      .getByRole("cell"),
+  ).toHaveText(["2", "2"]);
+  await expect(license.getByRole("listitem")).toHaveText([
+    "Desk · CurrentFree · 2 people",
+    "Office$39 a month or $390 a year · 25 people",
+    "Headquarters$89 a month or $890 a year · 100 people",
   ]);
   await expect(
     page.getByRole("heading", { name: /Software version|License & usage/ }),
   ).toHaveCount(0);
   await expect(software).toContainText("The release check is not available");
-  await expect(license).toContainText("No license required");
   await expect(
-    license.getByText(
-      /Sample license|Activate license|Renew license|Team|Business/,
-    ),
+    license.getByText(/Sample license|Activate license|Team|Business/),
   ).toHaveCount(0);
+  await license.getByLabel("License file").setInputFiles({
+    name: "acme.slatelicense",
+    mimeType: "text/plain",
+    buffer: Buffer.from("payload.signature\n"),
+  });
+  await expect(license.getByRole("status")).toHaveText(
+    "License imported. This installation now runs Office.",
+  );
+  await expect(license.getByRole("definition")).toHaveText([
+    "Office · Licensed to Acme Ltd",
+    "Active until Dec 31, 2026",
+  ]);
+  expect(editions.imports).toEqual(["payload.signature\n"]);
   await expect(
     software.getByRole("button", {
       name: /Review update|Roll back update|Confirm update/,
@@ -722,8 +747,8 @@ test("Updates and licensing share a real read-only destination and never simulat
   await expect(software).toContainText("Version 0.2.0 is available");
   await page.goto("/manage?view=updates");
   await expect(software).toBeVisible();
-  await expect(license).toContainText("No license required");
-  expect(writes).toEqual([]);
+  await expect(license).toContainText("Licensed to Acme Ltd");
+  expect(writes).toEqual(["/api/license"]);
 });
 
 test("Recorded version loading, denial, stale and current observations remain honest on refresh", async ({

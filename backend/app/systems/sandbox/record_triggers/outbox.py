@@ -14,6 +14,8 @@ from uuid6 import uuid7
 from app.core.base_model import utc_now
 from app.core.database.organization_scope import bound_organization_column
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.licensing.editions import Feature
+from app.systems.manage.licensing.limits import has_feature
 from app.systems.sandbox.record_triggers.models import (
     RecordTrigger,
     RecordTriggerEvent,
@@ -27,6 +29,8 @@ def enqueue_record_event(
 ) -> None:
     """Attach an event to the caller's record transaction only when data changed."""
 
+    if not has_feature(db, Feature.AUTOMATIONS):  # Desk runs no automation (ED-7)
+        return
     current = dict(record.data)
     if previous is None:
         kind = "record-created"
@@ -163,6 +167,8 @@ def next_schedule_minute(
 def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> int:
     """Queue each due published schedule once per definition/local minute."""
 
+    if not has_feature(db, Feature.AUTOMATIONS):  # Desk runs no automation (ED-7)
+        return 0
     instant = now or utc_now()
     queued = 0
     definitions = db.scalars(

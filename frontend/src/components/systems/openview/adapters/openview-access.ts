@@ -1,5 +1,6 @@
 "use client";
 
+import { isEditionRefusal } from "../../shared/adapters/license-api";
 import { useSyncExternalStore } from "react";
 import type { z } from "zod";
 import { ApiError, apiFetch, type ApiRequestInit } from "@/lib/api";
@@ -42,7 +43,12 @@ function notify() {
 }
 
 function isRefusal(error: unknown): boolean {
-  return error instanceof ApiError && [401, 403].includes(error.status);
+  // An edition refusal (an Office feature on Desk) is not an access refusal.
+  return (
+    error instanceof ApiError &&
+    [401, 403].includes(error.status) &&
+    !isEditionRefusal(error)
+  );
 }
 
 /**

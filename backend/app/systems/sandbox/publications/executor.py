@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.systems.access.users.membership import bound_organization
+from app.systems.manage.licensing.limits import require_publish_growth, structure_counts
 from app.systems.platform.scheduling.notification_creation import notify_sandbox_publication
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.derived.actions import planned_derived
@@ -167,6 +168,7 @@ def apply_publication(
         raise PublicationError("field_binding_ambiguous", str(error)) from error
     lifecycle_closed = lifecycle_closed_relationships(db, document, bindings)
     retired = stage_bound_names_and_positions(db, document, bindings, actor_id)
+    counts_before = structure_counts(db)  # edition limits (spec editions.md ED-4)
     departments = _apply_departments(db, document, bindings, actor_id)
     modules = _apply_modules(db, document, bindings, departments, actor_id)
     sync_module_chart_departments(db, modules, actor_id)
@@ -209,16 +211,10 @@ def apply_publication(
     db.add(publication)
     db.flush()
     apply_record_triggers(
-        db,
-        document,
-        bindings,
-        modules,
-        fields,
-        publication.id,
-        version.id,
-        plan.workspace_timezone,
-        actor_id,
+        db, document, bindings, modules, fields, publication.id, version.id,
+        plan.workspace_timezone, actor_id,
     )
+    require_publish_growth(db, counts_before)
     _validate_schemas(db, modules)
     _assert_no_record_or_edge_changes(db)
     response = PublicationResponse(

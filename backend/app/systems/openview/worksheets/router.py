@@ -26,6 +26,7 @@ from app.systems.access.policy.checks import module_level
 from app.systems.access.policy.transaction_access import forget_access
 from app.systems.access.users.membership import current_membership
 from app.systems.access.users.models import User, UserRole
+from app.systems.manage.licensing.limits import require_sheet
 from app.systems.openview.worksheets.access import (
     load_visible_worksheet,
     my_worksheets_clause,
@@ -303,6 +304,7 @@ def create_worksheet(
     forget_access(db, user.id)
     original = _source_checks(db, user, payload)  # again under the locks
     org_id = _creation_anchor(db, user, payload)
+    require_sheet(db)  # edition limit (spec editions.md ED-6)
     structure, draft = _structure(db, user, payload, original)
     sheet = Worksheet(
         org_id=org_id, record_id=payload.record_id, module_id=payload.module_id,

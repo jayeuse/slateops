@@ -224,6 +224,7 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         ("GET", "/api/workspace"),
         ("GET", "/api/workspace/security"),
         ("GET", "/api/version"),
+        ("GET", "/api/license"),
         ("PATCH", "/api/access/groups/{group_id}"),
         ("PATCH", "/api/backups/status"),
         ("PATCH", "/api/boards/{board_id}"),
@@ -364,7 +365,9 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
 
 # Each frontend operation requires an executor and actual successful request evidence.
 INTERACTIVE_ACCEPTANCE_ROUTES: dict[Route, str] = {}
-DEFERRED_ROUTES: dict[Route, str] = {}
+# A sample run holds no license file signing key, so it cannot import a valid license
+# file; tests/licensing owns the import (spec docs/specs/editions.md).
+DEFERRED_ROUTES: dict[Route, str] = {("PUT", "/api/license"): "license_signing_key"}
 
 
 @lru_cache(maxsize=1)
@@ -509,6 +512,7 @@ INSTALLATION_ROUTES: frozenset[Route] = frozenset(
         ("GET", "/api/backups/status"),
         ("PATCH", "/api/backups/status"),
         ("GET", "/api/version"),
+        ("GET", "/api/license"),
         ("PATCH", "/api/workspace/security"),
         ("GET", "/api/system/diagnostics/installation"),
     }

@@ -1,5 +1,5 @@
 import { ApiError } from "@/lib/api";
-import { apiErrorMessage } from "@/lib/api-errors";
+import { apiErrorMessage, isEditionRefusal } from "@/lib/api-errors";
 
 export type ImportFailure = { message: string; recheckSession: boolean };
 
@@ -17,6 +17,8 @@ export function importFailure(error: unknown, fallback: string): ImportFailure {
         message: "Your session needs to be checked before continuing.",
         recheckSession: true,
       };
+    if (isEditionRefusal(error))
+      return { message: error.message, recheckSession: false };
     if (error.status === 403)
       return {
         message: "Administrator permission is required to import records.",

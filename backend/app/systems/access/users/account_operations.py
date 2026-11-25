@@ -43,6 +43,7 @@ from app.systems.access.users.outcomes import record_security_event as _record_s
 from app.systems.access.users.schemas import UserResponse, UserUpdate
 from app.systems.comms.realtime.grants import lock_projection, revoke_stale
 from app.systems.manage.audit.models import SecurityEventOutcome
+from app.systems.manage.licensing.limits import require_person
 from app.systems.manage.workspace.security_policy import apply_role_mfa_episode
 from app.systems.openview.worksheets.leave import opening_count, record_opened
 
@@ -100,6 +101,10 @@ def update_user(
     destination_status = payload.status.value if payload.status is not None else user.status
     if payload.status == UserStatus.ACTIVE and not is_established_user(membership):
         raise conflict("Unaccepted invitations require verified acceptance")
+    if payload.status == UserStatus.ACTIVE and UserStatus.DISABLED.value in (
+        user.status, membership.status
+    ):
+        require_person(db, membership.role)  # edition limit (spec editions.md ED-3)
     if (
         payload.status is not None
         or role_change_requested
@@ -166,6 +171,8 @@ def _change_membership_status(
     """Disable or re-enable the person in this organization only (shared accounts)."""
     if payload.status == UserStatus.ACTIVE and not is_established_user(membership):
         raise conflict("Unaccepted invitations require verified acceptance")
+    if payload.status == UserStatus.ACTIVE and membership.status == UserStatus.DISABLED.value:
+        require_person(db, membership.role)  # edition limit (spec editions.md ED-3)
     if payload.status == UserStatus.DISABLED and membership.status == UserStatus.PENDING.value:
         raise conflict("Pending invitations cannot be disabled")
     destination_status = payload.status.value if payload.status is not None else membership.status
@@ -409,6 +416,7 @@ def restore_user(
         raise conflict("User is not deleted")
     if not is_established_user(membership):
         raise conflict("Unaccepted invitations cannot be restored")
+    require_person(db, membership.role)  # edition limit (spec editions.md ED-3)
     if not user.is_deleted:
         before = snapshot_access(db, (user,))
         membership.is_deleted, membership.deleted_at = False, None

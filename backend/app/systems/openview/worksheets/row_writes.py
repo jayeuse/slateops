@@ -14,13 +14,14 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import array
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.core.base_model import utc_now
 from app.systems.access.policy.checks import module_level
 from app.systems.access.policy.transaction_access import forget_access
 from app.systems.access.users.models import User
 from app.systems.access.users.person_visibility import visible_person_ids
+from app.systems.manage.licensing.limits import require_sheet_rows
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.openview.worksheets.access import load_visible_worksheet, worksheet_level
 from app.systems.openview.worksheets.cells import (
@@ -249,6 +250,8 @@ def _sized(context: Context, row: WorksheetRow, rows_added: int) -> None:
         raise worksheet_limit("sheet_size", MAX_SHEET_BYTES, "A sheet holds at most 8 MiB")
     if sheet.live_row_count + rows_added > MAX_ROWS:
         raise worksheet_limit("rows", MAX_ROWS, "A sheet holds at most 10,000 rows")
+    if rows_added and (db := object_session(sheet)) is not None:  # spec editions.md ED-6
+        require_sheet_rows(db, sheet.live_row_count, rows_added)
     sheet.data_bytes = total
     sheet.live_row_count += rows_added
     row.data_bytes = new_size

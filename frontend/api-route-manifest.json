@@ -2820,6 +2820,36 @@
     "path": "/api/notifications/{param}/read"
   },
   {
+    "adapter": "frontend/src/components/systems/shared/adapters/license-api.ts",
+    "function": "importLicense",
+    "method": "PUT",
+    "path": "/api/license"
+  },
+  {
+    "adapter": "frontend/src/components/systems/shared/adapters/license-api.ts",
+    "function": "licenseQueryOptions",
+    "method": "GET",
+    "path": "/api/license"
+  },
+  {
+    "adapter": "frontend/src/components/systems/shared/adapters/license-api.ts",
+    "function": "useHasFeature",
+    "method": "GET",
+    "path": "/api/license"
+  },
+  {
+    "adapter": "frontend/src/components/systems/shared/adapters/license-api.ts",
+    "function": "useLicense",
+    "method": "GET",
+    "path": "/api/license"
+  },
+  {
+    "adapter": "frontend/src/components/systems/shared/adapters/license-api.ts",
+    "function": "useFeatureReady",
+    "method": "GET",
+    "path": "/api/license"
+  },
+  {
     "adapter": "frontend/src/lib/api.ts",
     "function": "checkedSession",
     "method": "GET",

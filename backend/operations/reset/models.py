@@ -73,6 +73,7 @@ APPLICATION_TABLES = (
     "group_members",
     "groups",
     "in_app_notifications",
+    "installation_licenses",
     "identity_mfa_observations",
     "identity_rate_limit_buckets",
     "identity_sessions",
@@ -127,6 +128,8 @@ NON_PRESERVED_TABLES = tuple(
         "backup_runs",
         "platform_operators",
         "platform_settings",
+        # The installation's license file belongs to the installation, not to its data.
+        "installation_licenses",
         # Installation health history and worker signals survive an application reset.
         "system_health_samples",
         "system_health_signals",
@@ -286,7 +289,7 @@ FROM public.users AS profile
 _LOCK_APPLICATION_STATEMENT = """
 LOCK TABLE public.alembic_version, public.audit_logs, public.audit_seals,
  public.backup_export_operations, public.backup_policies, public.backup_runs,
- public.update_statuses,
+ public.update_statuses, public.installation_licenses,
  public.board_attachments, public.board_calendar_sources,
  public.board_event_reminders, public.board_events,
  public.board_card_checklist_items, public.board_card_labels, public.board_cards,

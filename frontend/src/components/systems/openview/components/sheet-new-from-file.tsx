@@ -1,5 +1,6 @@
 "use client";
 
+import { isEditionRefusal } from "@/lib/api-errors";
 import { useEffect, useId, useRef, useState } from "react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
@@ -60,6 +61,7 @@ function templateRefusal(error: unknown, onModule: boolean): string {
       return onModule
         ? "This module was closed, so it cannot hold a new sheet."
         : "This record was deleted or its module was closed, so it cannot hold a new sheet.";
+    if (isEditionRefusal(error)) return error.message;
     if (error.status === 403) return "Guests cannot create sheets.";
     if (error.status === 422)
       return "This template could not be used. Nothing was created.";

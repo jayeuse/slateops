@@ -63,7 +63,8 @@ def plan_backup_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         ("update_restore_backup_policy", 200, {"read_checks": 3, "policy_restored": True}),
         ("queue_backup", 201, {"read_checks": 1, "queued": True}),
         ("review_backup_history", 200, {"read_checks": 2, "owned_queue_verified": True}),
-        ("review_version", 200, {"read_checks": 1, "version_reviewed": True}),
+        # The version and the edition (spec editions.md).
+        ("review_version", 200, {"read_checks": 2, "version_reviewed": True}),
     )
     return tuple(
         PhaseAction(
@@ -214,7 +215,10 @@ def backup_request_contract(action: PhaseAction) -> dict[str, tuple[str, str, st
             ("backup_history", "GET", "/api/backups"),
             ("owned_queue", "GET", "/api/backups"),
         ),
-        "review_version": (("version_observation", "GET", "/api/version"),),
+        "review_version": (
+            ("version_observation", "GET", "/api/version"),
+            ("edition_observation", "GET", "/api/license"),
+        ),
     }
     return {
         step: ("operator", method, path, 201 if method == "POST" else 200)
@@ -396,4 +400,8 @@ def execute_backup_control(
         extra["version_observation"] = _version(
             read("/api/version", "version_observation"), step=action.key
         )
+        if read("/api/license", "edition_observation").get("edition") not in {
+            "desk", "office", "headquarters", "development"
+        }:
+            raise SamplePhaseActionError("The edition read is invalid", step=action.key)
     return _result(action, context, evidence, mappings, extra=extra)

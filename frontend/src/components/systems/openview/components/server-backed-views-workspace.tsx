@@ -1,4 +1,9 @@
 "use client";
+import {
+  useFeatureReady,
+  useHasFeature,
+} from "../../shared/adapters/license-api";
+import { EditionPreview } from "../../shared/components/edition-preview";
 import { useDisplayRegion } from "@/components/use-display-region";
 
 import {
@@ -2696,9 +2701,13 @@ export default function ServerBackedViewsWorkspace({
 
   // Reports (DC1–DC7): the count in the switch, the Reports view's address,
   // and the report dialog, which also opens from the Records view menu.
-  const reportCountQuery = useQuery(
-    moduleReportListOptions(moduleId ?? "", "exclude"),
-  );
+  // Reports are an Office feature (spec editions.md ED-11): Desk reads none.
+  const hasReports = useHasFeature("reports");
+  const reportsReady = useFeatureReady("reports");
+  const reportCountQuery = useQuery({
+    ...moduleReportListOptions(moduleId ?? "", "exclude"),
+    enabled: reportsReady && Boolean(moduleId),
+  });
   const reportCount =
     reportCountQuery.data && !exportAccessDenied
       ? reportCountQuery.data.pagination.total
@@ -3029,14 +3038,18 @@ export default function ServerBackedViewsWorkspace({
           </DropdownMenuGroup>
           {canManageViews ? (
             <>
-              <DropdownMenuSeparator />
-              <DropdownMenuGroup>
-                <MakeReportFromViewItem
-                  view={reportView}
-                  disabled={!currentWorkspace || incompleteFilters}
-                  onOpen={openReportDialog}
-                />
-              </DropdownMenuGroup>
+              {hasReports ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <MakeReportFromViewItem
+                      view={reportView}
+                      disabled={!currentWorkspace || incompleteFilters}
+                      onOpen={openReportDialog}
+                    />
+                  </DropdownMenuGroup>
+                </>
+              ) : null}
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
                 {saving ? null : (
@@ -3323,7 +3336,12 @@ export default function ServerBackedViewsWorkspace({
           }
         />
       </div>
-      {reportsActive && moduleId && moduleName ? (
+      {reportsActive && moduleId && moduleName && !hasReports ? (
+        <EditionPreview feature="reports" />
+      ) : reportsActive &&
+        moduleId &&
+        moduleName &&
+        !reportsReady ? null : reportsActive && moduleId && moduleName ? (
         <ModuleReports
           key={moduleId}
           moduleId={moduleId}

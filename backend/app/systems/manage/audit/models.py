@@ -50,7 +50,7 @@ class AuditLog(Base):
         CheckConstraint(
             "org_id IS NOT NULL OR entity_type IN ('users','platform_settings',"
             "'platform_operators','backup_policies','backup_runs','backup_export_operations',"
-            "'update_statuses') OR COALESCE(("
+            "'update_statuses','installation_licenses') OR COALESCE(("
             "COALESCE(NULLIF(\"after\", 'null'::jsonb), \"before\") -> 'org_id' = 'null'::jsonb "
             "AND ((entity_type = 'files' AND COALESCE(NULLIF(\"after\", 'null'::jsonb), "
             "\"before\") ->> 'purpose' = 'user_avatar') OR "

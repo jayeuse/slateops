@@ -37,18 +37,34 @@ _LATER_COLUMNS = (
 )
 
 
+_LATER_LICENSE_TABLE = """
+CREATE TABLE IF NOT EXISTS public.installation_licenses (
+    id uuid PRIMARY KEY, singleton_key boolean NOT NULL DEFAULT true,
+    license_text text NOT NULL, imported_at timestamptz NOT NULL, seen_through date NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+    deleted_at timestamptz, is_deleted boolean NOT NULL DEFAULT false, performed_by uuid
+)
+"""
+
+
 def add_later_user_column(owner: Engine) -> None:
-    """Let the current `User` and `Membership` models load rows at an older revision."""
+    """Let the current `User` and `Membership` models load rows at an older revision.
+
+    The current app also reads the installation's license row (edition gates), so an empty
+    `installation_licenses` table stands in for the later revision that creates it.
+    """
     with owner.begin() as connection:
         for table, column in _LATER_COLUMNS:
             connection.execute(
                 text(f"ALTER TABLE public.{table} ADD COLUMN {column} timestamptz")
             )
+        connection.execute(text(_LATER_LICENSE_TABLE))
 
 
 def drop_later_user_column(owner: Engine) -> None:
     """Undo `add_later_user_column` before the upgrade that adds the columns."""
     with owner.begin() as connection:
+        connection.execute(text("DROP TABLE IF EXISTS public.installation_licenses"))
         for table, column in _LATER_COLUMNS:
             connection.execute(
                 text(f"ALTER TABLE public.{table} DROP COLUMN IF EXISTS {column}")

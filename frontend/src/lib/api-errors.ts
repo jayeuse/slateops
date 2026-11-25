@@ -1,7 +1,28 @@
 import { ApiContractError, ApiError } from "@/lib/api";
 
-/** Present authored action copy, never untrusted response messages or details. */
+const EDITION_CODES = new Set([
+  "edition_required",
+  "edition_limit",
+  "license_read_only",
+]);
+
+/**
+ * A 403 for the edition (an Office feature, a full limit, or the read-only
+ * state after a license ends; spec docs/specs/editions.md), not for the
+ * person's access. Its message is written for people: show it as is.
+ */
+export function isEditionRefusal(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 403 &&
+    EDITION_CODES.has(String(error.code))
+  );
+}
+
+/** Present authored action copy, never untrusted response messages or details. The
+ * edition refusals carry fixed server copy (spec editions.md), shown as is. */
 export function apiErrorMessage(error: unknown, fallback: string): string {
+  if (isEditionRefusal(error)) return (error as ApiError).message;
   if (error instanceof ApiContractError)
     return "The server returned an unexpected response. Refresh and try again.";
   if (error instanceof TypeError)

@@ -12,6 +12,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.systems.manage.licensing.limits import require_records
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.record_triggers.outbox import enqueue_record_event
 from app.systems.sandbox.records.assignment_notifications import notify_record_assignments
@@ -152,6 +153,8 @@ def prepare_import_rows(
 def create_import_records(db: Session, module_id: UUID, rows: list[PreparedImportRow]) -> None:
     """Attach each valid row and its event; the route owns the single commit."""
 
+    # Edition limit (spec editions.md ED-5): the whole import or nothing.
+    require_records(db, module_id, adding=sum(1 for row in rows if not row.issues))
     fields = list(db.scalars(select(Field).where(Field.module_id == module_id)))
     for row in rows:
         if row.issues:
