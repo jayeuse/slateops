@@ -20,11 +20,9 @@ Test only on an installation that you run yourself.
 
 | Code | Security fixes |
 |---|---|
+| Latest published release (`1.0.x`) | Yes |
 | Latest commit on `main` | Yes |
-| Older commits, other branches, forks | No |
-
-The version `0.1.0` in the package manifests is not a release.
-When the first tagged GitHub release exists, this table will list it.
+| Older releases, other branches, forks | No |
 
 ## How to report
 
