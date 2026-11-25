@@ -27,7 +27,7 @@ First-version choices (DEC-0028):
 
 The company installation service, the email relay, public certificates, the purchase of a code-signing certificate, the managed cloud, installers for macOS or Linux desktops, Windows 10, Windows on Arm, and everything else that DEC-0028 defers. Windows 11 Home stays untested (section 4.2, requirement R2).
 
-The license work is also excluded. It holds the license file format, the signature check, the limit counters and the read-only state. It also holds the "Available in Office" previews and the test license. It is a separate build with its own contract (DEC-0029 Follow-up), and it starts only when the owner says so. This plan needs it before the first stable release. So the stable tags, the second deliverable's end-user pass (W16) and the first public download wait for it (section 5.3). The first deliverable does not wait for it.
+The license work is also excluded from this plan. It is built in its own contract, `docs/specs/editions.md`: the license file format, the offline signature check, the limit counters, the read-only state, the "Available in Office" previews and the development license. With it merged, the stable tags, the second deliverable's end-user pass (W16) and the first public download no longer wait (section 5.3).
 
 ### 1.3 Labels
 
