@@ -452,9 +452,19 @@ ready || fail "the services are not ready after the backup"
 # with those digests and SHA-256 values. It proves the engine's steps, the rollback and the
 # resume rule on a real Docker daemon; it does not prove a second signed release, a schema
 # change between releases, or low space (unit tests: test_update.py).
-[[ "$version" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-rc\.([0-9]+)$ ]] || fail "the update proof needs an rc version"
-bad="${BASH_REMATCH[1]}-rc.$((BASH_REMATCH[2] + 1))"
-good="${BASH_REMATCH[1]}-rc.$((BASH_REMATCH[2] + 2))"
+# A stable build X.Y.Z uses rc versions of the next patch (tests/tooling/test_install_proof_versions.py).
+# update-versions:start
+if [[ "$version" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-rc\.([0-9]+)$ ]]; then
+    bad="${BASH_REMATCH[1]}-rc.$((BASH_REMATCH[2] + 1))"
+    good="${BASH_REMATCH[1]}-rc.$((BASH_REMATCH[2] + 2))"
+elif [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+    next="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+    bad="$next-rc.1"
+    good="$next-rc.2"
+else
+    fail "the update proof cannot make test versions from $version"
+fi
+# update-versions:end
 now() { date -u +%Y%m%dT%H%M%SZ; }
 update_to() { printf '{"run_id":"%s","version":"%s"}' "$1" "$2" | "${engine[@]}" update; }
 installation() { docker exec "$machine" python3 -c 'import json,sys; print(json.load(open("/var/lib/slateops/installation.json"))[sys.argv[1]])' "$1"; }
