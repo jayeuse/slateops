@@ -143,6 +143,44 @@ When an action fails, the message can show a **Reference** with eight characters
 
 If you have changes that you did not save, Slate Operations asks you first.
 
+### 1.9 Office features and edition messages
+
+[Source: `frontend/src/components/systems/shared/components/edition-preview.tsx:21-89`, `frontend/src/components/systems/shared/components/edition-banner.tsx:32-46`, `backend/app/systems/manage/licensing/limits.py:34-56` and `:173-185`, `frontend/src/components/systems/openview/components/sheet-page.tsx:493`, `docs/specs/editions.md` (ED-11, ED-12, Preserved)]
+
+Your installation runs one edition: Desk, Office or Headquarters. Desk is free and has limits. Your administrator manages the edition.
+
+**Office features.** On Desk, these features show a lock and the title "<feature>: available in Office" in place of the feature:
+
+| Feature | Where you see it | Section |
+|---|---|---|
+| OpenComms | **OpenComms** in the foot of the sidebar | Chapter 5 |
+| Dashboards | The **Dashboard** of a department | 3.8 |
+| Reports | The **Reports** tab of a module page | 3.9 |
+| Gantt view | The **Gantt** of a board | 4.7 |
+| Automations | The **Triggers** section of the Sandbox | 2.4 |
+| Audit viewer | The **Audit** tab in **Manage** | None |
+
+Under the title, the page tells you what to do. If you are not an administrator, it says "Ask your administrator to upgrade to Office." Earlier work in these features is not deleted.
+
+**Limit messages.** On Desk, Slate Operations refuses an action that adds an item above a limit. Nothing is deleted. The message names the limit, for example:
+
+- "Desk allows 1,000 records in a module. To add more, upgrade in Manage → Updates & licensing."
+- "Desk allows 10 sheets. To add more, upgrade in Manage → Updates & licensing."
+- "Desk allows 1,000 rows in a sheet. To add more, upgrade in Manage → Updates & licensing."
+
+Only the installation owner can upgrade. When you see one of these messages, tell your administrator.
+
+In the sheet grid, a full sheet shows "The row could not be added. Try again." On Desk, a sheet holds at most 1,000 rows.
+
+**Banners.** A banner at the top of the page can say:
+
+| Banner | What it means |
+|---|---|
+| "The license ended on <date>. On <date> this installation becomes Desk." | You can work as usual. Your administrator renews the license. |
+| "Slate Operations is read-only. The license ended on <date>; your administrator can renew it." | You can read, but you cannot change data. A change can show "Slate Operations is read-only until your administrator renews the license." |
+
+Administrators see more banners. The [Administrator guide](administrator-guide.md#54-banners) explains them.
+
 ## 2. Sandbox
 
 [Source: `frontend/src/components/workspace-navigation.ts`, `frontend/src/components/systems/sandbox/`, `frontend/src/components/help/page-guides.ts`]

@@ -9,7 +9,7 @@
 - Email: [support contact].
 - Website: [website], when it is ready.
 
-[owner legal name] maintains Slate Operations, fixes problems, and answers questions.
+[owner legal name] maintains Slate Operations, fixes problems, and answers questions. Help is free in every edition.
 
 ## 2. What to send
 

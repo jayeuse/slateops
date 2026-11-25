@@ -2,7 +2,7 @@
 
 > **Draft: not legal advice. Review before use.**
 >
-> This statement describes how the current build of Slate Operations handles data. Read it with the [early access note](early-access.md).
+> This statement describes how the current build of Slate Operations handles data. Read it with [editions and license files](editions-and-license.md).
 >
 > **Blanks to fill:** [owner legal name], [support contact].
 >
@@ -34,6 +34,8 @@ Slate Operations is self-hosted. It runs on one Windows 11 PC in the Customer's 
 4. **Sign-in records:** the network address and the browser name of each session, sign-in and failed sign-in (`backend/app/systems/access/identity/models.py:69-70`; `backend/app/systems/access/users/sign_in_history.py:31-44`). They stay 365 days by default. The security settings can change this from 1 to 3650 days (`backend/app/systems/manage/workspace/models.py:126-127,222-227`; `backend/app/systems/manage/workspace/security_router.py:146-165`).
 5. **Service logs:** the app's request log holds the time, the page route, the result and the internal ID of the person. It holds no network address (`backend/app/core/observability.py:58-110`; `backend/app/__main__.py:39`). The web server keeps no access log (`infra/caddy/Caddyfile.template`). How long the app's request log stays: unverified. Docker keeps at most 30 MB of log for each service (`packaging/linux-image/rootfs/etc/docker/daemon.json:5-9`). Whether the third-party services write device addresses in their logs: unverified.
 
+6. **License file:** the imported license file, with the organization name, the edition, the number of people and the dates. It stays in the database on the PC (`backend/app/systems/manage/licensing/models.py:11-28`).
+
 The Customer decides what data people put in the app.
 
 ## 4. What leaves the PC
@@ -51,11 +53,13 @@ The PC connects to outside services only in these cases. A search of the built s
 | Time check | The Linux part keeps its clock correct with three public time services (time.cloudflare.com, nts.netnod.se, ptbtime1.ptb.de). | `packaging/linux-image/rootfs/etc/chrony/chrony.conf:5-7` |
 | Office network name | The PC answers devices on the office network that ask for its `.local` name. This stays on the office network. | `infra/windows/installer/scripts/lib/Mdns.ps1:1-10` |
 
+The license check makes no outside connection. It checks the signature of the license file on the PC ([editions spec](../specs/editions.md#license-file)).
+
 No analytics, tracking or error-reporting service was found:
 
 1. The app's web pages can load content only from the PC itself (`backend/app/core/static_site.py:22-26`).
 2. The app server, the database, the file storage, the message service and the gateway run on internal networks with no internet route (`infra/supabase/compose.yaml:393-398`; `infra/supabase/compose.production.yaml:157-161`; `compose.installer.yaml:18-22`).
-3. Only the sign-in service (to send email), the web server and the backup runner have a network with an internet route (`compose.yaml:111,399`; `compose.production.yaml:151,165`; `packaging/engine/backups.py:96-118`).
+3. Only the sign-in service (to send email), the web server and the backup runner have a network with an internet route (`compose.yaml:111,399`; `compose.production.yaml:151,165`; `packaging/engine/backups.py:97-119`).
 4. Whether the third-party software has built-in telemetry: unverified.
 
 ## 5. Backups

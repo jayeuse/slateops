@@ -115,7 +115,7 @@ Avoid "This PC's data drive": if that drive breaks, you lose the data and the ba
 1. Read the summary. To correct a row, select Change on that row (spec S11).
 2. Select Install (spec S11).
 
-The summary shows "Edition: Desk, the free edition" (Copy.iss `s11_edition`). This build checks no license and has no edition limits. Every feature is available (`frontend/src/components/systems/manage/domain/updates-rules.ts:9-10`).
+The summary shows "Edition: Desk, the free edition" (Copy.iss `s11_edition`). Setup starts every installation as Desk (`backend/app/systems/manage/licensing/state.py:63`). To unlock Office or Headquarters, import a license file in Manage → Updates & licensing. The [administrator guide, chapter 5](administrator-guide.md#5-edition-and-license-file) tells you how.
 
 ### Page "Installing Slate Operations" (plan page 10)
 
@@ -143,7 +143,7 @@ Your backups are locked. The recovery key opens them if the server PC breaks or 
 3. Select Open Slate Operations to sign in now (section 3 of this guide; spec S15).
 4. Select Finish (spec S15).
 
-The page also says "You use Desk, the free edition". This build has no license import and no edition limits (Copy.iss `s15_desk`; `updates-rules.ts:9-10`).
+The page also says "You use Desk, the free edition. To add a license later, open Manage → Updates & licensing in Slate Operations." (Copy.iss `s15_desk`). The [administrator guide, chapter 5](administrator-guide.md#5-edition-and-license-file) tells you how to import a license file.
 
 Slate Operations starts by itself when the server PC starts. For settings and help, open "Slate Operations settings" in the Start menu (spec S15, M01).
 
@@ -204,4 +204,5 @@ Send each report file to [support contact].
 ## 6. Next steps
 
 - To set up email, invite your people and manage backups, read the [administrator guide](administrator-guide.md).
+- Desk allows 2 people (administrators and members) and no guests. You are one of the 2. To add more people, read [chapter 5 of the administrator guide](administrator-guide.md#5-edition-and-license-file) (`backend/app/systems/manage/licensing/editions.py:51`).
 - To learn the daily tasks in Slate Operations, read the [user guide](user-guide.md).

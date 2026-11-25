@@ -16,8 +16,9 @@ Text in square brackets, for example [support contact], is a blank. Fill each bl
 
 | Word | Meaning |
 |---|---|
-| Administrator | A person with the role "Administrator" in your organization ([people.ts:41](../../frontend/src/components/systems/access/helpers/people.ts#L41)). |
-| Installation owner | The administrator that setup created. This account also manages backups and updates ([08-authentication-authorization.md](../architecture/08-authentication-authorization.md), "Only the organization owner"). |
+| Administrator | A person with the role "Administrator" in your organization ([people.ts:42](../../frontend/src/components/systems/access/helpers/people.ts#L42)). |
+| Installation owner | The administrator that setup created. This account also manages backups, updates and the license file ([08-authentication-authorization.md](../architecture/08-authentication-authorization.md), "Only the organization owner"; [workspace-navigation.ts:208](../../frontend/src/components/workspace-navigation.ts#L208)). |
+| Edition | What your installation can do: Desk (free), Office or Headquarters. A license file unlocks Office or Headquarters (chapter 5). |
 | Server PC | The Windows 11 PC that runs Slate Operations for your office ([Copy.iss:38](../../infra/windows/installer/wizard/Copy.iss#L38)). |
 | Slate Operations settings | The program on the server PC for email, backups, restore, stop and start, repair and reports ([SlateOpsSetup.iss:121](../../infra/windows/installer/SlateOpsSetup.iss#L121)). |
 | Slate Operations support | The people who maintain Slate Operations. Help is free. Contact: [support contact]. See [getting help](getting-help.md). |
@@ -28,6 +29,7 @@ Text in square brackets, for example [support contact], is a blank. Fill each bl
 |---|---|
 | Invite people, make groups, give access | Slate Operations → **Access** ([workspace-navigation.ts:62-73](../../frontend/src/components/workspace-navigation.ts#L62)) |
 | Check backups and updates | Slate Operations → **Manage** → **Backup**, **Updates & licensing** ([workspace-navigation.ts:88-104](../../frontend/src/components/workspace-navigation.ts#L88)) |
+| See the edition, import a license file | Slate Operations → **Manage** → **Updates & licensing** ([workspace-navigation.ts:103](../../frontend/src/components/workspace-navigation.ts#L103)) |
 | Check whether Slate Operations works | Slate Operations → **Manage** → **System health** ([workspace-navigation.ts:97](../../frontend/src/components/workspace-navigation.ts#L97)) |
 | Set up email, change the backup drive, restore the latest backup, stop or start, repair | Server PC → Start menu → **Slate Operations settings** ([SlateOpsSetup.iss:121](../../infra/windows/installer/SlateOpsSetup.iss#L121)) |
 | Make a file for support | Server PC → Start menu → **Slate Operations - Save report** ([SlateOpsSetup.iss:122](../../infra/windows/installer/SlateOpsSetup.iss#L122)) |
@@ -104,14 +106,18 @@ Slate Operations can send the invitation by email only after you set up email (c
 
 The person opens the link, sets a password and signs in ([08-authentication-authorization.md](../architecture/08-authentication-authorization.md), "Invitations and recovery").
 
+**Edition limit.** Desk allows 2 people (administrators and members), and you are one of them ([editions.py:51](../../backend/app/systems/manage/licensing/editions.py#L51)). An invitation above the limit fails with a message (section 5.5).
+
 ### 1.5 Invite a guest
 
 A guest reads only, for a limited time. Each guest has a sponsor in your organization ([invite-person-dialog.tsx:141](../../frontend/src/components/systems/access/components/invite-person-dialog.tsx#L141)).
 
+Desk allows no guests. Office and Headquarters allow 2 guests for each person in the license file ([editions.py:51](../../backend/app/systems/manage/licensing/editions.py#L51), [67-74](../../backend/app/systems/manage/licensing/editions.py#L67)).
+
 1. Do steps 1 to 3 of section 1.4.
 2. Select the **Role** "Guest".
 3. Select the sponsor ([invite-person-dialog.tsx:283](../../frontend/src/components/systems/access/components/invite-person-dialog.tsx#L283)).
-4. Type the **Access length in days**, from 1 to 365 ([invite-person-dialog.tsx:496](../../frontend/src/components/systems/access/components/invite-person-dialog.tsx#L496); [people.ts:503-504](../../frontend/src/components/systems/access/helpers/people.ts#L503)).
+4. Type the **Access length in days**, from 1 to 365 ([invite-person-dialog.tsx:496](../../frontend/src/components/systems/access/components/invite-person-dialog.tsx#L496); [people.ts:504-505](../../frontend/src/components/systems/access/helpers/people.ts#L504)).
 5. Do steps 5 to 8 of section 1.4.
 
 When the time ends, the guest cannot sign in. To let the guest sign in again, set a later end date ([person-account.tsx:408](../../frontend/src/components/systems/access/components/person-account.tsx#L408)).
@@ -147,7 +153,7 @@ An administrator can export direct and group messages. The export asks for the a
 
 ### 1.9 If you forget the administrator password
 
-If email works, select **Forgot password?** on the sign-in page ([login/page.tsx:150](../../frontend/src/app/login/page.tsx#L150)). If email does not work, reset the password on the server PC:
+If email works, select **Forgot password?** on the sign-in page ([login/page.tsx:153](../../frontend/src/app/login/page.tsx#L153)). If email does not work, reset the password on the server PC:
 
 1. On the server PC, open the Start menu.
 2. Open **Slate Operations settings**.
@@ -315,23 +321,23 @@ Slate Operations starts automatically when the server PC starts ([Copy.iss:371](
 
 ### 3.1 Check your version
 
-Open **Manage** → **Updates & licensing**. The **Installation** panel shows these rows ([updates-panel.tsx:44-77](../../frontend/src/components/systems/manage/components/updates-panel.tsx#L44)):
+Open **Manage** → **Updates & licensing**. The **Installation** panel shows these rows ([updates-panel.tsx:42-73](../../frontend/src/components/systems/manage/components/updates-panel.tsx#L42)):
 
 | Row | What it shows |
 |---|---|
-| Version | The version that runs now |
+| Version | The version that runs now, then "· Stable channel" ([updates-rules.ts:26-28](../../frontend/src/components/systems/manage/domain/updates-rules.ts#L26)) |
 | Release check | The result of the last check for a new release |
 | Latest release | A newer release, when one is known |
-| License | "No license required · Self-hosted" ([updates-rules.ts:9](../../frontend/src/components/systems/manage/domain/updates-rules.ts#L9)) |
-| Limits | "None · capacity depends on your server" ([updates-rules.ts:10](../../frontend/src/components/systems/manage/domain/updates-rules.ts#L10)) |
 
-Select **Refresh release status** to read the latest check again ([updates-panel.tsx:118](../../frontend/src/components/systems/manage/components/updates-panel.tsx#L118)).
+The **Edition and license** panel is below the **Installation** panel ([page.tsx:1589-1590](../../frontend/src/components/systems/manage/page.tsx#L1589)). Chapter 5 tells you how to use it.
 
-**This build shows no update prompt.** The release check reads only published, stable releases ([backup_runner.py:69-97](../../backend/operations/backup_runner.py#L69)). Slate Operations support tells you when an update is ready. The **Release check** row can show "The release check is not available" ([updates-rules.ts:15](../../frontend/src/components/systems/manage/domain/updates-rules.ts#L15)) (unverified).
+Select **Refresh release status** to read the latest check again ([updates-panel.tsx:115](../../frontend/src/components/systems/manage/components/updates-panel.tsx#L115)).
+
+**Stable releases only.** The release check reads only published, stable releases ([backup_runner.py:69-97](../../backend/operations/backup_runner.py#L69)). A test build gets no update prompt; Slate Operations support then tells you when an update is ready. The **Release check** row can show "The release check is not available" ([updates-rules.ts:12](../../frontend/src/components/systems/manage/domain/updates-rules.ts#L12)) (unverified).
 
 ### 3.2 Install an update
 
-The person who runs your server installs updates ([page.tsx:520](../../frontend/src/components/systems/manage/page.tsx#L520)). You install it with the new setup file. Get the file from [where to get the setup file].
+The person who runs your server installs updates ([page.tsx:525](../../frontend/src/components/systems/manage/page.tsx#L525)). You install it with the new setup file. Get the file from [where to get the setup file].
 
 **Caution:** "People cannot use Slate Operations while it updates. This can take up to 1 hour." ([Copy.iss:525](../../infra/windows/installer/wizard/Copy.iss#L525))
 
@@ -353,7 +359,7 @@ The person who runs your server installs updates ([page.tsx:520](../../frontend/
 
 If setup says that Slate Operations is busy, wait. Setup tries again by itself ([Copy.iss:531](../../infra/windows/installer/wizard/Copy.iss#L531)).
 
-The **Update procedure for this release** link on the Updates page is for Slate Operations support ([updates-panel.tsx:102](../../frontend/src/components/systems/manage/components/updates-panel.tsx#L102)).
+The **Update procedure for this release** link on the Updates page is for Slate Operations support ([updates-panel.tsx:99](../../frontend/src/components/systems/manage/components/updates-panel.tsx#L99)).
 
 ## 4. Reports for support
 
@@ -394,13 +400,146 @@ When an action fails, its message can show a reference. Send that reference with
 
 On the server PC, **Slate Operations settings** also shows a status, for example "Running." or "Needs support." ([Copy.iss:484-488](../../infra/windows/installer/wizard/Copy.iss#L484)). When it says "Not ready.", select **Repair**. "Repair" sets up the Windows parts again, and your data does not change ([Copy.iss:502-503](../../infra/windows/installer/wizard/Copy.iss#L502)).
 
-## 5. License import
+## 5. Edition and license file
 
-License import is **not available in this build**.
+For prices, how to buy a license file and the license states, read [editions and license files](editions-and-license.md).
 
-This build has every feature, no editions and no limits. Nothing in it checks a license ([updates-rules.ts:9-10](../../frontend/src/components/systems/manage/domain/updates-rules.ts#L9); [plan section 2](../plans/windows-installer.md#2-current-state), Editions row). Editions and license files come in a later version.
+Each installation runs one edition: Desk, Office or Headquarters ([editions.py:48-58](../../backend/app/systems/manage/licensing/editions.py#L48)). Setup starts every installation as Desk, the free edition ([Copy.iss:284](../../infra/windows/installer/wizard/Copy.iss#L284), [433](../../infra/windows/installer/wizard/Copy.iss#L433)). A license file from Slate Operations support unlocks Office or Headquarters. The license file works with no internet ([license-panel.tsx:195-198](../../frontend/src/components/systems/manage/components/license-panel.tsx#L195)).
 
-The last setup page can name an edition and a license ([Copy.iss:433](../../infra/windows/installer/wizard/Copy.iss#L433)). Ignore that text in this build. **Manage** → **Updates & licensing** shows the correct state.
+**Who can do this.** Only the installation owner opens **Manage** → **Updates & licensing** and imports a license file ([workspace-navigation.ts:208](../../frontend/src/components/workspace-navigation.ts#L208); [router.py:101-102](../../backend/app/systems/manage/licensing/router.py#L101)). Another administrator sees "Updates are managed by the installation owner." ([manage-unavailable.tsx:21-22](../../frontend/src/components/systems/manage/components/manage-unavailable.tsx#L21))
+
+### 5.1 What each edition allows
+
+| Item | Desk | Office | Headquarters |
+|---|---|---|---|
+| Price that the app shows | "Free" | "$39 a month or $390 a year" | "$89 a month or $890 a year" |
+| People (administrators and members) | 2 | The number in your license file. The app lists 25. | The number in your license file. The app lists 100. |
+| Guests | 0 | 2 for each person in the license file | 2 for each person in the license file |
+| Published departments | 2 | No limit | No limit |
+| Modules in a department | 3 | No limit | No limit |
+| Records in a module | 1,000 | No limit | No limit |
+| Sheets | 10 | No limit | No limit |
+| Rows in a sheet | 1,000 | 10,000, the size limit of every sheet | 10,000, the size limit of every sheet |
+| OpenComms, dashboards, reports, automations, Gantt view, audit viewer | No | Yes | Yes |
+
+Sources: [editions.py:48-74](../../backend/app/systems/manage/licensing/editions.py#L48); [license-rules.ts:66-72](../../frontend/src/components/systems/manage/domain/license-rules.ts#L66); [structure.py:21](../../backend/app/systems/openview/worksheets/structure.py#L21); [spec, Editions](../specs/editions.md#editions).
+
+What counts against a limit ([usage.py:23-39](../../backend/app/systems/manage/licensing/usage.py#L23)):
+
+- An active person and an invited person count.
+- A disabled person, a deleted person and a guest whose time ended do not count.
+- **Revoke invitation** does not free a place. The invitation stays until you delete the person ([service.py:299-310](../../backend/app/systems/access/users/service.py#L299)).
+- For modules, records and rows, the limit applies to each department, module and sheet. The **Used** column shows the fullest one ([usage.py:94-107](../../backend/app/systems/manage/licensing/usage.py#L94)).
+
+Backups, updates and audit recording work in every edition ([spec, Preserved](../specs/editions.md#preserved)).
+
+### 5.2 See your edition and use
+
+1. Open **Manage** → **Updates & licensing**.
+2. Find the panel **Edition and license** ([license-panel.tsx:80](../../frontend/src/components/systems/manage/components/license-panel.tsx#L80)).
+
+| Part of the panel | What it shows |
+|---|---|
+| **Edition** | The edition name. With a license file, also "Licensed to" and your organization's name in the file ([license-panel.tsx:114-125](../../frontend/src/components/systems/manage/components/license-panel.tsx#L114)). |
+| **License** | The license state. See the table below ([license-panel.tsx:126-129](../../frontend/src/components/systems/manage/components/license-panel.tsx#L126)). |
+| "Use against the limits of" your edition | A table with the columns **Item**, **Used** and **Limit**. A number in the **Used** column in red is at or above its limit. "No limit" means that the edition has no limit for that item ([license-panel.tsx:131-169](../../frontend/src/components/systems/manage/components/license-panel.tsx#L131); [license-rules.ts:29-38](../../frontend/src/components/systems/manage/domain/license-rules.ts#L29)). |
+| **Editions** | The three editions with their prices. Your edition shows "· Current" ([license-panel.tsx:170-194](../../frontend/src/components/systems/manage/components/license-panel.tsx#L170)). |
+
+The **License** row shows one of these states ([license-rules.ts:47-63](../../frontend/src/components/systems/manage/domain/license-rules.ts#L47); [state.py:31-32](../../backend/app/systems/manage/licensing/state.py#L31), [60-76](../../backend/app/systems/manage/licensing/state.py#L60)):
+
+| State | The **License** row shows | What it means |
+|---|---|---|
+| Desk | "No license file · Desk is free" | No license file. The Desk limits apply. |
+| Active | "Active until" and the end date | The edition of your license file applies. |
+| Grace | "Ended" and the end date, then "renew by" and a date | The license ended up to 14 days ago. The edition still applies. |
+| Warning | "Ended" and the end date, then "becomes Desk on" and a date | The 30 days after the grace period. The edition still applies. Everybody sees a warning. |
+| Ended | "Ended" and the end date, then "running as Desk" | The Desk limits apply. The Office features close. |
+| Ended, read-only | "Ended" and the end date, then "read-only until you import a new license file" | Your use is above a Desk limit. Only administrators can change data ([state.py:133-148](../../backend/app/systems/manage/licensing/state.py#L133)). |
+
+Slate Operations counts the days in UTC. If somebody sets the PC clock back, the license does not get more days ([state.py:106-110](../../backend/app/systems/manage/licensing/state.py#L106); [router.py:89-90](../../backend/app/systems/manage/licensing/router.py#L89)).
+
+### 5.3 Import a license file
+
+Get the license file from Slate Operations support. The file name ends in ".slatelicense" or ".txt" ([license-panel.tsx:84](../../frontend/src/components/systems/manage/components/license-panel.tsx#L84)). Import the file on or after its start date ([router.py:108-109](../../backend/app/systems/manage/licensing/router.py#L108)).
+
+1. Sign in as the installation owner.
+2. Open **Manage** → **Updates & licensing**.
+3. In the panel **Edition and license**, select **Import license file** ([license-panel.tsx:89](../../frontend/src/components/systems/manage/components/license-panel.tsx#L89)).
+4. Select the license file, then open it.
+5. Wait while the button shows "Importing license file…" ([license-panel.tsx:89](../../frontend/src/components/systems/manage/components/license-panel.tsx#L89)).
+6. Read the message.
+
+When the import works, the message is "License imported. This installation now runs" and the edition name ([license-panel.tsx:53](../../frontend/src/components/systems/manage/components/license-panel.tsx#L53)). The new edition and its limits apply at once ([spec ED-1](../specs/editions.md#acceptance-criteria)). Other open pages can need up to 30 seconds ([state.py:83-86](../../backend/app/systems/manage/licensing/state.py#L83)).
+
+When the import fails, nothing changes ([router.py:112](../../backend/app/systems/manage/licensing/router.py#L112)):
+
+| Message | What to do |
+|---|---|
+| "The file is not a Slate Operations license file" ([license_file.py:48](../../backend/app/systems/manage/licensing/license_file.py#L48), [60](../../backend/app/systems/manage/licensing/license_file.py#L60)) | Select the file that Slate Operations support sent you. |
+| "The license file signature is not valid for this installation" ([license_file.py:64](../../backend/app/systems/manage/licensing/license_file.py#L64)) | Do not change the file. Ask Slate Operations support for a new file. |
+| "This license file version is not supported" ([license_file.py:80](../../backend/app/systems/manage/licensing/license_file.py#L80)) | Tell Slate Operations support. |
+| "The license file content is not valid" ([license_file.py:91-97](../../backend/app/systems/manage/licensing/license_file.py#L91)) | Ask Slate Operations support for a new file. |
+| "This license file starts later; import it on its start date" ([router.py:109](../../backend/app/systems/manage/licensing/router.py#L109)) | Import the file again on its start date. |
+| "This license file has ended" ([router.py:111](../../backend/app/systems/manage/licensing/router.py#L111)) | Ask Slate Operations support for a new file. |
+| "The license file could not be imported. Try again." ([license-panel.tsx:61](../../frontend/src/components/systems/manage/components/license-panel.tsx#L61)) | Try again. If the message shows again, send a support file (section 4.2). |
+
+### 5.4 Banners
+
+A banner can show at the top of the pages. Only one banner shows at a time, in the order of this table ([edition-banner.tsx:32-46](../../frontend/src/components/systems/shared/components/edition-banner.tsx#L32)).
+
+| When | Who sees it | Text | What to do |
+|---|---|---|---|
+| Ended, read-only | Administrators | "The license ended on <date>. Only administrators can change data until you import a new license file or reduce use to the Desk limits." | Import a new license file, or reduce use below each Desk limit. |
+| Ended, read-only | Everybody else | "Slate Operations is read-only. The license ended on <date>; your administrator can renew it." | Nothing. The administrator renews. |
+| Warning | Everybody | "The license ended on <date>. On <date> this installation becomes Desk." | Import a new license file. |
+| Grace | Administrators | "The license ended on <date>. Renew it by <date>." | Import a new license file. |
+| A limit is at 80% or more | Administrators | The item, the use and the limit, for example "Records in a module: 800 of 1,000 used on Desk." | Reduce use, or get Office or Headquarters. |
+
+On the limit banner, another administrator also sees "The installation owner can upgrade." The installation owner sees the link **Upgrade or renew**. It opens **Updates & licensing** ([edition-banner.tsx:42-61](../../frontend/src/components/systems/shared/components/edition-banner.tsx#L42); [license-rules.ts:74-89](../../frontend/src/components/systems/manage/domain/license-rules.ts#L74)).
+
+### 5.5 When you reach a limit
+
+Slate Operations refuses only an action that adds an item above a limit. It deletes nothing. Your records, sheets and people stay, and they keep working ([limits.py:1-4](../../backend/app/systems/manage/licensing/limits.py#L1); [spec, Preserved](../specs/editions.md#preserved)).
+
+The message names the edition, the limit and the next step ([limits.py:34-56](../../backend/app/systems/manage/licensing/limits.py#L34)). For example: "Desk allows 1,000 records in a module. To add more, upgrade in Manage → Updates & licensing."
+
+| Action | Limit | Where the message shows |
+|---|---|---|
+| Invite a person, restore a person, change a guest to a member | People, guests | In the dialog or panel ([people.ts:793](../../frontend/src/components/systems/access/helpers/people.ts#L793); [invite-person-dialog.tsx:351](../../frontend/src/components/systems/access/components/invite-person-dialog.tsx#L351); [person-account.tsx:322](../../frontend/src/components/systems/access/components/person-account.tsx#L322); [person-details.tsx:387](../../frontend/src/components/systems/access/components/person-details.tsx#L387); [spec ED-3](../specs/editions.md#acceptance-criteria)) |
+| Create or import records | Records in a module | In the dialog ([record-create-dialog.tsx:161](../../frontend/src/components/systems/openview/components/record-create-dialog.tsx#L161); [record-import-failure.ts:20](../../frontend/src/components/systems/platform/helpers/record-import-failure.ts#L20)) |
+| Create, import or copy a sheet | Sheets, rows in a sheet | In the dialog ([sheet-lists.tsx:112](../../frontend/src/components/systems/openview/components/sheet-lists.tsx#L112); [sheet-import-dialog.tsx:139](../../frontend/src/components/systems/openview/components/sheet-import-dialog.tsx#L139); [sheet-copy-dialogs.tsx:69](../../frontend/src/components/systems/openview/components/sheet-copy-dialogs.tsx#L69)) |
+| Add a row in the sheet grid | Rows in a sheet | "The row could not be added. Try again." ([sheet-page.tsx:493](../../frontend/src/components/systems/openview/components/sheet-page.tsx#L493)) |
+| Publish a Sandbox draft that adds a department, a module or, on Desk, a trigger | Published departments, modules in a department, automations | "We could not confirm this change. Your password and note are still here so you can try again." ([review-publish-dialog.tsx:247](../../frontend/src/components/systems/sandbox/components/review-publish-dialog.tsx#L247), [410](../../frontend/src/components/systems/sandbox/components/review-publish-dialog.tsx#L410); [limits.py:157-170](../../backend/app/systems/manage/licensing/limits.py#L157)) |
+
+The grid and the publish dialog do not name the limit. If you see one of those two messages, compare your use with the limits in section 5.2.
+
+**Office features on Desk.** These features show "<feature>: available in Office" in place of the feature:
+
+- OpenComms
+- OpenView dashboards
+- OpenView reports
+- The Boards Gantt view
+- The Sandbox **Triggers** section
+- The Manage **Audit** tab
+
+Sources: [edition-preview.tsx:21-46](../../frontend/src/components/systems/shared/components/edition-preview.tsx#L21), [68](../../frontend/src/components/systems/shared/components/edition-preview.tsx#L68); [spec ED-11](../specs/editions.md#acceptance-criteria).
+
+In the Sandbox, the feature name is "Automations". The installation owner sees **See editions and prices**. Another administrator sees "Ask the installation owner to upgrade to Office." ([edition-preview.tsx:76-86](../../frontend/src/components/systems/shared/components/edition-preview.tsx#L76)). On Desk, triggers do not run. Audit recording continues ([spec ED-7](../specs/editions.md#acceptance-criteria)).
+
+**Get below a limit.** Use one of these ways:
+
+- Import a license file for Office or Headquarters (section 5.3).
+- Disable or delete people that do not need access (section 1.6).
+- Delete records, sheets or rows that you do not need.
+
+### 5.6 Renew the license
+
+1. Before the end date on the **License** row, ask Slate Operations support for a new license file.
+2. Import the new file (section 5.3).
+
+The new file replaces the old file ([router.py:117-124](../../backend/app/systems/manage/licensing/router.py#L117)). Your data does not change.
+
+If you do not renew, the grace period lasts 14 days. The warning period lasts 30 more days. Then the installation runs as Desk ([state.py:31-32](../../backend/app/systems/manage/licensing/state.py#L31)). Slate Operations deletes no data.
 
 ## 6. Email settings
 

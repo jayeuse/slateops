@@ -1,10 +1,10 @@
 # Customer documents
 
-These documents are for customers of Slate Operations. They describe the current build: every feature, no editions, no edition limits and no license check.
+These documents are for customers of Slate Operations. They describe the current build: Desk (free), Office and Headquarters, with a license file that unlocks a paid edition.
 
 | Document | Reader | Status |
 |---|---|---|
-| [Early access note](early-access.md) | Customer | Draft. Not legal advice. Free early build, updates, help, what comes later. No signature. |
+| [Editions and license files](editions-and-license.md) | Customer | Draft. Not legal advice. The license, the editions and prices, how to buy and renew a license file. No signature. |
 | [Getting help](getting-help.md) | Customer | Draft. Free help by email. |
 | [Data and privacy statement](data-and-privacy.md) | Customer | Draft. Not legal advice. A lawyer reviews it before use. |
 | [Quick start](quick-start.md) | Person at the server PC | Draft |
