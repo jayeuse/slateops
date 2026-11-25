@@ -73,16 +73,18 @@ def test_start_starts_docker_and_the_timer_then_waits_for_the_services(
     assert machine.index("caddy") > machine.index(" api")  # caddy last, after the api
 
 
-def test_a_stop_that_cannot_stop_docker_is_not_recorded_as_stopped(machine: Installed) -> None:
+def test_a_stop_that_cannot_stop_docker_is_not_recorded_as_stopped(
+    machine: Installed, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # PR 122 review: a failed Stop leaves no marker, so Stop can be tried again.
     real = machine.fake._do
 
-    def docker_will_not_stop(argv, env, stdin):  # type: ignore[no-untyped-def]
+    def docker_will_not_stop(argv: list[str], env: dict[str, str], stdin: bytes | None) -> Result:
         if argv[:2] == ["systemctl", "stop"] and "docker.service" in argv:
             return Result(1, b"", b"Job for docker.service failed\n")
         return real(argv, env, stdin)
 
-    machine.fake._do = docker_will_not_stop  # type: ignore[method-assign]
+    monkeypatch.setattr(machine.fake, "_do", docker_will_not_stop)
 
     code, result = machine.job("stop", {"run_id": RUN})
 
@@ -90,17 +92,19 @@ def test_a_stop_that_cannot_stop_docker_is_not_recorded_as_stopped(machine: Inst
     assert not power.stopped(machine.paths)
 
 
-def test_a_start_whose_services_do_not_come_up_stays_stopped(machine: Installed) -> None:
+def test_a_start_whose_services_do_not_come_up_stays_stopped(
+    machine: Installed, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # PR 122 review: Start stays on offer until the services are ready.
     machine.job("stop", {"run_id": RUN})
     real = machine.fake._do
 
-    def api_never_ready(argv, env, stdin):  # type: ignore[no-untyped-def]
+    def api_never_ready(argv: list[str], env: dict[str, str], stdin: bytes | None) -> Result:
         if "exec" in argv and "api" in argv:
             return Result(1, b"", b"service api is not running")
         return real(argv, env, stdin)
 
-    machine.fake._do = api_never_ready  # type: ignore[method-assign]
+    monkeypatch.setattr(machine.fake, "_do", api_never_ready)
 
     code, _ = machine.job("start", {"run_id": "maintenance-20261125T120300Z-ab12cd"})
 
