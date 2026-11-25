@@ -14,6 +14,13 @@
       "added": "2026-11-25",
       "expires": "2026-12-09",
       "reason": "First CI attempt timed out in locator.selectOption after the page loaded; the retry passed. It passed 5 of 5 alone and 250 of 250 with the whole spec at 4 workers locally, without retries. The PR changes no select-choice code. Find the race and remove this entry."
+    },
+    {
+      "test": "http/comms-refactor-journeys.spec.ts › a channel row names its state, and leaving a channel marks it read",
+      "owner": "Claude (found on PR #123)",
+      "added": "2026-11-25",
+      "expires": "2026-12-09",
+      "reason": "First CI attempt still showed 'workshop, marked unread' after switching channels; the retry passed. It reproduces on main: 1 failure in 198 whole-spec runs at 4 workers, the same assertion (the open channel's read mark is not saved). The PR changes no Comms read-state code. Find the race and remove this entry."
     }
   ]
 }
