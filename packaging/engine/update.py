@@ -716,6 +716,8 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     instance = backups.installed_instance(paths)
     if instance is None:
         raise refused("not_installed")
+    if (paths.run / "stopped").exists():  # power.stopped; power imports this module
+        raise refused("stopped")
     installed = str(_installed(paths)["version"])
     if precedence(version) <= precedence(installed):
         raise refused("version_not_newer")
