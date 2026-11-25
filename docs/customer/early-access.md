@@ -4,7 +4,7 @@
 >
 > This note is for the first organizations that use an early build of Slate Operations. Nobody signs it. The Elastic License 2.0, which you accept in the setup wizard, is the only agreement for the software.
 >
-> **Blanks to fill:** [owner legal name], [support contact], [where to get the setup file], [what early users get when licensing starts].
+> **Blanks to fill:** [owner legal name], [support contact], [where to get the setup file].
 
 ## 1. What you get now
 
@@ -35,8 +35,10 @@ Help is free. Write to [support contact]. The [getting help](getting-help.md) pa
 
 1. A later version adds editions. An edition sets which features you can use and how many people can use Slate Operations. A license file unlocks a paid edition.
 2. Edition prices and terms are published with that version. This note promises no edition, price or license file.
-3. When that version comes, early users get: [what early users get when licensing starts].
-4. No edition deletes your data.
+3. When you update to that version, your installation becomes the Desk edition, the free edition. Every installation without a license file is Desk.
+4. Desk has limits on people and published data. If your organization is above a limit, the people and data that you have keep working. Desk blocks only new items above the limit.
+5. To remove the limits, buy a license file for Office or Headquarters.
+6. No edition deletes your data.
 
 ## 6. Your data
 
