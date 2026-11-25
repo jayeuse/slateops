@@ -673,7 +673,7 @@ When **Use shortcuts** is on, press Ctrl+K (Windows) or Command+K (Mac) in OpenC
 
 ## Blanks in this guide
 
-The seller fills in these items before giving the guide to a customer:
+Fill in these items before you give the guide to people:
 
 - [support contact]: who to contact for help with Slate Operations.
 - [Slate Operations address]: the web address that people open to sign in.

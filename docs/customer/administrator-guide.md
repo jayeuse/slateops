@@ -2,15 +2,15 @@
 
 > **Draft.** This guide describes the current build of Slate Operations.
 >
-> **Blanks to fill:** [support contact], [support hours], [backup drive], [recovery key location], [how you get a new setup file].
+> **Blanks to fill:** [support contact], [backup drive], [recovery key location], [where to get the setup file].
 
 ## About this guide
 
-This guide is for the administrator of your organization in Slate Operations. Your support provider installed Slate Operations on one Windows 11 PC in your office. This guide calls that PC the **server PC**.
+This guide is for the administrator of your organization in Slate Operations. Slate Operations runs on one Windows 11 PC in your office. This guide calls that PC the **server PC**.
 
-Each statement has a source in parentheses. A source is a screen text in the product files, a runbook section, or a plan section. Your support provider uses the sources to check the guide. You can ignore them.
+Each statement has a source in parentheses. A source is a screen text in the product files, a runbook section, or a plan section. Slate Operations support uses the sources to check the guide. You can ignore them.
 
-Text in square brackets, for example [support contact], is a blank. Your support provider fills each blank before you get this guide.
+Text in square brackets, for example [support contact], is a blank. Fill each blank before you use this guide.
 
 ### Words in this guide
 
@@ -20,7 +20,7 @@ Text in square brackets, for example [support contact], is a blank. Your support
 | Installation owner | The administrator that setup created. This account also manages backups and updates ([08-authentication-authorization.md](../architecture/08-authentication-authorization.md), "Only the organization owner"). |
 | Server PC | The Windows 11 PC that runs Slate Operations for your office ([Copy.iss:38](../../infra/windows/installer/wizard/Copy.iss#L38)). |
 | Slate Operations settings | The program on the server PC for email, backups, restore, stop and start, repair and reports ([SlateOpsSetup.iss:121](../../infra/windows/installer/SlateOpsSetup.iss#L121)). |
-| Support provider | The person or company that installed Slate Operations for you. Contact: [support contact], [support hours]. |
+| Slate Operations support | The people who maintain Slate Operations. Help is free. Contact: [support contact]. See [getting help](getting-help.md). |
 
 ### Where to find things
 
@@ -189,7 +189,7 @@ Open **Manage** → **Backup**. The **Status** shows four rows ([backup-status-p
 
 **History** lists every backup. Each one has a status: Queued, Running, Completed, Verified, Failed, Interrupted or Expired ([backup-rules.ts:146-159](../../frontend/src/components/systems/manage/domain/backup-rules.ts#L146)).
 
-Check the **Last good backup** row regularly. If it is older than two days, tell your support provider.
+Check the **Last good backup** row regularly. If it is older than two days, tell Slate Operations support.
 
 ### 2.3 Change the schedule
 
@@ -267,7 +267,7 @@ These messages need action:
 |---|---|---|
 | **Slate Operations settings** | "Needs attention: plug in the backup drive (%1)." ([Copy.iss:485](../../infra/windows/installer/wizard/Copy.iss#L485)) | Plug in the backup drive. If the message stays, select **Repair**. |
 | **Slate Operations settings** | "Needs support." ([Copy.iss:486](../../infra/windows/installer/wizard/Copy.iss#L486)) | Make a report (chapter 4). Send it to [support contact]. |
-| **Manage** → **Backup** | "The person who runs your server must run backup recovery." ([backup-rules.ts:43-44](../../frontend/src/components/systems/manage/domain/backup-rules.ts#L43)) | Tell your support provider. |
+| **Manage** → **Backup** | "The person who runs your server must run backup recovery." ([backup-rules.ts:43-44](../../frontend/src/components/systems/manage/domain/backup-rules.ts#L43)) | Tell Slate Operations support. |
 
 In this table, "%1" is the letter of your backup drive.
 
@@ -294,11 +294,11 @@ You restore the newest backup on the server PC with one button ([plan section 8.
 | "Nothing changed: Slate Operations runs again on the data it had before." ([Copy.iss:400](../../infra/windows/installer/wizard/Copy.iss#L400)) | The restore stopped early and put the old data back. | Save a report (chapter 4). Send it to [support contact]. |
 | "Slate Operations is stopped." ([Copy.iss:401](../../infra/windows/installer/wizard/Copy.iss#L401)) | The restore stopped after it changed the installation. | Save a report (chapter 4). Send it to [support contact]. |
 
-**An older backup.** The button restores only the newest backup. To go back to an older backup, write to [support contact]. Your support provider does it through a remote session ([infra/supabase/RESTORE.md](../../infra/supabase/RESTORE.md)).
+**An older backup.** The button restores only the newest backup. To go back to an older backup, write to [support contact]. Slate Operations support does it through a remote session ([infra/supabase/RESTORE.md](../../infra/supabase/RESTORE.md)).
 
 ### 2.10 Stop and start Slate Operations
 
-Stop Slate Operations only when your support provider asks, or before work on the server PC.
+Stop Slate Operations only when Slate Operations support asks, or before work on the server PC.
 
 **Caution:** "Nobody can use Slate Operations, and backups do not run, until you select Start Slate Operations or this PC restarts." ([Copy.iss:360](../../infra/windows/installer/wizard/Copy.iss#L360))
 
@@ -327,11 +327,11 @@ Open **Manage** → **Updates & licensing**. The **Installation** panel shows th
 
 Select **Refresh release status** to read the latest check again ([updates-panel.tsx:118](../../frontend/src/components/systems/manage/components/updates-panel.tsx#L118)).
 
-**This build shows no update prompt.** The release check reads only published, stable releases ([backup_runner.py:69-97](../../backend/operations/backup_runner.py#L69)). Your support provider tells you when an update is ready. The **Release check** row can show "The release check is not available" ([updates-rules.ts:15](../../frontend/src/components/systems/manage/domain/updates-rules.ts#L15)) (unverified).
+**This build shows no update prompt.** The release check reads only published, stable releases ([backup_runner.py:69-97](../../backend/operations/backup_runner.py#L69)). Slate Operations support tells you when an update is ready. The **Release check** row can show "The release check is not available" ([updates-rules.ts:15](../../frontend/src/components/systems/manage/domain/updates-rules.ts#L15)) (unverified).
 
 ### 3.2 Install an update
 
-The person who runs your server installs updates ([page.tsx:520](../../frontend/src/components/systems/manage/page.tsx#L520)). Usually your support provider does it. You can also do it with the new setup file. You get the file by [how you get a new setup file].
+The person who runs your server installs updates ([page.tsx:520](../../frontend/src/components/systems/manage/page.tsx#L520)). You install it with the new setup file. Get the file from [where to get the setup file].
 
 **Caution:** "People cannot use Slate Operations while it updates. This can take up to 1 hour." ([Copy.iss:525](../../infra/windows/installer/wizard/Copy.iss#L525))
 
@@ -347,17 +347,17 @@ The person who runs your server installs updates ([page.tsx:520](../../frontend/
 | Result | What to do |
 |---|---|
 | "Slate Operations is updated to version %1." ([Copy.iss:532](../../infra/windows/installer/wizard/Copy.iss#L532)) | Nothing. Tell your people. |
-| "The update did not work. Slate Operations went back to version %1. Everybody must sign in again." ([Copy.iss:533](../../infra/windows/installer/wizard/Copy.iss#L533)) | Tell your people to sign in again. Tell your support provider. |
-| "The update did not work. Slate Operations still runs version %1. Nothing changed." ([Copy.iss:534](../../infra/windows/installer/wizard/Copy.iss#L534)) | Tell your support provider. |
+| "The update did not work. Slate Operations went back to version %1. Everybody must sign in again." ([Copy.iss:533](../../infra/windows/installer/wizard/Copy.iss#L533)) | Tell your people to sign in again. Tell Slate Operations support. |
+| "The update did not work. Slate Operations still runs version %1. Nothing changed." ([Copy.iss:534](../../infra/windows/installer/wizard/Copy.iss#L534)) | Tell Slate Operations support. |
 | Any message that says "Select Save report" ([Copy.iss:535-536](../../infra/windows/installer/wizard/Copy.iss#L535)) | Select **Save report**. Send the file to [support contact]. |
 
 If setup says that Slate Operations is busy, wait. Setup tries again by itself ([Copy.iss:531](../../infra/windows/installer/wizard/Copy.iss#L531)).
 
-The **Update procedure for this release** link on the Updates page is for your support provider ([updates-panel.tsx:102](../../frontend/src/components/systems/manage/components/updates-panel.tsx#L102)).
+The **Update procedure for this release** link on the Updates page is for Slate Operations support ([updates-panel.tsx:102](../../frontend/src/components/systems/manage/components/updates-panel.tsx#L102)).
 
 ## 4. Reports for support
 
-Two files help your support provider find a problem. Neither file is sent automatically.
+Two files help Slate Operations support find a problem. Send them as [getting help](getting-help.md) describes. Neither file is sent automatically.
 
 | File | Use it when |
 |---|---|
@@ -443,7 +443,7 @@ When you change the Gmail account password, Google cancels its app passwords. Th
 
 ## 7. Uninstall
 
-Ask your support provider before you uninstall. A reinstall with kept data needs the same or a newer setup file ([Copy.iss:476](../../infra/windows/installer/wizard/Copy.iss#L476)).
+Ask Slate Operations support before you uninstall. A reinstall with kept data needs the same or a newer setup file ([Copy.iss:476](../../infra/windows/installer/wizard/Copy.iss#L476)).
 
 ### 7.1 Uninstall and keep your data
 

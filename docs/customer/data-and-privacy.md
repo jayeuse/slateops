@@ -2,14 +2,14 @@
 
 > **Draft: not legal advice. Review before use.**
 >
-> This statement describes how the current build of Slate Operations handles data. It belongs to the [setup and support order](service-agreement.md).
+> This statement describes how the current build of Slate Operations handles data. Read it with the [early access note](early-access.md).
 >
 > **Blanks to fill:** [owner legal name], [support contact].
 >
 > **A Philippine lawyer must check:**
 >
 > 1. The duties of each party under the Data Privacy Act of 2012 (Republic Act 10173): to be checked by a lawyer. This draft states no duty under that Act.
-> 2. Whether the Customer is the personal information controller, and whether the Provider becomes a personal information processor during support.
+> 2. Whether the Customer is the personal information controller, and whether [owner legal name] becomes a personal information processor during a remote session.
 > 3. Whether a data processing or outsourcing agreement is needed for remote support sessions.
 > 4. Whether the Customer must tell its own staff and contacts about this processing, and how.
 > 5. Whether the outside connections in section 4 need a notice.
@@ -68,10 +68,10 @@ No analytics, tracking or error-reporting service was found:
 
 ## 6. Support access
 
-1. [owner legal name] accesses the PC or the data only when the Customer asks for it, through a remote session. The Customer watches the session and can end it at any time ([support policy](support-policy.md), section 4).
+1. [owner legal name] accesses the PC or the data only when the Customer asks for it, through a remote session. The Customer watches the session and can end it at any time ([getting help](getting-help.md), section 4).
 2. The "Save report" file holds logs and technical facts about the PC for support. It also holds the PC's own network addresses and two days of Windows events. It goes to the desktop of the person who saves it. Nothing is sent automatically; the Customer sends the file (`infra/windows/installer/scripts/lib/Report.ps1:1-15`; `Facts.ps1:103`; [plan, section 10.6](../plans/windows-installer.md#106-save-report)).
 3. Setup removes passwords, keys and the recovery key from the report. It leaves out a file that it cannot clean (`packaging/engine/log_bundle.py:1-7`; `Report.ps1:18-33`). Email addresses, Windows user names and the addresses of client devices in log lines are replaced (`packaging/engine/redaction.py:13-17`; `Report.ps1:18-33`). The logs do not record message text, file content or business records ([plan, section 10.1](../plans/windows-installer.md#101-logging-contract), item 7). This is unverified for the logs of the third-party services.
-4. [owner legal name] does not copy the Customer's data ([setup and support order](service-agreement.md), section 8).
+4. [owner legal name] does not copy the Customer's data ([getting help](getting-help.md), section 4).
 
 ## 7. Access inside the organization
 

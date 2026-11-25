@@ -4,8 +4,8 @@ These documents are for customers of Slate Operations. They describe the current
 
 | Document | Reader | Status |
 |---|---|---|
-| [Setup and support order](service-agreement.md) | Customer and provider | Draft. Not legal advice. Short service order with small promises. |
-| [Support policy](support-policy.md) | Customer | Draft. Not legal advice. A lawyer reviews it before use. |
+| [Early access note](early-access.md) | Customer | Draft. Not legal advice. Free early build, updates, help, what comes later. No signature. |
+| [Getting help](getting-help.md) | Customer | Draft. Free help by email. |
 | [Data and privacy statement](data-and-privacy.md) | Customer | Draft. Not legal advice. A lawyer reviews it before use. |
 | [Quick start](quick-start.md) | Person at the server PC | Draft |
 | [Administrator guide](administrator-guide.md) | Organization admin | Draft |

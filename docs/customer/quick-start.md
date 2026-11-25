@@ -2,12 +2,9 @@
 
 This guide tells you how to prepare the server PC, install Slate Operations, sign in for the first time, and connect phones and other PCs.
 
-[seller name] installs Slate Operations with you. Keep this guide to follow the install, or to install again later.
+You install Slate Operations yourself with this guide. Keep it to install again later.
 
-| Help | Contact |
-|---|---|
-| Support | [support contact] |
-| Support hours | [support hours] |
+For help, write to [support contact]. The [getting help](getting-help.md) page tells you what to send.
 
 Brackets give the source of each step: "plan" is the Windows installer plan, and "spec" is the setup wizard spec. Page numbers are the plan's page numbers.
 
@@ -44,7 +41,7 @@ The check takes about 1 minute. The questions take about 5 minutes. The install 
 
 ### Start setup
 
-1. Get the setup file `SlateOpsSetup-<version>.exe` from [seller name]: [how the seller gives the setup file] (SlateOpsSetup.iss).
+1. Get the setup file `SlateOpsSetup-<version>.exe` from [where to get the setup file] (SlateOpsSetup.iss).
 2. Sign in to the server PC with an administrator account (SlateOpsSetup.iss).
 3. Plug in the USB drive for backups (spec S01).
 4. Double-click the setup file (plan 11.2).
