@@ -339,6 +339,8 @@ var
   { Owner items, rc.35 round: the severity of MaintLine (item 9) and the restore's wait, busy
     retries and result view (items 1, 3, 7). }
   MaintLineSev, RestoreResult, RestoreCode, RestoreState, RestoreBackupAt: String;
+  { Owner request 2026-11-25: Stop and Start, and Start with Windows. }
+  MaintStopped, MaintAutostart: Boolean;
   RestoreTries: Integer;
   RestoreWaitAt: Cardinal;
 

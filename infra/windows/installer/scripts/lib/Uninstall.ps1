@@ -79,6 +79,9 @@ function Get-EngineStatus {
     # answer (admin_email) is personal data and is never passed on, logged or saved.
     $email = Get-DictValue $output 'email_configured'
     if ($email -is [bool]) { $values.email_configured = $email }
+    # Owner request 2026-11-25: the owner stopped Slate Operations (engine power.py).
+    $stopped = Get-DictValue $output 'stopped'
+    $values.stopped = (($stopped -is [bool]) -and $stopped)
     return New-StepResult -Code 'ok' -MessageKey 'maintenance.status.ok' -Values $values
 }
 

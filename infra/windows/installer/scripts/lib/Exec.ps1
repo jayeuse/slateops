@@ -13,7 +13,7 @@ $SlateOpsExec = @{
     # resend-invitation is gone with the invitation of the first administrator.
     EngineJobs  = @('receive', 'prepare', 'prefetch', 'smtp-test', 'install', 'status', 'update', 'set-email',
         'set-backup-target', 'new-recovery-key', 'export-trust', 'log-bundle', 'prepare-uninstall', 'restore',
-        'admin-password')
+        'admin-password', 'stop', 'start')
     # Windows-side work that must run as slateops-svc, because WSL distributions and .wslconfig
     # belong to the account that runs wsl.exe (kit design notes). Their paths come from the
     # administrator-only state file, never from the request.

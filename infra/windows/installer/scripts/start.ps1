@@ -19,6 +19,9 @@ $env:PSModulePath = Join-Path $PSHOME 'Modules'
 foreach ($name in @('Common', 'Checks', 'Exec', 'Mdns')) { . (Join-Path $PSScriptRoot ('lib\{0}.ps1' -f $name)) }
 
 $layout = New-SlateOpsLayout
+# Owner request 2026-11-25: with Start with Windows off, nothing starts until the settings
+# program's Start. The task runs this every minute, so it ends before it writes a log.
+if (-not (Test-StartAllowed -Layout $layout)) { exit 0 }
 $serviceSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $runId = New-RunId -Kind 'boot'
 $logDir = Open-LogDirectory -Layout $layout -Kind 'start' -ServiceSid $serviceSid

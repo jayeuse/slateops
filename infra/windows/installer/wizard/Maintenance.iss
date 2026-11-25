@@ -148,10 +148,16 @@ begin
   Line := '';
   if MaintStatus = 'checking' then
     Result := CM('m01_checking')
+  { Owner request 2026-11-25: Start with Windows is off and nobody started it since this PC
+    started; or the owner stopped it. }
+  else if MaintStatus = 'not_started' then
+    Result := CM('m01_not_started')
   else if MaintStatus <> 'ok' then
     Result := CM('m01_not_ready')
   else if MaintState = 'needs_support' then
     Result := CM('m01_needs_support')
+  else if MaintStopped then
+    Result := CM('m01_stopped')
   { W9 review item 5 (plan 10.7): the network differs from the range of the firewall rules. }
   else if MaintNetwork then
   begin
@@ -172,8 +178,9 @@ end;
 function MaintSeverity: String;
 begin
   if MaintStatus = 'checking' then Result := 'info'
+  else if MaintStatus = 'not_started' then Result := 'warn'
   else if (MaintStatus <> 'ok') or (MaintState = 'needs_support') then Result := 'error'
-  else if MaintNetwork or (MaintBackup = 'backup_target_missing') then Result := 'warn'
+  else if MaintStopped or MaintNetwork or (MaintBackup = 'backup_target_missing') then Result := 'warn'
   else Result := 'ok';
 end;
 
@@ -248,6 +255,63 @@ end;
 function ConfirmNewKey: Boolean;
 begin
   Result := ConfirmAction('m04_confirm_title', 'm04_confirm_text', 'm04_confirm_go');
+end;
+
+{ Owner request 2026-11-25: Stop and Start. Start first runs the boot task (start-boot, which
+  also records the start for Start with Windows off), then the engine job start. }
+function MaintCanStart: Boolean;
+begin
+  Result := MaintStopped or (MaintStatus = 'not_started');
+end;
+
+procedure SubmitPower(Job: String);
+begin
+  MaintPhase := Job;
+  StartJob(Job, '{"run_id":"' + RunId + '"}', Job, False, False, 15);
+end;
+
+{ Start runs the boot task first (step start-boot, from the timer); StepFinished then submits
+  the job. }
+procedure StartPower(Job: String);
+begin
+  MaintAt := GetTickCount;
+  MaintLine := '';
+  if Job = 'start' then
+  begin
+    if RunStep('start-boot', '', 'power-boot', CM('m01_starting'), 0, 0, HELPER_LIMIT_MS) then
+      MaintPhase := 'start-boot';
+  end
+  else
+    SubmitPower(Job);
+  RenderPage(P_MAINT);
+end;
+
+function PowerResultLine(Code: String; var Sev: String): String;
+begin
+  Sev := 'error';
+  if Code = 'stopped' then begin Result := CM('m01_stop_done'); Sev := 'info'; end
+  else if Code = 'started' then begin Result := CM('m01_start_done'); Sev := 'ok'; end
+  else if (Code = 'engine_busy') or (Code = 'runner_busy') or (Code = 'update_running') or (Code = 'recovery_required') then
+  begin
+    Result := CM('m01_power_busy');
+    Sev := 'warn';
+  end
+  else Result := CM('m01_power_failed');
+end;
+
+procedure AutostartClick(Sender: TObject; const Link: String; LinkType: TSysLinkType);
+begin
+  if JobRunning or StepRunning or (MaintPhase <> '') then
+    Exit;
+  if MaintAutostart then
+  begin
+    if not ConfirmAction('m01_autostart_confirm_title', 'm01_autostart_confirm_text', 'm01_autostart_confirm_go') then
+      Exit;
+    RunStep('start-with-windows-off', '', 'autostart', '', 0, 0, HELPER_LIMIT_MS);
+  end
+  else
+    RunStep('start-with-windows-on', '', 'autostart', '', 0, 0, HELPER_LIMIT_MS);
+  RenderPage(P_MAINT);
 end;
 
 { Owner decision 2026-11-24 (plan 8.4): "Restore the latest backup". The engine job restore
@@ -571,6 +635,10 @@ begin
        end;
     9: if ConfirmAction('m01_restore_confirm_title', 'm01_restore_confirm_text', 'm01_restore_confirm_go') then
          StartRestore;
+    10: if MaintCanStart then
+          StartPower('start')
+        else if ConfirmAction('m01_stop_confirm_title', 'm01_stop_confirm_text', 'm01_stop_confirm_go') then
+          StartPower('stop');
   end;
 end;
 
@@ -597,6 +665,7 @@ procedure RenderMaint;
 var
   Sentence, Line: String;
   Verdict: TNewMemo;
+  Link: TNewLinkLabel;
   Bottom, I: Integer;
 begin
   BeginBody(P_MAINT);
@@ -639,10 +708,27 @@ begin
       { AC-F4 (DEC-0042): "Reset the admin password" beside Save report. }
       if I = 3 then begin AddMaintAction(7, 0, CM('btn_save_report'), CM('m01_report_hint'), Bottom); AddMaintAction(8, 1, CM('m01_adminpw'), CM('m01_adminpw_hint'), Bottom); end;
       { Owner decision 2026-11-24: "Restore the latest backup". }
-      if I = 4 then AddMaintAction(9, 0, CM('m01_restore'), CM('m01_restore_hint'), Bottom);
+      if I = 4 then
+      begin
+        AddMaintAction(9, 0, CM('m01_restore'), CM('m01_restore_hint'), Bottom);
+        { Owner request 2026-11-25: Stop or Start, by the status. }
+        if MaintCanStart then
+          AddMaintAction(10, 1, CM('m01_start'), CM('m01_start_hint'), Bottom)
+        else
+          AddMaintAction(10, 1, CM('m01_stop'), CM('m01_stop_hint'), Bottom);
+      end;
       CurY := Bottom + ScaleY(4);
     end;
     AddStepLine;
+  end;
+  { Owner request 2026-11-25: Start with Windows, on or off, with its switch. }
+  if (MaintStatus <> 'checking') and (RestoreResult = '') and not RestoreRunning then
+  begin
+    if MaintAutostart then
+      Link := AddLinkLine(CM('m01_autostart_on'), CM('m01_autostart_turn_off'), 0)
+    else
+      Link := AddLinkLine(SeverityText(CM('m01_autostart_off'), 'warn'), CM('m01_autostart_turn_on'), 0);
+    Link.OnLinkClick := @AutostartClick;
   end;
   if MaintLine <> '' then
     AddTextAs(MaintLine, MaintLineSev, False);
@@ -727,6 +813,8 @@ begin
       MaintNetwork := JsonLiteral(Text, 'network_changed') = 'true';
       { AC-W6: only the flag; the administrator's address never reaches Windows here. }
       MaintEmailMissing := JsonLiteral(Text, 'email_configured') = 'false';
+      MaintStopped := JsonLiteral(Text, 'stopped') = 'true';
+      MaintAutostart := JsonLiteral(Text, 'start_with_windows') <> 'false';
       RenderPage(P_MAINT);
     end;
   end;
@@ -788,6 +876,15 @@ begin
       RestoreResult := 'failed';
       Log('Restore the latest backup: the job answered ' + JobCode + ' (' + RestoreState + ').');
     end;
+    StartMaintStatus;
+    RenderPage(P_MAINT);
+  end
+  else if (MaintPhase = 'stop') or (MaintPhase = 'start') then
+  begin
+    if JobCode <> MaintPhase + 'ed' then
+      Log('Stop or Start: the job ' + MaintPhase + ' answered ' + JobCode + '.');
+    MaintPhase := '';
+    MaintLine := PowerResultLine(JobCode, MaintLineSev);
     StartMaintStatus;
     RenderPage(P_MAINT);
   end
@@ -1725,6 +1822,30 @@ begin
     RenderPage(P_MAINT);
     ShowPhoneCode(JsonValue(Text, 'security_code'));
   end
+  else if ForTag = 'power-boot' then
+  begin
+    { Owner request 2026-11-25: the boot task runs; now the engine starts the services. }
+    if Code = 'started' then
+      SubmitPower('start')
+    else
+    begin
+      MaintPhase := '';
+      MaintLine := CM('m01_power_failed');
+      MaintLineSev := 'error';
+    end;
+    RenderPage(P_MAINT);
+  end
+  else if ForTag = 'autostart' then
+  begin
+    if Code = 'start_with_windows_on' then MaintAutostart := True
+    else if Code = 'start_with_windows_off' then MaintAutostart := False
+    else
+    begin
+      MaintLine := CM('m01_power_failed');
+      MaintLineSev := 'error';
+    end;
+    RenderPage(P_MAINT);
+  end
   else if ForTag = 'repair' then
   begin
     if Code = 'repaired' then MaintLine := CM('m01_repaired')
@@ -2219,6 +2340,15 @@ begin
   end
   else if MaintPhase = 'adminpw-selftest' then
     Result := OneLine(0, 0, CM('s09_channel'), MaintAt)
+  else if (MaintPhase = 'stop') or (MaintPhase = 'start') then
+  begin
+    Action := '';
+    if JobPurpose = MaintPhase then
+      Action := StepText(JobStepJob, JobStepKey, '', '', '');
+    if Action = '' then
+      if MaintPhase = 'stop' then Action := CM('m01_stopping') else Action := CM('m01_starting');
+    Result := OneLine(0, 0, Action, MaintAt);
+  end
   else if MaintPhase = 'adminpw' then
   begin
     Action := '';

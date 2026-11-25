@@ -725,7 +725,7 @@ class W9ReviewCorrectionTest(unittest.TestCase):
             r"'m01_restore_confirm_go'\) then\s+StartRestore;",
         )
         render = routine(self.raw, "procedure RenderMaint;\nvar")
-        self.assertIn("if I = 4 then AddMaintAction(9, 0, CM('m01_restore')", render)
+        self.assertIn("AddMaintAction(9, 0, CM('m01_restore')", render)
         start = routine(self.raw, "procedure SubmitRestore;")
         self.assertIn("StartJob('restore', '{\"run_id\":\"' + RunId + '\"}', 'restore'", start)
         # The wait covers the engine's 4-hour restore limit (PR 121 review).
@@ -762,6 +762,34 @@ class W9ReviewCorrectionTest(unittest.TestCase):
         # Owner item 2: a server part with no internet says so.
         fail = routine(self.raw, "function PrepFailText(Code: String): String;")
         self.assertIn("'manifest_check_unreachable' then Result := CM('s12_no_internet')", fail)
+
+    def test_m01_stop_start_and_start_with_windows(self) -> None:
+        # Owner request 2026-11-25 (scope 1a).
+        click = routine(self.raw, "procedure MaintActionClick(Sender: TObject);")
+        self.assertRegex(
+            click,
+            r"10: if MaintCanStart then\s+StartPower\('start'\)\s+else if ConfirmAction\("
+            r"'m01_stop_confirm_title'[^)]*\) then\s+StartPower\('stop'\);",
+        )
+        power = routine(self.raw, "procedure StartPower(Job: String);")
+        self.assertIn("RunStep('start-boot', '', 'power-boot'", power)
+        finished = routine(self.raw, "procedure StepFinished(ForTag, Code: String);\nvar")
+        self.assertIn("if Code = 'started' then\n      SubmitPower('start')", finished)
+        render = routine(self.raw, "procedure RenderMaint;\nvar")
+        self.assertIn("Link.OnLinkClick := @AutostartClick;", render)
+        sentence = routine(self.raw, "function MaintSentence(var Line: String): String;")
+        self.assertIn("Result := CM('m01_not_started')", sentence)
+        self.assertIn("Result := CM('m01_stopped')", sentence)
+        helper = (SCRIPTS / "setup-helper.ps1").read_text(encoding="ascii")
+        self.assertIn("if (-not (Test-StartAllowed -Layout $layout)) {", helper)
+        self.assertIn("$null = Set-StartWithWindows -Layout $layout -Started", helper)
+        start = (SCRIPTS / "start.ps1").read_text(encoding="ascii")
+        self.assertIn("if (-not (Test-StartAllowed -Layout $layout)) { exit 0 }", start)
+        self.assertLess(
+            start.index("Test-StartAllowed"), start.index("Open-LogDirectory")
+        )  # a skipped minute writes no log
+        exec_lib = (SCRIPTS / "lib/Exec.ps1").read_text(encoding="ascii")
+        self.assertIn("'admin-password', 'stop', 'start')", exec_lib)
 
     def test_item_13_s06_before_s14_has_no_cancel_answer(self) -> None:
         cancel = routine(
@@ -2871,7 +2899,7 @@ class OwnerRc32Test(unittest.TestCase):
     def test_ac_f4_reset_the_admin_password_through_the_pipe(self) -> None:
         exec_lib = (SCRIPTS / "lib/Exec.ps1").read_text(encoding="ascii")
         self.assertIn(
-            "'admin-password')", exec_lib.split("EngineJobs  = @(", 1)[1].split("WindowsJobs", 1)[0]
+            "'admin-password'", exec_lib.split("EngineJobs  = @(", 1)[1].split("WindowsJobs", 1)[0]
         )
         self.assertIn(
             "PipeInputJobs  = @('smtp-test', 'set-email', 'install', 'pipe-test', "

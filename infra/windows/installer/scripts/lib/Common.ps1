@@ -965,3 +965,54 @@ function Get-PowerShellLoggingPolicy {
     }
     return $result
 }
+
+# ---------------------------------------------------------------------------
+# Start with Windows (owner request 2026-11-25)
+# ---------------------------------------------------------------------------
+# state\start-with-windows.json: {"on": false, "started_at": "<UTC>"}. No file means on. With it
+# off, the boot task's start.ps1 ends at once unless the settings program's Start (start-boot)
+# ran since this PC started; the task itself stays as it is, so Repair keeps the choice.
+
+function Get-StartWithWindowsPath {
+    param([Parameter(Mandatory = $true)][hashtable]$Layout)
+    return (Join-Path $Layout.State 'start-with-windows.json')
+}
+
+function Get-StartWithWindows {
+    param([Parameter(Mandatory = $true)][hashtable]$Layout)
+    $path = Get-StartWithWindowsPath -Layout $Layout
+    $value = @{ on = $true; started_at = '' }
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+        try {
+            $data = Read-JsonFile -Path $path
+            $on = Get-DictValue $data 'on'
+            if ($on -is [bool]) { $value.on = $on }
+            $value.started_at = [string](Get-DictValue $data 'started_at')
+        } catch { $null = $_ }
+    }
+    return $value
+}
+
+function Set-StartWithWindows {
+    # -On sets the choice; -Started records that the settings program started Slate Operations now.
+    param([Parameter(Mandatory = $true)][hashtable]$Layout, [Nullable[bool]]$On = $null, [switch]$Started)
+    $value = Get-StartWithWindows -Layout $Layout
+    if ($null -ne $On) { $value.on = [bool]$On }
+    if ($Started) { $value.started_at = [DateTime]::UtcNow.ToString('o') }
+    Write-JsonFile -Path (Get-StartWithWindowsPath -Layout $Layout) -Value @{ on = $value.on; started_at = $value.started_at }
+    return $value
+}
+
+function Test-StartAllowed {
+    # True when Start with Windows is on, or when Start ran since this PC started. A boot time that
+    # cannot be read allows the start: a running server is the safe side.
+    param([Parameter(Mandatory = $true)][hashtable]$Layout)
+    $value = Get-StartWithWindows -Layout $Layout
+    if ($value.on) { return $true }
+    if (-not $value.started_at) { return $false }
+    try {
+        $boot = (Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime()
+        $started = [DateTime]::Parse($value.started_at, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+        return ($started -ge $boot)
+    } catch { return $true }
+}
