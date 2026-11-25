@@ -2,9 +2,9 @@
 
 > **Draft: not legal advice.**
 >
-> This is a short service order for a few known customers. It sells setup and support, not the software. It has no liability cap, no refund clause and no governing-law clause, and it makes small promises on purpose.
+> This is a short service order for a few known customers. It sells support, and setup if the Customer orders it. It does not sell the software. A customer who installs Slate Operations alone and buys no support needs no order: the Elastic License 2.0 alone covers them. It has no liability cap, no refund clause and no governing-law clause, and it makes small promises on purpose.
 >
-> **Blanks to fill:** [owner legal name], [owner address], [customer legal name], [customer address], [customer representative], [start date], [setup fee], [yearly support fee], [currency], [payment days], [support contact], [visits per year], [notice days], [signature date].
+> **Blanks to fill:** [owner legal name], [owner address], [customer legal name], [customer address], [customer representative], [start date], [setup fee, or none], [yearly support fee], [currency], [payment days], [support contact], [visits per year], [notice days], [server PC name], [signature date].
 >
 > **If you later ask a lawyer, ask about:** a liability cap for service work, refunds, governing law, and whether remote support sessions need a data processing agreement under the Data Privacy Act of 2012 (Republic Act 10173). Ask an accountant about receipts and tax on these fees.
 
@@ -13,11 +13,13 @@
 - **Provider:** [owner legal name], of [owner address].
 - **Customer:** [customer legal name], of [customer address], represented by [customer representative].
 
+- **Installation:** Slate Operations on the Customer's server PC [server PC name].
+
 This order starts on [start date].
 
 ## 2. Services
 
-1. **Setup.** The Provider installs Slate Operations on one Windows 11 PC of the Customer. The Provider creates the first administrator account. The Provider checks that the Customer can sign in from one PC and one phone.
+1. **Setup, if the Customer orders it.** The Provider installs Slate Operations on one Windows 11 PC of the Customer. The Provider creates the first administrator account. The Provider checks that the Customer can sign in from one PC and one phone. If the Customer installs Slate Operations alone, the Provider gives yearly support for that installation.
 2. **Yearly support.** The Provider answers questions, helps with problems, installs published updates, and helps with backups and restores. The [support policy](support-policy.md) gives the details.
 
 ## 3. The software
@@ -35,7 +37,7 @@ This order starts on [start date].
 
 ## 5. Fees
 
-1. Setup fee: [setup fee] [currency], paid once, within [payment days] days after setup.
+1. Setup fee: [setup fee, or none] [currency], paid once, within [payment days] days after setup. There is no setup fee when the Customer installs Slate Operations alone.
 2. Yearly support fee: [yearly support fee] [currency] for each support year, paid within [payment days] days after the start of that year.
 3. Fees do not include the Customer's PC, Windows, internet service, email account, backup drive or other hardware.
 
@@ -51,7 +53,7 @@ This order starts on [start date].
 1. Hardware faults, Windows faults, and problems with the Customer's network, internet service or email provider.
 2. Data loss when the backup drive was not connected, or when nobody acted on a failed-backup warning.
 3. Changes that the Customer or another person made to the software, its files or its Linux part.
-4. Other PCs or other installations than the one that the Provider set up.
+4. Other PCs or other installations than the one named in this order.
 5. Visits on site beyond [visits per year] each support year.
 6. New features, custom development and data import from other systems, unless both parties agree in writing.
 

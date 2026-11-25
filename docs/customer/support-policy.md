@@ -24,7 +24,7 @@ A request is **urgent** when nobody can sign in, or when the app or a backup fai
 ## 3. What support includes
 
 1. Answers to questions about the app and its use.
-2. Help with problems in the installation that the Provider set up.
+2. Help with problems in the installation named in the order.
 3. Installation of published updates by hand. Early builds get no update prompt in the app.
 4. Help with backups and restores. The Customer restores the latest backup with one button in Slate Operations settings. The Provider restores an older backup through a remote session ([plan 8.4](../plans/windows-installer.md#84-restore-in-v1)).
 5. Up to [visits per year] visits on site each support year.
