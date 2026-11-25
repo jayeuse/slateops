@@ -68,8 +68,9 @@ from app.systems.manage.audit.service import (
     list_audit_logs,
 )
 from app.systems.manage.licensing.editions import Feature
-from app.systems.manage.licensing.limits import require_feature
+from app.systems.manage.licensing.limits import has_feature, require_feature
 from app.systems.sandbox.records.access import record_access
+from app.systems.sandbox.records.models import Record
 
 router = APIRouter(prefix="/audit-logs", tags=["audit"])
 security_events_router = APIRouter(prefix="/security-events", tags=["security-events"])
@@ -155,7 +156,11 @@ def get_audit_logs(
         if entity_id is None or department_id is not None:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
         return _record_history(db, user, params, entity_id, filters)
-    if entity_id is None:  # one record's history stays in every edition (spec editions.md)
+    # One record's history stays in every edition (spec editions.md); any other list is
+    # the Office audit viewer.
+    if not has_feature(db, Feature.AUDIT_VIEWER) and (
+        entity_id is None or db.get(Record, entity_id) is None
+    ):
         require_feature(db, Feature.AUDIT_VIEWER)
     result = list_audit_logs(
         db, params, reader=user, entity_id=entity_id, department_id=department_id, **filters
@@ -282,6 +287,7 @@ def get_audit_log(
     user: AdminUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> AuditLogResponse:
+    require_feature(db, Feature.AUDIT_VIEWER)
     log = db.scalar(audit_log_statement().where(AuditLog.id == audit_log_id))
     if log is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audit log not found")

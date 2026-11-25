@@ -273,11 +273,11 @@ def create_app() -> FastAPI:
     app.include_router(
         comms_router, prefix="/api", dependencies=[Depends(feature_gate(Feature.OPENCOMMS))]
     )
-    app.include_router(charts_router, prefix="/api")
-    app.include_router(
-        dashboards_router, prefix="/api",
-        dependencies=[Depends(feature_gate(Feature.DASHBOARDS))],
-    )
+    # Saved charts exist only for the Dashboard builder.
+    for router in (charts_router, dashboards_router):
+        app.include_router(
+            router, prefix="/api", dependencies=[Depends(feature_gate(Feature.DASHBOARDS))]
+        )
     for router in (reports_router, report_schedule_router):
         app.include_router(
             router, prefix="/api", dependencies=[Depends(feature_gate(Feature.REPORTS))]

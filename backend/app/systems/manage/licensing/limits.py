@@ -41,6 +41,7 @@ _LIMIT_WORDS = {
     Limit.SHEET_ROWS: "{n} rows in a sheet",
 }
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+_ORGANIZATION_LOCK = 0x5A7E_0001  # one installation-wide advisory lock key
 
 
 def edition_limit(limit: Limit, allowed: int, edition_name: str) -> HTTPException:
@@ -105,6 +106,8 @@ def require_first_organization(db: Session) -> None:
 
     if current_state(db).terms.edition is Edition.DEVELOPMENT:
         return
+    # Serialize concurrent creations: the lock lasts until the caller's transaction ends.
+    db.execute(select(func.pg_advisory_xact_lock(_ORGANIZATION_LOCK)))
     existing = db.scalar(
         select(func.count(WorkspaceProfile.id)).where(WorkspaceProfile.is_deleted.is_(False))
     )

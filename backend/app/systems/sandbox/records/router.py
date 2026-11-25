@@ -380,6 +380,7 @@ def restore_record(
     record = _lock_record(db, record)
     if not record.is_deleted:
         raise _conflict("Record is not deleted")
+    require_records(db, record.module_id)  # a restore adds a live record (spec editions.md ED-5)
     # A record keeps values for primitive fields that were closed after it was
     # created.  Restore validates those values against the complete module
     # field set; create and update continue to validate against active fields.

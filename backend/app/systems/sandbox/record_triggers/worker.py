@@ -14,6 +14,8 @@ from app.core.database.organization_scope import worker_organization
 from app.core.database.session import AuditSession, get_engine
 from app.core.observability import failure_cause, log_event
 from app.systems.manage.health import signals
+from app.systems.manage.licensing.editions import Feature
+from app.systems.manage.licensing.limits import has_feature
 from app.systems.manage.workspace.organizations import active_organization_ids
 from app.systems.platform.scheduling.work_signals import WorkSignals
 from app.systems.sandbox.record_triggers.execution import (
@@ -306,6 +308,8 @@ class TriggerWorker:
     def _enqueue_and_claim(self, lane: int = 0) -> list[ClaimedTriggerEvent]:
         try:
             with AuditSession(bind=get_engine()) as db:
+                if not has_feature(db, Feature.AUTOMATIONS):
+                    return []  # Desk runs no automation; queued events wait (ED-7)
                 if lane == 0 and self._schedule_at is not None:
                     enqueue_due_schedules(db, now=self._schedule_at)
                 claims = claim_due_events(db, limit=self._claim_limit)

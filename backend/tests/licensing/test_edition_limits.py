@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.systems.manage.licensing import limits
 from app.systems.manage.licensing.editions import DESK, Edition, Limit
 from app.systems.manage.licensing.models import InstallationLicense
@@ -18,6 +19,7 @@ from app.systems.openview.worksheets.models import Worksheet
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.record_triggers.models import RecordTriggerEvent
 from app.systems.sandbox.record_triggers.outbox import enqueue_record_event
+from app.systems.sandbox.records.models import Record
 from tests.conftest import make_operator, membership_of
 from tests.licensing.support import install, license_text
 from tests.rbac.support import _client
@@ -135,9 +137,11 @@ def test_desk_hides_office_features_and_runs_no_automation(
 ) -> None:
     db = integration_db
     install(db, DESK_FILE)
-    listed = _client(application, world.admin, db).get("/api/dashboards")
-    assert listed.status_code == 403
-    assert listed.json()["detail"]["code"] == "edition_required"
+    admin = _client(application, world.admin, db)
+    for path in ("/api/dashboards", "/api/charts"):
+        listed = admin.get(path)
+        assert listed.status_code == 403, path
+        assert listed.json()["detail"]["code"] == "edition_required"
     queued = db.scalar(select(func.count(RecordTriggerEvent.id)))
     enqueue_record_event(db, world.record, previous=None)
     db.flush()
@@ -193,3 +197,31 @@ def test_the_installation_owner_imports_a_license_and_members_see_no_counts(
         "/api/license", json={"text": license_text()}
     )
     assert not_owner.status_code == 403
+
+
+def test_desk_keeps_one_records_history_and_refuses_any_other_audit_list(
+    application: FastAPI, integration_db: Session, world: SheetWorld,
+) -> None:
+    install(integration_db, DESK_FILE)
+    admin = _client(application, world.admin, integration_db)
+    history = admin.get("/api/audit-logs", params={"entity_id": str(world.record.id)})
+    assert history.status_code == 200, history.text
+    other = admin.get("/api/audit-logs", params={"entity_id": str(world.department.id)})
+    assert other.status_code == 403
+    assert other.json()["detail"]["code"] == "edition_required"
+
+
+def test_desk_refuses_to_restore_a_record_above_the_module_limit(
+    application: FastAPI, integration_db: Session, world: SheetWorld,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = integration_db
+    install(db, DESK_FILE)
+    deleted = Record(org_id=world.module.org_id, module_id=world.module.id, data={},
+                     is_deleted=True, deleted_at=utc_now())
+    db.add(deleted)
+    db.flush()
+    monkeypatch.setitem(DESK.limits, Limit.RECORDS, 1)  # the live record fills the module
+    restored = _client(application, world.admin, db).post(f"/api/records/{deleted.id}/restore")
+    assert restored.status_code == 403, restored.text
+    assert restored.json()["detail"]["limit"] == "records"
