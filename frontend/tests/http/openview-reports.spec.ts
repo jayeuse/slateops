@@ -6,6 +6,7 @@ import {
   expectAnsweredReference,
 } from "./helpers/test";
 import { readFile } from "node:fs/promises";
+import { mockLicense } from "./helpers/license";
 import { profilePreferences } from "./helpers/profile-api";
 import {
   installModuleReportsApi,
@@ -1195,4 +1196,26 @@ test.describe("on a phone", () => {
     await expect(page).toHaveURL(modulePage("reports"));
     await expect(reportRow(page)).toBeVisible();
   });
+});
+
+test("on Desk a module page shows Reports as available in Office and offers no report from a view", async ({
+  page,
+}) => {
+  await mockLicense(page);
+  await installModuleReportsApi(page, { reports: [], views: [] });
+  const reads: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.startsWith("/api/reports"))
+      reads.push(request.url());
+  });
+  await page.goto(`${modulePage()}&tab=reports`);
+  await expect(
+    page.getByRole("heading", { name: "Reports: available in Office" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: /^Records/ }).click();
+  await page.getByRole("button", { name: "More view actions" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Make a report from this view…" }),
+  ).toHaveCount(0);
+  expect(reads).toEqual([]);
 });

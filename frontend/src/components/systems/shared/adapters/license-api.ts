@@ -106,4 +106,14 @@ export function useHasFeature(feature: EditionFeature): boolean {
   return license === undefined || license.features.includes(feature);
 }
 
+/**
+ * True only once the edition is known to have the feature (or cannot be read).
+ * Use it to enable a feature's reads, so Desk sends none of them.
+ */
+export function useFeatureReady(feature: EditionFeature): boolean {
+  const license = useQuery(licenseQueryOptions());
+  if (license.isError) return true;
+  return license.data !== undefined && license.data.features.includes(feature);
+}
+
 export { isEditionRefusal } from "@/lib/api-errors";

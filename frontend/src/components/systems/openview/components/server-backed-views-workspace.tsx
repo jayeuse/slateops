@@ -1,5 +1,8 @@
 "use client";
-import { useHasFeature } from "../../shared/adapters/license-api";
+import {
+  useFeatureReady,
+  useHasFeature,
+} from "../../shared/adapters/license-api";
 import { EditionPreview } from "../../shared/components/edition-preview";
 import { useDisplayRegion } from "@/components/use-display-region";
 
@@ -2700,9 +2703,10 @@ export default function ServerBackedViewsWorkspace({
   // and the report dialog, which also opens from the Records view menu.
   // Reports are an Office feature (spec editions.md ED-11): Desk reads none.
   const hasReports = useHasFeature("reports");
+  const reportsReady = useFeatureReady("reports");
   const reportCountQuery = useQuery({
     ...moduleReportListOptions(moduleId ?? "", "exclude"),
-    enabled: hasReports && Boolean(moduleId),
+    enabled: reportsReady && Boolean(moduleId),
   });
   const reportCount =
     reportCountQuery.data && !exportAccessDenied
@@ -3034,14 +3038,18 @@ export default function ServerBackedViewsWorkspace({
           </DropdownMenuGroup>
           {canManageViews ? (
             <>
-              <DropdownMenuSeparator />
-              <DropdownMenuGroup>
-                <MakeReportFromViewItem
-                  view={reportView}
-                  disabled={!currentWorkspace || incompleteFilters}
-                  onOpen={openReportDialog}
-                />
-              </DropdownMenuGroup>
+              {hasReports ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <MakeReportFromViewItem
+                      view={reportView}
+                      disabled={!currentWorkspace || incompleteFilters}
+                      onOpen={openReportDialog}
+                    />
+                  </DropdownMenuGroup>
+                </>
+              ) : null}
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
                 {saving ? null : (

@@ -2844,6 +2844,12 @@
     "path": "/api/license"
   },
   {
+    "adapter": "frontend/src/components/systems/shared/adapters/license-api.ts",
+    "function": "useFeatureReady",
+    "method": "GET",
+    "path": "/api/license"
+  },
+  {
     "adapter": "frontend/src/lib/api.ts",
     "function": "checkedSession",
     "method": "GET",
