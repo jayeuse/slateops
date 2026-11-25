@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.base_model import utc_now
 from app.core.config import get_instance_settings, get_settings
 from app.systems.access.users.membership import transaction_organization
+from app.systems.manage.backups import restored_runs
 from app.systems.manage.backups.models import (
     BackupExportOperation,
     BackupPolicy,
@@ -487,6 +488,7 @@ def adopt_policy(
         return policy
     if unresolved_run(db, instance) is not None:
         raise BackupStateError("backup_recovery_required")
+    restored_runs.close(db, instance, marker, completed)
     policy.installation_id = instance
     policy.next_due_at = future_due(policy.schedule, policy.timezone, now or utc_now())
     policy.runner_last_seen_at = None

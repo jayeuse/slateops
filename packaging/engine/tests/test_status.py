@@ -71,6 +71,7 @@ def test_ac_s1_status_returns_only_safe_codes_booleans_and_whole_numbers(tmp_pat
         # TASK-0097 AC-B6: added fields; before the install, no email and no address.
         "email_configured": False,
         "admin_email": None,
+        "stopped": False,
     }
     assert not paths.logs.exists()
 

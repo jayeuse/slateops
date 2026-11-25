@@ -21,7 +21,8 @@ param(
         'start-boot', 'windows-steps', 'account-sid', 'r7', 'provider-detect', 'drives', 'drive-check', 'prepare-backup',
         'printers', 'data-check', 'name-check', 'https-check', 'job-stop', 'report-collect', 'report-zip', 'fix-mdns',
         'uninstall-info', 'uninstall-stop', 'uninstall-data', 'remove-windows', 'kept-read', 'restore-kept', 'kept-status',
-        'kept-return', 'kept-done', 'setup-remove-data', 'remove-features', 'engine-status', 'repair', 'security-code', 'update-prepare', 'update-wsl', 'update-done')]
+        'kept-return', 'kept-done', 'setup-remove-data', 'remove-features', 'engine-status', 'repair', 'security-code', 'update-prepare', 'update-wsl', 'update-done',
+        'start-with-windows-on', 'start-with-windows-off')]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$RunId,
     [Parameter(Mandatory = $true)][string]$OutFile,
@@ -303,13 +304,28 @@ try {
             if ((Test-Path -LiteralPath $kept.Folder) -and -not (Test-Path -LiteralPath $kept.Disk)) { Remove-PathNoFollow -Path $kept.Folder }
             $result = New-StepResult -Code 'done' -MessageKey 'setup.kept.done'
         }
+        'start-with-windows-on' {
+            $null = Set-StartWithWindows -Layout $layout -On $true
+            $result = New-StepResult -Code 'start_with_windows_on' -MessageKey 'maintenance.autostart.on'
+        }
+        'start-with-windows-off' {
+            $null = Set-StartWithWindows -Layout $layout -On $false
+            $result = New-StepResult -Code 'start_with_windows_off' -MessageKey 'maintenance.autostart.off'
+        }
         'engine-status' {
+            # Owner request 2026-11-25: with Start with Windows off and no Start since this PC
+            # started, nothing asks the engine, because an Exec job would start Linux and Docker.
+            if (-not (Test-StartAllowed -Layout $layout)) {
+                $result = New-StepResult -Code 'not_started' -MessageKey 'maintenance.status.not_started' -Values @{ start_with_windows = $false }
+                break
+            }
             $version = '0.0.0'
             try { $version = (Read-HelperVersion).version } catch { $version = '0.0.0' }
             $result = Get-EngineStatus -Layout $layout -RunId $RunId -WindowsPartVersion $version
             if ($result.code -eq 'ok') { $result.values.backup_folder = [string](Get-DictValue (Read-WindowsChanges -Layout $layout) 'backup_folder') }
             # W9 review item 5 (plan 10.7): the network against the recorded rule range.
             $result.values.network_changed = (Test-NetworkChanged -Layout $layout)
+            $result.values.start_with_windows = (Get-StartWithWindows -Layout $layout).on
         }
         'repair' { $result = Invoke-Repair -Layout $layout }
         # W13b part 2 (plan 7.4 setup-program path, M05): the five receive parts of this setup
@@ -444,6 +460,9 @@ try {
             }
         }
         'start-boot' {
+            # Owner request 2026-11-25: a start from setup or the settings program counts until
+            # the next PC start, also when Start with Windows is off.
+            $null = Set-StartWithWindows -Layout $layout -Started
             Start-ScheduledTask -TaskPath $SlateOps.TaskPath -TaskName $SlateOps.StartTaskName
             $result = New-StepResult -Code 'started' -MessageKey 'setup.boot.started'
         }

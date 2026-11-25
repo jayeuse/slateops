@@ -25,7 +25,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-from engine import backups, drive, progress, update
+from engine import backups, drive, power, progress, update
 from engine.context import Context
 from engine.core import FAILED, JobError, failed, is_run_id, private_dir, refused, write_private
 
@@ -69,6 +69,8 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
     instance = backups.installed_instance(paths)
     if instance is None:
         raise refused("not_installed")
+    if power.stopped(paths):
+        raise refused("stopped")
     record: dict[str, Any] = {
         "schema": 1, "kind": "restore", "run_id": ctx.run_id, "project": instance,
         "state": "running", "started_at": ctx.deps.clock().isoformat(), "steps": {},

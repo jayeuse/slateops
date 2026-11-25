@@ -28,6 +28,7 @@ from engine import (
     log_bundle,
     maintenance,
     packages,
+    power,
     prefetch,
     prepare,
     receive,
@@ -96,6 +97,9 @@ JOBS: dict[str, Job] = {
     # Owner decision 2026-11-24 (plan 8.4): M01 "Restore the latest backup"; on the Windows
     # Exec allow-list.
     "restore": Job(restore.handle, restore.KEYS, restore.REQUIRED),
+    # Owner request 2026-11-25: M01 Stop and Start; on the Windows Exec allow-list.
+    "stop": Job(power.stop, power.KEYS, power.REQUIRED),
+    "start": Job(power.start, power.KEYS, power.REQUIRED),
 }
 
 

@@ -18,7 +18,18 @@ import os
 import re
 from typing import Any
 
-from engine import answers, backups, packages, prefetch, release, report, smtp_env, tick, update
+from engine import (
+    answers,
+    backups,
+    packages,
+    power,
+    prefetch,
+    release,
+    report,
+    smtp_env,
+    tick,
+    update,
+)
 from engine.context import Context
 from engine.core import INSTANCE_ID, engine_version, is_run_id, is_version, lock_state
 
@@ -121,4 +132,6 @@ def handle(ctx: Context, request: dict[str, Any]) -> dict[str, Any]:
         "instance_id": _instance_id(ctx),
         "email_configured": _email_configured(ctx),
         "admin_email": _admin_email(ctx),
+        # Owner request 2026-11-25: the owner stopped Slate Operations (M01 Stop).
+        "stopped": power.stopped(paths),
     }

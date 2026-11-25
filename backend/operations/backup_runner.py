@@ -353,7 +353,8 @@ def run_once(
                         raise ValueError
                 except (OSError, ValueError, TypeError, physical_archive().BackupError) as error:
                     raise RunnerError("restore_marker_invalid") from error
-                result = host.bridge(command.model_dump(mode="json"))
+                # A marker from before PR 122 has no manifest: send the document as it is.
+                result = host.bridge(command.model_dump(mode="json", exclude_none=True))
                 if result.get("policy", {}).get("adopted") is not True:
                     raise RunnerError("result_unconfirmed")
                 return {"state": "adopted"}

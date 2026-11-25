@@ -339,6 +339,10 @@ var
   { Owner items, rc.35 round: the severity of MaintLine (item 9) and the restore's wait, busy
     retries and result view (items 1, 3, 7). }
   MaintLineSev, RestoreResult, RestoreCode, RestoreState, RestoreBackupAt: String;
+  { Owner request 2026-11-25: Stop and Start, and Start with Windows. }
+  MaintStopped, MaintAutostart: Boolean;
+  PowerTries: Integer;
+  PowerWaitAt: Cardinal;
   RestoreTries: Integer;
   RestoreWaitAt: Cardinal;
 
@@ -2599,6 +2603,8 @@ begin
     { Owner item 8 (rc.35 round): M01 sets DataPrepared from install.json but has no
       background stage; its report left the Linux part out every time. }
     and not ((EntryScreen <> 'M01') and DataPrepared and not BgDone and not BgFailed)
+    { PR 122 review: a log-bundle job would start Linux that the owner chose not to start. }
+    and not ((EntryScreen = 'M01') and (MaintStatus = 'not_started'))
     and not (InstallStarted and not InstallDone and not InstallFailed)
     and not ((EntryScreen = 'M05') and (UpdPhase <> '') and not UpdFailed);
 end;

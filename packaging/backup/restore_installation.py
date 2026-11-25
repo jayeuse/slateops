@@ -712,6 +712,8 @@ def run_finalize(
             "target_db_container_id": container_id,
             "completed_at": datetime.now(UTC).isoformat(),
             "application_sessions_invalidated": True,
+            # The adoption closes the restored backup's own run with it (owner, PR 122).
+            "manifest_sha256": pending.get("manifest_sha256"),
         },
     )
 

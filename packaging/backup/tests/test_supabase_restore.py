@@ -673,6 +673,7 @@ def _pending_restore(tmp_path: Path) -> tuple[Path, Path]:
                 "source_installation_id": "a" * 32,
                 "target_project": "client-b",
                 "target_instance_id": TARGET_INSTANCE,
+                "manifest_sha256": "d" * 64,
                 "volume_names": [
                     f"client-b_{name}"
                     for name in (
@@ -736,6 +737,8 @@ def test_finalize_verified_target_writes_identity_marker(tmp_path: Path) -> None
     marker = json.loads((target / "restore-finalized.json").read_text())
     assert marker["target_instance_id"] == TARGET_INSTANCE
     assert marker["application_sessions_invalidated"] is True
+    # Owner, PR 122: the adoption closes the restored backup's own run with this manifest.
+    assert marker["manifest_sha256"] == "d" * 64
     assert all(
         "-U" in args and args[args.index("-U") + 1] == "supabase_admin"
         for args in commands.calls

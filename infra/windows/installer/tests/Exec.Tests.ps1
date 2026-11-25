@@ -115,7 +115,7 @@ Test-Case 'AC-2 the request check accepts one allow-listed job and refuses the r
 Test-Case 'AC-2 the allow-list is the plan 6.2 list (R-8: no resend-invitation; AC-F4: admin-password through the pipe), and the Windows-side jobs with the W8 pipe-test' {
     # Ordinal order (code points): "-" (0x2D) sorts before letters.
     Assert-Equal @('admin-password', 'export-trust', 'install', 'log-bundle', 'new-recovery-key', 'prefetch', 'prepare', 'prepare-uninstall', 'receive',
-        'restore', 'set-backup-target', 'set-email', 'smtp-test', 'status', 'update') (Get-OrdinalSorted $SlateOpsExec.EngineJobs)
+        'restore', 'set-backup-target', 'set-email', 'smtp-test', 'start', 'status', 'stop', 'update') (Get-OrdinalSorted $SlateOpsExec.EngineJobs)
     Assert-Equal @('admin-password', 'install', 'pipe-test', 'set-email', 'smtp-test') (Get-OrdinalSorted $SlateOpsExec.PipeInputJobs)
     Assert-True ($SlateOpsExec.PipeOutputJobs -cnotcontains 'admin-password') 'its answer holds no secret'
     Assert-Equal @('import-distro', 'import-kept', 'pipe-test', 'terminate-distro', 'unregister-distro', 'wsl-facts', 'wslconfig') (Get-OrdinalSorted $SlateOpsExec.WindowsJobs)
