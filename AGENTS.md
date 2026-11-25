@@ -20,7 +20,7 @@ Read and apply this before any other instruction, every time a task runs tests.
 - **One heavy test side at a time.** Never run backend tests (pytest batches, coverage, shards, fullstack, smoke) while frontend tests (Playwright isolated or HTTP, the frontend build) run, or the reverse. Together they run 2–3 times slower on the 4-performance-core development machine and fail timing-sensitive tests at random.
 - **Keep parallelism inside each side.** Backend coverage runs `tests.parallel_coverage --shards 3`; the frontend suite keeps its Playwright workers. Do not lower `--shards` or drop to a single worker without a measured failure.
 - **Start nothing else beside a running heavy lane:** no focused tests, batches, or sample runs "to use the time".
-- **Free the machine before a full local suite or the release check:**
+- **Free the machine before a full local suite or a requested release check:**
   1. Stop dev servers and processes you started (`npm run dev`, `uv run python -m app`, preview servers, sample runs, idle agent clients).
   2. Stop the owned development Supabase stack with `python3 scripts/dev.py stop` (never `docker compose down -v`; its volumes hold the data).
   3. Stop other running development containers (other projects' Compose stacks) with `docker stop`; tell the user which ones. Never remove them or their volumes.
@@ -39,9 +39,9 @@ These rules are the one source for when tests run. Scoped guides own only their 
 - **Push with fast checks; CI runs the heavy suites.** CI on the pull request (`backend.yml`, `frontend.yml`) is the full gate. Before a push, run only:
   - the fast checks for the changed side: frontend `npm run check`; backend `uv run ruff check . ../scripts ../tests/tooling ../packaging/backup` and `uv run mypy app operations`; `python3 scripts/assertion_guard.py --base <base-ref>` when tests changed;
   - the focused tests and one batch for the changed files and their direct callers (`scripts/run_tests.py ... --match`, or the frontend specs that the change touches).
-- **Keep full suites off the local machine.** Do not run the full backend coverage gate, the full Playwright suite, fullstack or reset acceptance, or the smoke suite locally, unless the user asks or CI is unavailable; the release check below runs only its two runners.
+- **Keep full suites off the local machine.** Do not run the full backend coverage gate, the full Playwright suite, fullstack or reset acceptance, or the smoke suite locally, unless the user asks or CI is unavailable.
 - **CI decides completion.** After the push, read the CI result. Reproduce a CI failure with the focused test, fix it, and push again. Work is done and a pull request is ready to merge only when CI is green.
-- **Run the release check at a major update.** CI does not run its two suites. From `backend/`, run `uv run python -m tests.smoke_runner`, then `uv run python -m tests.fullstack_runner --acceptance-only`, one at a time, under rule zero. Choose worker and stack counts from measurements and record actual runtimes; elapsed time alone does not reject a complete passing run. Preserve hang and deadline protections, required scenarios, isolation, and cleanup guards.
+- **CI is the release gate.** A release tag runs only after green pull request CI on `main`; the release workflow (`release.yml`) then builds, signs and runs the Windows install acceptance. Run the local release check only when the user asks for it: from `backend/`, run `uv run python -m tests.smoke_runner`, then `uv run python -m tests.fullstack_runner --acceptance-only`, one at a time, under rule zero. Choose worker and stack counts from measurements and record actual runtimes; elapsed time alone does not reject a complete passing run. Preserve hang and deadline protections, required scenarios, isolation, and cleanup guards.
 - **Fix failures narrowly.** Rerun the failing case and affected batch, then only the failed check. Never weaken assertions or use blind retries. Use isolated PostgreSQL for database guarantees and preserve runner guards.
 - **Repair commands:** backend `uv run ruff check .`, `uv run mypy app operations`, and `COVERAGE_BASE_REF=<base-ref> uv run python -m tests.fullstack_runner --backend-coverage-only`; frontend `npm run verify`. Do not rerun them after a passing CI run unless a failure invalidates that evidence.
 - **Honor explicit test skips:** stop active runs, start no replacements, and report omitted checks.
@@ -63,6 +63,35 @@ Wrong: "Push succeeded; ran `docker system prune -a --volumes`."
 - If adding an abstraction layer, configuration surface, roughly more than five files, or a speculative option, stop and reduce the design first.
 - Read-only discovery needs no approval. Obtain approval for scope expansion, unrelated files, new services, unrequested public API/schema/storage/wire-format changes, data deletion, overwriting user work, discarding uncommitted changes, or rewriting Git history; preserve unrelated edits.
 - Review the final diff for correctness and scope, and remove task-created scratch code. Report actual results and blockers; deferred, skipped, or unavailable checks are unverified, never passed.
+
+## Releases and versions
+
+A published release reaches customers: every installation polls `releases/latest` of this repository (`backend/operations/backup_runner.py:74`) and offers it as an update. Treat publishing as irreversible.
+
+**Choose the version (`MAJOR.MINOR.PATCH`) from what an installed customer experiences.** When unsure, take the higher bump.
+
+| Bump | When | Examples |
+|---|---|---|
+| Patch `0.1.0 → 0.1.1` | Fixes only. No new feature, no new limit, no change a customer must learn. | A bug fix, a security fix, copy fixes, a dependency update with no behavior change |
+| Minor `0.1.1 → 0.2.0` | New or changed features that keep every installation working and need no manual step. | A new module or screen, a new setting, a forward-only migration, a new Office or Headquarters gate on a new feature |
+| Major `0.x → 1.0.0`, `1.x → 2.0.0` | An installed customer loses something or must act. Needs the owner's approval before the tag. | A removed feature, a new edition limit on an existing feature, a license file format a current license cannot pass, a backup that an older version cannot restore, a new Windows or hardware requirement, an update that needs a manual step |
+
+Before `1.0.0`, a major-class change still needs the owner's approval, and the owner decides whether it becomes `1.0.0` or the next minor. The release notes then start with a "Before you update" section.
+
+**Rules for every release:**
+
+1. The Git tag is the version. `backend/pyproject.toml` and `frontend/package.json` hold the same `X.Y.Z`; the release workflow refuses a tag that does not match (`scripts/check_release_version.py`).
+2. Bump both manifests in a pull request titled `Release vX.Y.Z` with only the version change and any release-only docs. It merges to `main` after green CI.
+3. A stable tag `vX.Y.Z` goes on a commit of `main`. A test tag `vX.Y.Z-rc.N` goes on any pushed commit and makes a draft titled "Test build, not for customers". Use an rc tag first when the release changes the installer, the engine, the Linux image or a migration, and let the owner install it.
+4. Never re-run a failed release workflow, never move a tag, and never reuse a version. Fix the cause and push the next rc number; a failed stable tag burns its version, so the fix ships as the next patch.
+5. The workflow always creates a draft. Before publishing, download the assets, run `sha256sum --check SHA256SUMS` and the `cosign verify-blob` command from the release notes, and add a short "What changed" section in customer words (no vulnerability details, SEC-R1). Publish only after the owner says so in chat.
+6. Migrations must upgrade every published stable version to the new one with no manual step. Never edit or delete a migration that a published release contains.
+7. A license file that worked on the last published version keeps working on a patch or minor release.
+8. After a stable release is published, delete its rc drafts and rc tags. Never delete or edit a published release or its tag; a bad release is replaced by the next patch.
+
+Correct: "Fixed the backup retry bug only; bumped to 0.1.1 in `Release v0.1.1`; CI green; tagged `v0.1.1` on main; checksums and cosign pass; owner approved; published."
+Wrong: "The v0.2.0 release job failed, so re-ran it and moved the tag to the fixed commit."
+Wrong: "Removed the Office export from Desk in 0.2.1 because it is only a small change."
 
 ## Security reporting and review rules
 

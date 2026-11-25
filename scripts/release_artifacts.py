@@ -45,9 +45,9 @@ from scripts.check_release_version import (  # noqa: E402
     release_version,
 )
 
-# DEC-0029 item 13 and plan 5.3: no stable release before the license work. The license
-# work's pull request sets this to True; until then every stable tag is refused.
-LICENSE_WORK_MERGED = False
+# DEC-0029 item 13 and plan 5.3: no stable release before the license work. The editions
+# merged in PR 123, so stable tags are accepted.
+LICENSE_WORK_MERGED = True
 
 TEST_BUILD_TITLE = "Test build, not for customers"
 OIDC_ISSUER = "https://token.actions.githubusercontent.com"
@@ -757,8 +757,22 @@ def release_notes(
     lines: list[str] = []
     if prerelease:
         lines += [
-            f"**{TEST_BUILD_TITLE}.** Do not publish, link or offer this release. It contains "
-            "no edition limits and no installer yet.",
+            f"**{TEST_BUILD_TITLE}.** Do not publish, link or offer this release.",
+            "",
+        ]
+    else:
+        version = tag.removeprefix("v")
+        lines += [
+            "## Install",
+            "",
+            f"Download `SlateOpsSetup-{version}.exe` and run it on the server PC "
+            "(Windows 11 Pro, Enterprise or Education, version 22H2 or later). "
+            f"The [quick start](https://github.com/{repository}/blob/{tag}"
+            "/docs/customer/quick-start.md) gives every step.",
+            "",
+            "The setup program is not code-signed yet. Windows SmartScreen shows a warning: "
+            "select More info, then Run anyway. A PC with Smart App Control turned on blocks "
+            "the setup program.",
             "",
         ]
     lines += [
