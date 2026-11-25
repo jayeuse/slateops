@@ -37,7 +37,7 @@ Notes:
 1. A person or guest counts once for the installation. A disabled person, a removed member and an expired guest do not count. A pending invitation counts. To free its place, disable or delete the person ([administrator guide](administrator-guide.md#5-edition-and-license-file)).
 2. Drafts in the Sandbox have no limit. The department and module limits apply when you publish ([editions spec](../specs/editions.md#acceptance-criteria), ED-4).
 3. At a limit, Slate Operations blocks only the action that adds a new item. It deletes nothing ([editions spec](../specs/editions.md#outcome)).
-4. On Desk, a paid feature shows "<feature>: available in Office" instead of the feature (`frontend/src/components/systems/shared/components/edition-preview.tsx:68`).
+4. On Desk, a paid feature shows "&lt;feature&gt;: available in Office" instead of the feature (`frontend/src/components/systems/shared/components/edition-preview.tsx:68`).
 
 ## 3. How to buy a license file
 

@@ -149,7 +149,7 @@ If you have changes that you did not save, Slate Operations asks you first.
 
 Your installation runs one edition: Desk, Office or Headquarters. Desk is free and has limits. Your administrator manages the edition.
 
-**Office features.** On Desk, these features show a lock and the title "<feature>: available in Office" in place of the feature:
+**Office features.** On Desk, these features show a lock and the title "&lt;feature&gt;: available in Office" in place of the feature:
 
 | Feature | Where you see it | Section |
 |---|---|---|
@@ -176,8 +176,8 @@ In the sheet grid, a full sheet shows "The row could not be added. Try again." O
 
 | Banner | What it means |
 |---|---|
-| "The license ended on <date>. On <date> this installation becomes Desk." | You can work as usual. Your administrator renews the license. |
-| "Slate Operations is read-only. The license ended on <date>; your administrator can renew it." | You can read, but you cannot change data. A change can show "Slate Operations is read-only until your administrator renews the license." |
+| "The license ended on &lt;date&gt;. On &lt;date&gt; this installation becomes Desk." | You can work as usual. Your administrator renews the license. |
+| "Slate Operations is read-only. The license ended on &lt;date&gt;; your administrator can renew it." | You can read, but you cannot change data. A change can show "Slate Operations is read-only until your administrator renews the license." |
 
 Administrators see more banners. The [Administrator guide](administrator-guide.md#54-banners) explains them.
 

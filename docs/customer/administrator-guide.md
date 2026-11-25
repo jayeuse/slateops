@@ -489,10 +489,10 @@ A banner can show at the top of the pages. Only one banner shows at a time, in t
 
 | When | Who sees it | Text | What to do |
 |---|---|---|---|
-| Ended, read-only | Administrators | "The license ended on <date>. Only administrators can change data until you import a new license file or reduce use to the Desk limits." | Import a new license file, or reduce use below each Desk limit. |
-| Ended, read-only | Everybody else | "Slate Operations is read-only. The license ended on <date>; your administrator can renew it." | Nothing. The administrator renews. |
-| Warning | Everybody | "The license ended on <date>. On <date> this installation becomes Desk." | Import a new license file. |
-| Grace | Administrators | "The license ended on <date>. Renew it by <date>." | Import a new license file. |
+| Ended, read-only | Administrators | "The license ended on &lt;date&gt;. Only administrators can change data until you import a new license file or reduce use to the Desk limits." | Import a new license file, or reduce use below each Desk limit. |
+| Ended, read-only | Everybody else | "Slate Operations is read-only. The license ended on &lt;date&gt;; your administrator can renew it." | Nothing. The administrator renews. |
+| Warning | Everybody | "The license ended on &lt;date&gt;. On &lt;date&gt; this installation becomes Desk." | Import a new license file. |
+| Grace | Administrators | "The license ended on &lt;date&gt;. Renew it by &lt;date&gt;." | Import a new license file. |
 | A limit is at 80% or more | Administrators | The item, the use and the limit, for example "Records in a module: 800 of 1,000 used on Desk." | Reduce use, or get Office or Headquarters. |
 
 On the limit banner, another administrator also sees "The installation owner can upgrade." The installation owner sees the link **Upgrade or renew**. It opens **Updates & licensing** ([edition-banner.tsx:42-61](../../frontend/src/components/systems/shared/components/edition-banner.tsx#L42); [license-rules.ts:74-89](../../frontend/src/components/systems/manage/domain/license-rules.ts#L74)).
@@ -513,7 +513,7 @@ The message names the edition, the limit and the next step ([limits.py:34-56](..
 
 The grid and the publish dialog do not name the limit. If you see one of those two messages, compare your use with the limits in section 5.2.
 
-**Office features on Desk.** These features show "<feature>: available in Office" in place of the feature:
+**Office features on Desk.** These features show "&lt;feature&gt;: available in Office" in place of the feature:
 
 - OpenComms
 - OpenView dashboards
