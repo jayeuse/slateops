@@ -1,6 +1,7 @@
 import copy
 import os
 import re
+import time
 from collections.abc import Generator
 from functools import cache
 from pathlib import Path
@@ -226,7 +227,11 @@ def _no_license_file_without_a_database(request):
     """
     from app.systems.manage.licensing import state
 
-    state.forget_cached_state()  # each test reads its own license row
+    # A test database holds no license row unless the test installs one, and
+    # `tests/licensing/support.install` forgets this, so requests add no license read
+    # to the statement counts of other tests.
+    state.forget_cached_state()
+    state._license_cache[:] = [(time.monotonic(), None)]
     with pytest.MonkeyPatch.context() as patch:
         if request.node.get_closest_marker("integration") is None:
             patch.setattr(state, "stored_license", lambda db: None)

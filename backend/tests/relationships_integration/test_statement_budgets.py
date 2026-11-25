@@ -56,8 +56,7 @@ OPEN, DONE = "open", "done"
 # The membership read belongs to authentication (cached for the request), not the route.
 BUDGETS = {
     "GET /api/records/{record_id}": 6,
-    # A create reads the installation license once per process and 30 s (edition limit).
-    "POST /api/records": 15,
+    "POST /api/records": 14,
     "PATCH /api/records/{record_id}": 15,
     "POST /api/relationships": 12,
     "PUT /api/relationships/fields/{field_id}/sources/{source_record_id}": 14,
