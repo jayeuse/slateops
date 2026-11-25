@@ -3,7 +3,9 @@
 Run from `backend/`:
 
     uv run python -m operations.issue_license --customer "Acme Ltd" --edition office \
-        --seats 25 --starts 2026-12-01 --ends 2026-12-31 --output acme-2026-12.slatelicense
+        --starts 2026-12-01 --ends 2026-12-31 --output acme-2026-12.slatelicense
+
+The seats come from the edition: Office 25, Headquarters 100, Desk 2.
 
 The private key is read from `--key-file` (default: the owner's production key in
 `~/.config/slateops-license/`). The key is never printed. The output file must not exist.
@@ -20,25 +22,20 @@ from uuid import uuid4
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
-from app.systems.manage.licensing.editions import Edition
-from app.systems.manage.licensing.license_file import (
-    DEVELOPMENT_PUBLIC_KEY,
-    PRODUCTION_PUBLIC_KEY,
-    LicenseFile,
-    LicenseInvalid,
-    sign,
-    verify,
-)
+from app.systems.manage.licensing import license_file
+from app.systems.manage.licensing.editions import DESK, PAID_SEATS, Edition, Limit
+from app.systems.manage.licensing.license_file import LicenseFile, LicenseInvalid, sign, verify
 
 DEFAULT_KEY_FILE = Path.home() / ".config" / "slateops-license" / "production-signing-key.pem"
 FILE_EDITIONS = (Edition.DESK.value, Edition.OFFICE.value, Edition.HEADQUARTERS.value)
+# The edition sets the seats (DEC-0029); guests are twice the seats.
+EDITION_SEATS = {**PAID_SEATS, Edition.DESK: DESK.limits[Limit.SEATS] or 2}
 
 
 def _arguments(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--customer", required=True)
     parser.add_argument("--edition", required=True, choices=FILE_EDITIONS)
-    parser.add_argument("--seats", required=True, type=int)
     parser.add_argument("--starts", required=True, type=date.fromisoformat)
     parser.add_argument("--ends", required=True, type=date.fromisoformat)
     parser.add_argument("--output", required=True, type=Path)
@@ -54,11 +51,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     found = LicenseFile(
         id=uuid4(), customer=args.customer.strip(), edition=Edition(args.edition),
-        seats=args.seats, starts=args.starts, ends=args.ends, issued=date.today(),
+        seats=EDITION_SEATS[Edition(args.edition)], starts=args.starts, ends=args.ends,
+        issued=date.today(),
     )
     text = sign(found, key)
     try:  # the file must pass the same check as the application's import
-        verify(text, (PRODUCTION_PUBLIC_KEY, DEVELOPMENT_PUBLIC_KEY))
+        verify(text, license_file.accepted_keys("development"))
     except LicenseInvalid as error:
         print(f"Refused: {error}", file=sys.stderr)
         return 2
@@ -77,7 +75,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _production(text: str) -> bool:
     try:
-        verify(text, (PRODUCTION_PUBLIC_KEY,))
+        verify(text, license_file.accepted_keys("production"))
     except LicenseInvalid:
         return False
     return True
