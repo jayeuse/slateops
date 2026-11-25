@@ -1,6 +1,6 @@
 "use client";
 
-import { EditionGate } from "../shared/components/edition-preview";
+import { EditionGate } from "../shared/components/edition-gate";
 import { SANDBOX_SHORTCUTS } from "@/lib/shortcuts";
 
 import { useCallback, useEffect, useRef, useState } from "react";

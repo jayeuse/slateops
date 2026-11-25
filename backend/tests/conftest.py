@@ -219,6 +219,16 @@ def _bound_test_organizations(request):
 
 
 @pytest.fixture(autouse=True)
+def _no_license_file_without_a_database(request, monkeypatch):
+    """A unit test's session is a stand-in: it holds no license file (spec editions.md)."""
+
+    if request.node.get_closest_marker("integration") is None:
+        from app.systems.manage.licensing import state
+
+        monkeypatch.setattr(state, "stored_license", lambda db: None)
+
+
+@pytest.fixture(autouse=True)
 def _no_health_writes_without_a_database(request):
     """Health signals and server errors go nowhere unless a test needs them.
 

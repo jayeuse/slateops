@@ -1,5 +1,5 @@
 "use client";
-import { EditionGate } from "../../shared/components/edition-preview";
+import { EditionGate } from "../../shared/components/edition-gate";
 import { useDisplayRegion } from "@/components/use-display-region";
 
 import { Suspense, useCallback, useEffect, useState } from "react";

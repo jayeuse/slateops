@@ -53,9 +53,13 @@ const gzip = {
 // Raised to 562,000 on 2026-11-23 for Sheets (TASK-0102 F4, parent decision):
 // shared UI primitives split, no sheet code in the shell — measured 559,819
 // local; with the sheet dialogs loaded on first use, 558,632 local.
+// Raised to 564,000 on 2026-11-25 for the editions (DEC-0029, TASK-0127): the
+// shell reads the edition once for the limit banner and the OpenComms gate.
+// Measured 562,515 in CI at a882d0f5; with the "Available in Office" preview
+// loaded only on Desk, 562,041 local. Revert if the owner prefers trimming.
 // Growth is reported against the last recorded measurement.
 const s04BaselineColdGzipBytes = 546_979;
-const coldTargetGzipBytes = 562_000;
+const coldTargetGzipBytes = 564_000;
 // docs/plans/ci-stability.md D3: a cold load within this many bytes of the
 // target warns, so the pull request that adds approved shell code records a new
 // target in the same commit instead of after a red run.

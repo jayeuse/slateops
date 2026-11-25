@@ -8353,6 +8353,55 @@
         "title": "EditRequest",
         "type": "object"
       },
+      "Edition": {
+        "enum": [
+          "desk",
+          "office",
+          "headquarters",
+          "development"
+        ],
+        "title": "Edition",
+        "type": "string"
+      },
+      "EditionPrice": {
+        "properties": {
+          "edition": {
+            "$ref": "#/components/schemas/Edition"
+          },
+          "monthly_usd": {
+            "title": "Monthly Usd",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "seats": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seats"
+          },
+          "yearly_usd": {
+            "title": "Yearly Usd",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "edition",
+          "name",
+          "monthly_usd",
+          "yearly_usd",
+          "seats"
+        ],
+        "title": "EditionPrice",
+        "type": "object"
+      },
       "EffectiveRetention": {
         "additionalProperties": false,
         "properties": {
@@ -9350,6 +9399,18 @@
         ],
         "title": "FailedReportNotificationResponse",
         "type": "object"
+      },
+      "Feature": {
+        "enum": [
+          "opencomms",
+          "dashboards",
+          "reports",
+          "automations",
+          "gantt",
+          "audit_viewer"
+        ],
+        "title": "Feature",
+        "type": "string"
       },
       "FieldChangedTrigger": {
         "additionalProperties": false,
@@ -11860,6 +11921,141 @@
         "title": "LibraryFileSortField",
         "type": "string"
       },
+      "LicenseImport": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "LicenseImport",
+        "type": "object"
+      },
+      "LicenseStatus": {
+        "properties": {
+          "can_import": {
+            "title": "Can Import",
+            "type": "boolean"
+          },
+          "customer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer"
+          },
+          "edition": {
+            "$ref": "#/components/schemas/Edition"
+          },
+          "edition_name": {
+            "title": "Edition Name",
+            "type": "string"
+          },
+          "editions": {
+            "items": {
+              "$ref": "#/components/schemas/EditionPrice"
+            },
+            "title": "Editions",
+            "type": "array"
+          },
+          "ends": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ends"
+          },
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/Feature"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "grace_ends": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grace Ends"
+          },
+          "limits": {
+            "items": {
+              "$ref": "#/components/schemas/LimitUse"
+            },
+            "title": "Limits",
+            "type": "array"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/Phase"
+          },
+          "read_only": {
+            "title": "Read Only",
+            "type": "boolean"
+          },
+          "starts": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starts"
+          },
+          "warning_ends": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning Ends"
+          }
+        },
+        "required": [
+          "edition",
+          "edition_name",
+          "phase",
+          "read_only",
+          "customer",
+          "starts",
+          "ends",
+          "grace_ends",
+          "warning_ends",
+          "features",
+          "limits",
+          "editions",
+          "can_import"
+        ],
+        "title": "LicenseStatus",
+        "type": "object"
+      },
       "LifecycleBlocker": {
         "additionalProperties": false,
         "properties": {
@@ -12423,6 +12619,55 @@
         ],
         "title": "LifecycleTargetType",
         "type": "string"
+      },
+      "Limit": {
+        "enum": [
+          "seats",
+          "guests",
+          "departments",
+          "modules",
+          "records",
+          "sheets",
+          "sheet_rows"
+        ],
+        "title": "Limit",
+        "type": "string"
+      },
+      "LimitUse": {
+        "properties": {
+          "allowed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed"
+          },
+          "limit": {
+            "$ref": "#/components/schemas/Limit"
+          },
+          "used": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used"
+          }
+        },
+        "required": [
+          "limit",
+          "allowed",
+          "used"
+        ],
+        "title": "LimitUse",
+        "type": "object"
       },
       "LinkPreview": {
         "additionalProperties": false,
@@ -14867,6 +15112,17 @@
         ],
         "title": "PersonalPreferences",
         "type": "object"
+      },
+      "Phase": {
+        "enum": [
+          "none",
+          "active",
+          "grace",
+          "warning",
+          "ended"
+        ],
+        "title": "Phase",
+        "type": "string"
       },
       "PinRequest": {
         "additionalProperties": false,
@@ -57952,6 +58208,126 @@
         "summary": "Retry Job",
         "tags": [
           "jobs"
+        ]
+      }
+    },
+    "/api/license": {
+      "get": {
+        "operationId": "get_license_api_license_get",
+        "parameters": [
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LicenseStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get License",
+        "tags": [
+          "license"
+        ]
+      },
+      "put": {
+        "operationId": "import_license_api_license_put",
+        "parameters": [
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LicenseImport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LicenseStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Import License",
+        "tags": [
+          "license"
         ]
       }
     },

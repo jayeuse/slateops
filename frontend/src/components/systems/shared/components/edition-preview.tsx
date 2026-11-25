@@ -1,8 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Lock } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -16,7 +14,6 @@ import {
 } from "@/components/ui/empty";
 import {
   LICENSING_PAGE,
-  licenseQueryOptions,
   useLicense,
   type EditionFeature,
 } from "../adapters/license-api";
@@ -90,27 +87,4 @@ export function EditionPreview({
       </EmptyContent>
     </Empty>
   );
-}
-
-/**
- * Render `children` only when the edition has `feature`; otherwise the
- * preview. Nothing renders until the edition is known, so a Desk installation
- * never starts the feature's requests. An unreadable edition shows the
- * feature (the API still refuses it on Desk).
- */
-export function EditionGate({
-  feature,
-  children,
-  className,
-}: {
-  feature: EditionFeature;
-  children: ReactNode;
-  className?: string;
-}) {
-  const license = useQuery(licenseQueryOptions());
-  if (license.isPending) return null;
-  if (license.data && !license.data.features.includes(feature)) {
-    return <EditionPreview feature={feature} className={className} />;
-  }
-  return children;
 }

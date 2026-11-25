@@ -1,7 +1,7 @@
 """Counts of what an installation uses against the edition limits.
 
-One installation holds one organization (DEC-0050), so the organization-bound
-counts below are the installation's counts.
+One installation holds one organization (DEC-0050), so the counts of the bound
+organization below are the installation's counts.
 """
 
 from collections.abc import Callable
@@ -11,6 +11,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
+from app.systems.access.users.membership import bound_membership_join
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.manage.licensing.editions import Limit
 from app.systems.openview.worksheets.models import Worksheet
@@ -25,7 +26,7 @@ def people(db: Session, *, guests: bool) -> int:
     roles = [UserRole.GUEST.value] if guests else [UserRole.ADMIN.value, UserRole.MEMBER.value]
     statement = (
         select(func.count(func.distinct(Membership.user_id)))
-        .join(User, User.id == Membership.user_id)
+        .join(User, bound_membership_join())
         .where(
             Membership.is_deleted.is_(False),
             Membership.role.in_(roles),

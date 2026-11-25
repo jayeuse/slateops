@@ -1,6 +1,6 @@
 "use client";
 
-import { EditionGate } from "../../shared/components/edition-preview";
+import { EditionGate } from "../../shared/components/edition-gate";
 import { lazy, Suspense } from "react";
 import Link from "next/link";
 import { Alert } from "@/components/ui/alert";
