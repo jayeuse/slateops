@@ -1,6 +1,7 @@
 """Private claim/outcome boundaries need real PostgreSQL, not browser outage actions."""
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -148,7 +149,13 @@ def test_foreign_history_is_not_claimed_and_inherited_policy_requires_adoption(
     }
     with pytest.raises(service.BackupStateError, match="restore_marker_invalid"):
         service.adopt_policy(integration_db, instance, instance, bad, now=NOW)
-    marker = {**bad, "source_installation_id": "old-installation"}
+    # The restore finished after the copied run started (the run's times stay in order).
+    finished = foreign.started_at + timedelta(hours=1)
+    marker = {
+        **bad,
+        "source_installation_id": "old-installation",
+        "completed_at": finished.isoformat(),
+    }
     from app.systems.manage.backups.schemas import AdoptCommand
     from operations import backup_state
 
@@ -164,7 +171,59 @@ def test_foreign_history_is_not_claimed_and_inherited_policy_requires_adoption(
     assert result["policy"]["adopted"] is True
     assert policy.installation_id == instance and policy.schedule == "weekly"
     assert policy.retention_days == 90 and policy.next_due_at > datetime.now(UTC)
-    assert foreign.state == "running" and foreign.installation_id == "old-installation"
+    # Owner, PR 122: the restored copy's open run is closed; this marker has no manifest, so
+    # the run cannot be the verified snapshot and counts as stopped by the restore.
+    assert foreign.installation_id == "old-installation"
+    assert (foreign.state, foreign.failure_code) == ("interrupted", "backup_interrupted")
+    assert foreign.finished_at == finished
+
+
+def test_adoption_marks_the_restored_backups_own_run_verified_and_stops_the_others(
+    integration_db: Session,
+) -> None:
+    # Owner, PR 122: a backup copies the database while its own run says running, so every
+    # restore left that run, and older ones, at Running for ever.
+    from app.systems.manage.backups import service
+    from app.systems.manage.backups.models import BackupPolicy
+
+    def running(installation: str, started: datetime) -> Any:
+        run = _queue(integration_db)
+        run.installation_id = installation
+        run.claim_id, run.started_at, run.state = uuid4(), started, "running"
+        run.claimed_schedule, run.claimed_retention_days = "disabled", 30
+        return run
+
+    started = _after_database_now(integration_db)
+    restored = running("old-installation", started + timedelta(minutes=5))
+    older = running("older-installation", started)
+    finished = started + timedelta(hours=1)
+    integration_db.flush()
+    instance = _identity(integration_db)
+    policy = integration_db.scalar(select(BackupPolicy))
+    policy.installation_id = "old-installation"
+    integration_db.flush()
+    marker = {
+        "format_version": 3,
+        "source_installation_id": "old-installation",
+        "target_instance_id": instance,
+        "target_project": instance,
+        "application_sessions_invalidated": True,
+        "snapshot_id": "a" * 64,
+        "manifest_sha256": "c" * 64,
+        "completed_at": finished.isoformat(),
+        "target_db_container_id": "b" * 64,
+    }
+
+    service.adopt_policy(integration_db, instance, instance, marker, now=NOW)
+    integration_db.flush()
+
+    assert (restored.state, restored.snapshot_id, restored.manifest_sha256) == (
+        "succeeded",
+        "a" * 64,
+        "c" * 64,
+    )
+    assert restored.verified_at == restored.finished_at == restored.reconciled_at == finished
+    assert (older.state, older.failure_code) == ("interrupted", "backup_interrupted")
 
 
 @pytest.mark.parametrize(
@@ -172,7 +231,9 @@ def test_foreign_history_is_not_claimed_and_inherited_policy_requires_adoption(
     [(0, "UTC"), (1, "Asia/Manila"), (2, "Asia/Manila")],
 )
 def test_backup_timezone_initializes_from_the_owners_organization(
-    integration_db: Session, organization_count: int, expected_timezone: str,
+    integration_db: Session,
+    organization_count: int,
+    expected_timezone: str,
 ) -> None:
     from app.systems.manage.backups import service
     from tests.conftest import create_organization

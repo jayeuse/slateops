@@ -253,6 +253,8 @@ class RestoreFinalizedMarker(StrictRequest):
     target_db_container_id: str = Field(pattern=r"^[0-9a-f]{12,64}$")
     completed_at: AwareDatetime
     application_sessions_invalidated: bool = Field(strict=True)
+    # Owner, PR 122: the restored snapshot's manifest; markers from before it have none.
+    manifest_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @model_validator(mode="after")
     def completed_restore(self) -> "RestoreFinalizedMarker":
