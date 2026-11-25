@@ -3,6 +3,7 @@ import {
   test,
   type Page,
   answeredHeaders,
+  heldResponse,
   expectAnsweredReference,
 } from "./helpers/test";
 import { readFile } from "node:fs/promises";
@@ -1203,12 +1204,23 @@ test("on Desk a module page shows Reports as available in Office and offers no r
 }) => {
   await mockLicense(page);
   await installModuleReportsApi(page, { reports: [], views: [] });
+  // The page renders while the edition is still unknown: nothing reads reports.
+  const edition = heldResponse();
+  await page.route("**/api/license", async (route) => {
+    edition.enter();
+    await edition.released;
+    await route.fallback();
+  });
   const reads: string[] = [];
   page.on("request", (request) => {
     if (new URL(request.url()).pathname.startsWith("/api/reports"))
       reads.push(request.url());
   });
   await page.goto(`${modulePage()}&tab=reports`);
+  await edition.entered;
+  await expect(page.getByRole("link", { name: /^Reports/ })).toBeVisible();
+  expect(reads).toEqual([]);
+  edition.release();
   await expect(
     page.getByRole("heading", { name: "Reports: available in Office" }),
   ).toBeVisible();

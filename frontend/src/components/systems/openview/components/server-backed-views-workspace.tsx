@@ -3338,7 +3338,10 @@ export default function ServerBackedViewsWorkspace({
       </div>
       {reportsActive && moduleId && moduleName && !hasReports ? (
         <EditionPreview feature="reports" />
-      ) : reportsActive && moduleId && moduleName ? (
+      ) : reportsActive &&
+        moduleId &&
+        moduleName &&
+        !reportsReady ? null : reportsActive && moduleId && moduleName ? (
         <ModuleReports
           key={moduleId}
           moduleId={moduleId}
