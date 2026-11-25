@@ -187,7 +187,8 @@ Restore every runtime actually stopped and report any restoration failure.
 ## Release check
 
 The release check is the release smoke suite plus the full-stack browser journeys. CI
-does not run them. Run them at a major update, one at a time, under the root test policy:
+does not run them. Pull request CI and the release workflow are the release gate; run the
+release check only when the owner asks, one at a time, under the root test policy:
 
 1. From `backend/`, run `uv run python -m tests.smoke_runner`.
 2. When it ends, run `uv run python -m tests.fullstack_runner --acceptance-only` from `backend/`.

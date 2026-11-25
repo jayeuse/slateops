@@ -82,13 +82,11 @@ class ReleaseTagTests(unittest.TestCase):
             ),
         )
 
-    def test_stable_tag_is_refused_while_the_license_work_constant_is_false(self):
-        # DEC-0029 item 13 and plan 5.3: the license work's pull request flips the constant.
-        with self.assertRaisesRegex(ReleaseError, "license work"):
-            release_artifacts.classify_tag("v0.2.0", "jayeuse", VERSIONS)
-
+    def test_stable_tag_is_accepted_now_that_the_license_work_is_merged(self):
+        # DEC-0029 item 13 and plan 5.3: the editions merged in PR 123.
+        self.assertTrue(release_artifacts.LICENSE_WORK_MERGED)
         self.assertEqual(
-            release_artifacts.classify_tag("v0.2.0", "jayeuse", VERSIONS, license_work_merged=True),
+            release_artifacts.classify_tag("v0.2.0", "jayeuse", VERSIONS),
             release_artifacts.ReleaseTag(
                 version="0.2.0",
                 prerelease=False,
@@ -96,6 +94,8 @@ class ReleaseTagTests(unittest.TestCase):
                 image_prefix="ghcr.io/jayeuse",
             ),
         )
+        with self.assertRaisesRegex(ReleaseError, "license work"):
+            release_artifacts.classify_tag("v0.2.0", "jayeuse", VERSIONS, license_work_merged=False)
 
     def test_tags_outside_the_release_shape_or_version_are_refused(self):
         for tag, reason in (
@@ -130,7 +130,10 @@ class ReleaseTagTests(unittest.TestCase):
 
             refused_output = Path(directory) / "refused-output"
             stderr = io.StringIO()
-            with contextlib.redirect_stderr(stderr):
+            with (
+                mock.patch.object(release_artifacts, "LICENSE_WORK_MERGED", False),
+                contextlib.redirect_stderr(stderr),
+            ):
                 refused = tag_command("v0.2.0", commits["main"], repository, refused_output)
             self.assertEqual(refused, 1)
             self.assertFalse(refused_output.exists())
@@ -422,12 +425,19 @@ class EngineManifestTests(unittest.TestCase):
 
             status = release_artifacts.main(
                 [
-                    "manifest", "--version", "0.2.0-rc.1",
-                    "--server-info", str(root / "server.json"),
-                    "--caddy-info", str(root / "caddy.json"),
-                    "--engine-info", str(root / "engine.json"),
-                    "--compose", str(root / "compose.yaml"),
-                    "--output", str(output),
+                    "manifest",
+                    "--version",
+                    "0.2.0-rc.1",
+                    "--server-info",
+                    str(root / "server.json"),
+                    "--caddy-info",
+                    str(root / "caddy.json"),
+                    "--engine-info",
+                    str(root / "engine.json"),
+                    "--compose",
+                    str(root / "compose.yaml"),
+                    "--output",
+                    str(output),
                 ]
             )
 
@@ -1252,6 +1262,10 @@ class ReleaseNotesTests(unittest.TestCase):
         )
 
         self.assertNotIn("Test build", notes)
+        self.assertIn("SlateOpsSetup-0.2.0.exe", notes)
+        self.assertIn("not code-signed", notes)
+        self.assertIn("Smart App Control", notes)
+        self.assertLess(notes.index("## Install"), notes.index("## Verify v0.2.0"))
 
 
 if __name__ == "__main__":
