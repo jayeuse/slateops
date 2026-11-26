@@ -12,7 +12,7 @@ This file lists what changed in each release of Slate Operations, in plain words
 
 ### Added
 
-- A changelog for Slate Operations, and a rule that each pull request adds one line to it.
+- A changelog for Slate Operations, and a rule that each pull request adds one line to it. (#127)
 
 ## [1.0.1] - 2026-11-25
 
