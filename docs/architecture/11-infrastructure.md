@@ -50,7 +50,7 @@ The application provisions two private buckets through [`backend/operations/prov
 
 FastAPI authorizes upload and download. The upload request validates the file type with an allowlist and a bounded parser subprocess, writes the bytes to the ready bucket, and commits the file as `ready` with its digest and size. There is no antivirus scan. The application denies reads in every other state and rechecks access on download. The provider adapter is [`supabase_storage.py`](../../backend/app/systems/platform/files/supabase_storage.py); upload, reconciliation, and purge behavior remains in the platform file service.
 
-Windows server operation uses Linux containers through Docker Desktop/WSL2, but Windows startup, reboot, and restore acceptance is still pending. macOS remains available as a development workstation; it is no longer a supported server target.
+Windows server operation uses the setup program, which runs Linux containers on Docker Engine in its own WSL2 image, not Docker Desktop (`infra/windows/installer/`, `packaging/linux-image/`, `infra/supabase/compose.installer.yaml`). Its acceptance is limited; see [Deployment Architecture](12-deployment-architecture.md#health-and-release-acceptance). macOS remains available as a development workstation; it is no longer a supported server target.
 
 ## Events and readiness
 

@@ -253,9 +253,11 @@ installation, reboot persistence, physical restore, TLS/ingress, or Windows beha
 A guarded isolated production Compose rehearsal exercised a real five-volume encrypted
 backup and restore, TLS trust, authorization and file access, and service restart using
 Linux containers on macOS Docker Desktop. Native Linux host installation and post-reboot
-recovery remain unaccepted. Windows Docker Desktop/WSL2 startup, reboot, persistent-volume
-recovery, and restore checks remain pending because no Windows acceptance host is
-available. macOS is a development workstation only, not a supported server target.
+recovery remain unaccepted. Windows runs the installer's own WSL2 image, not Docker Desktop.
+No automated check starts WSL or the installed stack on Windows: the release install proof
+runs on Linux, and the Windows workflows compile the setup file and run script tests only
+(`.github/workflows/release.yml`, `.github/workflows/windows-installer.yml`). macOS is a
+development workstation only, not a supported server target.
 
 `/api/ready` reports Database, Auth, Storage, and SMTP configuration states.
 Acceptance must exercise provider outages, missing mail configuration, and caller

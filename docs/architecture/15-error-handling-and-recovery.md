@@ -179,6 +179,7 @@ contract](12-deployment-architecture.md#backup-restore-and-persistent-data).
 
 Those artifacts and command-level checks are a recovery foundation, not proof of
 physical recovery. A real isolated physical restore and post-reboot recovery have not
-been accepted on Linux; Windows restore and reboot acceptance remain pending until a
-Windows host is available. Retention and off-host repository policy remain operator
+been accepted on Linux. The Windows restore (`packaging/engine/restore.py`) and
+reboot recovery have no checked-in acceptance record; see
+[Deployment Architecture](12-deployment-architecture.md#health-and-release-acceptance). Retention and off-host repository policy remain operator
 responsibilities.

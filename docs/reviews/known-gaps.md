@@ -77,8 +77,9 @@ or reinterpret a missing database as a product recovery failure.
 The target remains one self-hosted Compose stack per client. A guarded
 Linux-container backup/restore and bounded dependency-failure rehearsal on macOS
 Docker Desktop establishes that Compose path, not native server certification.
-Native Linux host boot/reboot and Windows Docker Desktop/WSL2 startup, reboot,
-persistent-volume and restore acceptance remain pending. macOS is a development
+Native Linux host boot/reboot acceptance remains pending. Windows runs the setup
+program's own WSL2 image with Docker Engine, not Docker Desktop, and has no
+checked-in acceptance record for startup, reboot, persistent-volume or restore. macOS is a development
 workstation, not a supported server target. Follow the
 [version 3 restore procedure](../../infra/supabase/RESTORE.md),
 [deployment state map](../architecture/12-deployment-architecture.md#deployment-state-map)

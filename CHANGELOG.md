@@ -17,6 +17,7 @@ This file lists what changed in each release of Slate Operations, in plain words
 ### Changed
 
 - Internal: shorter agent instructions, a documentation index, and finished specs and plans cut down to their contract (about 275,000 fewer words). (#127)
+- Internal: the architecture docs and the README now describe the shipped Windows setup program (its own WSL2 image with Docker Engine) and what its acceptance covers. (#127)
 
 ## [1.0.1] - 2026-11-25
 

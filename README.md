@@ -7,19 +7,25 @@ Caddy. Development uses the same pinned Supabase services with FastAPI and
 Next.js run on the host. Supabase Database is PostgreSQL, so SQLAlchemy and
 Alembic remain the application persistence layer.
 
-The supported server targets are Linux and Windows running Linux containers
-through Docker Desktop/WSL2. macOS can still be used as a development
-workstation; it is not a supported server target. Windows startup, reboot,
-persistent-volume recovery, and restore acceptance still need a Windows host.
-The production path is not accepted for general client use. A guarded
+The supported server targets are Linux and Windows 11 (Pro, Enterprise or
+Education, version 22H2 or later). On Windows, the setup program
+`SlateOpsSetup-<version>.exe` runs the Linux containers on Docker Engine in its
+own WSL2 image, not Docker Desktop (`infra/windows/installer/`,
+`packaging/linux-image/`). macOS can still be used as a development
+workstation; it is not a supported server target. Windows acceptance is limited:
+the release workflow's install proof runs on Linux, and no written record of
+the owner's end-user tests is checked in (see
+[Deployment architecture](docs/architecture/12-deployment-architecture.md#health-and-release-acceptance)).
+A release of the Windows setup program is published on GitHub Releases. It is not
+code-signed. The production path on a Linux host is not accepted for general
+client use. A guarded
 production Compose rehearsal using Linux containers on Docker Desktop for
 macOS exercised readiness, Caddy CA trust, encrypted five-volume restore with
 database-only session finalization, authorization and file access after
 restore, and full-stack stop/start. This confirms those paths in the rehearsal
 environment; it does not prove native Linux host boot/reboot behavior. Native
-Linux host boot/reboot acceptance, Windows acceptance (no test host is
-available), and the release check/final review remain
-pending. See the
+Linux host boot/reboot acceptance, a checked-in Windows acceptance record,
+and the release check/final review remain pending. See the
 [implementation plan](infra/supabase/PLAN.md) and
 [restore procedure](infra/supabase/RESTORE.md).
 
@@ -221,9 +227,11 @@ unrestricted `up` on a fresh production installation or remove named volumes as
 a reset shortcut.
 
 Production is one isolated stack per client, not shared multi-tenant SaaS.
-Linux and Windows Docker Compose are the intended server deployment paths;
-Windows requires Docker Desktop using WSL2/Linux containers. Windows operational
-acceptance is pending, and macOS server deployment is out of scope.
+Linux Docker Compose and the Windows setup program are the server deployment
+paths. The Windows setup program uses its own WSL2 image with Docker Engine, not
+Docker Desktop (`infra/windows/installer/`, `packaging/linux-image/`). Windows
+acceptance is limited ([Deployment architecture](docs/architecture/12-deployment-architecture.md#health-and-release-acceptance)),
+and macOS server deployment is out of scope.
 
 ## Application data reset
 
