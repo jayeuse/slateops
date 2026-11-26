@@ -16,7 +16,7 @@ This file lists what changed in each release of Slate Operations, in plain words
 
 ### Changed
 
-- Internal: shorter agent instructions, a documentation index, and finished specs and plans cut down to their contract (about 275,000 fewer words).
+- Internal: shorter agent instructions, a documentation index, and finished specs and plans cut down to their contract (about 275,000 fewer words). (#127)
 
 ## [1.0.1] - 2026-11-25
 
