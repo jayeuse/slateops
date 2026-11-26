@@ -1,0 +1,44 @@
+name: Bug report
+description: Something in Slate Operations does not work as the guides say.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report security problems here. Use private vulnerability reporting (see SECURITY.md).
+        Do not paste passwords, recovery keys, license files, or customer data.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Manage → Updates & licensing shows it.
+      placeholder: "1.0.1"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps
+      description: The steps that show the problem, one per line.
+      placeholder: |
+        1. Open ...
+        2. Select ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual result
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: reference
+    attributes:
+      label: Error reference
+      description: The eight-character reference from the error message, if one shows.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Windows version of the server PC, and the browser and device you used.

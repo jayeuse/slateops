@@ -1,63 +1,53 @@
 # Security policy
 
-## Summary
-
-Slate Operations is pre-release software in development. It has no released version, and no organization runs it yet.
-Only the latest commit on the `main` branch gets security fixes.
-
-**Report a vulnerability privately:**
-<https://github.com/jayeuse/slateops/security/advisories/new>
-
+Report security problems in Slate Operations privately through
+[GitHub private vulnerability reporting](https://github.com/jayeuse/slateops/security/advisories/new).
 Do not put vulnerability details in a public issue, pull request, commit, or comment.
-
-One person maintains Slate Operations. The maintainer acknowledges each report within 7 days, usually sooner.
-If you get no reply in 14 days, open a public issue with the title "Security report waiting". Do not add details.
-The maintainer coordinates disclosure with you. The disclosure window is up to 90 days from your report.
-There is no bug bounty. The maintainer credits you in the advisory unless you ask otherwise.
-Test only on an installation that you run yourself.
+One person maintains Slate Operations.
 
 ## Supported versions
 
-| Code | Security fixes |
+| Version | Security fixes |
 |---|---|
 | Latest published release (`1.0.x`) | Yes |
 | Latest commit on `main` | Yes |
 | Older releases, other branches, forks | No |
 
-## How to report
+Version 1.0.1 is the first published release. The `v1.0.0` tag exists, but that release was never published (see [CHANGELOG.md](CHANGELOG.md)).
 
-1. Open <https://github.com/jayeuse/slateops/security/advisories/new>.
-2. Give the commit SHA that you tested.
-3. Name the affected component, for example the API route or file path.
-4. Give the configuration: the `ENVIRONMENT` value, and development or production Compose stack.
-5. Write the steps to reproduce the problem.
-6. Describe the effect: what an attacker can read, change, or stop.
-7. Say if you used AI tools, and what they did.
-8. Submit the report.
+## Reporting a vulnerability
 
-The report stays private between you and the maintainer.
-The maintainer replies in the private advisory.
+Open <https://github.com/jayeuse/slateops/security/advisories/new> and include:
+
+- the commit SHA that you tested;
+- the affected component, for example the API route or file path;
+- the configuration: the `ENVIRONMENT` value, and the development or production Compose stack;
+- the steps to reproduce the problem;
+- the effect: what an attacker can read, change, or stop;
+- whether you used AI tools, and what they did.
+
+The report stays private between you and the maintainer, who replies in the private advisory.
 
 ### AI-assisted reports
 
-You can use AI tools to find a problem. You must check the result yourself.
+You can use AI tools to find a problem, but you must check the result yourself.
 Each report must show a real code path in this repository and steps that you ran.
-The maintainer closes reports that look like unverified AI output, without further reply.
-The maintainer can block accounts that send many such reports.
+The maintainer closes reports that look like unverified AI output, without further reply, and can block accounts that send many such reports.
 
 ## What happens next
 
-1. The maintainer acknowledges the report within 7 days.
+1. The maintainer acknowledges the report within 7 days, usually sooner.
 2. The maintainer aims to tell you within 30 days if the report is accepted.
 3. The maintainer develops the fix in a temporary private fork. You can take part if you want.
 4. The fix goes to `main`. Then the maintainer publishes a GitHub security advisory.
-5. You can publish your details after the advisory, or 90 days after your report. Ask if you need a different date.
+5. The maintainer coordinates disclosure with you. You can publish your details after the advisory, or 90 days after your report. Ask if you need a different date.
 
+The maintainer requests a CVE through GitHub for each confirmed vulnerability.
+There is no fixed date for a fix; the maintainer sends status updates in the advisory.
 If attackers already use the problem, the maintainer can fix and disclose it sooner.
-Until the first tagged release, advisories have no CVE ID, because no installation runs the code.
-From the first tagged release, the maintainer requests a CVE through GitHub for each confirmed vulnerability.
-There is no fixed date for a fix. The maintainer sends status updates in the advisory.
-There is no second maintainer. If the maintainer is not available, the 14-day public notice in the Summary applies.
+The maintainer credits you in the advisory unless you ask otherwise. There is no bug bounty.
+
+There is no second maintainer. If you get no reply in 14 days, open a public issue with the title "Security report waiting". Do not add details.
 
 ## Scope
 
@@ -66,9 +56,12 @@ The scope is the code in this repository, as shipped:
 - the FastAPI backend (`backend/`) and the static Next.js frontend (`frontend/`);
 - the Compose definitions and Caddy template (`infra/`);
 - the backup and restore tooling (`packaging/backup/`) and the operator commands (`backend/operations/`);
+- the Windows setup program and the installation it makes: the setup wizard and settings program (`infra/windows/installer/`), the engine (`packaging/engine/`), and the Linux image (`packaging/linux-image/`);
 - real credentials found in this repository or its history.
 
 Examples of in-scope problems: a login or session bypass; access to a module or record that the access rules deny; a provider account that gets access without a local binding; a revoked session that works again; cross-site request forgery on a cookie-authenticated change; a file that passes validation but is not an allowed type, or that escapes the validation limits; access to another organization's data.
+
+Accepted risks and the Comms boundary are in [Current OpenComms runtime boundary](#current-opencomms-runtime-boundary).
 
 ### Out of scope
 
@@ -81,11 +74,36 @@ Examples of in-scope problems: a login or session bypass; access to a module or 
 | Infrastructure that the operator changes or runs: host, Docker, network, TLS certificates | The operator owns these. A flaw in the shipped default configuration is in scope. |
 | Problems in Supabase, PostgreSQL, or another upstream project | Report them to that project. |
 | Scanner output, missing headers, or best-practice advice without a shown effect | Show the effect on Slate Operations. |
-| Server operation on Windows or macOS | These are not supported server targets yet. |
-| Older commits, forks, and modified code | Only `main` is supported. |
+| Server operation on macOS, or on Windows without the setup program | macOS is for development only, and the setup program is the only supported way to run a Windows server. |
+| Older commits and releases, forks, and modified code | Only the [supported versions](#supported-versions) get fixes. |
 | Denial of service by volume | Report it only if one small request causes large damage. |
 
-### Current OpenComms runtime boundary
+## Good faith
+
+Slate Operations is source-available under the [Elastic License 2.0](LICENSE).
+The license lets you run your own copy, so you need no extra permission for security research.
+Test only on an installation that you run yourself, on systems that you control.
+
+The maintainer will not take legal action against you for good-faith research that follows this policy.
+This promise covers only the maintainer. It does not cover a client organization that runs Slate Operations.
+You need the operator's permission to test an installation that someone else runs.
+If you are not sure, ask in a private report before you continue.
+
+## For operators
+
+- Only the [supported versions](#supported-versions) get fixes. Back up before you update. See `infra/supabase/RESTORE.md`.
+- Read the advisories at <https://github.com/jayeuse/slateops/security/advisories> before each update.
+- Watch this repository with Custom → Security alerts to get advisory notices.
+- Set `ENVIRONMENT=production` exactly. Other values do not trust the Caddy proxy subnet.
+- Use at least 32 random bytes for each secret key in `.env`, for example `openssl rand -base64 48`.
+- Keep Supabase Studio bound to loopback. Treat backups, exports, and `docker compose config` output as secrets.
+- One installation can hold several organizations. Each organization sees only its own data, and its administrators have no power in another organization. The installation owner controls installation-wide settings and backups for all of them. Use separate installations for organizations that must not share an installation owner.
+- You are responsible for the data-protection duties of your organization in your country.
+- If you think your installation is compromised, handle it as an incident in your organization first. Report the software flaw here.
+
+Details: `infra/supabase/README.md`, `docs/architecture/12-deployment-architecture.md`, `docs/architecture/20-architecture-risks.md`.
+
+## Current OpenComms runtime boundary
 
 FastAPI owns Comms content and current organization/conversation authorization.
 Ordinary private-conversation readability is not granted by administrator status
@@ -120,31 +138,6 @@ capacity, release-gate or Linux/Windows acceptance.
 See [API contracts](docs/architecture/07-api-architecture.md) and
 [operator ingress/publication boundaries](infra/supabase/README.md#opencomms-ingress-and-private-publication).
 
-## Good faith
-
-Slate Operations is source-available under the [Elastic License 2.0](LICENSE).
-The license lets you run your own copy, so you need no extra permission for security research.
-Do your security testing on a copy that runs on systems that you control.
-
-The maintainer will not take legal action against you for good-faith research that follows this policy.
-This promise covers only the maintainer. It does not cover a client organization that runs Slate Operations.
-You need the operator's permission to test an installation that someone else runs.
-If you are not sure, ask in a private report before you continue.
-
-## For operators
-
-- Only the latest `main` gets fixes. Back up before you update. See `infra/supabase/RESTORE.md`.
-- Read the advisories at <https://github.com/jayeuse/slateops/security/advisories> before each update.
-- Watch this repository with Custom → Security alerts to get advisory notices.
-- Set `ENVIRONMENT=production` exactly. Other values do not trust the Caddy proxy subnet.
-- Use at least 32 random bytes for each secret key in `.env`, for example `openssl rand -base64 48`.
-- Keep Supabase Studio bound to loopback. Treat backups, exports, and `docker compose config` output as secrets.
-- One installation can hold several organizations. Each organization sees only its own data, and its administrators have no power in another organization. The installation owner controls installation-wide settings and backups for all of them. Use separate installations for organizations that must not share an installation owner.
-- You are responsible for the data-protection duties of your organization in your country.
-- If you think your installation is compromised, handle it as an incident in your organization first. Report the software flaw here.
-
-Details: `infra/supabase/README.md`, `docs/architecture/12-deployment-architecture.md`, `docs/architecture/20-architecture-risks.md`.
-
 ---
 
 ## Reference for automated tools
@@ -158,8 +151,8 @@ Rule IDs are stable. A changed rule keeps its ID; a removed rule's ID is not reu
 Field names follow OpenSSF Security Insights v2.2.0. This block is not a `security-insights.yml` file.
 
 ```yaml
-status: pre-release
-supported: main (latest commit only)
+status: released
+supported: latest published release (1.0.x) and latest commit on main
 reports-accepted: true
 bug-bounty-available: false
 contact: https://github.com/jayeuse/slateops/security/advisories/new
@@ -168,7 +161,7 @@ policy: https://github.com/jayeuse/slateops/blob/main/SECURITY.md
 pgp-key: none
 maintainers: 1
 backup-maintainer: none
-installations-in-use: none
+installations-in-use: some
 license: Elastic-2.0 (Elastic License 2.0, source-available; full text in LICENSE)
 acknowledgement-target-days: 7
 silence-fallback-days: 14
@@ -176,11 +169,11 @@ triage-target-days: 30
 fix-deadline: none
 disclosure-window-days: 90
 embargo-list: none
-cve-ids: from the first tagged release; advisories before that have none
+cve-ids: requested through GitHub for each confirmed vulnerability
 credit: advisory, unless declined
 ai-assisted-reports: allowed if disclosed and verified by a human
 accepts-automated-change-request: true  # Dependabot pull requests
-last-reviewed: 2026-10-17
+last-reviewed: 2026-11-26
 ```
 
 ### Rules

@@ -127,7 +127,7 @@ Wrong: "Opened issue #<n>: '<route> skips the access check, here is the exploit.
 - Require Python `>=3.12,<3.15` and Node `>=24`; `.node-version` pins the version for development and CI. Use `backend/uv.lock` and `frontend/package-lock.json`.
 - Run Python/uv/Alembic in `backend/` and npm/Playwright in `frontend/`. Root owns orchestration and documentation.
 - Command ownership: root `scripts/` is repository automation, `backend/operations/` is operator commands, and `frontend/tooling/` is npm-owned launch plumbing. Add no other product directory named `scripts`.
-- Setup and daily commands: read the Local development section of `README.md`. Operator contracts and release gaps: read `infra/supabase/README.md` and `infra/supabase/PLAN.md`.
+- Setup and daily commands: read the Local development section of `CONTRIBUTING.md`. Operator contracts and release gaps: read `infra/supabase/README.md` and `infra/supabase/PLAN.md`.
 - Never reset provider volumes with `docker compose down -v`; they hold the installation database, Auth state, and Storage bytes. Application-data reset is a separate guarded operation. Backup and restore follow `infra/supabase/RESTORE.md`.
 
 ## System boundaries

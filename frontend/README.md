@@ -6,7 +6,7 @@ Sandbox, Boards, Access, OpenView, Manage, Platform, and OpenComms use authorize
 
 FastAPI must be running for identity actions. Invitation onboarding uses the protected FastAPI setup flow. Feature adapters use the shared same-origin `apiFetch()` contract, including cookie mutation CSRF and session refresh behavior. Production serves the static Next export through FastAPI. For daily frontend development, run `npm run dev` in this directory and open `http://localhost:<FRONTEND_DEV_PORT>`. Next forwards same-origin `/api/*` requests to loopback FastAPI on `BACKEND_PORT`; the launcher parses `FRONTEND_DEV_PORT`, `BACKEND_BIND_HOST`, `BACKEND_PORT`, and `PUBLIC_ORIGIN` from the process or root configuration, then passes only the three direct nonsecret values and the derived exact HMR-origin hostname to Next. The configured `PUBLIC_ORIGIN` hostname becomes that HMR allowlist entry; root environment validation and the launcher limit it to a permitted local or LAN browser address. An IPv6 `BACKEND_BIND_HOST=::1` uses `localhost` with IPv6-first resolution because Next cannot compile a literal IPv6 rewrite host. Developers may pass Next host or port overrides with `npm run dev -- --hostname <host> --port <port>` and use frontend-local `.env*` files during development. Production builds reject frontend-local environment files.
 
-Frontend-specific commands and architecture are documented in the repository root [`README.md`](../README.md).
+Repository setup, commands and architecture are documented in [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ## Tests and verification
 

@@ -12,10 +12,12 @@ This file lists what changed in each release of Slate Operations, in plain words
 
 ### Added
 
+- A new README with a banner and a screenshot, a contributing guide, and templates for pull requests, bug reports and feature requests. (#127)
 - A changelog for Slate Operations, and a rule that each pull request adds one line to it. (#127)
 
 ### Changed
 
+- The security policy now covers the Windows setup program and the installation it makes. (#127)
 - Internal: shorter agent instructions, a documentation index, and finished specs and plans cut down to their contract (about 275,000 fewer words). (#127)
 - Internal: the architecture docs and the README now describe the shipped Windows setup program (its own WSL2 image with Docker Engine) and what its acceptance covers. (#127)
 
