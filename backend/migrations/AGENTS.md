@@ -28,4 +28,4 @@ Every schema change starts in `backend/app/systems/<page>/<capability>/models.py
 
 ## Skills
 
-- Alembic revisions: [`postgres-patterns`](../../.agents/skills/postgres-patterns/SKILL.md). Use it for each revision and its review: constraints, indexes, grants, and rollback policy.
+- Alembic revisions: the `postgres-patterns` skill. Use it for each revision and its review: constraints, indexes, grants, and rollback policy.

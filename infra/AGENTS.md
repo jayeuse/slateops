@@ -5,11 +5,11 @@
 - Application images must not start provider services, apply Alembic migrations, provision database roles or Storage buckets, bootstrap users, or define hosted deployment; CI/operators own those steps outside the images.
 - Never bake `BACKEND_URL`, frontend runtime configuration, or private/backend secrets into the image.
 - `caddy/` contains production gateway artifacts. Caddy is not part of ordinary local development.
-- Target: one full Compose stack per client (micro–medium SMB, on-premise first) on Linux or Windows Docker Desktop using WSL2/Linux containers. Windows startup, reboot, persistent-volume, and restore acceptance remain pending until run on Windows. macOS workstation development is allowed, but macOS is not a server deployment target. Do not introduce fleet/orchestrated deployment into these artifacts.
+- Target: one full Compose stack per client (micro–medium SMB, on-premise first). The shipped server is Windows 11: the Windows installer (`windows/installer/`) imports its own WSL2 Linux image with Docker Engine (`../packaging/linux-image/`); it does not use Docker Desktop. The release workflow runs the Windows install acceptance. macOS is for development only. Do not introduce fleet/orchestrated deployment into these artifacts.
 - `/api/health` reports API-process liveness; `/api/ready` reports the required database, Auth, and Storage components and the optional SMTP-configuration component: email is set up after install (DEC-0041; `../docs/architecture/11-infrastructure.md`).
-- Native Linux host boot/reboot, Windows acceptance, and the release check remain pending; do not describe this infrastructure as production-ready.
+- A native Linux server host (without the Windows installer) has no install acceptance; do not describe it as supported.
 
 ## Skills
 
-- Compose files and Dockerfiles: [`project-tooling`](../.agents/skills/project-tooling/SKILL.md). Use it for each change under `supabase/`, `docker/`, or `caddy/`.
-- Compose exposure: [`webapp-security-review`](../.agents/skills/webapp-security-review/SKILL.md). Use it when a change touches exposed ports, gateway rules, or where secrets reach an image or a container.
+- Compose files and Dockerfiles: the `project-tooling` skill. Use it for each change under `supabase/`, `docker/`, or `caddy/`.
+- Compose exposure: the `webapp-security-review` skill. Use it when a change touches exposed ports, gateway rules, or where secrets reach an image or a container.

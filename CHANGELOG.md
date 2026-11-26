@@ -4,7 +4,7 @@ This file lists what changed in each release of Slate Operations, in plain words
 
 - The newest release is at the top.
 - A small release uses the sections **Added**, **Changed**, **Fixed** and **Removed**. The first release (1.0.0) is grouped by feature area, because everything in it is new.
-- A version number follows the rules in `AGENTS.md`, section "Releases and versions".
+- A version number follows [docs/release-process.md](docs/release-process.md).
 - Each "History" line shows how a feature grew: the first commit date, then the pull requests that built it, oldest first.
 - Each pull request adds one short line under **Unreleased**. A release moves these lines under its version number.
 
@@ -13,6 +13,10 @@ This file lists what changed in each release of Slate Operations, in plain words
 ### Added
 
 - A changelog for Slate Operations, and a rule that each pull request adds one line to it. (#127)
+
+### Changed
+
+- Internal: shorter agent instructions, a documentation index, and finished specs and plans cut down to their contract (about 275,000 fewer words).
 
 ## [1.0.1] - 2026-11-25
 
