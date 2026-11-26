@@ -1,5 +1,7 @@
 # Boards and OpenView contracts and implementation status
 
+> **Status: reference (2026-11-26).** A live contract that current work reads; it is not compacted.
+
 ## Authority and historical scope
 
 The original local-runtime audit and its phased migration proposal are

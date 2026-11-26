@@ -1,5 +1,7 @@
 # Access page contracts and implementation status
 
+> **Status: reference (2026-11-26).** A live contract that current work reads; it is not compacted.
+
 ## Authority and historical scope
 
 The former Draft 5 plan described a seven-view rollout with custom roles,
@@ -58,8 +60,8 @@ See [authentication and authorization](../architecture/08-authentication-authori
 ## Schema, recovery and acceptance limits
 
 The historical Access revisions belong to the archived migration history, not
-the active graph. Fresh installations start at
-`089c54b88aa6`
+the active graph. Fresh installations start at the root
+`e46611902f25` (`backend/migrations/versions/e46611902f25_slate_operations_fresh_root.py`)
 and apply forward revisions. See [data architecture](../architecture/06-data-architecture.md)
 and [recovery compatibility](access-recovery-compatibility.md). Neither stamping
 an old installation onto that root nor a destructive downgrade is recovery.

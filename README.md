@@ -1,321 +1,68 @@
-# Slate Operations
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/banner-dark.svg">
+    <img src=".github/assets/banner-light.svg" alt="Slate Operations" width="830">
+  </picture>
+</p>
 
-Slate Operations is a self-hosted, single-installation application for each client. Its
-server stack runs with Docker Compose and includes Supabase Database, Auth,
-Storage, Studio, and Realtime alongside the Slate Operations API, static frontend, and
-Caddy. Development uses the same pinned Supabase services with FastAPI and
-Next.js run on the host. Supabase Database is PostgreSQL, so SQLAlchemy and
-Alembic remain the application persistence layer.
+<p align="center">Slate Operations turns the drawing into one system that your organization's people use every day. You install it on one Windows PC in your office.</p>
 
-The supported server targets are Linux and Windows running Linux containers
-through Docker Desktop/WSL2. macOS can still be used as a development
-workstation; it is not a supported server target. Windows startup, reboot,
-persistent-volume recovery, and restore acceptance still need a Windows host.
-The production path is not accepted for general client use. A guarded
-production Compose rehearsal using Linux containers on Docker Desktop for
-macOS exercised readiness, Caddy CA trust, encrypted five-volume restore with
-database-only session finalization, authorization and file access after
-restore, and full-stack stop/start. This confirms those paths in the rehearsal
-environment; it does not prove native Linux host boot/reboot behavior. Native
-Linux host boot/reboot acceptance, Windows acceptance (no test host is
-available), and the release check/final review remain
-pending. See the
-[implementation plan](infra/supabase/PLAN.md) and
-[restore procedure](infra/supabase/RESTORE.md).
+<p align="center">
+  <a href="https://github.com/jayeuse/slateops/releases/latest"><img src="https://img.shields.io/github/v/release/jayeuse/slateops" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Elastic%20License%202.0-blue" alt="License: Elastic License 2.0"></a>
+  <a href="https://github.com/jayeuse/slateops/actions/workflows/backend.yml"><img src="https://img.shields.io/github/actions/workflow/status/jayeuse/slateops/backend.yml?branch=main&label=backend%20CI" alt="Backend CI"></a>
+  <a href="https://github.com/jayeuse/slateops/actions/workflows/frontend.yml"><img src="https://img.shields.io/github/actions/workflow/status/jayeuse/slateops/frontend.yml?branch=main&label=frontend%20CI" alt="Frontend CI"></a>
+</p>
 
-To report a vulnerability, follow [SECURITY.md](SECURITY.md). Do not open a
-public issue.
+![The Slate Operations Sandbox, where an organization's departments and their tables are laid out on a canvas. Sample data.](.github/assets/screenshot.png)
 
-## Stack and boundaries
+*The Sandbox, shown with sample data.*
 
-- **Database:** Supabase's pinned PostgreSQL distribution. FastAPI accesses
-  application tables through synchronous SQLAlchemy connections; Alembic owns
-  only the Slate Operations schema. There is no pgweb service or standalone PostgreSQL
-  development stack.
-- **Authentication:** Supabase Auth handles email/password verification,
-  invitations, and recovery email. FastAPI verifies provider identity, binds a
-  provider subject to an Slate Operations profile, maintains revocable application
-  sessions, and decides access from Slate Operations roles, groups, and permissions.
-  Provider claims and metadata do not grant application permissions.
-- **Files:** Supabase Storage holds file bytes in one private bucket. FastAPI
-  checks the file type, decides upload and download authorization, and serves
-  each download as an attachment. A file is ready when its upload request ends.
-- **Events:** Other application pages retain authenticated SSE with opaque
-  PostgreSQL `LISTEN`/`NOTIFY` invalidations. OpenComms uses private Supabase
-  Realtime topics for opaque events and transient presence/typing signals;
-  authorized content reads and commands remain with FastAPI. These are
-  implemented transports, not proof of complete browser or capacity acceptance.
-- **Administration:** Supabase Studio replaces pgweb. It is a privileged
-  operator surface, so keep its gateway loopback-only in development and
-  protected in production.
-- **Audit:** Normal application ORM mutations record minimal, redacted diffs in
-  the same transaction as the business change. Alembic, direct SQL, provider
-  operations, and file-byte operations are outside that audit boundary.
+## What it does
 
-FastAPI remains the authority for application data access, identity binding,
-authorization, file access, SSE delivery, and private Comms publication. Do not
-write application data through provider APIs, Studio, or direct SQL.
+- **Sandbox.** Lay out your departments, their tables and the links between them on a canvas. Try the design with test values that make no real records, then publish it.
+- **Records.** Search, filter and sort each department's records, show them as a table, grid or gallery, save views, and export to CSV or Excel.
+- **Sheets.** Add your own tables for notes, checklists, costs or plans to a record. Start from a blank sheet, a CSV file or an Excel file.
+- **Boards.** Posts, a calendar, Kanban and Gantt for the whole organization, for each department and for each project.
+- **Messages.** Channels, direct messages and group messages, with threads, files and records inside messages.
+- **Access.** Administrators, members and guests. Groups give each department Read, Write or Manage access. Two-step verification and sign-in history are included.
+- **Backups and updates.** Encrypted backups every night to a drive that you choose, a one-button restore, and an update that goes back to the old version by itself if it fails.
 
-## Configuration
+Messages, dashboards, reports, automations, the Gantt view and the audit viewer need Office or Headquarters (see [Editions](#editions)).
 
-The ignored root `.env` is the canonical local development configuration. Start
-from `.env.example`, keep the file owner-only, and never pass it to Next.js or
-commit it. The checked-in example has blank secrets and database role URLs. The
-key generator writes a new owner-only key file and never prints its contents;
-it does not assemble a complete installation environment. Copy its generated
-entries into the corresponding blank fields in `.env`, then set the remaining
-installation values there:
+## Install
 
-```bash
-cp .env.example .env
-chmod 600 .env
-```
+Slate Operations runs on one Windows 11 Pro, Enterprise or Education PC (version 22H2 or later) with a 64-bit Intel or AMD processor, virtualization turned on, 16 GB of memory and 15 GB of free disk space. Phones and other PCs on your office network open it in a browser. Your data stays on that PC and on your backup drive.
 
-Choose a fresh `SLATEOPS_INSTANCE_ID` and private `SLATEOPS_INSTANCE_ROOT`
-for a new Supabase development installation. The migration starts with fresh
-application data and does not import old accounts, records, or files. Keep
-existing PostgreSQL volumes and configuration until you have separately
-reviewed their disposition; do not point the new Compose project at them.
+1. Download `SlateOpsSetup-<version>.exe` from the [latest release](https://github.com/jayeuse/slateops/releases/latest).
+2. Follow the [quick start](docs/customer/quick-start.md).
 
-After installing backend dependencies, generate keys at a new private path
-whose parent directory already exists:
+The setup program is not code-signed yet. Windows SmartScreen shows a warning: select **More info**, then **Run anyway**. A PC with Smart App Control turned on blocks the setup program. Each release has checksums and a signed manifest, and its release notes show how to check them.
 
-```bash
-# backend/
-uv sync --locked
-uv run python operations/supabase_keys.py --output /absolute/private/path/provider-keys.env
-```
+## Editions
 
-Set `DATABASE_BOOTSTRAP_URL` to the provider's `supabase_admin` connection using
-`POSTGRES_PASSWORD`. Set `MIGRATION_DATABASE_URL` to the application owner
-login `slateops_owner` and `DATABASE_URL` to the constrained runtime login
-`slateops_runtime`; supply separate passwords for those application roles.
-The role provisioning command creates and checks the application roles. Never
-put the bootstrap URL or `SUPABASE_SECRET_KEY` in frontend configuration or a
-browser bundle. Production uses separate owner-only provider and application
-environment files; see the [Supabase operator guide](infra/supabase/README.md).
+Every installation starts as **Desk**, the free edition, with limits on people, departments and records. A license file unlocks **Office** or **Headquarters**, and it works with no internet connection.
 
-Check local configuration from the repository root:
+Office and Headquarters add the parts named above and raise or remove the limits. [Editions and license files](docs/customer/editions-and-license.md) gives the limits and how to get a license file.
 
-```bash
-uv run --directory backend python ../scripts/environment.py check
-```
+## Documentation
 
-## Local development
+- [Quick start](docs/customer/quick-start.md): prepare the server PC and install.
+- [Administrator guide](docs/customer/administrator-guide.md): set up and run the installation.
+- [User guide](docs/customer/user-guide.md): everyday use for every person.
+- [Customer documents](docs/customer/README.md): editions, getting help, and data and privacy.
+- [Changelog](CHANGELOG.md): what changed in each release.
+- [Documentation index](docs/README.md): specs, plans and the release process.
+- [Architecture](docs/architecture/README.md): how Slate Operations is built, with source paths.
 
-Run the following from the repository root unless a directory is shown. Start
-the owned Supabase development stack with its default Compose project derived
-from `SLATEOPS_INSTANCE_ID`:
+## Contributing
 
-```bash
-./scripts/dev.py db
-```
+To run Slate Operations from source or to change it, read [CONTRIBUTING.md](CONTRIBUTING.md).
 
-The wrapper validates `.env`, resolves the pinned base and development Compose
-files, and checks instance ownership before mutating containers. It starts the
-provider services, including the loopback gateway and development Mailpit.
-PostgreSQL and the gateway bind to loopback; the database port is available for
-host-run SQLAlchemy and Alembic. The gateway serves the operator Studio surface
-on `SUPABASE_API_PORT` (default `58000`); Mailpit's inbox is on
-`SUPABASE_MAIL_PORT` (default `58025`). Use the operator credentials configured
-in `.env` for Studio. Studio has broader privileges than the removed read-only
-pgweb inspector.
+## Security
 
-Provision the application roles, apply the fresh-install schema, check for
-drift, and create the private Storage bucket:
+Report a vulnerability privately, as [SECURITY.md](SECURITY.md) describes. Do not open a public issue.
 
-```bash
-# backend/
-uv run python operations/provision_database_role.py
-uv run alembic upgrade head
-uv run alembic check
-uv run python operations/provision_storage.py
-```
+## License
 
-### Update a development checkout from before the scanner removal
-
-Tier 2 enables permanent delete in `.env.example` for new installations.
-`LIFECYCLE_PURGE_ENABLED` remains required. An upgrade keeps the existing
-installation's value; changing the example does not enable it in an existing
-private `.env`.
-
-Installations from commits before `3343730f` (2026-10-05) had antivirus file scanning. If
-your `.env` and local stack come from such a commit, do these steps once after
-you update the checkout:
-
-1. Stop FastAPI.
-2. Remove these seven lines from your private `.env`. Do not change other
-   lines; they hold your installation identity and credentials.
-   `FILES_CLAMAV_PORT`, `FILES_CLAMAV_HOST`, `FILES_CLAMAV_MANIFEST_PATH`,
-   `SCANNER_DEFINITIONS`, `CLAMAV_MEMORY_LIMIT`, `CLAMAV_CPUS`,
-   `CLAMAV_PIDS_LIMIT`.
-3. Run `uv run python ../scripts/environment.py check` in `backend/`. It
-   must print "Environment configuration is valid." While a retired name stays
-   in `.env`, every wrapper stops with "Unknown configuration names".
-4. Run `uv run alembic upgrade head` in `backend/`.
-5. Run `uv run python operations/retire_legacy_upload_bucket.py` in
-   `backend/`. This dry run reports the old upload bucket and its object count.
-6. Caution: the next step permanently deletes the old bucket and its bytes.
-   Those uploads never became available, so no user can open them.
-   Run `uv run python operations/retire_legacy_upload_bucket.py --execute`.
-
-Start FastAPI and Next.js in separate terminals:
-
-```bash
-# backend/
-uv run python -m app --reload
-
-# frontend/
-npm ci
-npm run dev
-```
-
-Next.js is the daily browser origin and proxies `/api` to the loopback FastAPI
-server only in development. The static production export is served by FastAPI;
-production does not run a Node.js frontend process. After FastAPI is running,
-bootstrap the first administrator. Supabase sends an invitation; complete it
-from the development Mailpit inbox and set the password through Slate Operations:
-
-```bash
-# backend/
-uv run python operations/bootstrap_admin.py
-```
-
-`ADMIN_EMAIL` and `ADMIN_USERNAME` must be set in `.env`; usernames are profile
-labels and login is by email. Production bootstrap requires the command's
-`--confirm` option. Provider invitation and recovery email use the configured
-SMTP service; development uses Mailpit.
-
-The supported `./scripts/dev.py` actions are `db`, `studio`, `caddy`,
-`containers`, `status`, and `stop`. For example, use `./scripts/dev.py studio`
-to start the Studio gateway explicitly, or `./scripts/dev.py stop` to stop the
-owned development containers while retaining their named data volumes. There
-is no `pgweb` action. Do not use `docker compose down -v` on an installation
-whose data should be retained.
-
-`/api/health` remains an API-process response. `/api/ready` returns a bounded,
-no-store component snapshot for the application database, Supabase Auth and
-Storage health, and SMTP configuration. All four components are required. It
-returns 200 only when every component is ready and 503 otherwise. SMTP reports
-configuration presence, not email delivery. A guarded production Compose
-rehearsal exercised all-required-component readiness and bounded Auth and
-Storage failure/recovery responses. `/api/ready` remains a component signal,
-not a whole-installation or release check; it does not establish SMTP
-delivery.
-
-## Production Compose
-
-The production overlay adds the unified FastAPI/static-frontend image and
-Caddy. Provider services remain on private Compose
-networks; the Studio gateway is loopback-bound for operator access, and only
-the configured Caddy listener is public. Production needs separate provider and
-application environment files, real SMTP, TLS materials, and
-release-specific image tags.
-
-Follow [infra/supabase/README.md](infra/supabase/README.md) for the exact
-Compose inputs and startup sequence. Apply database roles, Alembic schema, and
-private Storage bucket provisioning explicitly before starting the API or
-Caddy. Container health and `/api/ready` are operational signals,
-not substitutes for installation checks or release acceptance. Do not run
-unrestricted `up` on a fresh production installation or remove named volumes as
-a reset shortcut.
-
-Production is one isolated stack per client, not shared multi-tenant SaaS.
-Linux and Windows Docker Compose are the intended server deployment paths;
-Windows requires Docker Desktop using WSL2/Linux containers. Windows operational
-acceptance is pending, and macOS server deployment is out of scope.
-
-## Application data reset
-
-The guarded reset operation is only for local development or disposable test
-instances. Stop FastAPI first. Run a dry plan, review the
-preserved administrator and impact, then use `--execute` in a TTY and enter the
-exact displayed impact digest:
-
-```bash
-# backend/
-uv run python operations/reset_application_data.py
-uv run python operations/reset_application_data.py --execute
-```
-
-The operation removes selected Slate Operations application records, associated
-Supabase Auth accounts, and private Storage objects while preserving the
-configured administrator and that account's installation operator row. It
-removes every organization and creates no new organization. Run
-`operations/create_organization.py` after the reset; with `--email`, `--username` is optional and
-defaults to the email's local part. It reports partial cleanup failures for operator
-recovery. It is not a database-volume reset, backup, rollback, or customer
-recovery mechanism. See [RESTORE.md](infra/supabase/RESTORE.md) for the
-support-operated restore procedure and its current acceptance gaps.
-
-## Application contracts
-
-User and role administration and audit reads require administrator authority.
-The backend applies the existing feature read/write capabilities, group and
-workspace rules, Board grants and audiences, Report eligibility, guest expiry,
-and lifecycle constraints. Session revocation and current application
-eligibility are checked independently of Supabase's authentication result.
-
-File metadata lives in the application schema; object bytes live in private
-Supabase Storage bucket. An upload passes the file-type check before FastAPI
-stores it, and the file is ready when the upload request ends. Keep upload,
-reconciliation, download, and deletion behind the existing FastAPI file
-contracts.
-
-## OpenComms status and entrypoints
-
-Comms conversations/messages, scoped files/settings, administrator tools,
-moderation and durable jobs have implemented FastAPI contracts. The
-`/comms` page reads and changes them only through those APIs and receives private
-Realtime notifications; no part of it runs on browser-local example data. Private
-Realtime events do not grant content access. Complete integrated browser,
-provider-load and release acceptance remains separate.
-
-Use the existing [Supabase operator guide](infra/supabase/README.md#opencomms-ingress-and-private-publication)
-for ingress/publication and startup boundaries, and the
-[Comms API contract](docs/architecture/07-api-architecture.md#opencomms-http-boundary)
-for current reads, commands and privileged purposes. No additional service or
-operator bootstrap entrypoint is introduced for Comms.
-
-The [sample seeder](backend/operations/seed_sample_data.py) includes planners and
-[API executors](backend/operations/sample/controls/comms.py) for implemented core
-Comms controls, including primary/partner organization paths. Its plan is not a
-claim that every future UI tool is wired or that a full pack passed. Full Harbor
-and School pack execution remains deferred to S34; retain the other unsupported
-feature exclusions in the [operator plan](backend/operations/sample/plan_summary.py).
-
-## Verification
-
-Use the repository's focused checks during development. CI on the pull
-request is the full gate. It selects the applicable backend, frontend, and
-server-image checks from the changed paths. Backend verification retains the
-90% overall and changed-line coverage thresholds.
-
-CI does not run the release check. Run it at a major update from `backend/`,
-one command at a time:
-
-```bash
-uv run python -m tests.smoke_runner
-uv run python -m tests.fullstack_runner --acceptance-only
-```
-
-Integration tests must use the runner-owned disposable Supabase instance and
-its ownership manifest; never point tests at a developer's personal or
-customer installation. See [Testing Architecture](docs/architecture/16-testing-architecture.md)
-for test boundaries and the release check.
-
-## Repository architecture
-
-- `backend/app/core/` owns configuration, database wiring, provider
-  integrations, JWT verification, and middleware.
-- `backend/app/common/` contains shared dependencies, exceptions, and
-  utilities.
-- `backend/app/systems/` groups capabilities under `sandbox`, `access`,
-  `manage`, `openview`, `boards`, `platform`, and `comms`.
-- `backend/migrations/` is the Alembic path for the Slate Operations application
-  schema. Supabase-owned Auth and Storage schemas stay provider-managed.
-- `frontend/src/app/` contains App Router routes; reusable primitives live
-  under `frontend/src/components/ui/`.
-- `infra/supabase/` contains the pinned self-hosted provider stack and
-  development/production overlays. `infra/docker/` contains the unified
-  Slate Operations server image; `infra/caddy/` contains gateway artifacts.
+Slate Operations is licensed under the [Elastic License 2.0](LICENSE). You can use it for your own organization, and you can copy, share and change it. You cannot offer it to other people as a hosted or managed service, and you cannot go around the license file check. [Editions and license files](docs/customer/editions-and-license.md) explains how this applies to the editions.

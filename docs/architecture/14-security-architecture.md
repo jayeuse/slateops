@@ -224,10 +224,10 @@ operator procedure. A guarded production Compose rehearsal exercised TLS trust,
 encrypted five-volume restore, restored-file authorization, and service restart
 using Linux containers on macOS Docker Desktop. Local encrypted-export verification
 is separate from pending production-bind and native-browser gateway acceptance.
-Native Linux host boot/reboot and final release acceptance remain pending. Windows
-Docker Desktop/WSL2 is the intended Windows server path, but Windows-host startup,
-reboot, and restore acceptance are pending.
-macOS is not a server target, and no native server installer is part of this
-Compose scope. These deployment boundaries must not be described as verified
+Native Linux host boot/reboot and final release acceptance remain pending. The
+Windows server path is the setup program with its own WSL2 image and Docker Engine
+(`infra/windows/installer/`, `packaging/linux-image/`); its acceptance is limited, as
+Deployment Architecture states. macOS is not a server target. The only installer is
+the Windows setup program; no Linux or macOS server installer exists. These deployment boundaries must not be described as verified
 production controls. See [Deployment Architecture](12-deployment-architecture.md)
 and the [Supabase implementation plan](../../infra/supabase/PLAN.md).

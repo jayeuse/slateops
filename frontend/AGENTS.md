@@ -68,16 +68,14 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Use `npm run verify` to repair a failed frontend gate. Production contains only FastAPI and static frontend assets; Node is a development and build-time dependency.
 - `tooling/` contains frontend-owned Node launchers. Developers invoke them through `npm` scripts; repository-wide automation remains in the root `scripts/` directory.
 
-## TDD and acceptance
+## Coverage and build output
 
-- Before creating/extending tests, changing behavior, fixing bugs, or refactoring, read and follow [tdd-workflow](../.agents/skills/tdd-workflow/SKILL.md). It owns test admission, sequencing, and exceptions; this guide owns project runners.
-- Workers must report the skill path actually read and the focused failing/passing test evidence, or the applicable exception. A reference or announcement alone does not prove TDD execution.
 - There is no frontend numerical line-coverage requirement.
 - `next.config.ts` must keep `output: "export"` and `images.unoptimized`. A development-only `/api/:path*` rewrite may proxy to loopback FastAPI; production must have no rewrites, headers, redirects, proxy, route handlers, server actions, request-time `cookies`/`headers`, or `next start` command.
 
 ## Skills
 
-- Screens, forms, and validation: [`react-frontend-patterns`](../.agents/skills/react-frontend-patterns/SKILL.md). Use it for each change under `src/app/` and `src/components/`.
-- Cached server reads: [`query-cache-patterns`](../.agents/skills/query-cache-patterns/SKILL.md). Use it for TanStack Query reads: query keys, SSE invalidation, load-more pages, and prefetch.
-- Playwright tests: [`playwright-e2e-testing`](../.agents/skills/playwright-e2e-testing/SKILL.md). Use it to write, fix, or review a spec, fixture, mock, or config, and to diagnose a flaky test.
-- UI/UX and visual design: [`ui-ux-pro-max`](../.agents/skills/ui-ux-pro-max/SKILL.md) and [`impeccable`](../.agents/skills/impeccable/SKILL.md). Read [DESIGN-RULES.md](../DESIGN-RULES.md) for what each one owns and their order.
+- Screens, forms, and validation: the `react-frontend-patterns` skill. Use it for each change under `src/app/` and `src/components/`.
+- Cached server reads: the `query-cache-patterns` skill. Use it for TanStack Query reads: query keys, SSE invalidation, load-more pages, and prefetch.
+- Playwright tests: the `playwright-e2e-testing` skill. Use it to write, fix, or review a spec, fixture, mock, or config, and to diagnose a flaky test.
+- UI/UX and visual design: the `ui-ux-pro-max` skill and the `impeccable` skill. Read [DESIGN-RULES.md](../DESIGN-RULES.md) for what each one owns and their order.

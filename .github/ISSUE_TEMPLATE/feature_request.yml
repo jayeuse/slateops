@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest a change that would help your organization.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What do you try to do today, and what makes it hard?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help
+      description: The change you suggest, in plain words.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Who it helps
+      description: Which people in your organization (for example administrators, members, guests) and how often.

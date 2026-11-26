@@ -1,5 +1,7 @@
 # Access recovery and host compatibility
 
+> **Status: reference (2026-11-26).** A live contract that current work reads; it is not compacted.
+
 ## Current authority
 
 The earlier isolated Access rollout's version-2 database-dump/private-root

@@ -61,10 +61,8 @@ Every organization query runs in a bound transaction (`app/core/database/organiz
 - Put helpers in a package: `backups/` (host backup runner internals), `reset/` (guarded reset), or `sample/` (sample-data engine: `population/`, `phases/`, `controls/`, `verification/`, `packs/`). Inside a package, drop the repeated prefix (`sample/controls/boards.py`, not `sample_control_boards.py`). Do not add a package named `backup`: `backups/host.py` imports `packaging/backup` as `backup`.
 - `tests/operations/` mirrors those folders (plus `runner/` for the disposable runner and instance guards), but test files keep their full unique names (`sample/controls/test_sample_control_boards.py`). `tests/operations/` has no `__init__.py` on purpose: one would make pytest import it as a top-level `operations` package that shadows the real one, so pytest needs every test file name to be unique.
 
-## TDD and coverage
+## Coverage
 
-- Before creating/extending tests, changing behavior, fixing bugs, or refactoring, read and follow [tdd-workflow](../.agents/skills/tdd-workflow/SKILL.md). It owns test admission, sequencing, and exceptions; this guide owns project runners and coverage thresholds.
-- Workers must report the skill path actually read and the focused failing/passing test evidence, or the applicable exception. A reference or announcement alone does not prove TDD execution.
 - Require **90% changed executable production-line coverage** against the task's base revision and **90% overall `app` coverage** for full backend verification. Report these separately; a missing CI measurement or a failed gate is **NOT READY TO MERGE** under the skill's exception policy.
 
 ## Verification and references
@@ -74,6 +72,6 @@ Every organization query runs in a bound transaction (`app/core/database/organiz
 
 ## Skills
 
-- Endpoint contracts: [`fastapi-api-design`](../.agents/skills/fastapi-api-design/SKILL.md). Use it before you add or change a route path, method, status, response shape, pagination, or SSE contract.
-- Backend implementation: [`fastapi-backend-patterns`](../.agents/skills/fastapi-backend-patterns/SKILL.md). Use it for each change to routers, dependencies, services, background work, settings, or logging under `app/`.
-- Persistence: [`postgres-patterns`](../.agents/skills/postgres-patterns/SKILL.md). Use it for each change to a model, query, lock, savepoint, or grant, and to investigate a slow query.
+- Endpoint contracts: the `fastapi-api-design` skill. Use it before you add or change a route path, method, status, response shape, pagination, or SSE contract.
+- Backend implementation: the `fastapi-backend-patterns` skill. Use it for each change to routers, dependencies, services, background work, settings, or logging under `app/`.
+- Persistence: the `postgres-patterns` skill. Use it for each change to a model, query, lock, savepoint, or grant, and to investigate a slow query.

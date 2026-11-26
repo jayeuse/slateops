@@ -4,9 +4,9 @@
 > **Audience:** Developers and operators working in this repository.
 > **Related documents:** [System overview](01-system-overview.md), [Runtime flows](13-runtime-flows.md), [Glossary](21-glossary.md)
 
-Slate Operations is a self-hosted application installed separately for each client. The selected Compose topology uses self-hosted Supabase Database (PostgreSQL), Auth, Storage, and Studio. FastAPI remains the application API and authorization authority; it serves the statically exported Next.js UI, accesses application data through SQLAlchemy, and mediates private file operations. Caddy is part of the production overlay. Full production acceptance is still in progress, and Windows runtime acceptance remains pending.
+Slate Operations is a self-hosted application installed separately for each client. The selected Compose topology uses self-hosted Supabase Database (PostgreSQL), Auth, Storage, and Studio. FastAPI remains the application API and authorization authority; it serves the statically exported Next.js UI, accesses application data through SQLAlchemy, and mediates private file operations. Caddy is part of the production overlay. Full production acceptance is still in progress, and Windows acceptance is limited ([Deployment architecture](12-deployment-architecture.md#health-and-release-acceptance)).
 
-The intended server platforms are Linux and Windows running Linux containers through Docker Desktop and WSL2. macOS remains available for workstation development but is not a supported server target. Existing application data is not imported into the fresh Supabase installation. Supabase Realtime is a future integration; authenticated SSE remains the current invalidation transport.
+The server platforms are Linux (the Compose files) and Windows 11, where the setup program runs Linux containers on Docker Engine in its own WSL2 image (`infra/windows/installer/`, `packaging/linux-image/`). macOS remains available for workstation development but is not a supported server target. Existing application data is not imported into the fresh Supabase installation. Supabase Realtime is a future integration; authenticated SSE remains the current invalidation transport.
 
 ## Purpose and accuracy
 
@@ -89,7 +89,7 @@ Supabase Auth establishes provider identity. FastAPI verifies the provider token
 - Authenticated SSE carries private invalidation events, never row snapshots. OpenComms also uses private Supabase Realtime topics for opaque invalidations, presence and typing; message content still loads through FastAPI.
 - Supabase Studio is an operator-only database console that replaces pgweb in the Compose topology; it is more privileged than the former read-only inspector.
 - The selected production overlay uses one FastAPI application upstream behind Caddy. Next.js is a static-export build tool and a local development server.
-- The Compose stack is the per-client deployment direction. Production and Windows runtime acceptance remain pending; there is no native Windows/macOS installer contract.
+- The Compose stack is the per-client deployment direction. Production acceptance remains pending and Windows acceptance is limited. The Windows setup program (`infra/windows/installer/`) is the only installer; there is no macOS installer.
 
 ## System boundaries
 
@@ -100,16 +100,16 @@ Supabase Auth establishes provider identity. FastAPI verifies the provider token
 - SQLAlchemy models and a fresh Alembic application-schema lineage
 - Supabase PostgreSQL, Auth, Storage, Studio Compose services and the production application overlay
 - Private Storage adapter, file-type validation, Caddy configuration, and operator workflows
-- Verification-only GitHub Actions and test suites
+- GitHub Actions for verification and for the release build (`.github/workflows/release.yml`), and test suites
 
 ### External or still pending
 
 - Customer-specific SMTP service and production mail configuration
 - Complete production TLS, restart, backup/restore, and release acceptance
-- Windows-host runtime acceptance; Linux container support on Windows is the target path
+- A checked-in acceptance record for the Windows setup program (see Deployment architecture)
 - Live production acceptance of the implemented Database/Auth/Storage/SMTP-configuration readiness report
 - Supabase Realtime application integration; current authenticated event delivery uses SSE
-- Native server installers, managed hosted control plane, and cross-organization tenancy
+- Linux and macOS server installers, managed hosted control plane, and cross-organization tenancy
 - Customer backup destination, retention schedule, monitoring, and alerting operations
 
 Slate Operations stores private file bytes in Supabase Storage. Validation, authorization, upload, download, reconciliation, and cleanup continue through the FastAPI file-service boundary. See [storage](11-infrastructure.md#storage).
