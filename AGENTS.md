@@ -64,6 +64,33 @@ Wrong: "Push succeeded; ran `docker system prune -a --volumes`."
 - Read-only discovery needs no approval. Obtain approval for scope expansion, unrelated files, new services, unrequested public API/schema/storage/wire-format changes, data deletion, overwriting user work, discarding uncommitted changes, or rewriting Git history; preserve unrelated edits.
 - Review the final diff for correctness and scope, and remove task-created scratch code. Report actual results and blockers; deferred, skipped, or unavailable checks are unverified, never passed.
 
+## Pull requests and the changelog
+
+Humans track agent work through two places: the pull request description and `CHANGELOG.md`. Every pull request from now on fills both. The only exception is Dependabot; the release pull request lists its updates (Releases rule 2).
+
+**Pull request description.** Use these three headings, in this order, in plain words:
+
+1. `## What changed`: what a user, an operator, or a developer now sees or gets.
+2. `## How`: how the change was implemented: the main files or modules, the approach, and any migration or configuration change.
+3. `## Problem solved`: the issue, bug, or need that the change answers, with a link to the issue when one exists. Write "None" for a change with no problem behind it (for example a refactor or a docs update).
+
+Add test evidence and review notes below these headings when they apply.
+
+**Changelog entry.** In the same pull request, add one line under `## [Unreleased]` in `CHANGELOG.md`, in the section that fits (`### Added`, `### Changed`, `### Fixed`, `### Removed`). Create the section if it is missing.
+
+- Keep the line very brief: one sentence that says what changed, in words a non-developer understands, then the pull request number, for example `(#131)`. Add the number after the pull request exists.
+- Describe the result, not the implementation. Implementation detail goes in the pull request description.
+- An internal change with nothing to see (tests, CI, refactor, tooling) still gets one line under `### Changed`, starting with "Internal:".
+- SEC-R1 applies: a security fix says only what is now safer, never how the old code could be misused.
+- When the branch conflicts in `CHANGELOG.md` with another merged entry, keep both lines.
+
+Correct description: `## What changed` "Admins can export a sheet as Excel." `## How` "Added `export_xlsx` in `openview/sheets/export.py` with openpyxl; the Export menu calls the new route." `## Problem solved` "Sheets could only be exported as CSV (#140)."
+Wrong description: "Various improvements to sheets. See commits."
+
+Correct changelog line: `- Sheets can be exported as Excel files. (#141)`
+Wrong changelog line: `- Refactored SheetExportService to use a strategy pattern and added openpyxl writer with streaming support.`
+Wrong changelog line: `- Fixed the missing access check on GET /api/sheets/{id}/export that let any member download private sheets.` (SEC-R1)
+
 ## Releases and versions
 
 A published release reaches customers: every installation polls `releases/latest` of this repository (`backend/operations/backup_runner.py:74`) and offers it as an update. Treat publishing as irreversible.
@@ -81,7 +108,7 @@ Before `1.0.0`, a major-class change still needs the owner's approval, and the o
 **Rules for every release:**
 
 1. The Git tag is the version. `backend/pyproject.toml` and `frontend/package.json` hold the same `X.Y.Z`; the release workflow refuses a tag that does not match (`scripts/check_release_version.py`).
-2. Bump both manifests in a pull request titled `Release vX.Y.Z` with only the version change and any release-only docs. It merges to `main` after green CI.
+2. Bump both manifests in a pull request titled `Release vX.Y.Z` with only the version change and any release-only docs. That pull request renames `## [Unreleased]` in `CHANGELOG.md` to `## [X.Y.Z] - <date>`, adds a one-line summary for the version and a one-line entry for each merged Dependabot pull request, and opens a new empty `## [Unreleased]`. It merges to `main` after green CI.
 3. A stable tag `vX.Y.Z` goes on a commit of `main`. A test tag `vX.Y.Z-rc.N` goes on any pushed commit and makes a draft titled "Test build, not for customers". Use an rc tag first when the release changes the installer, the engine, the Linux image or a migration, and let the owner install it.
 4. Never re-run a failed release workflow, never move a tag, and never reuse a version. Fix the cause and push the next rc number; a failed stable tag burns its version, so the fix ships as the next patch.
 5. The workflow always creates a draft. Before publishing, download the assets, run `sha256sum --check SHA256SUMS` and the `cosign verify-blob` command from the release notes, and add a short "What changed" section in customer words (no vulnerability details, SEC-R1). Publish only after the owner says so in chat.
